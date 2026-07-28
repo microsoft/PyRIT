@@ -65,6 +65,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunState,
     Score,
     ScorerIdentifier,
     Seed,
@@ -2879,7 +2880,7 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         scenario_result_id: str,
-        scenario_run_state: str,
+        scenario_run_state: ScenarioRunState | str,
         error_message: str | None = None,
         error_type: str | None = None,
     ) -> None:
@@ -2891,7 +2892,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             scenario_result_id (str): The ID of the scenario result to update.
-            scenario_run_state (str): The new state for the scenario
+            scenario_run_state (ScenarioRunState | str): The new state for the scenario
                 (e.g., "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED").
             error_message (str | None): Optional scenario-level error message.
             error_type (str | None): Optional exception class name.
@@ -2899,21 +2900,22 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
+        normalized_state = ScenarioRunState(scenario_run_state)
         with closing(self.get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
             if not entry:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
-            entry.scenario_run_state = scenario_run_state
-            if error_message is not None:
+            entry.scenario_run_state = normalized_state.value
+            if error_message is not None or normalized_state != ScenarioRunState.FAILED:
                 entry.error_message = error_message
-            if error_type is not None:
+            if error_type is not None or normalized_state != ScenarioRunState.FAILED:
                 entry.error_type = error_type
 
             session.commit()
 
-        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
+        logger.info(f"Updated scenario {scenario_result_id} state to '{normalized_state.value}'")
 
     def update_scenario_metadata(
         self,

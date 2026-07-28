@@ -650,7 +650,7 @@ class TestScenarioRunServiceCancelRun:
 
         mock_memory.update_scenario_run_state.assert_called_once_with(
             scenario_result_id=response.scenario_result_id,
-            scenario_run_state="CANCELLED",
+            scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",
         )

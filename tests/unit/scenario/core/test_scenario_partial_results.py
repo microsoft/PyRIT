@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
+from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
@@ -191,6 +192,9 @@ class TestScenarioPartialAttackCompletion:
         # Verify scenario succeeded after retry
         assert isinstance(result, ScenarioResult)
         assert call_count[0] == 2  # Called twice
+        assert result.scenario_run_state == "COMPLETED"
+        assert result.error_message is None
+        assert result.error_type is None
 
         # All 3 results should be saved
         assert len(result.attack_results["partial_attack"]) == 3
@@ -202,6 +206,8 @@ class TestScenarioPartialAttackCompletion:
     async def test_scenario_saves_partial_results_before_failure(self, mock_objective_target):
         """Test that scenario saves partial results even when attack fails."""
         atomic_attack = create_mock_atomic_attack("partial_save_attack", ["obj1", "obj2", "obj3", "obj4"])
+        first_error = RuntimeError("Failed obj3")
+        second_error = RuntimeError("Failed obj4")
 
         async def mock_run(*args, **kwargs):
             # Return partial results with incomplete objectives
@@ -214,7 +220,7 @@ class TestScenarioPartialAttackCompletion:
                 )
                 for i in [1, 2]
             ]
-            incomplete = [("obj3", RuntimeError("Failed obj3")), ("obj4", RuntimeError("Failed obj4"))]
+            incomplete = [("obj3", first_error), ("obj4", second_error)]
 
             # Save completed results to memory
             save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
@@ -237,14 +243,24 @@ class TestScenarioPartialAttackCompletion:
         await scenario.initialize_async()
 
         # Should raise error because of incomplete objectives
-        with pytest.raises(ValueError, match="incomplete"):
+        with pytest.raises(ScenarioPartialFailureException, match="incomplete") as exc_info:
             await scenario.run_async()
+
+        error = exc_info.value
+        assert error.atomic_attack_name == "partial_save_attack"
+        assert error.completed_count == 2
+        assert error.incomplete_count == 2
+        assert error.total_count == 4
+        assert error.incomplete_objectives == (("obj3", first_error), ("obj4", second_error))
+        assert error.__cause__ is first_error
+        assert not isinstance(error, ValueError)
 
         # But the 2 completed results should still be saved
         scenario_results = CentralMemory.get_memory_instance().get_scenario_results(
             scenario_result_ids=[scenario._scenario_result_id]
         )
         assert len(scenario_results) == 1
+        assert scenario_results[0].error_type == "ScenarioPartialFailureException"
         saved_results = scenario_results[0].attack_results["partial_save_attack"]
         assert len(saved_results) == 2
         assert saved_results[0].objective == "obj1"
