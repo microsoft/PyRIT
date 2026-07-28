@@ -366,30 +366,38 @@ async def test_write_async_with_colors_enabled_emits_ansi_codes(
     assert "\x1b[" in capsys.readouterr().out
 
 
-async def test_write_async_invalid_reasoning_summary_is_rejected(printer, attack_result, sqlite_instance):
-    piece = MessagePiece(
-        role="assistant",
-        original_value="not-json",
-        converted_value="not-json",
-        original_value_data_type="reasoning",
-        converted_value_data_type="reasoning",
-    )
-    _seed_messages(sqlite_instance, "conv-main", [piece])
-    with pytest.raises(ValueError, match="valid JSON object"):
-        await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
+async def test_write_async_invalid_reasoning_summary_warns(printer, attack_result, sqlite_instance):
+    pieces = [
+        MessagePiece(
+            role="assistant",
+            original_value="not-json",
+            original_value_data_type="reasoning",
+        ),
+        MessagePiece(role="assistant", original_value="Final answer."),
+    ]
+    _seed_messages(sqlite_instance, "conv-main", pieces)
+
+    rendered = await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
+
+    assert "⚠ WARNING: Reasoning summary failed to render; conversation is intact." in rendered
+    assert "Final answer." in rendered
 
 
-async def test_write_async_reasoning_summary_without_summary_key_is_rejected(printer, attack_result, sqlite_instance):
-    piece = MessagePiece(
-        role="assistant",
-        original_value='{"id": "r1", "type": "reasoning"}',
-        converted_value='{"id": "r1", "type": "reasoning"}',
-        original_value_data_type="reasoning",
-        converted_value_data_type="reasoning",
-    )
-    _seed_messages(sqlite_instance, "conv-main", [piece])
-    with pytest.raises(ValueError, match="'summary' list"):
-        await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
+async def test_write_async_reasoning_summary_without_summary_key_warns(printer, attack_result, sqlite_instance):
+    pieces = [
+        MessagePiece(
+            role="assistant",
+            original_value='{"id": "r1", "type": "reasoning"}',
+            original_value_data_type="reasoning",
+        ),
+        MessagePiece(role="assistant", original_value="Final answer."),
+    ]
+    _seed_messages(sqlite_instance, "conv-main", pieces)
+
+    rendered = await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
+
+    assert "⚠ WARNING: Reasoning summary failed to render; conversation is intact." in rendered
+    assert "Final answer." in rendered
 
 
 async def test_write_async_pruned_reasoning_uses_pretty_heading(

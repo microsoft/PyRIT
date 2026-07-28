@@ -4,7 +4,7 @@
 import json
 
 import pytest
-from colorama import Fore
+from colorama import Fore, Style
 from pydantic import ValidationError
 
 from pyrit.models import Message, MessagePiece
@@ -137,30 +137,96 @@ async def test_empty_reasoning_summary_renders_explicit_state(
     "reasoning_value",
     [
         "not-json",
-        json.dumps({"type": "message", "summary": []}),
-        json.dumps({"type": "reasoning", "summary": []}),
-        json.dumps({"id": "r1", "type": "reasoning"}),
-        json.dumps({"id": "r1", "type": "reasoning", "summary": [{"type": "text", "text": "step"}]}),
-        json.dumps({"id": "r1", "type": "reasoning", "summary": [{"type": "summary_text", "text": 1}]}),
-        json.dumps({"id": "r1", "type": "reasoning", "summary": [], "status": "invalid"}),
-        json.dumps({"id": "r1", "type": "reasoning", "summary": [], "content": [{"type": "text"}]}),
+        json.dumps([]),
+        json.dumps({}),
+        json.dumps({"summary": None}),
+        json.dumps({"summary": "step"}),
+        json.dumps({"summary": [None]}),
+        json.dumps({"summary": [{}]}),
+        json.dumps({"summary": [{"text": 1}]}),
     ],
 )
-async def test_reasoning_payload_must_match_openai_responses_shape(markdown_printer, reasoning_value):
+def test_reasoning_payload_requires_renderable_summary_fields(reasoning_value):
+    with pytest.raises(ValueError, match="Reasoning piece|reasoning summary item"):
+        MarkdownConversationMemoryPrinter._extract_reasoning_summary(reasoning_value)
+
+
+@pytest.mark.parametrize("format_name", ["pretty", "markdown"])
+async def test_malformed_reasoning_warns_and_preserves_response(
+    format_name,
+    pretty_printer,
+    markdown_printer,
+):
+    message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="not-json",
+                original_value_data_type="reasoning",
+            ),
+            MessagePiece(role="assistant", original_value="Final answer."),
+        ]
+    )
+    printer = pretty_printer if format_name == "pretty" else markdown_printer
+
+    rendered = await printer.render_async([message], include_reasoning_summaries=True)
+
+    assert "⚠ WARNING: Reasoning summary failed to render; conversation is intact." in rendered
+    assert "💬 Response" in rendered
+    assert "Final answer." in rendered
+
+
+async def test_pretty_malformed_reasoning_warning_is_red(patch_central_database):
+    printer = PrettyConversationMemoryPrinter(enable_colors=True)
+    message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="not-json",
+                original_value_data_type="reasoning",
+            )
+        ]
+    )
+
+    rendered = await printer.render_async([message], include_reasoning_summaries=True)
+
+    expected = f"{Style.BRIGHT}{Fore.RED}  ⚠ WARNING: Reasoning summary failed to render; conversation is intact."
+    assert expected in rendered
+
+
+async def test_reasoning_payload_ignores_unrendered_fields(markdown_printer):
+    reasoning_value = json.dumps(
+        {
+            "type": "unexpected",
+            "id": 42,
+            "summary": [{"type": "unexpected", "text": "rendered summary"}],
+            "status": "unexpected",
+            "encrypted_content": 42,
+            "content": "unexpected",
+        }
+    )
     message = Message(
         message_pieces=[
             MessagePiece(
                 role="assistant",
                 original_value=reasoning_value,
-                converted_value=reasoning_value,
                 original_value_data_type="reasoning",
-                converted_value_data_type="reasoning",
             )
         ]
     )
 
-    with pytest.raises(ValueError, match="Reasoning piece|reasoning summary item|reasoning content item"):
-        await markdown_printer.render_async([message], include_reasoning_summaries=True)
+    rendered = await markdown_printer.render_async([message], include_reasoning_summaries=True)
+
+    assert "rendered summary" in rendered
+
+
+def test_extract_reasoning_summary_preserves_extremely_long_text():
+    long_summary = f"start {'reasoning ' * 10_000}end"
+    reasoning_value = json.dumps({"summary": [{"text": long_summary}]})
+
+    extracted = MarkdownConversationMemoryPrinter._extract_reasoning_summary(reasoning_value)
+
+    assert extracted == long_summary
 
 
 def test_reasoning_prompt_data_type_requires_exact_literal():

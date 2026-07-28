@@ -234,9 +234,22 @@ class PrettyConversationPrinter(ConversationPrinterBase):
             reasoning_value (str): Serialized OpenAI Responses reasoning item.
 
         Returns:
-            str: The labeled reasoning block, including an explicit message when the summary is empty.
+            str: The labeled reasoning block, or a warning when extraction fails.
         """
-        summary = self._extract_reasoning_summary(reasoning_value)
+        try:
+            summary = self._extract_reasoning_summary(reasoning_value)
+        except ValueError:
+            return "".join(
+                [
+                    self._format_colored(
+                        f"{self._indent}{self._REASONING_RENDER_WARNING}",
+                        Style.BRIGHT,
+                        Fore.RED,
+                    ),
+                    self._format_colored("", Fore.RED),
+                ]
+            )
+
         if not summary:
             summary = "[No reasoning summary was returned by the provider.]"
 
