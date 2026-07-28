@@ -169,6 +169,7 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
             <TableCell>
               <Tooltip content="Open attack" relationship="label">
                 <Button
+                  className={styles.touchTarget}
                   appearance="subtle"
                   size="small"
                   icon={<OpenRegular />}

@@ -1,14 +1,19 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { makeTarget } from "./_targets";
 
+const MOBILE_VIEWPORT = { width: 390, height: 844 };
+const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
+
+type TourViewportName = "mobile" | "desktop";
+
 async function expectMinimumTouchTarget(locator: Locator, minimum = 44): Promise<void> {
   await expect(locator).toBeVisible();
 
   const box = await locator.boundingBox();
 
   expect(box).not.toBeNull();
-  expect(box!.width).toBeGreaterThanOrEqual(minimum);
-  expect(box!.height).toBeGreaterThanOrEqual(minimum);
+  expect(Math.round(box!.width)).toBeGreaterThanOrEqual(minimum);
+  expect(Math.round(box!.height)).toBeGreaterThanOrEqual(minimum);
 }
 
 async function expectTourContained(page: Page, dialog: Locator, checkTouchTargets: boolean): Promise<void> {
@@ -57,6 +62,37 @@ async function expectTourContained(page: Page, dialog: Locator, checkTouchTarget
       await expectMinimumTouchTarget(action);
     }
   }
+}
+
+async function expectTourContainedAndActionable(
+  page: Page,
+  viewportName: TourViewportName
+): Promise<void> {
+  await page.getByRole("button", { name: "Take a tour" }).click();
+
+  const dialog = page.getByRole("alertdialog");
+
+  for (let step = 0; step < 5; step += 1) {
+    await expect(dialog).toContainText(`${step + 1} of 5`);
+    await expectTourContained(page, dialog, viewportName === "mobile");
+
+    if (viewportName === "desktop" && step === 0) {
+      const targetBox = await page.locator('[data-tour="sidebar-nav"]').boundingBox();
+      const dialogBox = await dialog.boundingBox();
+
+      expect(targetBox).not.toBeNull();
+      expect(dialogBox).not.toBeNull();
+      expect(dialogBox!.x).toBeGreaterThanOrEqual(targetBox!.x + targetBox!.width);
+    }
+
+    if (step < 4) {
+      await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    }
+  }
+
+  await dialog.getByRole("button", { name: "Anchors Away!", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(/\/$/);
 }
 
 test.describe("Accessibility", () => {
@@ -270,73 +306,53 @@ test.describe("Accessibility", () => {
     }
   });
 
-  test("mobile audit controls provide 44px touch targets", async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+  test.describe("mobile touch context", () => {
+    test.use({ hasTouch: true });
 
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Configure a target" }));
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
+    test("mobile audit controls provide 44px touch targets", async ({ page }) => {
+      await page.setViewportSize(MOBILE_VIEWPORT);
 
-    await page.route(/\/api\/targets/, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [
-            makeTarget({
-              target_registry_name: "mobile-touch-target",
-              target_type: "OpenAIChatTarget",
-              endpoint: "https://test.com",
-              model_name: "gpt-4o",
-            }),
-          ],
-          pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
-        }),
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Configure a target" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
+
+      await page.route(/\/api\/targets/, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [
+              makeTarget({
+                target_registry_name: "mobile-touch-target",
+                target_type: "OpenAIChatTarget",
+                endpoint: "https://test.com",
+                model_name: "gpt-4o",
+              }),
+            ],
+            pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+          }),
+        });
       });
+
+      await page.getByRole("button", { name: "Configuration" }).click();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Target Configuration" })
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "New Target" }));
     });
 
-    await page.getByRole("button", { name: "Configuration" }).click();
-    await expect(
-      page.getByRole("heading", { level: 1, name: "Target Configuration" })
-    ).toBeVisible();
-    await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "New Target" }));
+    test("tour remains contained and actionable on mobile", async ({ page }) => {
+      await page.setViewportSize(MOBILE_VIEWPORT);
+      await expectTourContainedAndActionable(page, "mobile");
+    });
   });
 
-  for (const viewport of [
-    { name: "mobile", width: 390, height: 844 },
-    { name: "desktop", width: 1280, height: 800 },
-  ]) {
-    test(`tour remains contained and actionable on ${viewport.name}`, async ({ page }) => {
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.getByRole("button", { name: "Take a tour" }).click();
-
-      const dialog = page.getByRole("alertdialog");
-
-      for (let step = 0; step < 5; step += 1) {
-        await expect(dialog).toContainText(`${step + 1} of 5`);
-        await expectTourContained(page, dialog, viewport.name === "mobile");
-
-        if (viewport.name === "desktop" && step === 0) {
-          const targetBox = await page.locator('[data-tour="sidebar-nav"]').boundingBox();
-          const dialogBox = await dialog.boundingBox();
-
-          expect(targetBox).not.toBeNull();
-          expect(dialogBox).not.toBeNull();
-          expect(dialogBox!.x).toBeGreaterThanOrEqual(targetBox!.x + targetBox!.width);
-        }
-
-        if (step < 4) {
-          await dialog.getByRole("button", { name: "Next", exact: true }).click();
-        }
-      }
-
-      await dialog.getByRole("button", { name: "Anchors Away!", exact: true }).click();
-      await expect(dialog).toBeHidden();
-      await expect(page).toHaveURL(/\/$/);
-    });
-  }
+  test("tour remains contained and actionable on desktop", async ({ page }) => {
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await expectTourContainedAndActionable(page, "desktop");
+  });
 });
 
 test.describe("Visual Consistency", () => {

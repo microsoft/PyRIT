@@ -3,12 +3,13 @@
 
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import pytest
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import MemoryInterface
+from pyrit.memory import AttackResultsKeysetCursor, MemoryInterface
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -42,6 +43,61 @@ def create_attack_result(
         labels=labels or {},
         targeted_harm_categories=targeted_harm_categories or [],
     )
+
+
+_BASE_TS = datetime(2024, 6, 1, tzinfo=timezone.utc)
+
+
+def _make_attack_result(
+    conversation_id: str,
+    *,
+    executed_turns: int = 1,
+    outcome: AttackOutcome = AttackOutcome.SUCCESS,
+    ts_offset: int = 0,
+    updated_at_offset: int | None = None,
+    created_at_offset: int | None = None,
+    attack_result_id: str | None = None,
+) -> AttackResult:
+    """Build an AttackResult with an explicit timestamp and recency metadata.
+
+    Used by the pagination tests, which need deterministic control over the row
+    timestamp and the ``attack_metadata`` ``updated_at``/``created_at`` recency keys.
+    """
+    metadata: dict[str, str] = {}
+    if updated_at_offset is not None:
+        metadata["updated_at"] = (_BASE_TS + timedelta(seconds=updated_at_offset)).isoformat()
+    if created_at_offset is not None:
+        metadata["created_at"] = (_BASE_TS + timedelta(seconds=created_at_offset)).isoformat()
+    kwargs: dict = {
+        "conversation_id": conversation_id,
+        "objective": f"Objective {conversation_id}",
+        "executed_turns": executed_turns,
+        "execution_time_ms": 0,
+        "outcome": outcome,
+        "metadata": metadata,
+        "timestamp": _BASE_TS + timedelta(seconds=ts_offset),
+    }
+    if attack_result_id is not None:
+        kwargs["attack_result_id"] = attack_result_id
+    return AttackResult(**kwargs)
+
+
+def _after(page: "Sequence[AttackResult]") -> AttackResultsKeysetCursor:
+    """Build the keyset anchor for the next page from the last row of ``page``."""
+    return AttackResultsKeysetCursor.from_attack_result(page[-1])
+
+
+def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list[AttackResult]:
+    """Page through get_attack_results with the keyset cursor until exhausted."""
+    drained: list[AttackResult] = []
+    after: AttackResultsKeysetCursor | None = None
+    while True:
+        page = list(memory.get_attack_results(limit=page_size, after=after, **filters))
+        drained.extend(page)
+        if len(page) < page_size:
+            break
+        after = _after(page)
+    return drained
 
 
 def test_add_attack_results_to_memory(sqlite_instance: MemoryInterface):
@@ -1590,3 +1646,359 @@ def test_get_attack_results_by_attack_identifier_filter_no_match(sqlite_instance
         ],
     )
     assert len(results) == 0
+
+
+def test_get_attack_results_pagination_returns_recency_ordered_page(sqlite_instance: MemoryInterface):
+    """Keyset pagination returns the recency-ordered slice (newest updated_at first)."""
+    attack_results = [
+        _make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=100 + i, created_at_offset=i) for i in range(10)
+    ]
+    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+
+    page1 = sqlite_instance.get_attack_results(limit=3)
+    assert [r.conversation_id for r in page1] == ["conv-9", "conv-8", "conv-7"]
+
+    page2 = sqlite_instance.get_attack_results(limit=3, after=_after(page1))
+    assert [r.conversation_id for r in page2] == ["conv-6", "conv-5", "conv-4"]
+
+
+def test_get_attack_results_pagination_disjoint_and_complete(sqlite_instance: MemoryInterface):
+    """Concatenated keyset pages equal the full recency-ordered set with no gaps or duplicates."""
+    attack_results = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=100 + i) for i in range(25)]
+    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+
+    full = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=100)]
+    paged = [r.conversation_id for r in _drain_keyset(sqlite_instance, page_size=7)]
+    assert paged == full
+    assert len(set(paged)) == 25
+
+
+def test_get_attack_results_pagination_duplicate_and_tie_heavy_pages_disjoint_and_complete(
+    sqlite_instance: MemoryInterface,
+):
+    """Duplicate- and tie-heavy data still paginates as disjoint, complete, newest-per-conversation winners."""
+    num_convs = 12
+    attack_results: list[AttackResult] = []
+    for i in range(num_convs):
+        # Older row for the conversation — must lose dedup to the newer row below.
+        attack_results.append(
+            _make_attack_result(
+                f"conv-{i}",
+                outcome=AttackOutcome.SUCCESS,
+                ts_offset=i,
+                updated_at_offset=i,
+                attack_result_id=f"00000000-0000-4000-8000-{i:012d}",
+            )
+        )
+        # Newer (winning) row. updated_at ties within pairs, broken by timestamp then id.
+        attack_results.append(
+            _make_attack_result(
+                f"conv-{i}",
+                outcome=AttackOutcome.FAILURE,
+                ts_offset=100 + i,
+                updated_at_offset=100 + (i // 2),
+                attack_result_id=f"00000000-0000-4000-8000-1{i:011d}",
+            )
+        )
+    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+
+    full = list(sqlite_instance.get_attack_results(limit=100))
+    # Each duplicate pair collapses to exactly one winner, and the winner is the newer (FAILURE) row.
+    assert len(full) == num_convs
+    assert all(r.outcome == AttackOutcome.FAILURE for r in full)
+    assert len({r.conversation_id for r in full}) == num_convs
+
+    paged = [r.attack_result_id for r in _drain_keyset(sqlite_instance, page_size=5)]
+    assert paged == [r.attack_result_id for r in full]
+    assert len(set(paged)) == num_convs
+
+
+def test_get_attack_results_pagination_order_parity_with_python_sort(sqlite_instance: MemoryInterface):
+    """Paginated SQL ordering matches the previous Python metadata sort for distinct metadata."""
+    attack_results = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=(i * 7) % 50) for i in range(15)]
+    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+
+    new_order = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=100)]
+    all_unpaged = list(sqlite_instance.get_attack_results())
+    expected = sorted(
+        all_unpaged,
+        key=lambda ar: ar.metadata.get("updated_at", ar.metadata.get("created_at", "")),
+        reverse=True,
+    )
+    assert new_order == [r.conversation_id for r in expected]
+
+
+def test_get_attack_results_paginated_dedup_is_filter_aware(sqlite_instance: MemoryInterface):
+    """When the newest row fails the filter, the older matching row still survives dedup."""
+    older_id = str(uuid.uuid4())
+    newer_id = str(uuid.uuid4())
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            _make_attack_result(
+                "conv-1", outcome=AttackOutcome.SUCCESS, ts_offset=1, updated_at_offset=1, attack_result_id=older_id
+            ),
+            _make_attack_result(
+                "conv-1", outcome=AttackOutcome.FAILURE, ts_offset=2, updated_at_offset=2, attack_result_id=newer_id
+            ),
+        ]
+    )
+    page = sqlite_instance.get_attack_results(outcome=AttackOutcome.SUCCESS.value, limit=50)
+    assert len(page) == 1
+    assert page[0].attack_result_id == older_id
+
+
+def test_get_attack_results_paginated_turns_filter_after_dedup(sqlite_instance: MemoryInterface):
+    """min/max_turns apply to the surviving winner, never resurrecting an older duplicate."""
+    older_id = str(uuid.uuid4())
+    newer_id = str(uuid.uuid4())
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            _make_attack_result(
+                "conv-1", executed_turns=2, ts_offset=1, updated_at_offset=1, attack_result_id=older_id
+            ),
+            _make_attack_result(
+                "conv-1", executed_turns=9, ts_offset=2, updated_at_offset=2, attack_result_id=newer_id
+            ),
+        ]
+    )
+    # Winner (turns=9) is out of range; the older turns=2 row must NOT resurface.
+    assert list(sqlite_instance.get_attack_results(max_turns=5, limit=50)) == []
+    # Winner in range -> returned.
+    page = sqlite_instance.get_attack_results(min_turns=5, limit=50)
+    assert len(page) == 1
+    assert page[0].attack_result_id == newer_id
+
+
+def test_get_attack_results_paginated_same_timestamp_tie_keeps_max_id(sqlite_instance: MemoryInterface):
+    """On identical timestamps, dedup deterministically keeps the max id."""
+    id_lo = "00000000-0000-4000-8000-000000000001"
+    id_hi = "00000000-0000-4000-8000-0000000000ff"
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            _make_attack_result("conv-1", ts_offset=5, updated_at_offset=5, attack_result_id=id_hi),
+            _make_attack_result("conv-1", ts_offset=5, updated_at_offset=5, attack_result_id=id_lo),
+        ]
+    )
+    page = sqlite_instance.get_attack_results(limit=50)
+    assert len(page) == 1
+    assert page[0].attack_result_id == id_hi
+
+
+def test_get_attack_results_paginated_empty_metadata_orders_newest_first(sqlite_instance: MemoryInterface):
+    """Rows without recency metadata fall back to timestamp DESC (newest first)."""
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            _make_attack_result("conv-a", ts_offset=1),
+            _make_attack_result("conv-b", ts_offset=2),
+            _make_attack_result("conv-c", ts_offset=3),
+        ]
+    )
+    page = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=50)]
+    assert page == ["conv-c", "conv-b", "conv-a"]
+
+
+def test_get_attack_results_pagination_with_ids_raises(sqlite_instance: MemoryInterface):
+    """limit/keyset pagination cannot be combined with id-batched lookups."""
+    anchor = AttackResultsKeysetCursor(recency="", timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    with pytest.raises(ValueError, match="pagination cannot be combined"):
+        sqlite_instance.get_attack_results(attack_result_ids=[str(uuid.uuid4())], limit=10)
+    with pytest.raises(ValueError, match="pagination cannot be combined"):
+        sqlite_instance.get_attack_results(objective_sha256=["abc"], after=anchor)
+
+
+def test_get_attack_results_unpaginated_turns_filter(sqlite_instance: MemoryInterface):
+    """The unpaginated path also honors min/max_turns (applied after dedup)."""
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            _make_attack_result("conv-x", executed_turns=2, ts_offset=1, updated_at_offset=1),
+            _make_attack_result("conv-y", executed_turns=8, ts_offset=2, updated_at_offset=2),
+        ]
+    )
+    filtered = sqlite_instance.get_attack_results(min_turns=5)
+    assert len(filtered) == 1
+    assert filtered[0].conversation_id == "conv-y"
+    # No bounds -> unchanged behavior (all winners).
+    assert len(sqlite_instance.get_attack_results()) == 2
+
+
+def test_get_attack_results_paginated_hydrates_scores_under_limit(sqlite_instance: MemoryInterface):
+    """The paginated joinedload path still hydrates last_response and last_score."""
+    message_piece = MessagePiece(
+        role="user",
+        original_value="Test prompt",
+        converted_value="Test prompt",
+        conversation_id="conv-scored",
+    )
+    score = Score(
+        score_value="1.0",
+        score_type="float_scale",
+        score_category=["test_category"],
+        message_piece_id=message_piece.id,
+        score_rationale="Test score rationale",
+    )
+    sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece])
+    sqlite_instance.add_scores_to_memory(scores=[score])
+
+    scored = AttackResult(
+        conversation_id="conv-scored",
+        objective="scored objective",
+        last_response=message_piece,
+        last_score=score,
+        executed_turns=5,
+        execution_time_ms=0,
+        outcome=AttackOutcome.SUCCESS,
+        metadata={"updated_at": (_BASE_TS + timedelta(seconds=99)).isoformat()},
+        timestamp=_BASE_TS + timedelta(seconds=99),
+    )
+    others = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=i) for i in range(5)]
+    sqlite_instance.add_attack_results_to_memory(attack_results=[scored, *others])
+
+    page = sqlite_instance.get_attack_results(limit=1)
+    assert len(page) == 1
+    assert page[0].conversation_id == "conv-scored"
+    assert page[0].last_response is not None
+    assert page[0].last_response.id == message_piece.id
+    assert page[0].last_score is not None
+    assert page[0].last_score.id == score.id
+
+
+def test_get_attack_results_keyset_pagination_stable_under_concurrent_insert(sqlite_instance: MemoryInterface):
+    """A row inserted at the top between page loads must not duplicate or skip a result.
+
+    This is the regression guard for the offset-drift bug: with a numeric offset, a new
+    top-sorting row shifts every row down one slot, so page 2 re-shows page 1's last row.
+    A keyset cursor seeks strictly past the previous page's last row, so it is immune.
+    """
+    seeded = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=i) for i in range(6)]
+    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+
+    page1 = sqlite_instance.get_attack_results(limit=3)
+    assert [r.conversation_id for r in page1] == ["conv-5", "conv-4", "conv-3"]
+
+    # A concurrent attack finishes between page loads and sorts to the very top.
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[_make_attack_result("conv-new", ts_offset=999, updated_at_offset=999)]
+    )
+
+    page2 = sqlite_instance.get_attack_results(limit=3, after=_after(page1))
+    page2_ids = [r.conversation_id for r in page2]
+
+    # The pre-existing rows below the anchor are returned exactly once, in order, with no
+    # duplicate of the page-1 boundary ("conv-3") and no skipped row.
+    assert page2_ids == ["conv-2", "conv-1", "conv-0"]
+    assert {p.conversation_id for p in page1}.isdisjoint(page2_ids)
+    # The newly inserted top row sorts above the anchor, so it is correctly not shown on page 2.
+    assert "conv-new" not in page2_ids
+
+
+def test_get_attack_results_keyset_pagination_stable_under_delete(sqlite_instance: MemoryInterface):
+    """Deleting an already-seen row between pages must not skip the next unseen row."""
+    seeded = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=i) for i in range(6)]
+    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+
+    page1 = sqlite_instance.get_attack_results(limit=3)
+    assert [r.conversation_id for r in page1] == ["conv-5", "conv-4", "conv-3"]
+
+    # Delete a row that was already returned on page 1 (above the anchor). With an offset this
+    # shifts the window and skips "conv-2"; the keyset anchor is unaffected.
+    with sqlite_instance.get_session() as session:
+        session.query(AttackResultEntry).filter(AttackResultEntry.conversation_id == "conv-4").delete()
+        session.commit()
+
+    page2 = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=3, after=_after(page1))]
+    assert page2 == ["conv-2", "conv-1", "conv-0"]
+
+
+def test_get_attack_results_keyset_paginates_empty_recency_tie_block(sqlite_instance: MemoryInterface):
+    """Rows that all share an empty recency key still paginate disjoint and complete.
+
+    Metadata-less rows all coalesce to recency "", so the seek must fall through to the
+    timestamp and id tie-breaks. A recency-only seek would loop or skip within this block.
+    """
+    seeded = [_make_attack_result(f"conv-{i}", ts_offset=i) for i in range(9)]  # no updated_at/created_at
+    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+
+    full = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=100)]
+    assert full == [f"conv-{i}" for i in range(8, -1, -1)]  # newest timestamp first
+
+    paged = [r.conversation_id for r in _drain_keyset(sqlite_instance, page_size=4)]
+    assert paged == full
+    assert len(set(paged)) == 9
+
+
+def test_get_attack_results_keyset_paginates_recency_and_timestamp_ties(sqlite_instance: MemoryInterface):
+    """With shared recency and timestamp, the seek falls through to the unique id tie-break."""
+    ids = [f"00000000-0000-4000-8000-{i:012d}" for i in range(8)]
+    seeded = [
+        # All rows share updated_at and timestamp; only the id differs.
+        _make_attack_result(f"conv-{i}", ts_offset=5, updated_at_offset=5, attack_result_id=ids[i])
+        for i in range(8)
+    ]
+    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+
+    full = [r.attack_result_id for r in sqlite_instance.get_attack_results(limit=100)]
+    paged = [r.attack_result_id for r in _drain_keyset(sqlite_instance, page_size=3)]
+    assert paged == full
+    assert len(set(paged)) == 8
+
+
+def test_attack_result_recency_key_matches_sql_order(sqlite_instance: MemoryInterface):
+    """The Python recency anchor key reproduces the DB recency ordering (updated_at > created_at > '')."""
+    seeded = [
+        _make_attack_result("conv-upd", ts_offset=1, updated_at_offset=50, created_at_offset=1),
+        _make_attack_result("conv-created-only", ts_offset=2, created_at_offset=40),
+        _make_attack_result("conv-none", ts_offset=3),
+        _make_attack_result("conv-upd-high", ts_offset=4, updated_at_offset=90),
+    ]
+    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+
+    sql_order = list(sqlite_instance.get_attack_results(limit=100))
+    python_order = sorted(
+        sqlite_instance.get_attack_results(),
+        key=lambda ar: (AttackResultsKeysetCursor.from_attack_result(ar).recency, ar.timestamp, ar.attack_result_id),
+        reverse=True,
+    )
+    assert [r.conversation_id for r in sql_order] == [r.conversation_id for r in python_order]
+
+
+@pytest.mark.parametrize("bad_recency", [False, 0, 1700000000])
+def test_get_attack_results_keyset_terminates_with_non_string_recency(
+    sqlite_instance: MemoryInterface, bad_recency: object
+):
+    """Non-string recency scalars must not break keyset seek monotonicity.
+
+    ``attack_metadata`` is ``dict[str, Any]``, so a caller can persist a non-string
+    ``updated_at`` (a JSON bool or number). SQLite's ``json_extract`` returns such a value as a
+    typed scalar and orders numbers before text, so the seek predicate ``recency < anchor``
+    could never advance past the row — pagination would loop forever. The ``json_type`` string
+    guard collapses non-strings to ``""`` so the row sorts last and the keyset drains cleanly.
+    """
+    string_rows = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=i) for i in range(4)]
+    bad_row = AttackResult(
+        conversation_id="conv-bad",
+        objective="Objective conv-bad",
+        outcome=AttackOutcome.UNDETERMINED,
+        metadata={"updated_at": bad_recency},
+        timestamp=_BASE_TS,
+    )
+    sqlite_instance.add_attack_results_to_memory(attack_results=[*string_rows, bad_row])
+
+    full = list(sqlite_instance.get_attack_results(limit=100))
+    assert len(full) == 5
+
+    # Bounded manual drain: a regression re-introduces an infinite loop, so cap the page count
+    # and fail on non-termination rather than hanging the suite.
+    drained: list[str] = []
+    after: AttackResultsKeysetCursor | None = None
+    for _ in range(len(full) + 2):
+        page = list(sqlite_instance.get_attack_results(limit=1, after=after))
+        if not page:
+            break
+        drained.append(page[0].conversation_id)
+        after = _after(page)
+    else:
+        pytest.fail("keyset pagination did not terminate for non-string recency")
+
+    assert drained == [r.conversation_id for r in full]
+    assert len(set(drained)) == len(drained)
+    assert drained[-1] == "conv-bad"  # non-string recency collapses to "" and sorts last
