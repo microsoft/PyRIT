@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -108,9 +108,7 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
         self._prompt_format_string = prompt_format_string
 
         self._score_category = category
-        # A caller-supplied handler owns its own response contract; otherwise the default JSON
-        # handler carries the schema so the round-trip forwards it to the scoring target.
-        self._response_handler = response_handler or JsonSchemaResponseHandler(
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(
             score_value_output_key=score_value_output_key,
             rationale_output_key=rationale_output_key,
             description_output_key=description_output_key,
@@ -118,6 +116,8 @@ class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
             category_output_key=category_output_key,
             response_schema=response_json_schema,
         )
+        # Keep score-domain validation in the parser callback so invalid semantic values retry.
+        self._response_handler = TrueFalseResponseHandler(response_handler=wire_format_handler)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

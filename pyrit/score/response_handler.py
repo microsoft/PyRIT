@@ -255,6 +255,59 @@ class JsonSchemaResponseHandler(ResponseHandler):
         return score
 
 
+class TrueFalseResponseHandler(ResponseHandler):
+    """Response-handler decorator that enforces the true/false score domain."""
+
+    def __init__(self, *, response_handler: ResponseHandler) -> None:
+        """
+        Initialize the decorator.
+
+        Args:
+            response_handler (ResponseHandler): Handler that parses the target's wire format.
+        """
+        self._response_handler = response_handler
+
+    @property
+    def json_response_config(self) -> JsonResponseConfig:
+        """The wrapped handler's JSON-response request."""
+        return self._response_handler.json_response_config
+
+    def parse(
+        self,
+        *,
+        response_text: str,
+        scorer_identifier: ComponentIdentifier,
+        scored_prompt_id: str | uuid.UUID,
+        category: Sequence[str] | str | None = None,
+        objective: str | None = None,
+    ) -> UnvalidatedScore:
+        """
+        Parse a response and require a true/false score value.
+
+        Returns:
+            UnvalidatedScore: The parsed score with a normalized true/false value.
+
+        Raises:
+            InvalidJsonException: If the parsed value is outside the true/false domain.
+        """
+        score = self._response_handler.parse(
+            response_text=response_text,
+            scorer_identifier=scorer_identifier,
+            scored_prompt_id=scored_prompt_id,
+            category=category,
+            objective=objective,
+        )
+
+        normalized_value = score.raw_score_value.lower()
+        if normalized_value not in {"true", "false"}:
+            raise InvalidJsonException(
+                message=f"True/false score_value must be 'true' or 'false', not {score.raw_score_value!r}."
+            )
+
+        score.raw_score_value = normalized_value
+        return score
+
+
 class CallableResponseHandler(ResponseHandler):
     """
     ResponseHandler that delegates parsing to a user-supplied callable.
