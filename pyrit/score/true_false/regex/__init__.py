@@ -5,10 +5,12 @@
 Regex-based true/false scorers for detecting credential leaks, OWASP LLM02
 insecure-output payloads (XSS, SQL injection, shell commands, path traversal,
 SSRF, SSTI, XXE, open redirect, and LDAP injection), prompt injection,
-markdown injection, and CBRN/illicit-substance keywords.
+markdown injection, CBRN/illicit-substance keywords, and AI agent security
+vulnerabilities (CCS detection).
 """
 
 from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
+from pyrit.score.true_false.regex.ccs_output_scorer import CCSOutputScorer
 from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
 from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
 from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
@@ -28,6 +30,7 @@ from pyrit.score.true_false.regex.xxe_output_scorer import XXEOutputScorer
 
 __all__ = [
     "AnthraxKeywordScorer",
+    "CCSOutputScorer",
     "CredentialLeakScorer",
     "FentanylKeywordScorer",
     "LDAPInjectionOutputScorer",

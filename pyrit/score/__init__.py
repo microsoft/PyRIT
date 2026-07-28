@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
 from pyrit.score.batch_scorer import BatchScorer
+from pyrit.score.true_false.regex.ccs_output_scorer import CCSOutputScorer
 from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
 from pyrit.score.float_scale.float_scale_score_aggregator import (
@@ -85,7 +86,6 @@ from pyrit.score.true_false.regex.ssrf_output_scorer import SSRFOutputScorer
 from pyrit.score.true_false.regex.ssti_output_scorer import SSTIOutputScorer
 from pyrit.score.true_false.regex.static_prompt_injection_scorer import StaticPromptInjectionScorer
 from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
-from pyrit.score.true_false.ccs_output_scorer import CCSOutputScorer
 from pyrit.score.true_false.regex.xxe_output_scorer import XXEOutputScorer
 from pyrit.score.true_false.self_ask_category_scorer import (
     ContentClassifier,
@@ -161,6 +161,7 @@ __all__ = [
     "AudioTrueFalseScorer",
     "AzureContentFilterScorer",
     "BatchScorer",
+    "CCSOutputScorer",
     "CallableResponseHandler",
     "ContentClassifier",
     "ContentClassifierCategory",
@@ -254,6 +255,5 @@ __all__ = [
     "VideoFloatScaleScorer",
     "VideoTrueFalseScorer",
     "XSSOutputScorer",
-    "CCSOutputScorer",
     "XXEOutputScorer",
 ]
