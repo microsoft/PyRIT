@@ -88,7 +88,24 @@ async def test_reasoning_is_hidden_by_default(
 
 
 @pytest.mark.parametrize("format_name", ["pretty", "markdown"])
-async def test_empty_reasoning_summary_omits_headings(
+async def test_absent_reasoning_piece_renders_no_reasoning_state(
+    format_name,
+    pretty_printer,
+    markdown_printer,
+):
+    message = Message(message_pieces=[MessagePiece(role="assistant", original_value="Final answer.")])
+    printer = pretty_printer if format_name == "pretty" else markdown_printer
+
+    rendered = await printer.render_async([message], include_reasoning_summaries=True)
+
+    assert "💭 Reasoning" not in rendered
+    assert "No reasoning summary was returned by the provider." not in rendered
+    assert "💬 Response" not in rendered
+    assert "Final answer." in rendered
+
+
+@pytest.mark.parametrize("format_name", ["pretty", "markdown"])
+async def test_empty_reasoning_summary_renders_explicit_state(
     format_name,
     pretty_printer,
     markdown_printer,
@@ -110,8 +127,9 @@ async def test_empty_reasoning_summary_omits_headings(
 
     rendered = await printer.render_async([message], include_reasoning_summaries=True)
 
-    assert "💭 Reasoning" not in rendered
-    assert "💬 Response" not in rendered
+    assert "💭 Reasoning" in rendered
+    assert "[No reasoning summary was returned by the provider.]" in rendered
+    assert "💬 Response" in rendered
     assert "Final answer." in rendered
 
 

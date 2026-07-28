@@ -205,11 +205,11 @@ class MarkdownConversationPrinter(ConversationPrinterBase):
             reasoning_value (str): Serialized OpenAI Responses reasoning item.
 
         Returns:
-            list[str]: A labeled Markdown block, or an empty list for an empty summary.
+            list[str]: A labeled Markdown block, including an explicit message when the summary is empty.
         """
         summary = self._extract_reasoning_summary(reasoning_value)
         if not summary:
-            return []
+            summary = "[No reasoning summary was returned by the provider.]"
 
         block_lines = [
             "> **💭 Reasoning**",

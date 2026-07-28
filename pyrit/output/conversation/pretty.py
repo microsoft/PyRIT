@@ -234,13 +234,14 @@ class PrettyConversationPrinter(ConversationPrinterBase):
             reasoning_value (str): Serialized OpenAI Responses reasoning item.
 
         Returns:
-            str: The labeled reasoning block, or an empty string when the summary is empty.
+            str: The labeled reasoning block, including an explicit message when the summary is empty.
         """
         summary = self._extract_reasoning_summary(reasoning_value)
         if not summary:
-            return ""
+            summary = "[No reasoning summary was returned by the provider.]"
 
         label = "Provider-generated reasoning summary (not raw chain-of-thought)"
+
         return "".join(
             [
                 self._format_colored(f"{self._indent}💭 Reasoning", Style.BRIGHT, Fore.LIGHTBLACK_EX),
