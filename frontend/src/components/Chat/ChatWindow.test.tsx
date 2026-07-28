@@ -3276,6 +3276,28 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled();
     });
 
+    it("keeps export disabled when the only loaded message is a system prompt", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "system", content: "You are a pirate.", timestamp: "2026-07-22T02:30:07.000Z" },
+      ]);
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            attackResultId="ar-1"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+          />
+        </TestWrapper>
+      );
+      await waitFor(() => {
+        expect(mockedMapper.backendMessagesToFrontend).toHaveBeenCalled();
+      });
+      // A lone system prompt renders only in the banner, so export stays disabled.
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled();
+    });
+
     it("opens a menu with Markdown and JSON options", async () => {
       const user = userEvent.setup();
       await renderWithLoadedConversation();

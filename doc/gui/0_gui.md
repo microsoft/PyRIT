@@ -79,7 +79,7 @@ Click the **Export** button in the ribbon to download the conversation that is c
 - **Markdown (`.md`):** A human-readable transcript with each message labeled by role. Best for reading, sharing, or pasting into reports.
 - **JSON (`.json`):** A structured record of the conversation for tooling and further processing.
 
-The export runs entirely in your browser and captures exactly what is shown in the chat, including the system prompt shown in the banner — no data is sent to the server. Export stays available for read-only historical conversations, and is disabled while a conversation is empty, still loading, or sending. The button is disabled until there is at least one message to export.
+The export runs entirely in your browser and captures exactly what is shown in the chat, including the system prompt shown in the banner — no data is sent to the server. Export stays available for read-only historical conversations, and is disabled while a conversation is empty, still loading, or sending. The button is disabled until there is at least one user or model message to export.
 
 > **Note:** Exported files can contain adversarial prompts, model responses, and other sensitive material. Store and share them responsibly.
 

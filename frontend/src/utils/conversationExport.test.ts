@@ -252,6 +252,16 @@ describe("conversationExport", () => {
       expect(json).toContain("\n  "); // two-space indentation
     });
 
+    it("records the export timestamp in the envelope", () => {
+      const json = conversationToJson([message({ content: "hi" })], "conv-1", FIXED_NOW);
+      expect(JSON.parse(json).exported_at).toBe(FIXED_NOW.toISOString());
+    });
+
+    it("defaults the export timestamp to a valid ISO string when omitted", () => {
+      const exportedAt = JSON.parse(conversationToJson([message()], "conv-1")).exported_at;
+      expect(Number.isNaN(Date.parse(exportedAt))).toBe(false);
+    });
+
     it("drops the loading placeholder", () => {
       const json = conversationToJson(
         [message({ content: "real" }), message({ role: "assistant", content: "", isLoading: true })],
@@ -439,6 +449,15 @@ describe("conversationExport", () => {
       const { getAnchor } = installAnchorSpy();
       exportConversation({ messages: [message()], conversationId: "conv-1", format: "markdown" });
       expect(getAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.md$/);
+    });
+
+    it("uses one timestamp for both the JSON body and the filename", async () => {
+      const { getAnchor } = installAnchorSpy();
+      exportConversation({ messages: [message({ content: "hi" })], conversationId: "conv-1", format: "json", now: FIXED_NOW });
+
+      const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
+      expect(JSON.parse(await blobToText(blob)).exported_at).toBe(FIXED_NOW.toISOString());
+      expect(getAnchor().download).toContain("2026-07-22T02-34-01-059");
     });
   });
 });

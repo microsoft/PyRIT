@@ -625,10 +625,11 @@ export default function ChatWindow({
   const systemMessage = messages.find(message => message.role === 'system')
 
   // Export is available whenever there is a stable, viewable conversation:
-  // not while empty, loading, or mid-send. Read-only / operator-lock /
-  // cross-target states do not block export.
+  // not while empty, loading, or mid-send. A lone system prompt (rendered only
+  // in the banner, not the chat body) does not count as an exportable message.
+  // Read-only / operator-lock / cross-target states do not block export.
   const canExportConversation =
-    messages.some((message) => !message.isLoading) &&
+    messages.some((message) => !message.isLoading && message.role !== 'system') &&
     !isSending &&
     !isLoadingAttack &&
     !isLoadingMessages &&

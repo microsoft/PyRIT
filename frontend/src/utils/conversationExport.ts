@@ -38,7 +38,7 @@ export function exportConversation({
   const content =
     format === 'markdown'
       ? conversationToMarkdown(messages, conversationId, now)
-      : conversationToJson(messages, conversationId)
+      : conversationToJson(messages, conversationId, now)
   downloadTextFile(content, buildExportFilename(conversationId, format, now), EXPORT_MIME_TYPES[format])
 }
 
@@ -85,13 +85,19 @@ export function conversationToMarkdown(
 
 /**
  * Serialize the in-state conversation to pretty-printed JSON, exporting exactly
- * what the GUI holds (WYSIWYG). Loading placeholders are dropped and the
+ * what the GUI holds (WYSIWYG). The envelope records the conversation id, the
+ * export timestamp, and the messages. Loading placeholders are dropped and the
  * non-serializable `File` handle is removed from each attachment; every other
  * field (including attachment metadata) is preserved as-is.
  */
-export function conversationToJson(messages: Message[], conversationId: string | null): string {
+export function conversationToJson(
+  messages: Message[],
+  conversationId: string | null,
+  exportedAt: Date = new Date(),
+): string {
   const envelope = {
     conversation_id: conversationId,
+    exported_at: exportedAt.toISOString(),
     messages: withoutLoadingPlaceholders(messages).map(messageForExport),
   }
   return JSON.stringify(envelope, null, 2)
@@ -187,14 +193,16 @@ function fencedBlock(content: string): string {
 }
 
 function longestBacktickRun(content: string): number {
-  const runs = content.match(/`+/g)
-  if (!runs) {
-    return 0
-  }
   let longest = 0
-  for (const run of runs) {
-    if (run.length > longest) {
-      longest = run.length
+  let current = 0
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '`') {
+      current += 1
+      if (current > longest) {
+        longest = current
+      }
+    } else {
+      current = 0
     }
   }
   return longest
