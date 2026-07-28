@@ -10,6 +10,18 @@ from pyrit.score.response_handler import JsonSchemaResponseHandler, TrueFalseRes
 SCORER_IDENTIFIER = ComponentIdentifier(class_name="TestScorer", class_module=__name__)
 
 
+@pytest.mark.parametrize("response_text", ["[]", '["score"]', '"true"', "1", "true", "null"])
+def test_json_schema_response_handler_rejects_non_object_response(response_text: str) -> None:
+    handler = JsonSchemaResponseHandler()
+
+    with pytest.raises(InvalidJsonException, match="expected a top-level object"):
+        handler.parse(
+            response_text=response_text,
+            scorer_identifier=SCORER_IDENTIFIER,
+            scored_prompt_id="test-id",
+        )
+
+
 @pytest.mark.parametrize(
     ("json_value", "expected"),
     [

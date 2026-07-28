@@ -217,12 +217,17 @@ class JsonSchemaResponseHandler(ResponseHandler):
         Raises:
             ValueError: If a category is present in both the response and the argument, or the
                 parsed category is not a string or a list of strings.
-            InvalidJsonException: If the response is not valid JSON, is missing a required key, or
-                (when this handler is numeric) the score value is not parsable as a float.
+            InvalidJsonException: If the response is invalid JSON, is not a top-level JSON object,
+                is missing a required key, or (when this handler is numeric) the score value is not
+                parsable as a float.
         """
         response_json = remove_markdown_json(response_text)
         try:
             parsed_response = json.loads(response_json)
+            if not isinstance(parsed_response, dict):
+                raise InvalidJsonException(
+                    message=f"Invalid JSON response, expected a top-level object: {response_json}"
+                )
             score = _build_unvalidated_score(
                 parsed_response=parsed_response,
                 score_value_output_key=self._score_value_output_key,
