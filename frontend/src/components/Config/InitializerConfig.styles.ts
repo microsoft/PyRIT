@@ -23,6 +23,61 @@ export const useInitializerConfigStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalM,
   },
+  section: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+  },
+  sectionHeader: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
+  addInitializerRow: {
+    display: 'flex',
+    alignItems: 'end',
+    gap: tokens.spacingHorizontalM,
+    flexWrap: 'wrap',
+  },
+  initializerPicker: {
+    minWidth: '18rem',
+  },
+  baselineList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+  },
+  baselineCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    padding: tokens.spacingVerticalL,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
+  },
+  baselineHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: tokens.spacingHorizontalM,
+    flexWrap: 'wrap',
+  },
+  titleGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
+  metadataText: {
+    color: tokens.colorNeutralForeground3,
+  },
+  parametersBlock: {
+    margin: 0,
+    padding: tokens.spacingVerticalM,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    overflowX: 'auto',
+    fontFamily: 'Consolas, "Courier New", monospace',
+  },
   loadingState: {
     display: 'flex',
     justifyContent: 'center',

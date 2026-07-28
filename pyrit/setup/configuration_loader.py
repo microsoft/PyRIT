@@ -15,13 +15,11 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.yaml_loadable import YamlLoadable
-from pyrit.memory import CentralMemory
 from pyrit.models import class_name_to_snake_case
 from pyrit.setup.initialization import (
     AZURE_SQL,
     IN_MEMORY,
     SQLITE,
-    _create_memory_instance,
     initialize_pyrit_async,
 )
 
@@ -389,18 +387,12 @@ class ConfigurationLoader(YamlLoadable):
         """
         return DEFAULT_CONFIG_PATH
 
-    def resolve_initializers(
-        self, *, initializer_configs: Sequence[InitializerConfig] | None = None
-    ) -> Sequence["PyRITInitializer"]:
+    def resolve_initializers(self) -> Sequence["PyRITInitializer"]:
         """
         Resolve initializer names to PyRITInitializer instances.
 
         Uses the InitializerRegistry to look up initializer classes by name
         and instantiate them with optional arguments.
-
-        Args:
-            initializer_configs: The initializer configs to resolve. Defaults to the
-                ``.pyrit_conf`` baseline (``self.initializer_configs``) when omitted.
 
         Returns:
             Sequence of PyRITInitializer instances.
@@ -412,7 +404,7 @@ class ConfigurationLoader(YamlLoadable):
 
         from pyrit.registry import InitializerRegistry
 
-        configs = initializer_configs if initializer_configs is not None else self._initializer_configs
+        configs = self._initializer_configs
         if not configs:
             return []
 
@@ -497,30 +489,20 @@ class ConfigurationLoader(YamlLoadable):
         """
         Initialize PyRIT with the loaded configuration.
 
-        Builds Central Memory up front (instead of leaving it to the core
-        ``initialize_pyrit_async`` function) so saved ``InitializerSetting`` overrides can be
-        merged with the ``.pyrit_conf`` baseline before resolving which initializers actually
-        run. This keeps DB-awareness scoped to this backend-facing entry point: a direct call
-        to the module-level ``initialize_pyrit_async`` still only sees the ``.pyrit_conf``
-        baseline.
-
-        This method resolves all initializer names to instances and calls
-        the core initialize_pyrit_async function.
+        Resolves the ``.pyrit_conf`` baseline initializers to instances and calls the core
+        ``initialize_pyrit_async`` function. This method is intentionally unaware of any
+        persisted additional initializers: consumers such as ``pyrit.backend.main.lifespan``
+        run those after the baseline, keeping DB-awareness out of the configuration loader.
 
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
+        resolved_initializers = self.resolve_initializers()
         resolved_scripts = self.resolve_initialization_scripts()
         resolved_env_files = self.resolve_env_files()
 
         # Map snake_case memory_db_type to internal constant
         internal_memory_db_type = self._MEMORY_DB_TYPE_MAP[self.memory_db_type]
-
-        memory_instance = _create_memory_instance(internal_memory_db_type, silent=self.silent)
-        CentralMemory.set_memory_instance(memory_instance)
-
-        merged_configs = self._merge_initializer_configs_with_saved_overrides()
-        resolved_initializers = self.resolve_initializers(initializer_configs=merged_configs)
 
         await initialize_pyrit_async(
             memory_db_type=internal_memory_db_type,
@@ -529,47 +511,7 @@ class ConfigurationLoader(YamlLoadable):
             env_files=resolved_env_files,
             env_akv_ref=self.env_akv_ref,
             silent=self.silent,
-            memory_instance=memory_instance,
         )
-
-    def _merge_initializer_configs_with_saved_overrides(self) -> list[InitializerConfig]:
-        """
-        Merge the ``.pyrit_conf`` baseline initializers with saved override rows.
-
-        A saved override's ``parameters``/``order_index`` take precedence over the baseline
-        when set. Saved overrides for initializers absent from the baseline are appended. The
-        result is ordered by each entry's effective ``order_index``.
-
-        Returns:
-            list[InitializerConfig]: The merged, ordered initializer configs.
-        """
-        saved_overrides = {
-            setting.initializer_name: setting
-            for setting in CentralMemory.get_memory_instance().get_initializer_settings()
-        }
-
-        baseline_count = len(self._initializer_configs)
-        merged: list[tuple[int, int, InitializerConfig]] = []
-
-        for position, config in enumerate(self._initializer_configs):
-            override = saved_overrides.get(config.name)
-            args = override.parameters if override and override.parameters is not None else config.args
-            order_index = override.order_index if override and override.order_index is not None else position
-            merged.append((order_index, position, InitializerConfig(name=config.name, args=args)))
-
-        baseline_names = {config.name for config in self._initializer_configs}
-        append_index = 0
-        for name, override in saved_overrides.items():
-            if name in baseline_names:
-                continue
-
-            insertion_order = baseline_count + append_index
-            order_index = override.order_index if override.order_index is not None else insertion_order
-            merged.append((order_index, insertion_order, InitializerConfig(name=name, args=override.parameters)))
-            append_index += 1
-
-        merged.sort(key=lambda item: (item[0], item[1]))
-        return [config for _, _, config in merged]
 
 
 async def initialize_from_config_async(

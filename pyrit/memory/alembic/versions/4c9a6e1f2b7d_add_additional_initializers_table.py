@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 """
-Add persisted initializer settings table.
+Add persisted additional initializers table.
 
 Revision ID: 4c9a6e1f2b7d
 Revises: 3f6e8a0c2d4b
@@ -24,14 +24,15 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Apply this schema upgrade."""
     op.create_table(
-        "InitializerSettings",
+        "AdditionalInitializers",
+        sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("initializer_name", sa.String(length=64), nullable=False),
         sa.Column("parameters", sa.JSON(), nullable=True),
         sa.Column("order_index", sa.INTEGER(), nullable=True),
-        sa.PrimaryKeyConstraint("initializer_name"),
+        sa.PrimaryKeyConstraint("id"),
     )
 
 
 def downgrade() -> None:
     """Revert this schema upgrade."""
-    op.drop_table("InitializerSettings")
+    op.drop_table("AdditionalInitializers")

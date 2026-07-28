@@ -7,7 +7,6 @@ from unittest import mock
 
 import pytest
 
-from pyrit.models.initializer_setting import InitializerSetting
 from pyrit.setup.configuration_loader import (
     ConfigurationLoader,
     InitializerConfig,
@@ -30,90 +29,6 @@ class TestInitializerConfig:
         config = InitializerConfig(name="custom", args={"param1": "value1"})
         assert config.name == "custom"
         assert config.args == {"param1": "value1"}
-
-
-class TestMergeInitializerConfigsWithSavedOverrides:
-    """Tests for ConfigurationLoader._merge_initializer_configs_with_saved_overrides."""
-
-    @staticmethod
-    def _merge_with_overrides(loader, overrides):
-        """Run the merge with ``overrides`` returned by the saved-settings store."""
-        memory = mock.MagicMock()
-        memory.get_initializer_settings.return_value = overrides
-        with mock.patch("pyrit.setup.configuration_loader.CentralMemory") as mock_central:
-            mock_central.get_memory_instance.return_value = memory
-            return loader._merge_initializer_configs_with_saved_overrides()
-
-    def test_no_overrides_preserves_baseline(self):
-        """With no saved overrides the baseline is returned unchanged, in order."""
-        loader = ConfigurationLoader(
-            initializers=[
-                {"name": "technique", "args": {"a": 1}},
-                {"name": "target", "args": {"tags": ["default"]}},
-            ]
-        )
-
-        merged = self._merge_with_overrides(loader, [])
-
-        assert [c.name for c in merged] == ["technique", "target"]
-        assert [c.args for c in merged] == [{"a": 1}, {"tags": ["default"]}]
-
-    def test_override_parameters_replace_baseline_args(self):
-        """A saved override's parameters take precedence over the baseline args."""
-        loader = ConfigurationLoader(initializers=[{"name": "target", "args": {"tags": ["default"]}}])
-        override = InitializerSetting(initializer_name="target", parameters={"tags": ["scorer"]})
-
-        merged = self._merge_with_overrides(loader, [override])
-
-        assert [c.name for c in merged] == ["target"]
-        assert merged[0].args == {"tags": ["scorer"]}
-
-    def test_override_parameters_none_keeps_baseline_args(self):
-        """An override with parameters=None does not clobber baseline args."""
-        loader = ConfigurationLoader(initializers=[{"name": "target", "args": {"tags": ["default"]}}])
-        override = InitializerSetting(initializer_name="target", parameters=None, order_index=5)
-
-        merged = self._merge_with_overrides(loader, [override])
-
-        assert merged[0].args == {"tags": ["default"]}
-
-    def test_override_order_index_reorders_baseline(self):
-        """A saved order_index override changes the resolved startup order."""
-        loader = ConfigurationLoader(
-            initializers=[
-                {"name": "technique"},
-                {"name": "target"},
-            ]
-        )
-        override = InitializerSetting(initializer_name="technique", order_index=5)
-
-        merged = self._merge_with_overrides(loader, [override])
-
-        assert [c.name for c in merged] == ["target", "technique"]
-
-    def test_override_only_initializer_is_appended(self):
-        """A saved override for an initializer absent from the baseline is appended last."""
-        loader = ConfigurationLoader(initializers=[{"name": "target"}])
-        override = InitializerSetting(initializer_name="custom_extra", parameters={"k": "v"})
-
-        merged = self._merge_with_overrides(loader, [override])
-
-        assert [c.name for c in merged] == ["target", "custom_extra"]
-        assert merged[1].args == {"k": "v"}
-
-    def test_override_only_initializer_order_index_interleaves(self):
-        """An override-only initializer's order_index positions it within the baseline order."""
-        loader = ConfigurationLoader(
-            initializers=[
-                {"name": "technique"},
-                {"name": "target"},
-            ]
-        )
-        override = InitializerSetting(initializer_name="custom_extra", order_index=0)
-
-        merged = self._merge_with_overrides(loader, [override])
-
-        assert [c.name for c in merged] == ["technique", "custom_extra", "target"]
 
 
 class TestConfigurationLoader:

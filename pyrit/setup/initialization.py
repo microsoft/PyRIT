@@ -195,42 +195,6 @@ async def _execute_initializers_async(*, initializers: Sequence["PyRITInitialize
             raise
 
 
-def _create_memory_instance(
-    memory_db_type: MemoryDatabaseType | str,
-    *,
-    silent: bool,
-    **memory_instance_kwargs: Any,
-) -> MemoryInterface:
-    """
-    Construct a new memory instance for the given database type.
-
-    Args:
-        memory_db_type: The MemoryDatabaseType string literal indicating which memory
-            instance to construct. Options include "InMemory", "SQLite", and "AzureSQL".
-        silent: If True, suppresses print statements about the memory instance.
-        **memory_instance_kwargs: Additional keyword arguments to pass to the memory instance.
-
-    Returns:
-        MemoryInterface: The newly constructed memory instance.
-
-    Raises:
-        ValueError: If an unsupported memory_db_type is provided.
-    """
-    if memory_db_type == IN_MEMORY:
-        logger.info("Using in-memory SQLite database.")
-        return SQLiteMemory(db_path=":memory:", silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
-    elif memory_db_type == SQLITE:
-        logger.info("Using persistent SQLite database.")
-        return SQLiteMemory(silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
-    elif memory_db_type == AZURE_SQL:
-        logger.info("Using AzureSQL database.")
-        return AzureSQLMemory(silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
-    else:
-        raise ValueError(
-            f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"
-        )
-
-
 async def initialize_pyrit_async(
     memory_db_type: MemoryDatabaseType | str,
     *,
@@ -240,7 +204,6 @@ async def initialize_pyrit_async(
     env_files: Sequence[pathlib.Path] | None = None,
     env_akv_ref: Sequence[str] | None = None,
     silent: bool = False,
-    memory_instance: MemoryInterface | None = None,
     **memory_instance_kwargs: Any,
 ) -> None:
     """
@@ -271,12 +234,7 @@ async def initialize_pyrit_async(
             so local files take precedence over AKV. Requires ``azure-keyvault-secrets``.
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
-        memory_instance (MemoryInterface | None): An already-constructed memory instance to reuse
-            instead of building a new one. Useful for callers (e.g. ``ConfigurationLoader``) that need
-            to query Central Memory before deciding what to initialize. Defaults to None, which
-            constructs a fresh memory instance from ``memory_db_type``.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
-            Ignored when ``memory_instance`` is provided.
 
     Raises:
         ValueError: If an unsupported memory_db_type is provided or if env_files contains non-existent files.
@@ -293,7 +251,21 @@ async def initialize_pyrit_async(
     # Set up memory BEFORE executing initialization scripts
     # This is critical because initialization scripts may instantiate objects
     # (like prompt targets) that require central memory to be initialized
-    memory = memory_instance or _create_memory_instance(memory_db_type, silent=silent, **memory_instance_kwargs)
+    memory: MemoryInterface
+
+    if memory_db_type == IN_MEMORY:
+        logger.info("Using in-memory SQLite database.")
+        memory = SQLiteMemory(db_path=":memory:", silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+    elif memory_db_type == SQLITE:
+        logger.info("Using persistent SQLite database.")
+        memory = SQLiteMemory(silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+    elif memory_db_type == AZURE_SQL:
+        logger.info("Using AzureSQL database.")
+        memory = AzureSQLMemory(silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+    else:
+        raise ValueError(
+            f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"
+        )
 
     CentralMemory.set_memory_instance(memory)
 

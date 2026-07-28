@@ -153,13 +153,16 @@ For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **
 
 Targets can also be auto-populated by adding the `target` initializer to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
 
-### Initializer Settings
+### Initializers
 
-The Targets page includes an **Initializer Settings** dialog for tuning how PyRIT initializes from your environment (for example, the `target` initializer's `tags` and `auto_group` settings).
+The **Initializers** page (in the left navigation) lets you review and extend how PyRIT sets itself up at startup — for example, the `target` initializer's `tags` and `auto_group` settings.
 
-The dialog shows the settings resolved from your active configuration file (`~/.pyrit/.pyrit_conf`) along with any changes you make in the GUI, which are saved to the memory database. Where a saved GUI change and the config file disagree, the GUI change takes precedence.
+The page has two sections:
 
-Use **Apply** to re-run an initializer immediately against the running backend — handy for picking up an environment or setting change without a restart. Saved changes and `.pyrit_conf` edits otherwise take effect the next time the backend starts.
+- **Baseline initializers** are read-only. They come from your active configuration file (`~/.pyrit/.pyrit_conf`) and run first, in order.
+- **Additional initializers** are added in the GUI and saved to the memory database. They run after the baseline, in the order shown. You can add more than one initializer of the same type — each is its own invocation.
+
+Use **Apply now** to re-run a single initializer immediately against the running backend — handy for picking up an environment or setting change without a restart. Saved additional initializers and `.pyrit_conf` edits otherwise take effect the next time the backend starts.
 
 ---
 

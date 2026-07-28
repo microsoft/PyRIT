@@ -15,14 +15,14 @@ from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
     ApplyInitializerResponse,
-    ListEffectiveInitializerSettingsResponse,
+    BaselineInitializerConfig,
+    InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisteredInitializer,
 )
 from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
-from pyrit.models import InitializerSetting, Parameter
+from pyrit.models import AdditionalInitializer, Parameter
 from pyrit.registry import InitializerMetadata
-from pyrit.setup.configuration_loader import InitializerConfig
 
 
 @pytest.fixture
@@ -193,25 +193,21 @@ class TestInitializerServiceGetInitializer:
 
 
 class TestInitializerServiceSettings:
-    """Tests for merged initializer settings behavior."""
+    """Tests for baseline + additional initializer settings behavior."""
 
-    async def test_list_effective_initializer_settings_merges_baseline_and_overrides(self) -> None:
+    async def test_list_initializer_settings_returns_baseline_and_additional(self) -> None:
         metadata = [
             _make_initializer_metadata(registry_name="target", class_name="TargetInitializer"),
             _make_initializer_metadata(registry_name="widget", class_name="WidgetInitializer"),
             _make_initializer_metadata(registry_name="custom", class_name="CustomInitializer"),
         ]
         baseline_initializers = [
-            InitializerConfig(name="target", args={"tags": ["baseline"]}),
-            InitializerConfig(name="widget", args={"mode": "baseline"}),
+            BaselineInitializerConfig(initializer_name="target", parameters={"tags": ["baseline"]}),
+            BaselineInitializerConfig(initializer_name="widget", parameters={"mode": "baseline"}),
         ]
-        saved_overrides = [
-            InitializerSetting(initializer_name="target", order_index=3),
-            InitializerSetting(
-                initializer_name="custom",
-                parameters={"tags": ["override"]},
-                order_index=0,
-            ),
+        additional = [
+            AdditionalInitializer(id="a1", initializer_name="custom", parameters={"tags": ["extra"]}, order_index=0),
+            AdditionalInitializer(id="a2", initializer_name="target", order_index=1),
         ]
 
         with patch.object(InitializerService, "__init__", lambda self: None):
@@ -219,41 +215,32 @@ class TestInitializerServiceSettings:
             service._registry = MagicMock()
             service._registry.get_all_registered_class_metadata.return_value = metadata
             service._memory = MagicMock()
-            service._memory.get_initializer_settings.return_value = saved_overrides
+            service._memory.get_additional_initializers.return_value = additional
 
-            result = await service.list_effective_initializer_settings_async(
-                baseline_initializers=baseline_initializers
-            )
+            result = await service.list_initializer_settings_async(baseline_initializers=baseline_initializers)
 
-            assert [item.initializer_name for item in result.items] == ["custom", "widget", "target"]
-            assert [item.source for item in result.items] == ["override", "baseline", "baseline+override"]
-            assert result.items[0].parameters == {"tags": ["override"]}
-            assert result.items[1].parameters == {"mode": "baseline"}
-            assert result.items[2].saved_order_index == 3
+            assert [item.initializer.initializer_name for item in result.baseline] == ["target", "widget"]
+            assert [item.order_index for item in result.baseline] == [0, 1]
+            assert result.baseline[0].parameters == {"tags": ["baseline"]}
 
-    async def test_list_effective_initializer_settings_hides_scanner_only_initializers(self) -> None:
-        """Scorer/technique/dataset/scenario-metadata initializers have no GUI-visible
-        effect (no scenario-run, dataset, or live-scoring UI exists here), so the
-        GUI-facing effective settings list excludes them even when they are configured
-        in the baseline or have a saved override."""
+            assert [item.id for item in result.additional] == ["a1", "a2"]
+            assert [item.initializer.initializer_name for item in result.additional] == ["custom", "target"]
+            assert result.additional[0].parameters == {"tags": ["extra"]}
+
+    async def test_list_initializer_settings_hides_scanner_only_baseline_initializers(self) -> None:
+        """Scorer/technique/dataset/scenario-metadata initializers have no GUI-visible effect,
+        so they are excluded from the read-only baseline list."""
         metadata = [
             _make_initializer_metadata(registry_name="target", class_name="TargetInitializer"),
             _make_initializer_metadata(registry_name="scorer", class_name="ScorerInitializer"),
             _make_initializer_metadata(registry_name="technique", class_name="TechniqueInitializer"),
             _make_initializer_metadata(registry_name="load_default_datasets", class_name="LoadDefaultDatasets"),
-            _make_initializer_metadata(
-                registry_name="preload_scenario_metadata", class_name="PreloadScenarioMetadata"
-            ),
         ]
         baseline_initializers = [
-            InitializerConfig(name="technique"),
-            InitializerConfig(name="target"),
-            InitializerConfig(name="scorer"),
-            InitializerConfig(name="load_default_datasets"),
-        ]
-        saved_overrides = [
-            InitializerSetting(initializer_name="scorer", parameters={"mode": "strict"}),
-            InitializerSetting(initializer_name="preload_scenario_metadata"),
+            BaselineInitializerConfig(initializer_name="technique"),
+            BaselineInitializerConfig(initializer_name="target"),
+            BaselineInitializerConfig(initializer_name="scorer"),
+            BaselineInitializerConfig(initializer_name="load_default_datasets"),
         ]
 
         with patch.object(InitializerService, "__init__", lambda self: None):
@@ -261,42 +248,33 @@ class TestInitializerServiceSettings:
             service._registry = MagicMock()
             service._registry.get_all_registered_class_metadata.return_value = metadata
             service._memory = MagicMock()
-            service._memory.get_initializer_settings.return_value = saved_overrides
+            service._memory.get_additional_initializers.return_value = []
 
-            result = await service.list_effective_initializer_settings_async(
-                baseline_initializers=baseline_initializers
-            )
+            result = await service.list_initializer_settings_async(baseline_initializers=baseline_initializers)
 
-            assert [item.initializer_name for item in result.items] == ["target"]
+            assert [item.initializer.initializer_name for item in result.baseline] == ["target"]
 
-    async def test_list_effective_initializer_settings_handles_override_without_order(self) -> None:
-        baseline_initializers = [InitializerConfig(name="target", args={"tags": ["baseline"]})]
-
+    async def test_list_initializer_settings_marks_unregistered_additional_initializers(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.get_all_registered_class_metadata.return_value = [
-                _make_initializer_metadata(registry_name="target")
-            ]
+            service._registry.get_all_registered_class_metadata.return_value = []
             service._memory = MagicMock()
-            service._memory.get_initializer_settings.return_value = [
-                InitializerSetting(initializer_name="target")
+            service._memory.get_additional_initializers.return_value = [
+                AdditionalInitializer(id="a1", initializer_name="gone")
             ]
 
-            result = await service.list_effective_initializer_settings_async(
-                baseline_initializers=baseline_initializers
-            )
+            result = await service.list_initializer_settings_async(baseline_initializers=[])
 
-            assert result.items[0].order_index == 0
-            assert result.items[0].source == "baseline+override"
+            assert result.additional[0].initializer.initializer_type == "UnknownInitializer"
 
-    async def test_save_initializer_setting_validates_and_persists(self) -> None:
+    async def test_create_additional_initializer_validates_and_persists(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
             service._memory = MagicMock()
 
-            result = await service.save_initializer_setting_async(
+            result = await service.create_additional_initializer_async(
                 initializer_name="target",
                 parameters={"tags": ["saved"]},
                 order_index=2,
@@ -306,22 +284,60 @@ class TestInitializerServiceSettings:
                 "target",
                 initializer_params={"tags": ["saved"]},
             )
-            service._memory.add_initializer_setting.assert_called_once()
-            assert result == InitializerSetting(
-                initializer_name="target",
-                parameters={"tags": ["saved"]},
-                order_index=2,
+            service._memory.add_additional_initializer.assert_called_once()
+            assert result.initializer_name == "target"
+            assert result.parameters == {"tags": ["saved"]}
+            assert result.order_index == 2
+            assert result.id
+
+    async def test_update_additional_initializer_preserves_id_and_name(self) -> None:
+        existing = AdditionalInitializer(id="a1", initializer_name="target", parameters={"tags": ["old"]})
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = [existing]
+
+            result = await service.update_additional_initializer_async(
+                initializer_id="a1",
+                parameters={"tags": ["new"]},
+                order_index=5,
             )
 
-    async def test_delete_initializer_setting_calls_memory(self) -> None:
+            service._registry.create_and_configure.assert_called_once_with(
+                "target",
+                initializer_params={"tags": ["new"]},
+            )
+            service._memory.add_additional_initializer.assert_called_once()
+            assert result == AdditionalInitializer(
+                id="a1",
+                initializer_name="target",
+                parameters={"tags": ["new"]},
+                order_index=5,
+            )
+
+    async def test_update_additional_initializer_raises_key_error_when_missing(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = []
+
+            with pytest.raises(KeyError):
+                await service.update_additional_initializer_async(
+                    initializer_id="missing", parameters=None, order_index=None
+                )
+
+    async def test_delete_additional_initializer_calls_memory(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._memory = MagicMock()
             service._registry = MagicMock()
 
-            await service.delete_initializer_setting_async(initializer_name="target")
+            await service.delete_additional_initializer_async(initializer_id="a1")
 
-            service._memory.delete_initializer_setting.assert_called_once_with(initializer_name="target")
+            service._memory.delete_additional_initializer.assert_called_once_with(initializer_id="a1")
 
     async def test_apply_initializer_uses_explicit_parameters(self) -> None:
         initializer = MagicMock()
@@ -333,9 +349,6 @@ class TestInitializerServiceSettings:
             service._registry = MagicMock()
             service._registry.create_and_configure.return_value = initializer
             service._memory = MagicMock()
-            service._memory.get_initializer_settings.return_value = [
-                InitializerSetting(initializer_name="target", parameters={"tags": ["saved"]})
-            ]
 
             result = await service.apply_initializer_async(
                 initializer_name="target",
@@ -354,7 +367,7 @@ class TestInitializerServiceSettings:
                 applied_parameters={"tags": ["explicit"]},
             )
 
-    async def test_apply_initializer_uses_saved_parameters_when_body_is_empty(self) -> None:
+    async def test_apply_initializer_with_no_parameters(self) -> None:
         initializer = MagicMock()
         initializer.validate = MagicMock()
         initializer.initialize_async = AsyncMock(return_value=None)
@@ -364,17 +377,14 @@ class TestInitializerServiceSettings:
             service._registry = MagicMock()
             service._registry.create_and_configure.return_value = initializer
             service._memory = MagicMock()
-            service._memory.get_initializer_settings.return_value = [
-                InitializerSetting(initializer_name="target", parameters={"tags": ["saved"]})
-            ]
 
             result = await service.apply_initializer_async(initializer_name="target")
 
             service._registry.create_and_configure.assert_called_once_with(
                 "target",
-                initializer_params={"tags": ["saved"]},
+                initializer_params=None,
             )
-            assert result.applied_parameters == {"tags": ["saved"]}
+            assert result.applied_parameters is None
 
     async def test_apply_initializer_propagates_validation_errors(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
@@ -382,10 +392,48 @@ class TestInitializerServiceSettings:
             service._registry = MagicMock()
             service._registry.create_and_configure.side_effect = ValueError("Unknown parameter")
             service._memory = MagicMock()
-            service._memory.get_initializer_settings.return_value = []
 
             with pytest.raises(ValueError, match="Unknown parameter"):
                 await service.apply_initializer_async(initializer_name="target")
+
+    async def test_run_additional_initializers_runs_each_in_order(self) -> None:
+        first = MagicMock()
+        first.validate = MagicMock()
+        first.initialize_async = AsyncMock(return_value=None)
+        second = MagicMock()
+        second.validate = MagicMock()
+        second.initialize_async = AsyncMock(return_value=None)
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.create_and_configure.side_effect = [first, second]
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = [
+                AdditionalInitializer(id="a1", initializer_name="target", parameters={"tags": ["one"]}, order_index=0),
+                AdditionalInitializer(id="a2", initializer_name="widget", order_index=1),
+            ]
+
+            await service.run_additional_initializers_async()
+
+            assert service._registry.create_and_configure.call_args_list[0].args == ("target",)
+            assert service._registry.create_and_configure.call_args_list[0].kwargs == {
+                "initializer_params": {"tags": ["one"]}
+            }
+            assert service._registry.create_and_configure.call_args_list[1].args == ("widget",)
+            first.initialize_async.assert_awaited_once()
+            second.initialize_async.assert_awaited_once()
+
+    async def test_run_additional_initializers_no_op_when_empty(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = []
+
+            await service.run_additional_initializers_async()
+
+            service._registry.create_and_configure.assert_not_called()
 
 
 # ============================================================================
@@ -491,26 +539,23 @@ class TestInitializerRoutes:
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_get_initializer_settings_returns_200(self, client: TestClient) -> None:
-        with (
-            patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service,
-            patch(
-                "pyrit.backend.routes.initializers.asyncio.to_thread",
-                new=AsyncMock(return_value=[]),
-            ),
-        ):
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.list_effective_initializer_settings_async = AsyncMock(
-                return_value=ListEffectiveInitializerSettingsResponse(items=[])
+            mock_service.list_initializer_settings_async = AsyncMock(
+                return_value=InitializerSettingsResponse(baseline=[], additional=[])
             )
             mock_get_service.return_value = mock_service
 
             response = client.get("/api/initializers/settings")
 
             assert response.status_code == status.HTTP_200_OK
-            assert response.json()["items"] == []
+            body = response.json()
+            assert body["baseline"] == []
+            assert body["additional"] == []
 
-    def test_put_initializer_settings_returns_saved_row(self, client: TestClient) -> None:
-        saved_setting = InitializerSetting(
+    def test_post_additional_initializer_returns_created_row(self, client: TestClient) -> None:
+        created = AdditionalInitializer(
+            id="a1",
             initializer_name="target",
             parameters={"tags": ["saved"]},
             order_index=2,
@@ -518,42 +563,80 @@ class TestInitializerRoutes:
 
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.save_initializer_setting_async = AsyncMock(return_value=saved_setting)
+            mock_service.create_additional_initializer_async = AsyncMock(return_value=created)
             mock_get_service.return_value = mock_service
 
-            response = client.put(
-                "/api/initializers/target/settings",
-                json={"parameters": {"tags": ["saved"]}, "order_index": 2},
+            response = client.post(
+                "/api/initializers/settings",
+                json={"initializer_name": "target", "parameters": {"tags": ["saved"]}, "order_index": 2},
             )
 
-            assert response.status_code == status.HTTP_200_OK
-            assert response.json()["initializer_name"] == "target"
-            mock_service.save_initializer_setting_async.assert_called_once_with(
+            assert response.status_code == status.HTTP_201_CREATED
+            body = response.json()
+            assert body["id"] == "a1"
+            assert body["initializer_name"] == "target"
+            mock_service.create_additional_initializer_async.assert_called_once_with(
                 initializer_name="target",
                 parameters={"tags": ["saved"]},
                 order_index=2,
             )
 
-    def test_put_initializer_settings_returns_404_for_missing_initializer(self, client: TestClient) -> None:
+    def test_post_additional_initializer_returns_404_for_missing_initializer(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.save_initializer_setting_async = AsyncMock(side_effect=KeyError("missing"))
+            mock_service.create_additional_initializer_async = AsyncMock(side_effect=KeyError("missing"))
             mock_get_service.return_value = mock_service
 
-            response = client.put("/api/initializers/unknown/settings", json={})
+            response = client.post("/api/initializers/settings", json={"initializer_name": "unknown"})
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_delete_initializer_settings_returns_204(self, client: TestClient) -> None:
+    def test_put_additional_initializer_returns_updated_row(self, client: TestClient) -> None:
+        updated = AdditionalInitializer(
+            id="a1",
+            initializer_name="target",
+            parameters={"tags": ["new"]},
+            order_index=5,
+        )
+
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.delete_initializer_setting_async = AsyncMock(return_value=None)
+            mock_service.update_additional_initializer_async = AsyncMock(return_value=updated)
             mock_get_service.return_value = mock_service
 
-            response = client.delete("/api/initializers/target/settings")
+            response = client.put(
+                "/api/initializers/settings/a1",
+                json={"parameters": {"tags": ["new"]}, "order_index": 5},
+            )
+
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json()["parameters"] == {"tags": ["new"]}
+            mock_service.update_additional_initializer_async.assert_called_once_with(
+                initializer_id="a1",
+                parameters={"tags": ["new"]},
+                order_index=5,
+            )
+
+    def test_put_additional_initializer_returns_404_when_missing(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.update_additional_initializer_async = AsyncMock(side_effect=KeyError("missing"))
+            mock_get_service.return_value = mock_service
+
+            response = client.put("/api/initializers/settings/missing", json={})
+
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_delete_additional_initializer_returns_204(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.delete_additional_initializer_async = AsyncMock(return_value=None)
+            mock_get_service.return_value = mock_service
+
+            response = client.delete("/api/initializers/settings/a1")
 
             assert response.status_code == status.HTTP_204_NO_CONTENT
-            mock_service.delete_initializer_setting_async.assert_called_once_with(initializer_name="target")
+            mock_service.delete_additional_initializer_async.assert_called_once_with(initializer_id="a1")
 
     def test_post_apply_initializer_returns_200(self, client: TestClient) -> None:
         apply_result = ApplyInitializerResponse(

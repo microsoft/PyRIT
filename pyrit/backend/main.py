@@ -58,6 +58,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config = ConfigurationLoader.load_with_overrides(config_file=config_file)
     await config.initialize_pyrit_async()
 
+    # Persisted additional initializers run after the .pyrit_conf baseline, in stored order.
+    # ConfigurationLoader is intentionally unaware of these; the backend owns that decision.
+    from pyrit.backend.models.initializers import BaselineInitializerConfig
+    from pyrit.backend.services.initializer_service import get_initializer_service
+
+    app.state.baseline_initializers = [
+        BaselineInitializerConfig(initializer_name=initializer.name, parameters=initializer.args)
+        for initializer in config.initializer_configs
+    ]
+    await get_initializer_service().run_additional_initializers_async()
+
     # Expose config values to route handlers via app.state
     default_labels: dict[str, str] = {}
     if config.operator:

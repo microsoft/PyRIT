@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
-import type { EffectiveInitializerSetting } from '@/types'
+import type { AdditionalInitializerSetting, RegisteredInitializer } from '@/types'
 
 import InitializerList from './InitializerList'
 
@@ -10,63 +10,70 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 )
 
-const SAMPLE_ITEMS: EffectiveInitializerSetting[] = [
+const targetInitializer: RegisteredInitializer = {
+  initializer_name: 'target',
+  initializer_type: 'TargetInitializer',
+  description: 'Registers targets.',
+  required_env_vars: ['AZURE_OPENAI_ENDPOINT'],
+  supported_parameters: [
+    {
+      name: 'tags',
+      type_name: 'list[str]',
+      required: false,
+      default: null,
+      choices: null,
+      is_list: true,
+      description: 'Target tags.',
+    },
+  ],
+}
+
+const scorerInitializer: RegisteredInitializer = {
+  initializer_name: 'scorer',
+  initializer_type: 'ScorerInitializer',
+  description: 'Registers scorers.',
+  required_env_vars: [],
+  supported_parameters: [],
+}
+
+const sampleItems: AdditionalInitializerSetting[] = [
   {
-    initializer_name: 'target',
-    initializer_type: 'TargetInitializer',
-    description: 'Registers targets.',
-    required_env_vars: ['AZURE_OPENAI_ENDPOINT'],
-    supported_parameters: [
-      {
-        name: 'tags',
-        type_name: 'list[str]',
-        required: false,
-        default: ['default'],
-        choices: null,
-        is_list: true,
-        description: 'Target tags.',
-      },
-    ],
+    id: 'additional-1',
+    initializer: targetInitializer,
     parameters: { tags: ['default'] },
-    order_index: 0,
-    saved_order_index: 2,
-    source: 'baseline+override',
+    order_index: 2,
   },
   {
-    initializer_name: 'scorer',
-    initializer_type: 'ScorerInitializer',
-    description: 'Registers scorers.',
-    required_env_vars: [],
-    supported_parameters: [],
+    id: 'additional-2',
+    initializer: scorerInitializer,
     parameters: null,
-    order_index: 1,
-    saved_order_index: null,
-    source: 'baseline',
+    order_index: null,
   },
 ]
 
 describe('InitializerList', () => {
   const defaultProps = {
-    items: SAMPLE_ITEMS,
+    items: sampleItems,
     onSave: jest.fn().mockResolvedValue(undefined),
     onApply: jest.fn().mockResolvedValue(undefined),
-    onReset: jest.fn().mockResolvedValue(undefined),
+    onRemove: jest.fn().mockResolvedValue(undefined),
   }
 
   beforeEach(() => {
     jest.clearAllMocks()
   })
 
-  it('should render initializer rows and metadata', () => {
+  it('should render additional initializer rows and metadata', () => {
     render(
       <TestWrapper>
         <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
-    expect(screen.getByRole('list', { name: 'Initializer settings' })).toBeInTheDocument()
-    expect(screen.getByText('target')).toBeInTheDocument()
-    expect(screen.getByText('Customized')).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'Additional initializers' })).toBeInTheDocument()
+    expect(screen.getByTestId('initializer-row-additional-1')).toHaveTextContent('target')
+    expect(screen.getByText('Required env vars: AZURE_OPENAI_ENDPOINT')).toBeInTheDocument()
+    expect(screen.getByText('tags (list[str], optional)')).toBeInTheDocument()
   })
 
   it('should show the description as hover text on the initializer name', async () => {
@@ -85,7 +92,7 @@ describe('InitializerList', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Registers targets.')
   })
 
-  it('should call onSave with parsed settings', async () => {
+  it('should call onSave with parsed parameters and order', async () => {
     const user = userEvent.setup()
 
     render(
@@ -94,37 +101,18 @@ describe('InitializerList', () => {
       </TestWrapper>,
     )
 
-    const row = screen.getByTestId('initializer-row-target')
+    const row = screen.getByTestId('initializer-row-additional-1')
     await user.clear(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
     await user.click(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
     await user.paste('{"tags":["extra"]}')
+    await user.clear(within(row).getByRole('spinbutton', { name: 'Order index' }))
+    await user.type(within(row).getByRole('spinbutton', { name: 'Order index' }), '5')
     await user.click(within(row).getByRole('button', { name: 'Save' }))
 
-    expect(defaultProps.onSave).toHaveBeenCalledWith('target', {
+    expect(defaultProps.onSave).toHaveBeenCalledWith('additional-1', {
       parameters: { tags: ['extra'] },
-      order_index: 2,
+      order_index: 5,
     })
-  })
-
-  it('should disable Save until parameters change, while keeping Apply now enabled', async () => {
-    const user = userEvent.setup()
-
-    render(
-      <TestWrapper>
-        <InitializerList {...defaultProps} />
-      </TestWrapper>,
-    )
-
-    const row = screen.getByTestId('initializer-row-target')
-    expect(within(row).getByRole('button', { name: 'Save' })).toBeDisabled()
-    expect(within(row).getByRole('button', { name: 'Apply now' })).toBeEnabled()
-
-    await user.clear(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
-    await user.click(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
-    await user.paste('{"tags":["extra"]}')
-
-    expect(within(row).getByRole('button', { name: 'Save' })).toBeEnabled()
-    expect(within(row).getByRole('button', { name: 'Apply now' })).toBeEnabled()
   })
 
   it('should call onApply with parsed parameters', async () => {
@@ -136,13 +124,27 @@ describe('InitializerList', () => {
       </TestWrapper>,
     )
 
-    const row = screen.getByTestId('initializer-row-scorer')
+    const row = screen.getByTestId('initializer-row-additional-2')
     await user.clear(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
     await user.click(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
     await user.paste('{"mode":"strict"}')
     await user.click(within(row).getByRole('button', { name: 'Apply now' }))
 
-    expect(defaultProps.onApply).toHaveBeenCalledWith('scorer', { mode: 'strict' })
+    expect(defaultProps.onApply).toHaveBeenCalledWith('additional-2', 'scorer', { mode: 'strict' })
+  })
+
+  it('should call onRemove with the additional initializer id', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TestWrapper>
+        <InitializerList {...defaultProps} />
+      </TestWrapper>,
+    )
+
+    await user.click(within(screen.getByTestId('initializer-row-additional-1')).getByRole('button', { name: 'Remove' }))
+
+    expect(defaultProps.onRemove).toHaveBeenCalledWith('additional-1')
   })
 
   it('should show a validation error for invalid JSON', async () => {
@@ -154,7 +156,7 @@ describe('InitializerList', () => {
       </TestWrapper>,
     )
 
-    const row = screen.getByTestId('initializer-row-target')
+    const row = screen.getByTestId('initializer-row-additional-1')
     await user.clear(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
     await user.click(within(row).getByRole('textbox', { name: 'Parameters JSON' }))
     await user.paste('{"tags":')
@@ -164,16 +166,21 @@ describe('InitializerList', () => {
     expect(defaultProps.onSave).not.toHaveBeenCalled()
   })
 
-  it('should only show reset action for saved overrides', () => {
+  it('should show a validation error for non-integer order', async () => {
+    const user = userEvent.setup()
+
     render(
       <TestWrapper>
         <InitializerList {...defaultProps} />
       </TestWrapper>,
     )
 
-    expect(screen.getByRole('button', { name: 'Reset saved' })).toBeInTheDocument()
-    const baselineRow = screen.getByTestId('initializer-row-scorer')
-    expect(within(baselineRow).queryByRole('button', { name: 'Reset saved' })).not.toBeInTheDocument()
+    const row = screen.getByTestId('initializer-row-additional-1')
+    await user.clear(within(row).getByRole('spinbutton', { name: 'Order index' }))
+    await user.type(within(row).getByRole('spinbutton', { name: 'Order index' }), '1.5')
+    await user.click(within(row).getByRole('button', { name: 'Save' }))
+
+    expect(await within(row).findByRole('alert')).toHaveTextContent('Order must be a whole number.')
+    expect(defaultProps.onSave).not.toHaveBeenCalled()
   })
 })
-

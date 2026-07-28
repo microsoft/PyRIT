@@ -42,30 +42,6 @@ jest.mock("./CreateTargetDialog", () => {
   };
 });
 
-jest.mock("./InitializerSettingsDialog", () => {
-  const MockInitializerSettingsDialog = ({
-    open,
-    onClose,
-  }: {
-    open: boolean;
-    onClose: () => void;
-  }) => {
-    if (!open) return null;
-    return (
-      <div data-testid="initializer-settings-dialog">
-        <button onClick={onClose} data-testid="initializer-dialog-close">
-          Close
-        </button>
-      </div>
-    );
-  };
-  MockInitializerSettingsDialog.displayName = "MockInitializerSettingsDialog";
-  return {
-    __esModule: true,
-    default: MockInitializerSettingsDialog,
-  };
-});
-
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
@@ -428,36 +404,4 @@ describe("TargetConfig", () => {
     expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
   });
 
-  it("should open the initializer settings dialog when the button is clicked", async () => {
-    mockedTargetsApi.listTargets.mockResolvedValue({
-      items: sampleTargets,
-      pagination: { limit: 200, has_more: false },
-    });
-
-    render(
-      <TestWrapper>
-        <TargetConfig {...defaultProps} />
-      </TestWrapper>
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Initializer Settings")).toBeInTheDocument();
-    });
-
-    expect(
-      screen.queryByTestId("initializer-settings-dialog")
-    ).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByText("Initializer Settings"));
-
-    expect(
-      screen.getByTestId("initializer-settings-dialog")
-    ).toBeInTheDocument();
-
-    await userEvent.click(screen.getByTestId("initializer-dialog-close"));
-
-    expect(
-      screen.queryByTestId("initializer-settings-dialog")
-    ).not.toBeInTheDocument();
-  });
 });

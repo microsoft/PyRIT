@@ -41,14 +41,14 @@ export const useInitializerListStyles = makeStyles({
     minHeight: '10rem',
     width: '100%',
   },
+  orderInput: {
+    maxWidth: '10rem',
+  },
   actionsRow: {
     display: 'flex',
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalS,
-  },
-  sourceBadge: {
-    textTransform: 'capitalize',
   },
   errorText: {
     color: tokens.colorPaletteRedForeground1,
@@ -60,4 +60,3 @@ export const useInitializerListStyles = makeStyles({
     marginTop: tokens.spacingVerticalXXS,
   },
 })
-

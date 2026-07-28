@@ -1,45 +1,27 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { initializersApi } from '@/services/api'
+import type {
+  AdditionalInitializerSetting,
+  BaselineInitializerSetting,
+  InitializerSettingsResponse,
+  RegisteredInitializer,
+} from '@/types'
 
 import InitializerConfig from './InitializerConfig'
 
 jest.mock('@/services/api', () => ({
   initializersApi: {
     getSettings: jest.fn(),
-    updateSettings: jest.fn(),
-    clearSettings: jest.fn(),
+    listRegistered: jest.fn(),
+    createAdditional: jest.fn(),
+    updateAdditional: jest.fn(),
+    deleteAdditional: jest.fn(),
     applyNow: jest.fn(),
   },
 }))
-
-jest.mock('./InitializerList', () => {
-  const MockInitializerList = ({
-    items,
-    onSave,
-    onApply,
-    onReset,
-  }: {
-    items: Array<{ initializer_name: string }>
-    onSave: (initializerName: string, request: { parameters?: Record<string, unknown> | null }) => Promise<void>
-    onApply: (initializerName: string, parameters?: Record<string, unknown> | null) => Promise<void>
-    onReset: (initializerName: string) => Promise<void>
-  }) => (
-    <div data-testid="initializer-table">
-      <span data-testid="initializer-count">{items.length}</span>
-      <button onClick={() => void onSave('target', { parameters: null })}>Save target</button>
-      <button onClick={() => void onApply('target', { tags: ['extra'] })}>Apply target</button>
-      <button onClick={() => void onReset('target')}>Reset target</button>
-    </div>
-  )
-  MockInitializerList.displayName = 'MockInitializerList'
-  return {
-    __esModule: true,
-    default: MockInitializerList,
-  }
-})
 
 const mockedInitializersApi = initializersApi as jest.Mocked<typeof initializersApi>
 
@@ -47,145 +29,188 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 )
 
-const SAMPLE_RESPONSE = {
-  items: [
+const targetInitializer: RegisteredInitializer = {
+  initializer_name: 'target',
+  initializer_type: 'TargetInitializer',
+  description: 'Registers targets.',
+  required_env_vars: ['AZURE_OPENAI_ENDPOINT'],
+  supported_parameters: [
     {
-      initializer_name: 'target',
-      initializer_type: 'TargetInitializer',
-      description: 'Registers targets.',
-      required_env_vars: [],
-      supported_parameters: [],
-      parameters: null,
-      order_index: 0,
-      saved_order_index: null,
-      source: 'baseline' as const,
+      name: 'tags',
+      type_name: 'list[str]',
+      required: false,
+      default: null,
+      choices: null,
+      is_list: true,
+      description: 'Target tags.',
     },
   ],
+}
+
+const scorerInitializer: RegisteredInitializer = {
+  initializer_name: 'scorer',
+  initializer_type: 'ScorerInitializer',
+  description: 'Registers scorers.',
+  required_env_vars: [],
+  supported_parameters: [],
+}
+
+const baselineItem: BaselineInitializerSetting = {
+  initializer: targetInitializer,
+  parameters: { tags: ['baseline'] },
+  order_index: 0,
+}
+
+const additionalItem: AdditionalInitializerSetting = {
+  id: 'additional-1',
+  initializer: scorerInitializer,
+  parameters: { mode: 'strict' },
+  order_index: 10,
+}
+
+const sampleSettings: InitializerSettingsResponse = {
+  baseline: [baselineItem],
+  additional: [additionalItem],
+}
+
+function renderInitializerConfig(): void {
+  render(
+    <TestWrapper>
+      <InitializerConfig />
+    </TestWrapper>,
+  )
 }
 
 describe('InitializerConfig', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockedInitializersApi.getSettings.mockResolvedValue(SAMPLE_RESPONSE)
-    mockedInitializersApi.updateSettings.mockResolvedValue({
+    mockedInitializersApi.getSettings.mockResolvedValue(sampleSettings)
+    mockedInitializersApi.listRegistered.mockResolvedValue({
+      items: [targetInitializer, scorerInitializer],
+      pagination: { limit: 200, has_more: false },
+    })
+    mockedInitializersApi.createAdditional.mockResolvedValue({
+      id: 'additional-2',
       initializer_name: 'target',
       parameters: null,
       order_index: null,
     })
-    mockedInitializersApi.applyNow.mockResolvedValue({
-      initializer_name: 'target',
-      status: 'applied',
-      applied_parameters: { tags: ['extra'] },
+    mockedInitializersApi.updateAdditional.mockResolvedValue({
+      id: 'additional-1',
+      initializer_name: 'scorer',
+      parameters: { mode: 'relaxed' },
+      order_index: 11,
     })
-    mockedInitializersApi.clearSettings.mockResolvedValue()
+    mockedInitializersApi.deleteAdditional.mockResolvedValue()
+    mockedInitializersApi.applyNow.mockResolvedValue({
+      initializer_name: 'scorer',
+      status: 'applied',
+      applied_parameters: { mode: 'strict' },
+    })
   })
 
   it('should show loading state initially', () => {
     mockedInitializersApi.getSettings.mockReturnValue(new Promise(() => {}))
 
-    render(
-      <TestWrapper>
-        <InitializerConfig />
-      </TestWrapper>,
-    )
+    renderInitializerConfig()
 
     expect(screen.getByText('Loading initializer settings...')).toBeInTheDocument()
   })
 
-  it('should render fetched initializer settings', async () => {
-    render(
-      <TestWrapper>
-        <InitializerConfig />
-      </TestWrapper>,
-    )
+  it('should render baseline and additional initializers', async () => {
+    renderInitializerConfig()
 
-    await waitFor(() => {
-      expect(screen.getByTestId('initializer-table')).toBeInTheDocument()
-      expect(screen.getByTestId('initializer-count')).toHaveTextContent('1')
-    })
+    expect(await screen.findByRole('heading', { level: 1, name: 'Initializers' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Baseline initializers' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Additional initializers' })).toBeInTheDocument()
+    expect(screen.getByTestId('baseline-initializer-row-target')).toHaveTextContent('Registers targets.')
+    expect(screen.getByTestId('initializer-row-additional-1')).toHaveTextContent('scorer')
   })
 
   it('should refresh settings when the refresh button is clicked', async () => {
     const user = userEvent.setup()
-
-    render(
-      <TestWrapper>
-        <InitializerConfig />
-      </TestWrapper>,
-    )
+    renderInitializerConfig()
 
     await waitFor(() => {
       expect(mockedInitializersApi.getSettings).toHaveBeenCalledTimes(1)
+      expect(mockedInitializersApi.listRegistered).toHaveBeenCalledTimes(1)
     })
 
     await user.click(screen.getByRole('button', { name: 'Refresh' }))
 
     await waitFor(() => {
       expect(mockedInitializersApi.getSettings).toHaveBeenCalledTimes(2)
+      expect(mockedInitializersApi.listRegistered).toHaveBeenCalledTimes(2)
     })
   })
 
-  it('should save initializer settings and show success feedback', async () => {
+  it('should create an additional initializer and show success feedback', async () => {
     const user = userEvent.setup()
+    renderInitializerConfig()
 
-    render(
-      <TestWrapper>
-        <InitializerConfig />
-      </TestWrapper>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('initializer-table')).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: 'Save target' }))
+    await screen.findByTestId('initializer-row-additional-1')
+    await user.type(screen.getByRole('combobox', { name: 'Add initializer' }), 'target')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() => {
-      expect(mockedInitializersApi.updateSettings).toHaveBeenCalledWith('target', { parameters: null })
-      expect(screen.getByText('Saved settings for target.')).toBeInTheDocument()
+      expect(mockedInitializersApi.createAdditional).toHaveBeenCalledWith({ initializer_name: 'target' })
+      expect(screen.getByText('Added target.')).toBeInTheDocument()
     })
   })
 
-  it('should apply an initializer and show success feedback', async () => {
+  it('should save an additional initializer and show success feedback', async () => {
     const user = userEvent.setup()
+    renderInitializerConfig()
 
-    render(
-      <TestWrapper>
-        <InitializerConfig />
-      </TestWrapper>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('initializer-table')).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: 'Apply target' }))
+    const row = await screen.findByTestId('initializer-row-additional-1')
+    const parametersEditor = within(row).getByRole('textbox', { name: 'Parameters JSON' })
+    await user.clear(parametersEditor)
+    await user.click(parametersEditor)
+    await user.paste('{"mode":"relaxed"}')
+    await user.clear(within(row).getByRole('spinbutton', { name: 'Order index' }))
+    await user.type(within(row).getByRole('spinbutton', { name: 'Order index' }), '11')
+    await user.click(within(row).getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {
-      expect(mockedInitializersApi.applyNow).toHaveBeenCalledWith('target', { parameters: { tags: ['extra'] } })
-      expect(screen.getByText('Applied target.')).toBeInTheDocument()
+      expect(mockedInitializersApi.updateAdditional).toHaveBeenCalledWith('additional-1', {
+        parameters: { mode: 'relaxed' },
+        order_index: 11,
+      })
+      expect(screen.getByText('Saved additional initializer.')).toBeInTheDocument()
     })
   })
 
-  it('should clear saved settings and show success feedback', async () => {
+  it('should apply baseline and additional initializers', async () => {
     const user = userEvent.setup()
+    renderInitializerConfig()
 
-    render(
-      <TestWrapper>
-        <InitializerConfig />
-      </TestWrapper>,
-    )
+    const baselineRow = await screen.findByTestId('baseline-initializer-row-target')
+    await user.click(within(baselineRow).getByRole('button', { name: 'Apply now' }))
+
+    const additionalRow = await screen.findByTestId('initializer-row-additional-1')
+    await user.click(within(additionalRow).getByRole('button', { name: 'Apply now' }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('initializer-table')).toBeInTheDocument()
+      expect(mockedInitializersApi.applyNow).toHaveBeenCalledWith('target', {
+        parameters: { tags: ['baseline'] },
+      })
+      expect(mockedInitializersApi.applyNow).toHaveBeenCalledWith('scorer', {
+        parameters: { mode: 'strict' },
+      })
+      expect(screen.getByText('Applied scorer.')).toBeInTheDocument()
     })
+  })
 
-    await user.click(screen.getByRole('button', { name: 'Reset target' }))
+  it('should remove an additional initializer and show success feedback', async () => {
+    const user = userEvent.setup()
+    renderInitializerConfig()
+
+    const row = await screen.findByTestId('initializer-row-additional-1')
+    await user.click(within(row).getByRole('button', { name: 'Remove' }))
 
     await waitFor(() => {
-      expect(mockedInitializersApi.clearSettings).toHaveBeenCalledWith('target')
-      expect(screen.getByText('Cleared saved settings for target.')).toBeInTheDocument()
+      expect(mockedInitializersApi.deleteAdditional).toHaveBeenCalledWith('additional-1')
+      expect(screen.getByText('Removed additional initializer.')).toBeInTheDocument()
     })
   })
 })
-

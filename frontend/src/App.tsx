@@ -8,6 +8,7 @@ import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import ConfigPage from './components/Config/ConfigPage'
+import InitializerConfig from './components/Config/InitializerConfig'
 import AttackHistory from './components/History/AttackHistory'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
@@ -36,6 +37,7 @@ const VIEW_PATHS: Record<ViewName, string> = {
   chat: '/chat',
   history: '/history',
   config: '/config',
+  initializers: '/initializers',
 }
 
 /** Resolves the active view from a URL path, defaulting to home for unknown paths. */
@@ -392,6 +394,7 @@ function App() {
                   />
                 }
               />
+              <Route path="/initializers" element={<InitializerConfig />} />
               <Route
                 path="/history"
                 element={

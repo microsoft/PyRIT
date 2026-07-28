@@ -13,7 +13,10 @@ import type {
   ConverterListResponse,
   CreateTargetRequest,
   InitializerSettingsResponse,
-  SavedInitializerSetting,
+  ListRegisteredInitializersResponse,
+  AdditionalInitializer,
+  CreateAdditionalInitializerRequest,
+  UpdateAdditionalInitializerRequest,
   CreateAttackRequest,
   CreateAttackResponse,
   AttackSummary,
@@ -25,7 +28,6 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   ChangeMainConversationResponse,
-  UpdateInitializerSettingRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -208,19 +210,31 @@ export const initializersApi = {
     return response.data
   },
 
-  updateSettings: async (
-    initializerName: string,
-    request: UpdateInitializerSettingRequest,
-  ): Promise<SavedInitializerSetting> => {
+  listRegistered: async (): Promise<ListRegisteredInitializersResponse> => {
+    const response = await apiClient.get('/initializers', { params: { limit: 200 } })
+    return response.data
+  },
+
+  createAdditional: async (
+    request: CreateAdditionalInitializerRequest,
+  ): Promise<AdditionalInitializer> => {
+    const response = await apiClient.post('/initializers/settings', request)
+    return response.data
+  },
+
+  updateAdditional: async (
+    id: string,
+    request: UpdateAdditionalInitializerRequest,
+  ): Promise<AdditionalInitializer> => {
     const response = await apiClient.put(
-      `/initializers/${encodeURIComponent(initializerName)}/settings`,
+      `/initializers/settings/${encodeURIComponent(id)}`,
       request,
     )
     return response.data
   },
 
-  clearSettings: async (initializerName: string): Promise<void> => {
-    await apiClient.delete(`/initializers/${encodeURIComponent(initializerName)}/settings`)
+  deleteAdditional: async (id: string): Promise<void> => {
+    await apiClient.delete(`/initializers/settings/${encodeURIComponent(id)}`)
   },
 
   applyNow: async (

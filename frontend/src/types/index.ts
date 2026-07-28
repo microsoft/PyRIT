@@ -118,28 +118,50 @@ export interface RegisteredInitializer {
   supported_parameters: Parameter[]
 }
 
-export type InitializerSource = 'baseline' | 'override' | 'baseline+override'
-
-export interface EffectiveInitializerSetting extends RegisteredInitializer {
+/** A read-only initializer from the `.pyrit_conf` baseline plus its registry metadata. */
+export interface BaselineInitializerSetting {
+  initializer: RegisteredInitializer
   parameters?: Record<string, unknown> | null
   order_index: number
-  saved_order_index?: number | null
-  source: InitializerSource
+}
+
+/** A persisted additional initializer plus its registry metadata. */
+export interface AdditionalInitializerSetting {
+  id: string
+  initializer: RegisteredInitializer
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
 }
 
 export interface InitializerSettingsResponse {
-  items: EffectiveInitializerSetting[]
+  /** Read-only initializers from the `.pyrit_conf` baseline, in run order. */
+  baseline: BaselineInitializerSetting[]
+  /** Persisted additional initializers that run after the baseline, in run order. */
+  additional: AdditionalInitializerSetting[]
 }
 
-export interface UpdateInitializerSettingRequest {
-  parameters?: Record<string, unknown> | null
-  order_index?: number | null
-}
-
-export interface SavedInitializerSetting {
+/** The persisted domain row returned by create/update of an additional initializer. */
+export interface AdditionalInitializer {
+  id: string
   initializer_name: string
   parameters?: Record<string, unknown> | null
   order_index?: number | null
+}
+
+export interface CreateAdditionalInitializerRequest {
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface UpdateAdditionalInitializerRequest {
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface ListRegisteredInitializersResponse {
+  items: RegisteredInitializer[]
+  pagination: PaginationInfo
 }
 
 export interface ApplyInitializerRequest {

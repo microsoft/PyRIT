@@ -2,11 +2,12 @@
 # Licensed under the MIT license.
 
 """
-Initializer service for catalog, registration, settings, and apply-now operations.
+Initializer service for catalog, registration, additional-initializer settings, and apply-now.
 
-Provides access to the ``InitializerRegistry`` (listing, registering, and
-unregistering initializers) plus persisted initializer override rows stored in
-Central Memory.
+Provides access to the ``InitializerRegistry`` (listing, registering, and unregistering
+initializers) plus the persisted *additional initializers* stored in Central Memory. Additional
+initializers run after the ``.pyrit_conf`` baseline; multiple rows may reference the same
+initializer name (each is its own invocation, identified by ``id``).
 """
 
 import asyncio
@@ -17,24 +18,23 @@ from typing import Any
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
+    AdditionalInitializerSetting,
     ApplyInitializerResponse,
-    EffectiveInitializerSetting,
-    ListEffectiveInitializerSettingsResponse,
+    BaselineInitializerConfig,
+    BaselineInitializerSetting,
+    InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
 )
 from pyrit.memory import CentralMemory
-from pyrit.models import InitializerSetting
+from pyrit.models import AdditionalInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
 from pyrit.registry import InitializerMetadata, InitializerRegistry
-from pyrit.setup.configuration_loader import InitializerConfig
 
 logger = logging.getLogger(__name__)
 
 # Scanner-only initializers with no visible effect in the GUI today. Excluded from the
-# GUI-facing effective settings list so the Initializers page only shows useful controls.
-_GUI_HIDDEN_INITIALIZER_NAMES = frozenset(
-    {"scorer", "technique", "load_default_datasets", "preload_scenario_metadata"}
-)
+# read-only baseline list so the Initializers page only surfaces useful controls.
+_GUI_HIDDEN_INITIALIZER_NAMES = frozenset({"scorer", "technique", "load_default_datasets", "preload_scenario_metadata"})
 
 
 def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> RegisteredInitializer:
@@ -58,7 +58,7 @@ def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> Regist
 
 def _missing_registered_initializer(initializer_name: str) -> RegisteredInitializer:
     """
-    Build placeholder metadata for a saved override whose class is no longer registered.
+    Build placeholder metadata for a persisted row whose class is no longer registered.
 
     Args:
         initializer_name: The missing initializer's registry name.
@@ -80,7 +80,7 @@ class InitializerService:
     Service for listing, registering, configuring, and applying initializers.
 
     Uses ``InitializerRegistry`` for metadata/building and Central Memory for
-    persisted override rows.
+    persisted additional-initializer rows.
     """
 
     def __init__(self) -> None:
@@ -128,115 +128,122 @@ class InitializerService:
         metadata = self._get_metadata_by_name().get(initializer_name)
         return _metadata_to_registered_initializer(metadata) if metadata else None
 
-    async def list_effective_initializer_settings_async(
+    async def list_initializer_settings_async(
         self,
         *,
-        baseline_initializers: Sequence[InitializerConfig],
-    ) -> ListEffectiveInitializerSettingsResponse:
+        baseline_initializers: Sequence[BaselineInitializerConfig],
+    ) -> InitializerSettingsResponse:
         """
-        Merge baseline initializer config with saved override rows.
+        List the read-only ``.pyrit_conf`` baseline plus the persisted additional initializers.
 
         Args:
-            baseline_initializers: The initializer list resolved from the config baseline.
+            baseline_initializers: The initializer list the backend was started with.
 
         Returns:
-            ListEffectiveInitializerSettingsResponse: The merged, ordered effective list.
+            InitializerSettingsResponse: The read-only baseline and editable additional lists.
         """
         metadata_by_name = self._get_metadata_by_name()
-        saved_overrides = {setting.initializer_name: setting for setting in self._memory.get_initializer_settings()}
-        ordered_items: list[tuple[int, int, int, EffectiveInitializerSetting]] = []
-        seen_names: set[str] = set()
 
-        for baseline_position, config in enumerate(baseline_initializers):
-            if config.name in _GUI_HIDDEN_INITIALIZER_NAMES:
+        baseline: list[BaselineInitializerSetting] = []
+        for position, config in enumerate(baseline_initializers):
+            if config.initializer_name in _GUI_HIDDEN_INITIALIZER_NAMES:
                 continue
-
-            override = saved_overrides.get(config.name)
-            effective_parameters = override.parameters if override and override.parameters is not None else config.args
-            source = "baseline+override" if override else "baseline"
-            effective_order = (
-                override.order_index if override and override.order_index is not None else baseline_position
-            )
-            registered_initializer = self._get_registered_initializer_for_name(
-                initializer_name=config.name,
-                metadata_by_name=metadata_by_name,
-            )
-
-            ordered_items.append(
-                self._build_effective_item_sort_entry(
-                    registered_initializer=registered_initializer,
-                    parameters=effective_parameters,
-                    order_index=effective_order,
-                    saved_order_index=override.order_index if override else None,
-                    source=source,
-                    insertion_order=baseline_position,
+            baseline.append(
+                BaselineInitializerSetting(
+                    initializer=self._get_registered_initializer_for_name(
+                        initializer_name=config.initializer_name,
+                        metadata_by_name=metadata_by_name,
+                    ),
+                    parameters=config.parameters,
+                    order_index=position,
                 )
             )
-            seen_names.add(config.name)
 
-        append_index = 0
-        for initializer_name, override in saved_overrides.items():
-            if initializer_name in seen_names or initializer_name in _GUI_HIDDEN_INITIALIZER_NAMES:
-                continue
-
-            effective_order = (
-                override.order_index if override.order_index is not None else len(baseline_initializers) + append_index
+        additional = [
+            AdditionalInitializerSetting(
+                id=initializer.id,
+                initializer=self._get_registered_initializer_for_name(
+                    initializer_name=initializer.initializer_name,
+                    metadata_by_name=metadata_by_name,
+                ),
+                parameters=initializer.parameters,
+                order_index=initializer.order_index,
             )
-            registered_initializer = self._get_registered_initializer_for_name(
-                initializer_name=initializer_name,
-                metadata_by_name=metadata_by_name,
-            )
+            for initializer in self._memory.get_additional_initializers()
+        ]
 
-            ordered_items.append(
-                self._build_effective_item_sort_entry(
-                    registered_initializer=registered_initializer,
-                    parameters=override.parameters,
-                    order_index=effective_order,
-                    saved_order_index=override.order_index,
-                    source="override",
-                    insertion_order=len(baseline_initializers) + append_index,
-                )
-            )
-            append_index += 1
+        return InitializerSettingsResponse(baseline=baseline, additional=additional)
 
-        ordered_items.sort(key=lambda item: (item[0], item[1], item[2], item[3].initializer_name))
-        return ListEffectiveInitializerSettingsResponse(items=[item[3] for item in ordered_items])
-
-    async def save_initializer_setting_async(
+    async def create_additional_initializer_async(
         self,
         *,
         initializer_name: str,
         parameters: dict[str, Any] | None,
         order_index: int | None,
-    ) -> InitializerSetting:
+    ) -> AdditionalInitializer:
         """
-        Validate and persist a single initializer override row.
+        Validate and persist a new additional initializer.
 
         Args:
             initializer_name: The initializer registry name.
-            parameters: Optional parameter overrides to persist.
-            order_index: Optional zero-based order override.
+            parameters: Optional parameters to persist.
+            order_index: Optional zero-based position among the additional initializers.
 
         Returns:
-            InitializerSetting: The saved override row.
+            AdditionalInitializer: The newly persisted row.
         """
         self._validate_initializer_parameters(initializer_name=initializer_name, parameters=parameters)
-        setting = InitializerSetting(
+        initializer = AdditionalInitializer(
             initializer_name=initializer_name,
             parameters=parameters,
             order_index=order_index,
         )
-        self._memory.add_initializer_setting(setting=setting)
-        return setting
+        self._memory.add_additional_initializer(initializer=initializer)
+        return initializer
 
-    async def delete_initializer_setting_async(self, *, initializer_name: str) -> None:
+    async def update_additional_initializer_async(
+        self,
+        *,
+        initializer_id: str,
+        parameters: dict[str, Any] | None,
+        order_index: int | None,
+    ) -> AdditionalInitializer:
         """
-        Delete one saved initializer override row.
+        Validate and update one existing additional initializer by id.
 
         Args:
-            initializer_name: The initializer registry name to clear.
+            initializer_id: The additional initializer row id to update.
+            parameters: Optional parameters to persist.
+            order_index: Optional zero-based position among the additional initializers.
+
+        Returns:
+            AdditionalInitializer: The updated row.
+
+        Raises:
+            KeyError: If no additional initializer with the given id exists.
         """
-        self._memory.delete_initializer_setting(initializer_name=initializer_name)
+        existing = self._get_additional_initializer_by_id(initializer_id)
+        self._validate_initializer_parameters(
+            initializer_name=existing.initializer_name,
+            parameters=parameters,
+        )
+        updated = AdditionalInitializer(
+            id=existing.id,
+            initializer_name=existing.initializer_name,
+            parameters=parameters,
+            order_index=order_index,
+        )
+        self._memory.add_additional_initializer(initializer=updated)
+        return updated
+
+    async def delete_additional_initializer_async(self, *, initializer_id: str) -> None:
+        """
+        Delete one additional initializer by id.
+
+        Args:
+            initializer_id: The additional initializer row id to delete.
+        """
+        self._memory.delete_additional_initializer(initializer_id=initializer_id)
 
     async def apply_initializer_async(
         self,
@@ -254,29 +261,41 @@ class InitializerService:
 
         Args:
             initializer_name: The initializer registry name to execute.
-            parameters: Optional one-time parameters. When omitted, any saved override
-                parameters are used instead.
+            parameters: Optional one-time parameters for this execution.
 
         Returns:
             ApplyInitializerResponse: Success metadata for the apply-now execution.
         """
-        resolved_parameters = parameters if parameters is not None else self._get_saved_parameters(initializer_name)
-
-        def _build_and_apply() -> None:
-            initializer = self._registry.create_and_configure(
-                initializer_name,
-                initializer_params=resolved_parameters or None,
-            )
-            initializer.validate()
-            asyncio.run(initializer.initialize_async())
-
-        await asyncio.to_thread(_build_and_apply)
+        await asyncio.to_thread(
+            self._build_and_run_initializer,
+            initializer_name=initializer_name,
+            parameters=parameters,
+        )
 
         return ApplyInitializerResponse(
             initializer_name=initializer_name,
             status="applied",
-            applied_parameters=resolved_parameters,
+            applied_parameters=parameters,
         )
+
+    async def run_additional_initializers_async(self) -> None:
+        """
+        Run all persisted additional initializers in stored order, after the baseline.
+
+        Intended for the backend startup lifespan: the ``.pyrit_conf`` baseline runs first via
+        the configuration loader, then this appends the user's additional initializers.
+        """
+        initializers = self._memory.get_additional_initializers()
+        if not initializers:
+            return
+
+        logger.info("Running %d additional initializer(s)...", len(initializers))
+        for initializer in initializers:
+            await asyncio.to_thread(
+                self._build_and_run_initializer,
+                initializer_name=initializer.initializer_name,
+                parameters=initializer.parameters,
+            )
 
     async def register_initializer_async(
         self,
@@ -311,6 +330,44 @@ class InitializerService:
         self._registry.unregister_and_cleanup(initializer_name)
         logger.info("Unregistered initializer: %s", initializer_name)
 
+    def _build_and_run_initializer(
+        self,
+        *,
+        initializer_name: str,
+        parameters: dict[str, Any] | None,
+    ) -> None:
+        """
+        Build, validate, and run one initializer synchronously (for thread offload).
+
+        Args:
+            initializer_name: The initializer registry name to execute.
+            parameters: Optional parameters for this execution.
+        """
+        initializer = self._registry.create_and_configure(
+            initializer_name,
+            initializer_params=parameters or None,
+        )
+        initializer.validate()
+        asyncio.run(initializer.initialize_async())
+
+    def _get_additional_initializer_by_id(self, initializer_id: str) -> AdditionalInitializer:
+        """
+        Look up a persisted additional initializer by id.
+
+        Args:
+            initializer_id: The additional initializer row id.
+
+        Returns:
+            AdditionalInitializer: The matching row.
+
+        Raises:
+            KeyError: If no row with the given id exists.
+        """
+        for initializer in self._memory.get_additional_initializers():
+            if initializer.id == initializer_id:
+                return initializer
+        raise KeyError(initializer_id)
+
     def _validate_initializer_parameters(
         self,
         *,
@@ -326,21 +383,6 @@ class InitializerService:
         """
         self._registry.create_and_configure(initializer_name, initializer_params=parameters or None)
 
-    def _get_saved_parameters(self, initializer_name: str) -> dict[str, Any] | None:
-        """
-        Look up saved parameters for one initializer.
-
-        Args:
-            initializer_name: The initializer registry name.
-
-        Returns:
-            dict[str, Any] | None: Saved parameters, if present.
-        """
-        for setting in self._memory.get_initializer_settings():
-            if setting.initializer_name == initializer_name:
-                return setting.parameters
-        return None
-
     def _get_metadata_by_name(self) -> dict[str, InitializerMetadata]:
         return {metadata.registry_name: metadata for metadata in self._registry.get_all_registered_class_metadata()}
 
@@ -354,30 +396,6 @@ class InitializerService:
         if metadata:
             return _metadata_to_registered_initializer(metadata)
         return _missing_registered_initializer(initializer_name)
-
-    @staticmethod
-    def _build_effective_item_sort_entry(
-        *,
-        registered_initializer: RegisteredInitializer,
-        parameters: dict[str, Any] | None,
-        order_index: int,
-        saved_order_index: int | None,
-        source: str,
-        insertion_order: int,
-    ) -> tuple[int, int, int, EffectiveInitializerSetting]:
-        explicit_priority = 0 if saved_order_index is not None else 1
-        return (
-            order_index,
-            explicit_priority,
-            insertion_order,
-            EffectiveInitializerSetting(
-                **registered_initializer.model_dump(),
-                parameters=parameters,
-                order_index=order_index,
-                saved_order_index=saved_order_index,
-                source=source,
-            ),
-        )
 
     @staticmethod
     def _paginate(

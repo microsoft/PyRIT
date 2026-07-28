@@ -18,13 +18,16 @@ from pyrit.models import REGISTRY_NAME_PATTERN
 from pyrit.models.catalog.initializer import RegisteredInitializer
 
 __all__ = [
+    "AdditionalInitializerSetting",
     "ApplyInitializerRequest",
     "ApplyInitializerResponse",
-    "EffectiveInitializerSetting",
-    "ListEffectiveInitializerSettingsResponse",
+    "BaselineInitializerConfig",
+    "BaselineInitializerSetting",
+    "CreateAdditionalInitializerRequest",
+    "InitializerSettingsResponse",
     "ListRegisteredInitializersResponse",
     "RegisterInitializerRequest",
-    "UpdateInitializerSettingRequest",
+    "UpdateAdditionalInitializerRequest",
 ]
 
 
@@ -46,45 +49,76 @@ class RegisterInitializerRequest(BaseModel):
     script_content: str = Field(..., description="Python source code containing a PyRITInitializer subclass")
 
 
-class EffectiveInitializerSetting(RegisteredInitializer):
-    """Merged initializer settings plus registry metadata."""
+class BaselineInitializerConfig(BaseModel):
+    """
+    One ``.pyrit_conf`` baseline initializer, as captured at backend startup.
 
-    parameters: dict[str, Any] | None = Field(
-        default=None,
-        description="Effective parameters that will be used for this initializer.",
-    )
-    order_index: int = Field(..., ge=0, description="Effective zero-based order position.")
-    saved_order_index: int | None = Field(
-        default=None,
-        ge=0,
-        description="Saved override order, if one exists.",
-    )
-    source: Literal["baseline", "override", "baseline+override"] = Field(
-        ...,
-        description="Whether this effective row comes from the config baseline, a saved override, or both.",
-    )
+    Stashed on ``app.state`` by the startup lifespan so route/service layers can display the
+    read-only baseline without importing the configuration loader.
+    """
+
+    initializer_name: str = Field(..., description="Initializer registry name.")
+    parameters: dict[str, Any] | None = Field(default=None, description="Baseline parameters from the config.")
 
 
-class ListEffectiveInitializerSettingsResponse(BaseModel):
-    """Response for listing merged initializer settings."""
+class BaselineInitializerSetting(BaseModel):
+    """A read-only baseline initializer plus its registry metadata."""
 
-    items: list[EffectiveInitializerSetting] = Field(
-        ...,
-        description="Merged baseline and saved initializer settings.",
-    )
+    initializer: RegisteredInitializer = Field(..., description="Registry metadata for this initializer.")
+    parameters: dict[str, Any] | None = Field(default=None, description="Baseline parameters from the config.")
+    order_index: int = Field(..., ge=0, description="Zero-based position in the baseline startup sequence.")
 
 
-class UpdateInitializerSettingRequest(BaseModel):
-    """Request body for saving one initializer override."""
+class AdditionalInitializerSetting(BaseModel):
+    """A persisted additional initializer plus its registry metadata."""
 
-    parameters: dict[str, Any] | None = Field(
-        default=None,
-        description="Parameter overrides to persist for this initializer.",
-    )
+    id: str = Field(..., description="Stable unique row id.")
+    initializer: RegisteredInitializer = Field(..., description="Registry metadata for this initializer.")
+    parameters: dict[str, Any] | None = Field(default=None, description="Persisted parameters for this invocation.")
     order_index: int | None = Field(
         default=None,
         ge=0,
-        description="Optional zero-based order override for this initializer.",
+        description="Optional zero-based position among the additional initializers.",
+    )
+
+
+class InitializerSettingsResponse(BaseModel):
+    """Response describing the read-only baseline plus the editable additional initializers."""
+
+    baseline: list[BaselineInitializerSetting] = Field(
+        ...,
+        description="Read-only initializers from the ``.pyrit_conf`` baseline, in run order.",
+    )
+    additional: list[AdditionalInitializerSetting] = Field(
+        ...,
+        description="Persisted additional initializers that run after the baseline, in run order.",
+    )
+
+
+class CreateAdditionalInitializerRequest(BaseModel):
+    """Request body for adding a new additional initializer."""
+
+    initializer_name: str = Field(
+        ...,
+        pattern=REGISTRY_NAME_PATTERN,
+        description="Registry name of the initializer to add.",
+    )
+    parameters: dict[str, Any] | None = Field(default=None, description="Parameters to persist for this invocation.")
+    order_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional zero-based position among the additional initializers.",
+    )
+
+
+class UpdateAdditionalInitializerRequest(BaseModel):
+    """Request body for updating one existing additional initializer."""
+
+    parameters: dict[str, Any] | None = Field(default=None, description="Parameters to persist for this invocation.")
+    order_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional zero-based position among the additional initializers.",
     )
 
 

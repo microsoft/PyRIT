@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
+    AdditionalInitializerEntry,
     AtomicAttackIdentifierEntry,
     AttackIdentifierEntry,
     AttackResultEntry,
@@ -32,7 +33,6 @@ from pyrit.memory.memory_models import (
     ConversationEntry,
     ConverterIdentifierEntry,
     EmbeddingDataEntry,
-    InitializerSettingEntry,
     PromptConverterIdentifierEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
@@ -50,6 +50,7 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    AdditionalInitializer,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackResult,
@@ -62,7 +63,6 @@ from pyrit.models import (
     ConverterIdentifier,
     IdentifierFilter,
     IdentifierType,
-    InitializerSetting,
     Message,
     MessagePiece,
     ScenarioIdentifier,
@@ -325,47 +325,51 @@ class MemoryInterface(abc.ABC):
         result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
         return result
 
-    def add_initializer_setting(self, *, setting: InitializerSetting) -> None:
+    def add_additional_initializer(self, *, initializer: AdditionalInitializer) -> None:
         """
-        Insert or replace a saved initializer setting.
+        Insert or replace an additional initializer, keyed by its ``id``.
 
         Args:
-            setting: The initializer setting to persist.
+            initializer: The additional initializer to persist.
         """
-        self._update_entry(InitializerSettingEntry.from_domain_model(setting))
+        self._update_entry(AdditionalInitializerEntry.from_domain_model(initializer))
 
-    def get_initializer_settings(self) -> Sequence[InitializerSetting]:
+    def get_additional_initializers(self) -> Sequence[AdditionalInitializer]:
         """
-        Load all saved initializer settings.
+        Load all additional initializers in run order.
 
         Returns:
-            Sequence[InitializerSetting]: The persisted settings ordered by initializer name.
+            Sequence[AdditionalInitializer]: The persisted initializers ordered by
+            ``order_index`` then ``id`` for a stable, deterministic startup sequence.
         """
         entries = self._query_entries(
-            InitializerSettingEntry,
-            order_by=InitializerSettingEntry.initializer_name.asc(),
+            AdditionalInitializerEntry,
+            order_by=AdditionalInitializerEntry.order_index.asc(),
         )
-        return [entry.to_domain_model() for entry in entries]
+        return sorted(
+            (entry.to_domain_model() for entry in entries),
+            key=lambda item: (item.order_index is None, item.order_index or 0, item.id),
+        )
 
-    def delete_initializer_setting(self, *, initializer_name: str) -> None:
+    def delete_additional_initializer(self, *, initializer_id: str) -> None:
         """
-        Delete a saved initializer setting when it exists.
+        Delete an additional initializer by id when it exists.
 
         Args:
-            initializer_name: The initializer registry name to delete.
+            initializer_id: The additional initializer row id to delete.
 
         Raises:
             SQLAlchemyError: If the delete operation fails.
         """
         with closing(self.get_session()) as session:
             try:
-                session.query(InitializerSettingEntry).filter(
-                    InitializerSettingEntry.initializer_name == initializer_name
+                session.query(AdditionalInitializerEntry).filter(
+                    AdditionalInitializerEntry.id == initializer_id
                 ).delete(synchronize_session=False)
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
-                logger.exception(f"Error deleting initializer setting '{initializer_name}': {e}")
+                logger.exception(f"Error deleting additional initializer '{initializer_id}': {e}")
                 raise
 
     @abc.abstractmethod

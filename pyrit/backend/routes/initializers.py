@@ -8,15 +8,15 @@ Provides endpoints for listing, registering, and removing initializers.
 
 Route structure:
     GET    /api/initializers                — list all initializers
+    GET    /api/initializers/settings       — list baseline + additional initializers
+    POST   /api/initializers/settings       — add an additional initializer
+    PUT    /api/initializers/settings/{id}  — update an additional initializer
+    DELETE /api/initializers/settings/{id}  — remove an additional initializer
+    POST   /api/initializers/{name}/apply   — apply an initializer immediately
     GET    /api/initializers/{name}         — get single initializer detail
     POST   /api/initializers                — register initializer from script
     DELETE /api/initializers/{name}         — unregister an initializer
 """
-
-import asyncio
-import os
-from collections.abc import Sequence
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
@@ -24,35 +24,36 @@ from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
     ApplyInitializerRequest,
     ApplyInitializerResponse,
-    ListEffectiveInitializerSettingsResponse,
+    BaselineInitializerConfig,
+    CreateAdditionalInitializerRequest,
+    InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisterInitializerRequest,
-    UpdateInitializerSettingRequest,
+    UpdateAdditionalInitializerRequest,
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
-from pyrit.models import InitializerSetting
+from pyrit.models import AdditionalInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
-from pyrit.setup.configuration_loader import ConfigurationLoader, InitializerConfig
 
 router = APIRouter(prefix="/initializers", tags=["initializers"])
 
 
-def _load_baseline_initializer_configs_sync() -> Sequence[InitializerConfig]:
+def _baseline_initializers(request: Request) -> list[BaselineInitializerConfig]:
     """
-    Load the baseline initializer list from the active configuration.
+    Read the read-only baseline initializer list captured at backend startup.
 
-    Uses the same ``PYRIT_CONFIG_FILE`` resolution as the backend's startup
-    lifespan (see ``pyrit.backend.main.lifespan``) so the baseline shown here
-    always matches what the running backend was actually initialized with,
-    rather than re-reading ``~/.pyrit/.pyrit_conf`` unconditionally.
+    The startup lifespan (see ``pyrit.backend.main.lifespan``) stashes the ``.pyrit_conf``
+    baseline on ``app.state`` so routes can display it without importing the configuration
+    loader. Falls back to an empty list when the app was not started via the lifespan
+    (e.g. isolated route tests).
+
+    Args:
+        request: The incoming FastAPI request.
 
     Returns:
-        Sequence[InitializerConfig]: The normalized initializer configs from the active config.
+        list[BaselineInitializerConfig]: The baseline initializers, or an empty list.
     """
-    config_file_env = os.getenv("PYRIT_CONFIG_FILE")
-    config_file = Path(config_file_env) if config_file_env else None
-    config = ConfigurationLoader.load_with_overrides(config_file=config_file)
-    return list(config.initializer_configs)
+    return list(getattr(request.app.state, "baseline_initializers", []))
 
 
 def _check_custom_initializers_allowed(request: Request) -> None:
@@ -99,74 +100,116 @@ async def list_initializers(  # pyrit-async-suffix-exempt
 
 @router.get(
     "/settings",
-    response_model=ListEffectiveInitializerSettingsResponse,
+    response_model=InitializerSettingsResponse,
 )
 async def get_initializer_settings(  # pyrit-async-suffix-exempt
-) -> ListEffectiveInitializerSettingsResponse:
+    request: Request,
+) -> InitializerSettingsResponse:
     """
-    Get the merged effective initializer list.
+    List the read-only ``.pyrit_conf`` baseline plus the persisted additional initializers.
+
+    Args:
+        request: The incoming FastAPI request (carries the startup baseline on ``app.state``).
 
     Returns:
-        ListEffectiveInitializerSettingsResponse: Merged baseline and saved settings.
+        InitializerSettingsResponse: The read-only baseline and editable additional lists.
     """
     service = get_initializer_service()
-    baseline_initializers = await asyncio.to_thread(_load_baseline_initializer_configs_sync)
-    return await service.list_effective_initializer_settings_async(baseline_initializers=baseline_initializers)
+    return await service.list_initializer_settings_async(
+        baseline_initializers=_baseline_initializers(request),
+    )
 
 
-@router.put(
-    "/{initializer_name}/settings",
-    response_model=InitializerSetting,
+@router.post(
+    "/settings",
+    response_model=AdditionalInitializer,
+    status_code=status.HTTP_201_CREATED,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid initializer settings"},
         404: {"model": ProblemDetail, "description": "Initializer not found"},
     },
 )
-async def save_initializer_settings(  # pyrit-async-suffix-exempt
-    initializer_name: str,
-    body: UpdateInitializerSettingRequest,
-) -> InitializerSetting:
+async def create_additional_initializer(  # pyrit-async-suffix-exempt
+    body: CreateAdditionalInitializerRequest,
+) -> AdditionalInitializer:
     """
-    Validate and save one initializer override row.
+    Add a new additional initializer.
 
     Args:
-        initializer_name: Registry name of the initializer.
-        body: The override payload to persist.
+        body: The additional initializer to add.
 
     Returns:
-        InitializerSetting: The saved override row.
+        AdditionalInitializer: The newly persisted row.
     """
     service = get_initializer_service()
     try:
-        return await service.save_initializer_setting_async(
-            initializer_name=initializer_name,
+        return await service.create_additional_initializer_async(
+            initializer_name=body.initializer_name,
             parameters=body.parameters,
             order_index=body.order_index,
         )
     except KeyError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Initializer '{initializer_name}' not found",
+            detail=f"Initializer '{body.initializer_name}' not found",
+        ) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+
+
+@router.put(
+    "/settings/{additional_initializer_id}",
+    response_model=AdditionalInitializer,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid initializer settings"},
+        404: {"model": ProblemDetail, "description": "Additional initializer not found"},
+    },
+)
+async def update_additional_initializer(  # pyrit-async-suffix-exempt
+    additional_initializer_id: str,
+    body: UpdateAdditionalInitializerRequest,
+) -> AdditionalInitializer:
+    """
+    Update one existing additional initializer by id.
+
+    Args:
+        additional_initializer_id: The additional initializer row id to update.
+        body: The updated payload.
+
+    Returns:
+        AdditionalInitializer: The updated row.
+    """
+    service = get_initializer_service()
+    try:
+        return await service.update_additional_initializer_async(
+            initializer_id=additional_initializer_id,
+            parameters=body.parameters,
+            order_index=body.order_index,
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Additional initializer '{additional_initializer_id}' not found",
         ) from None
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
 
 @router.delete(
-    "/{initializer_name}/settings",
+    "/settings/{additional_initializer_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_initializer_settings(  # pyrit-async-suffix-exempt
-    initializer_name: str,
+async def delete_additional_initializer(  # pyrit-async-suffix-exempt
+    additional_initializer_id: str,
 ) -> None:
     """
-    Delete one saved initializer override row.
+    Delete one additional initializer by id.
 
     Args:
-        initializer_name: Registry name of the initializer whose saved settings should be cleared.
+        additional_initializer_id: The additional initializer row id to delete.
     """
     service = get_initializer_service()
-    await service.delete_initializer_setting_async(initializer_name=initializer_name)
+    await service.delete_additional_initializer_async(initializer_id=additional_initializer_id)
 
 
 @router.post(

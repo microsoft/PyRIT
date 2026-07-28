@@ -1,18 +1,23 @@
 import { useEffect, useState } from 'react'
 import {
   Button,
+  Combobox,
+  Field,
   MessageBar,
   MessageBarBody,
+  Option,
   Spinner,
   Text,
 } from '@fluentui/react-components'
-import { ArrowSyncRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
 import { initializersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
-  EffectiveInitializerSetting,
-  UpdateInitializerSettingRequest,
+  BaselineInitializerSetting,
+  InitializerSettingsResponse,
+  RegisteredInitializer,
+  UpdateAdditionalInitializerRequest,
 } from '@/types'
 
 import InitializerList from './InitializerList'
@@ -23,26 +28,42 @@ interface StatusMessage {
   text: string
 }
 
+const EMPTY_SETTINGS: InitializerSettingsResponse = {
+  baseline: [],
+  additional: [],
+}
+
+function formatParameters(parameters?: Record<string, unknown> | null): string {
+  return JSON.stringify(parameters ?? {}, null, 2)
+}
+
 export default function InitializerConfig() {
   const styles = useInitializerConfigStyles()
-  const [items, setItems] = useState<EffectiveInitializerSetting[]>([])
+  const [settings, setSettings] = useState<InitializerSettingsResponse>(EMPTY_SETTINGS)
+  const [registeredInitializers, setRegisteredInitializers] = useState<RegisteredInitializer[]>([])
+  const [selectedInitializerName, setSelectedInitializerName] = useState('')
   const [loading, setLoading] = useState(true)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
-  const [savingInitializerName, setSavingInitializerName] = useState<string | null>(null)
-  const [applyingInitializerName, setApplyingInitializerName] = useState<string | null>(null)
-  const [resettingInitializerName, setResettingInitializerName] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [savingInitializerId, setSavingInitializerId] = useState<string | null>(null)
+  const [applyingInitializerId, setApplyingInitializerId] = useState<string | null>(null)
+  const [deletingInitializerId, setDeletingInitializerId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
 
-    const loadSettingsAsync = async (): Promise<void> => {
+    const loadInitializersAsync = async (): Promise<void> => {
       try {
-        const response = await initializersApi.getSettings()
+        const [settingsResponse, registeredResponse] = await Promise.all([
+          initializersApi.getSettings(),
+          initializersApi.listRegistered(),
+        ])
         if (cancelled) {
           return
         }
-        setItems(response.items)
+        setSettings(settingsResponse)
+        setRegisteredInitializers(registeredResponse.items)
       } catch (error) {
         if (cancelled) {
           return
@@ -55,7 +76,7 @@ export default function InitializerConfig() {
       }
     }
 
-    void loadSettingsAsync()
+    void loadInitializersAsync()
     return () => {
       cancelled = true
     }
@@ -66,65 +87,102 @@ export default function InitializerConfig() {
     if (clearStatusMessage) {
       setStatusMessage(null)
     }
-    setRefetchCount((currentCount) => currentCount + 1)
+    setRefetchCount((currentCount: number) => currentCount + 1)
   }
 
-  const handleSave = async (
-    initializerName: string,
-    request: UpdateInitializerSettingRequest,
-  ): Promise<void> => {
-    setSavingInitializerName(initializerName)
+  const refetchSettingsOnly = async (): Promise<void> => {
+    const response = await initializersApi.getSettings()
+    setSettings(response)
+  }
 
+  const handleAdd = async (): Promise<void> => {
+    if (!selectedInitializerName) {
+      return
+    }
+
+    setCreating(true)
     try {
-      await initializersApi.updateSettings(initializerName, request)
-      setStatusMessage({ intent: 'success', text: `Saved settings for ${initializerName}.` })
-      refreshSettings(false)
+      await initializersApi.createAdditional({ initializer_name: selectedInitializerName })
+      setStatusMessage({ intent: 'success', text: `Added ${selectedInitializerName}.` })
+      setSelectedInitializerName('')
+      await refetchSettingsOnly()
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
     } finally {
-      setSavingInitializerName(null)
+      setCreating(false)
+    }
+  }
+
+  const handleSave = async (
+    id: string,
+    request: UpdateAdditionalInitializerRequest,
+  ): Promise<void> => {
+    setSavingInitializerId(id)
+    try {
+      await initializersApi.updateAdditional(id, request)
+      setStatusMessage({ intent: 'success', text: 'Saved additional initializer.' })
+      await refetchSettingsOnly()
+    } catch (error) {
+      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+    } finally {
+      setSavingInitializerId(null)
     }
   }
 
   const handleApply = async (
+    id: string,
     initializerName: string,
     parameters?: Record<string, unknown> | null,
   ): Promise<void> => {
-    setApplyingInitializerName(initializerName)
-
+    setApplyingInitializerId(id)
     try {
-      // An explicit {} (rather than null/undefined) tells the backend "apply with no
-      // parameters," distinct from omitting parameters entirely, which would fall back
-      // to any saved override parameters instead.
-      await initializersApi.applyNow(initializerName, { parameters: parameters ?? {} })
+      await initializersApi.applyNow(initializerName, { parameters })
       setStatusMessage({ intent: 'success', text: `Applied ${initializerName}.` })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
     } finally {
-      setApplyingInitializerName(null)
+      setApplyingInitializerId(null)
     }
   }
 
-  const handleReset = async (initializerName: string): Promise<void> => {
-    setResettingInitializerName(initializerName)
-
+  const handleBaselineApply = async (item: BaselineInitializerSetting): Promise<void> => {
+    const initializerName = item.initializer.initializer_name
+    setApplyingInitializerId(`baseline:${initializerName}:${item.order_index}`)
     try {
-      await initializersApi.clearSettings(initializerName)
-      setStatusMessage({ intent: 'success', text: `Cleared saved settings for ${initializerName}.` })
-      refreshSettings(false)
+      await initializersApi.applyNow(initializerName, { parameters: item.parameters ?? {} })
+      setStatusMessage({ intent: 'success', text: `Applied ${initializerName}.` })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
     } finally {
-      setResettingInitializerName(null)
+      setApplyingInitializerId(null)
     }
   }
 
+  const handleRemove = async (id: string): Promise<void> => {
+    setDeletingInitializerId(id)
+    try {
+      await initializersApi.deleteAdditional(id)
+      setStatusMessage({ intent: 'success', text: 'Removed additional initializer.' })
+      await refetchSettingsOnly()
+    } catch (error) {
+      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+    } finally {
+      setDeletingInitializerId(null)
+    }
+  }
+
+  const hasNoInitializers = settings.baseline.length === 0 && settings.additional.length === 0
+  const canAddSelectedInitializer = registeredInitializers.some(
+    (initializer: RegisteredInitializer) => initializer.initializer_name === selectedInitializerName,
+  )
+
   return (
-    <section className={styles.root} data-testid="initializer-config">
+    <main className={styles.root} data-testid="initializer-config">
       <div className={styles.header}>
         <div className={styles.headerText}>
+          <Text as="h1" size={600} weight="semibold">Initializers</Text>
           <Text size={300}>
-            Review the effective initializer order, save overrides to the database, or apply a single initializer now.
+            Review read-only baseline initializers and manage additional initializer invocations that run after them.
           </Text>
         </div>
         <div className={styles.headerActions}>
@@ -149,20 +207,125 @@ export default function InitializerConfig() {
         <div className={styles.loadingState}>
           <Spinner label="Loading initializer settings..." />
         </div>
-      ) : items.length === 0 ? (
-        <Text className={styles.emptyState}>No initializer settings are available.</Text>
       ) : (
-        <InitializerList
-          items={items}
-          savingInitializerName={savingInitializerName}
-          applyingInitializerName={applyingInitializerName}
-          resettingInitializerName={resettingInitializerName}
-          onSave={handleSave}
-          onApply={handleApply}
-          onReset={handleReset}
-        />
+        <>
+          {hasNoInitializers && (
+            <Text className={styles.emptyState}>No initializer settings are available.</Text>
+          )}
+
+          <section className={styles.section} aria-labelledby="baseline-initializers-heading">
+            <div className={styles.sectionHeader}>
+              <Text as="h2" id="baseline-initializers-heading" size={500} weight="semibold">
+                Baseline initializers
+              </Text>
+              <Text size={300} className={styles.metadataText}>
+                Read-only initializers from the .pyrit_conf baseline.
+              </Text>
+            </div>
+            {settings.baseline.length === 0 ? (
+              <Text className={styles.emptyState}>No baseline initializers are configured.</Text>
+            ) : (
+              <div className={styles.baselineList} role="list" aria-label="Baseline initializers">
+                {settings.baseline.map((item: BaselineInitializerSetting) => {
+                  const initializerName = item.initializer.initializer_name
+                  const baselineApplyId = `baseline:${initializerName}:${item.order_index}`
+                  return (
+                    <div
+                      key={`${initializerName}:${item.order_index}`}
+                      className={styles.baselineCard}
+                      role="listitem"
+                      data-testid={`baseline-initializer-row-${initializerName}`}
+                    >
+                      <div className={styles.baselineHeader}>
+                        <div className={styles.titleGroup}>
+                          <Text weight="semibold" size={400}>{initializerName}</Text>
+                          <Text size={300}>{item.initializer.description || 'No description available.'}</Text>
+                          <Text size={200} className={styles.metadataText}>
+                            Required env vars: {item.initializer.required_env_vars.length > 0
+                              ? item.initializer.required_env_vars.join(', ')
+                              : 'None'}
+                          </Text>
+                          <Text size={200} className={styles.metadataText}>Order: {item.order_index}</Text>
+                        </div>
+                        <Button
+                          appearance="secondary"
+                          onClick={() => void handleBaselineApply(item)}
+                          disabled={applyingInitializerId === baselineApplyId}
+                        >
+                          {applyingInitializerId === baselineApplyId ? 'Applying...' : 'Apply now'}
+                        </Button>
+                      </div>
+                      <div>
+                        <Text weight="semibold" size={300}>Parameters</Text>
+                        <pre className={styles.parametersBlock}>{formatParameters(item.parameters)}</pre>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className={styles.section} aria-labelledby="additional-initializers-heading">
+            <div className={styles.sectionHeader}>
+              <Text as="h2" id="additional-initializers-heading" size={500} weight="semibold">
+                Additional initializers
+              </Text>
+              <Text size={300} className={styles.metadataText}>
+                Add and edit initializer invocations that run after the baseline.
+              </Text>
+            </div>
+
+            <div className={styles.addInitializerRow}>
+              <Field label="Add initializer">
+                <Combobox
+                  className={styles.initializerPicker}
+                  value={selectedInitializerName}
+                  selectedOptions={selectedInitializerName ? [selectedInitializerName] : []}
+                  onOptionSelect={(_, data) => {
+                    setSelectedInitializerName(data.optionValue ?? '')
+                  }}
+                  onChange={(event) => setSelectedInitializerName(event.target.value)}
+                  placeholder="Select an initializer"
+                  disabled={creating || registeredInitializers.length === 0}
+                >
+                  {registeredInitializers.map((initializer: RegisteredInitializer) => (
+                    <Option
+                      key={initializer.initializer_name}
+                      value={initializer.initializer_name}
+                      text={initializer.initializer_name}
+                    >
+                      {initializer.initializer_name}
+                    </Option>
+                  ))}
+                </Combobox>
+              </Field>
+              <Button
+                appearance="primary"
+                icon={<AddRegular />}
+                onClick={() => void handleAdd()}
+                disabled={creating || !canAddSelectedInitializer}
+              >
+                {creating ? 'Adding...' : 'Add'}
+              </Button>
+            </div>
+
+            {settings.additional.length === 0 ? (
+              <Text className={styles.emptyState}>No additional initializers are configured.</Text>
+            ) : (
+              <InitializerList
+                items={settings.additional}
+                savingInitializerId={savingInitializerId}
+                applyingInitializerId={applyingInitializerId}
+                deletingInitializerId={deletingInitializerId}
+                onSave={handleSave}
+                onApply={handleApply}
+                onRemove={handleRemove}
+              />
+            )}
+          </section>
+        </>
       )}
-    </section>
+    </main>
   )
 }
-
