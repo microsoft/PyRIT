@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
 from pyrit.score.batch_scorer import BatchScorer
-from pyrit.score.true_false.regex.ccs_output_scorer import CCSOutputScorer
 from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
 from pyrit.score.float_scale.float_scale_score_aggregator import (
@@ -72,6 +71,7 @@ from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
 from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
 from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
 from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+from pyrit.score.true_false.regex.ccs_output_scorer import CCSOutputScorer
 from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
 from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
 from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
