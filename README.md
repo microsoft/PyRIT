@@ -8,6 +8,8 @@ identify risks in generative AI systems.
 
 - Check out our [website](https://microsoft.github.io/PyRIT/) for more information
   about how to use, install, or contribute to PyRIT.
+- Review our [security policy](https://github.com/microsoft/PyRIT/security/policy)
+  to report vulnerabilities privately through the Microsoft Security Response Center.
 - Visit our [Discord server](https://discord.gg/9fMpq3tc8u) to chat with the team and community.
 
 ## Trademarks and Citations

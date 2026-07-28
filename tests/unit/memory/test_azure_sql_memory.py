@@ -290,6 +290,26 @@ def test_get_message_pieces_memory_label_conditions_uses_attack_result_labels(
     assert 'JSON_VALUE("PromptMemoryEntries".labels' not in compiled
 
 
+def test_attack_results_recency_expr_guards_non_string_values(uninitialized_memory_interface: AzureSQLMemory):
+    """Azure recency sort honors only JSON *string* values, mirroring SQLite's json_type guard.
+
+    A raw ``JSON_VALUE`` would stringify a non-string scalar (a JSON bool ``false`` -> ``"false"``),
+    diverging from ``_attack_result_recency_key``'s Python anchor (which collapses non-strings to
+    ``""``) and skipping rows at a page boundary. Each accessor is instead an ``OPENJSON`` subquery
+    filtered to ``type = 1`` (JSON string), so non-strings coalesce to ``""`` and both agree.
+    """
+    from sqlalchemy.dialects import mssql
+
+    expr = uninitialized_memory_interface._attack_results_recency_expr()
+    compiled = expr.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": False})
+    sql = str(compiled).lower()
+    # One OPENJSON accessor each for updated_at and created_at; the raw JSON_VALUE path is gone.
+    assert sql.count("openjson(") == 2
+    assert "json_value" not in sql
+    # Both accessors guard on JSON string type (OPENJSON type == 1).
+    assert sorted(v for k, v in compiled.params.items() if k.startswith("type")) == [1, 1]
+
+
 def test_get_message_pieces_memory_label_conditions_bind_params(uninitialized_memory_interface: AzureSQLMemory):
     """Test that bind parameters are created for AttackResultEntry labels."""
     conditions = uninitialized_memory_interface._get_message_pieces_memory_label_conditions(
