@@ -291,3 +291,27 @@ class TestFetchZipFromUrl:
         loader = ConcreteRemoteLoader()
         with pytest.raises(ValueError, match="Invalid file_type"):
             await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["bad.parquet"], cache=False)
+
+
+class TestFetchFromHuggingFaceDownloadMode:
+    """The cache flag must drive the HuggingFace download_mode so cache=False re-downloads."""
+
+    async def test_cache_true_reuses_dataset(self):
+        from datasets import DownloadMode
+
+        loader = ConcreteRemoteLoader()
+        with patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load:
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=True)
+
+        assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.REUSE_DATASET_IF_EXISTS
+        assert mock_load.call_args.kwargs["cache_dir"] is not None
+
+    async def test_cache_false_forces_redownload(self):
+        from datasets import DownloadMode
+
+        loader = ConcreteRemoteLoader()
+        with patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load:
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=False)
+
+        assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.FORCE_REDOWNLOAD
+        assert mock_load.call_args.kwargs["cache_dir"] is None

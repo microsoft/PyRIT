@@ -107,8 +107,9 @@ async def list_attacks(  # pyrit-async-suffix-exempt
     limit: int = Query(20, ge=1, le=100, description="Maximum items per page"),
     cursor: str | None = Query(
         None,
-        description="Pagination cursor: the attack_result_id of the last item from the previous page. "
-        "Omit to start from the beginning. The response includes next_cursor for the next page.",
+        description="Opaque pagination cursor returned as next_cursor by the previous page. "
+        "Treat it as opaque and pass it back unmodified. "
+        "Omit to start from the beginning; the response includes next_cursor for the next page.",
     ),
 ) -> AttackListResponse:
     """

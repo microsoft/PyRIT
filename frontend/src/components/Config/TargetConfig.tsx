@@ -133,6 +133,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             for details.
           </Text>
           <Button
+            className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
