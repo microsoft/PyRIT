@@ -104,3 +104,30 @@ def test_braille_converter_output_supported():
     converter = BrailleConverter()
     assert converter.output_supported("text") is True
     assert converter.output_supported("image_path") is False
+
+
+async def test_braille_converter_punctuation_cells():
+    """Punctuation must map to the correct English/UEB braille cells.
+
+    The existing tests only assert the output is non-empty, so an incorrect cell
+    could pass unnoticed. English Braille punctuation is standard across UEB and the
+    major national codes; pin the exact cells here. Regression for the semicolon,
+    which was mapped to the letter-sign cell U+2830 (dots 5,6) instead of the
+    semicolon cell U+2806 (dots 2,3).
+    """
+    converter = BrailleConverter()
+    # char -> expected single braille cell (English/UEB)
+    expected = {
+        ",": "⠂",  # dot 2
+        ";": "⠆",  # dots 2,3
+        ":": "⠒",  # dots 2,5
+        ".": "⠲",  # dots 2,5,6
+        "!": "⠖",  # dots 2,3,5
+        "?": "⠦",  # dots 2,3,6
+    }
+    for char, cell in expected.items():
+        result = await converter.convert_async(prompt=char, input_type="text")
+        assert result.output_text == cell, (
+            f"{char!r} -> {result.output_text!r} (U+{ord(result.output_text):04X}), "
+            f"expected {cell!r} (U+{ord(cell):04X})"
+        )

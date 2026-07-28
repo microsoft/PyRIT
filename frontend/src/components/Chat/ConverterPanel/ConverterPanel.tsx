@@ -328,6 +328,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
           size="small"
           icon={<DismissRegular />}
           onClick={onClose}
+          className={styles.touchTarget}
           data-testid="close-converter-panel-btn"
         />
       </div>

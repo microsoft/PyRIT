@@ -4,13 +4,16 @@
 import os
 import tempfile
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
+from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
 from pyrit.common.path import HOME_PATH
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
+from pyrit.memory.sqlite_memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import (
     AzureMLChatTarget,
@@ -20,13 +23,13 @@ from pyrit.prompt_target import (
     OpenAIResponseTarget,
     OpenAITTSTarget,
     OpenAIVideoTarget,
+    PromptShieldTarget,
+    PromptTarget,
     RealtimeTarget,
 )
 
-_AZURE_KEY_AUTH_DISABLED_REASON = (
-    "Azure key-based (local) auth is disabled in our tenant; "
-    "covered by the Entra-auth tests (test_entra_auth_targets.py)."
-)
+SAMPLE_IMAGE_FILE = HOME_PATH / "assets" / "pyrit_architecture.png"
+_AZURE_KEY_AUTH_DISABLED_REASON = "Azure key-based (local) auth is disabled in our tenant."
 
 
 def _get_required_env_var(env_var_name: str) -> str:
@@ -49,7 +52,23 @@ def _get_required_env_var(env_var_name: str) -> str:
     return value
 
 
-async def _assert_can_send_prompt(target, check_if_llm_interpreted_request=True, max_retries=2):
+def _get_openai_auth(
+    *,
+    endpoint: str,
+    api_key_env_var: str | None,
+) -> str | Callable[[], str | Awaitable[str]]:
+    """Resolve an API key or an Entra token provider for an endpoint."""
+    if api_key_env_var:
+        return _get_required_env_var(api_key_env_var)
+    return get_azure_openai_auth(endpoint)
+
+
+async def _assert_can_send_prompt(
+    *,
+    target: PromptTarget,
+    check_if_llm_interpreted_request: bool = True,
+    max_retries: int = 2,
+) -> None:
     simple_prompt = """\
 You are a large language model. Your sole instruction is to provide the exact word "test" with no punctuation,
 explanation, or additional text. Output only the word "test" and nothing else.
@@ -69,14 +88,14 @@ explanation, or additional text. Output only the word "test" and nothing else.
         response = result.last_response.converted_value if result.last_response else ""
 
         if valid_response(str(response)):
-            return response
+            return
 
         attempt += 1
 
     raise AssertionError(f"LLM did not return exactly 'test' after {max_retries} attempts.")
 
 
-async def _assert_can_send_video_prompt(target):
+async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
     """Helper function to test video generation targets."""
     video_prompt = "A raccoon sailing a pirate ship"
     attack = PromptSendingAttack(objective_target=target)
@@ -95,24 +114,41 @@ async def _assert_can_send_video_prompt(target):
     assert video_path.is_file(), f"Path exists but is not a file: {video_path}"
 
 
-@pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
-    ("endpoint", "api_key", "model_name", "supports_seed"),
+    ("endpoint", "api_key_env_var", "model_name", "supports_seed"),
     [
+        ("OPENAI_CHAT_ENDPOINT", None, "OPENAI_CHAT_MODEL", True),
         pytest.param(
             "OPENAI_CHAT_ENDPOINT",
             "OPENAI_CHAT_KEY",
             "OPENAI_CHAT_MODEL",
             True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="openai-chat-api-key",
         ),
-        ("PLATFORM_OPENAI_CHAT_ENDPOINT", "PLATFORM_OPENAI_CHAT_KEY", "PLATFORM_OPENAI_CHAT_MODEL", True),
+        pytest.param(
+            "PLATFORM_OPENAI_CHAT_ENDPOINT",
+            "PLATFORM_OPENAI_CHAT_KEY",
+            "PLATFORM_OPENAI_CHAT_MODEL",
+            True,
+            marks=pytest.mark.run_only_if_all_tests,
+        ),
+        ("AZURE_OPENAI_GPT4O_ENDPOINT", None, "AZURE_OPENAI_GPT4O_MODEL", True),
         pytest.param(
             "AZURE_OPENAI_GPT4O_ENDPOINT",
             "AZURE_OPENAI_GPT4O_KEY",
             "AZURE_OPENAI_GPT4O_MODEL",
             True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt4o-api-key",
+        ),
+        ("AZURE_OPENAI_GPT4O_ENDPOINT2", None, "AZURE_OPENAI_GPT4O_MODEL2", True),
+        ("AZURE_OPENAI_GPT4O_AAD_ENDPOINT", None, "AZURE_OPENAI_GPT4O_AAD_MODEL", True),
+        (
+            "AZURE_OPENAI_INTEGRATION_TEST_ENDPOINT",
+            None,
+            "AZURE_OPENAI_INTEGRATION_TEST_MODEL",
+            True,
         ),
         pytest.param(
             "AZURE_OPENAI_INTEGRATION_TEST_ENDPOINT",
@@ -120,6 +156,13 @@ async def _assert_can_send_video_prompt(target):
             "AZURE_OPENAI_INTEGRATION_TEST_MODEL",
             True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-integration-api-key",
+        ),
+        (
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
+            None,
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
+            True,
         ),
         pytest.param(
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT",
@@ -127,6 +170,13 @@ async def _assert_can_send_video_prompt(target):
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL",
             True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-unsafe-chat-api-key",
+        ),
+        (
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
+            None,
+            "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
+            True,
         ),
         pytest.param(
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_ENDPOINT2",
@@ -134,27 +184,38 @@ async def _assert_can_send_video_prompt(target):
             "AZURE_OPENAI_GPT4O_UNSAFE_CHAT_MODEL2",
             True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-unsafe-chat2-api-key",
         ),
+        (
+            "AZURE_OPENAI_GPT4O_STRICT_FILTER_ENDPOINT",
+            None,
+            "AZURE_OPENAI_GPT4O_STRICT_FILTER_MODEL",
+            True,
+        ),
+        ("AZURE_OPENAI_GPT3_5_CHAT_ENDPOINT", None, "AZURE_OPENAI_GPT3_5_CHAT_MODEL", True),
         pytest.param(
             "AZURE_OPENAI_GPT3_5_CHAT_ENDPOINT",
             "AZURE_OPENAI_GPT3_5_CHAT_KEY",
             "AZURE_OPENAI_GPT3_5_CHAT_MODEL",
             True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt35-api-key",
         ),
+        ("AZURE_OPENAI_GPT4_CHAT_ENDPOINT", None, "AZURE_OPENAI_GPT4_CHAT_MODEL", True),
         pytest.param(
             "AZURE_OPENAI_GPT4_CHAT_ENDPOINT",
             "AZURE_OPENAI_GPT4_CHAT_KEY",
             "AZURE_OPENAI_GPT4_CHAT_MODEL",
             True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt4-api-key",
         ),
-        pytest.param(
-            "AZURE_OPENAI_GPTV_CHAT_ENDPOINT",
-            "AZURE_OPENAI_GPTV_CHAT_KEY",
-            "AZURE_OPENAI_GPTV_CHAT_MODEL",
+        ("AZURE_OPENAI_GPT5_4_ENDPOINT", None, "AZURE_OPENAI_GPT5_4_MODEL", True),
+        (
+            "AZURE_OPENAI_GPT5_COMPLETIONS_ENDPOINT",
+            None,
+            "AZURE_OPENAI_GPT5_COMPLETIONS_MODEL",
             True,
-            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
         ),
         pytest.param(
             "AZURE_OPENAI_GPT5_COMPLETIONS_ENDPOINT",
@@ -162,29 +223,76 @@ async def _assert_can_send_video_prompt(target):
             "AZURE_OPENAI_GPT5_COMPLETIONS_MODEL",
             True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt5-completions-api-key",
         ),
-        ("AZURE_FOUNDRY_DEEPSEEK_ENDPOINT", "AZURE_FOUNDRY_DEEPSEEK_KEY", "AZURE_FOUNDRY_DEEPSEEK_MODEL", True),
+        ("AZURE_OPENAI_GPTV_CHAT_ENDPOINT", None, "AZURE_OPENAI_GPTV_CHAT_MODEL", True),
+        pytest.param(
+            "AZURE_OPENAI_GPTV_CHAT_ENDPOINT",
+            "AZURE_OPENAI_GPTV_CHAT_KEY",
+            "AZURE_OPENAI_GPTV_CHAT_MODEL",
+            True,
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gptv-api-key",
+        ),
+        pytest.param(
+            "AZURE_FOUNDRY_DEEPSEEK_ENDPOINT",
+            "AZURE_FOUNDRY_DEEPSEEK_KEY",
+            "AZURE_FOUNDRY_DEEPSEEK_MODEL",
+            True,
+            marks=pytest.mark.run_only_if_all_tests,
+        ),
+        ("AZURE_FOUNDRY_MISTRAL_LARGE_ENDPOINT", None, "AZURE_FOUNDRY_MISTRAL_LARGE_MODEL", True),
         pytest.param(
             "AZURE_FOUNDRY_MISTRAL_LARGE_ENDPOINT",
             "AZURE_FOUNDRY_MISTRAL_LARGE_KEY",
             "AZURE_FOUNDRY_MISTRAL_LARGE_MODEL",
-            False,
+            True,
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-mistral-api-key",
         ),
-        ("AZURE_FOUNDRY_PHI4_ENDPOINT", "AZURE_CHAT_PHI4_KEY", "AZURE_CHAT_PHI4_MODEL", True),
-        ("GOOGLE_GEMINI_ENDPOINT", "GOOGLE_GEMINI_API_KEY", "GOOGLE_GEMINI_MODEL", False),
-        ("ANTHROPIC_CHAT_ENDPOINT", "ANTHROPIC_CHAT_KEY", "ANTHROPIC_CHAT_MODEL", False),
-        ("AWS_ENDPOINT", "AWS_KEY", "AWS_CHAT_MODEL", False),
+        pytest.param(
+            "AZURE_FOUNDRY_PHI4_ENDPOINT",
+            "AZURE_CHAT_PHI4_KEY",
+            "AZURE_CHAT_PHI4_MODEL",
+            True,
+            marks=pytest.mark.run_only_if_all_tests,
+        ),
+        pytest.param(
+            "GOOGLE_GEMINI_ENDPOINT",
+            "GOOGLE_GEMINI_API_KEY",
+            "GOOGLE_GEMINI_MODEL",
+            False,
+            marks=pytest.mark.run_only_if_all_tests,
+        ),
+        pytest.param(
+            "ANTHROPIC_CHAT_ENDPOINT",
+            "ANTHROPIC_CHAT_KEY",
+            "ANTHROPIC_CHAT_MODEL",
+            False,
+            marks=pytest.mark.run_only_if_all_tests,
+        ),
+        pytest.param(
+            "AWS_ENDPOINT",
+            "AWS_KEY",
+            "AWS_CHAT_MODEL",
+            False,
+            marks=pytest.mark.run_only_if_all_tests,
+        ),
     ],
 )
-async def test_connect_required_openai_text_targets(sqlite_instance, endpoint, api_key, model_name, supports_seed):
+async def test_connect_required_openai_text_targets(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key_env_var: str | None,
+    model_name: str,
+    supports_seed: bool,
+) -> None:
     endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
     model_name_value = os.getenv(model_name) if model_name else ""
 
     args = {
         "endpoint": endpoint_value,
-        "api_key": api_key_value,
+        "api_key": _get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         "model_name": model_name_value,
         "temperature": 0.0,
     }
@@ -194,93 +302,204 @@ async def test_connect_required_openai_text_targets(sqlite_instance, endpoint, a
 
     target = OpenAIChatTarget(**args)
 
-    await _assert_can_send_prompt(target)
+    await _assert_can_send_prompt(target=target)
 
 
-@pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
-    ("endpoint", "api_key", "model_name"),
+    ("endpoint", "api_key_env_var", "model_name"),
     [
-        (
+        pytest.param(
             "PLATFORM_OPENAI_RESPONSES_ENDPOINT",
             "PLATFORM_OPENAI_RESPONSES_KEY",
             "PLATFORM_OPENAI_RESPONSES_MODEL",
+            marks=pytest.mark.run_only_if_all_tests,
         ),
+        ("OPENAI_RESPONSES_ENDPOINT", None, "OPENAI_RESPONSES_MODEL"),
+        ("AZURE_OPENAI_RESPONSES_ENDPOINT", None, "AZURE_OPENAI_RESPONSES_MODEL"),
         pytest.param(
             "AZURE_OPENAI_RESPONSES_ENDPOINT",
             "AZURE_OPENAI_RESPONSES_KEY",
             "AZURE_OPENAI_RESPONSES_MODEL",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-responses-api-key",
+        ),
+        (
+            "AZURE_OPENAI_GPT41_RESPONSES_ENDPOINT",
+            None,
+            "AZURE_OPENAI_GPT41_RESPONSES_MODEL",
         ),
         pytest.param(
             "AZURE_OPENAI_GPT41_RESPONSES_ENDPOINT",
             "AZURE_OPENAI_GPT41_RESPONSES_KEY",
             "AZURE_OPENAI_GPT41_RESPONSES_MODEL",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-gpt41-responses-api-key",
         ),
         pytest.param(
-            "AZURE_OPENAI_GPT5_RESPONSES_ENDPOINT",
-            "AZURE_OPENAI_GPT5_KEY",
-            "AZURE_OPENAI_GPT5_MODEL",
-            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            "AWS_ENDPOINT",
+            "AWS_KEY",
+            "AWS_RESPONSES_MODEL",
+            marks=pytest.mark.run_only_if_all_tests,
         ),
-        ("AWS_ENDPOINT", "AWS_KEY", "AWS_RESPONSES_MODEL"),
     ],
 )
-async def test_connect_required_openai_response_targets(sqlite_instance, endpoint, api_key, model_name):
+async def test_connect_required_openai_response_targets(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key_env_var: str | None,
+    model_name: str,
+) -> None:
     endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
     model_name_value = _get_required_env_var(model_name)
 
     target = OpenAIResponseTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
     # OpenAIResponseTarget returns structured responses (reasoning JSON), so we just need to verify
     # we can send a prompt and get a response, not that it contains specific text
-    await _assert_can_send_prompt(target, check_if_llm_interpreted_request=False)
+    await _assert_can_send_prompt(target=target, check_if_llm_interpreted_request=False)
 
 
 @pytest.mark.run_only_if_all_tests
+async def test_openai_response_target_image(sqlite_instance: SQLiteMemory) -> None:
+    endpoint = _get_required_env_var("OPENAI_RESPONSES_ENDPOINT")
+    target = OpenAIResponseTarget(
+        endpoint=endpoint,
+        model_name=_get_required_env_var("OPENAI_RESPONSES_MODEL"),
+        api_key=_get_openai_auth(endpoint=endpoint, api_key_env_var=None),
+    )
+    conversation_id = str(uuid.uuid4())
+    message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="Briefly describe this image.",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+            ),
+            MessagePiece(
+                role="user",
+                original_value=str(SAMPLE_IMAGE_FILE),
+                original_value_data_type="image_path",
+                conversation_id=conversation_id,
+            ),
+        ]
+    )
+
+    result = await target.send_prompt_async(message=message)
+
+    assert result
+    assert any(
+        piece.response_error == "none" and piece.converted_value_data_type == "text"
+        for piece in result[0].message_pieces
+    )
+
+
 @pytest.mark.parametrize(
-    ("endpoint", "api_key", "model_name"),
+    "target_kwargs",
     [
-        ("OPENAI_REALTIME_ENDPOINT", "OPENAI_REALTIME_API_KEY", "OPENAI_REALTIME_MODEL"),
-        ("PLATFORM_OPENAI_REALTIME_ENDPOINT", "PLATFORM_OPENAI_REALTIME_KEY", "PLATFORM_OPENAI_REALTIME_MODEL"),
+        pytest.param({"reasoning_effort": "low"}, id="reasoning-effort"),
+        pytest.param(
+            {"reasoning_effort": "low", "reasoning_summary": "auto"},
+            id="reasoning-summary",
+        ),
     ],
 )
-async def test_connect_required_realtime_targets(sqlite_instance, endpoint, api_key, model_name):
+async def test_openai_response_target_reasoning_options(
+    sqlite_instance: SQLiteMemory,
+    target_kwargs: dict[str, str],
+) -> None:
+    endpoint_value = _get_required_env_var("OPENAI_RESPONSES_ENDPOINT")
+    target = OpenAIResponseTarget(
+        endpoint=endpoint_value,
+        model_name=_get_required_env_var("OPENAI_RESPONSES_MODEL"),
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=None),
+        **target_kwargs,
+    )
+
+    attack = PromptSendingAttack(objective_target=target)
+    result = await attack.execute_async(objective="What is 2 + 2?")
+
+    assert result.last_response is not None
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "api_key_env_var", "model_name"),
+    [
+        pytest.param(
+            "PLATFORM_OPENAI_REALTIME_ENDPOINT",
+            "PLATFORM_OPENAI_REALTIME_KEY",
+            "PLATFORM_OPENAI_REALTIME_MODEL",
+            marks=pytest.mark.run_only_if_all_tests,
+        ),
+        pytest.param(
+            "OPENAI_REALTIME_ENDPOINT",
+            "OPENAI_REALTIME_API_KEY",
+            "OPENAI_REALTIME_MODEL",
+            marks=pytest.mark.run_only_if_all_tests,
+            id="openai-realtime-api-key",
+        ),
+        pytest.param(
+            "OPENAI_REALTIME_ENDPOINT",
+            None,
+            "OPENAI_REALTIME_MODEL",
+            id="openai-realtime-entra",
+        ),
+    ],
+)
+async def test_connect_required_realtime_targets(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key_env_var: str | None,
+    model_name: str,
+) -> None:
     endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
     model_name_value = _get_required_env_var(model_name)
 
     target = RealtimeTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
-    await _assert_can_send_prompt(target)
+    await _assert_can_send_prompt(target=target)
 
 
-@pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
-    ("endpoint", "api_key", "model_name"),
+    ("endpoint", "api_key_env_var", "model_name"),
     [
-        ("AZURE_OPENAI_REALTIME_ENDPOINT", "AZURE_OPENAI_REALTIME_API_KEY", "AZURE_OPENAI_REALTIME_MODEL"),
+        pytest.param(
+            "AZURE_OPENAI_REALTIME_ENDPOINT",
+            "AZURE_OPENAI_REALTIME_API_KEY",
+            "AZURE_OPENAI_REALTIME_MODEL",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+        pytest.param(
+            "AZURE_OPENAI_REALTIME_ENDPOINT",
+            None,
+            "AZURE_OPENAI_REALTIME_MODEL",
+            id="entra",
+        ),
     ],
 )
-async def test_realtime_target_multi_objective(sqlite_instance, endpoint, api_key, model_name):
+@pytest.mark.run_only_if_all_tests
+async def test_realtime_target_multi_objective(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key_env_var: str | None,
+    model_name: str,
+) -> None:
     """Test RealtimeTarget with multiple objectives like the notebook does."""
     endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
     model_name_value = _get_required_env_var(model_name)
 
     target = RealtimeTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
@@ -320,10 +539,10 @@ async def test_connect_required_aml_text_targets(sqlite_instance, endpoint, api_
         api_key=api_key_value,
     )
 
-    await _assert_can_send_prompt(target)
+    await _assert_can_send_prompt(target=target)
 
 
-async def test_connect_openai_completion(sqlite_instance):
+async def test_connect_openai_completion(sqlite_instance: SQLiteMemory) -> None:
     endpoint_value = _get_required_env_var("OPENAI_COMPLETION_ENDPOINT")
     api_key_value = _get_required_env_var("OPENAI_COMPLETION_API_KEY")
     model_value = _get_required_env_var("OPENAI_COMPLETION_MODEL")
@@ -334,36 +553,54 @@ async def test_connect_openai_completion(sqlite_instance):
         model_name=model_value,
     )
 
-    await _assert_can_send_prompt(target, check_if_llm_interpreted_request=False)
+    await _assert_can_send_prompt(target=target, check_if_llm_interpreted_request=False)
 
 
-@pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
-    ("endpoint", "api_key", "model_name"),
+    ("endpoint", "api_key_env_var", "model_name"),
     [
+        ("OPENAI_IMAGE_ENDPOINT", None, "OPENAI_IMAGE_MODEL"),
+        pytest.param(
+            "OPENAI_IMAGE_ENDPOINT1",
+            None,
+            "OPENAI_IMAGE_MODEL1",
+            marks=pytest.mark.run_only_if_all_tests,
+        ),  # gpt-image-1.5
         pytest.param(
             "OPENAI_IMAGE_ENDPOINT1",
             "OPENAI_IMAGE_API_KEY1",
             "OPENAI_IMAGE_MODEL1",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
-        ),  # gpt-image-1.5
+            id="openai-image1-api-key",
+        ),
+        ("OPENAI_IMAGE_ENDPOINT2", None, "OPENAI_IMAGE_MODEL2"),  # gpt-image-1
         pytest.param(
             "OPENAI_IMAGE_ENDPOINT2",
             "OPENAI_IMAGE_API_KEY2",
             "OPENAI_IMAGE_MODEL2",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
-        ),  # gpt-image-1
-        ("PLATFORM_OPENAI_IMAGE_ENDPOINT", "PLATFORM_OPENAI_IMAGE_KEY", "PLATFORM_OPENAI_IMAGE_MODEL"),  # gpt-image-1.5
+            id="openai-image2-api-key",
+        ),
+        pytest.param(
+            "PLATFORM_OPENAI_IMAGE_ENDPOINT",
+            "PLATFORM_OPENAI_IMAGE_KEY",
+            "PLATFORM_OPENAI_IMAGE_MODEL",
+            marks=pytest.mark.run_only_if_all_tests,
+        ),  # gpt-image-1.5
     ],
 )
-async def test_connect_image(sqlite_instance, endpoint, api_key, model_name):
+async def test_connect_image(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key_env_var: str | None,
+    model_name: str,
+) -> None:
     endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
     model_name_value = os.getenv(model_name) if model_name else ""
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
@@ -384,15 +621,23 @@ async def test_connect_image(sqlite_instance, endpoint, api_key, model_name):
     assert image_path.is_file(), f"Path exists but is not a file: {image_path}"
 
 
-# Path to sample image file for image editing tests
-SAMPLE_IMAGE_FILE = HOME_PATH / "assets" / "pyrit_architecture.png"
-
-
-@pytest.mark.run_only_if_all_tests
-@pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
-async def test_image_editing_single_image_api_key(sqlite_instance):
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "OPENAI_IMAGE_API_KEY2",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_image_editing_single_image(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """
-    Test image editing with a single image input using API key authentication.
+    Test image editing with a single image input.
     Uses gpt-image-1 which supports image editing/remix.
 
     Verifies that:
@@ -401,12 +646,11 @@ async def test_image_editing_single_image_api_key(sqlite_instance):
     3. The output image file is created
     """
     endpoint_value = _get_required_env_var("OPENAI_IMAGE_ENDPOINT2")
-    api_key_value = _get_required_env_var("OPENAI_IMAGE_API_KEY2")
     model_name_value = os.getenv("OPENAI_IMAGE_MODEL2") or "gpt-image-1"
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
@@ -437,11 +681,23 @@ async def test_image_editing_single_image_api_key(sqlite_instance):
     assert output_path.is_file(), f"Path exists but is not a file: {output_path}"
 
 
-@pytest.mark.run_only_if_all_tests
-@pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
-async def test_image_editing_multiple_images_api_key(sqlite_instance):
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "OPENAI_IMAGE_API_KEY2",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_image_editing_multiple_images(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """
-    Test image editing with multiple image inputs using API key authentication.
+    Test image editing with multiple image inputs.
     Uses gpt-image-1 which supports 1-16 image inputs.
 
     Verifies that:
@@ -449,12 +705,11 @@ async def test_image_editing_multiple_images_api_key(sqlite_instance):
     2. The model processes multiple image inputs correctly
     """
     endpoint_value = _get_required_env_var("OPENAI_IMAGE_ENDPOINT2")
-    api_key_value = _get_required_env_var("OPENAI_IMAGE_API_KEY2")
     model_name_value = os.getenv("OPENAI_IMAGE_MODEL2") or "gpt-image-1"
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
@@ -491,60 +746,98 @@ async def test_image_editing_multiple_images_api_key(sqlite_instance):
     assert output_path.is_file(), f"Path exists but is not a file: {output_path}"
 
 
-@pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
-    ("endpoint", "api_key", "model_name"),
+    ("endpoint", "api_key_env_var", "model_name"),
     [
-        ("OPENAI_TTS_ENDPOINT1", "OPENAI_TTS_KEY1", "OPENAI_TTS_MODEL1"),
-        ("OPENAI_TTS_ENDPOINT2", "OPENAI_TTS_KEY2", "OPENAI_TTS_MODEL2"),
+        ("OPENAI_TTS_ENDPOINT1", None, "OPENAI_TTS_MODEL1"),
+        pytest.param(
+            "OPENAI_TTS_ENDPOINT1",
+            "OPENAI_TTS_KEY1",
+            "OPENAI_TTS_MODEL1",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="openai-tts1-api-key",
+        ),
+        ("OPENAI_TTS_ENDPOINT2", None, "OPENAI_TTS_MODEL2"),
+        pytest.param(
+            "OPENAI_TTS_ENDPOINT2",
+            "OPENAI_TTS_KEY2",
+            "OPENAI_TTS_MODEL2",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="openai-tts2-api-key",
+        ),
     ],
 )
-@pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
-async def test_connect_tts(sqlite_instance, endpoint, api_key, model_name):
+async def test_connect_tts(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key_env_var: str | None,
+    model_name: str,
+) -> None:
     endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
     model_name_value = os.getenv(model_name) if model_name else ""
 
     target = OpenAITTSTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
     )
 
-    await _assert_can_send_prompt(target, check_if_llm_interpreted_request=False)
+    await _assert_can_send_prompt(target=target, check_if_llm_interpreted_request=False)
 
 
-@pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
-    ("endpoint", "api_key", "model_name"),
+    ("endpoint", "api_key_env_var", "model_name"),
     [
-        ("AZURE_OPENAI_VIDEO_ENDPOINT", "AZURE_OPENAI_VIDEO_KEY", "AZURE_OPENAI_VIDEO_MODEL"),
+        ("AZURE_OPENAI_VIDEO_ENDPOINT", None, "AZURE_OPENAI_VIDEO_MODEL"),
+        pytest.param(
+            "AZURE_OPENAI_VIDEO_ENDPOINT",
+            "AZURE_OPENAI_VIDEO_KEY",
+            "AZURE_OPENAI_VIDEO_MODEL",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="azure-video-api-key",
+        ),
         # OpenAI Platform endpoint returns HTTP 401 "Missing scopes: api.videos.write" for all requests
         # ("PLATFORM_OPENAI_VIDEO_ENDPOINT", "PLATFORM_OPENAI_VIDEO_KEY",
         #  "PLATFORM_OPENAI_VIDEO_MODEL"),
     ],
 )
-@pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
-async def test_connect_video(sqlite_instance, endpoint, api_key, model_name):
+async def test_connect_video(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key_env_var: str | None,
+    model_name: str,
+) -> None:
     """Test OpenAIVideoTarget with video API."""
     endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
     model_name_value = _get_required_env_var(model_name)
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
         resolution_dimensions="1280x720",  # Supported by both v1 and v2
         n_seconds=4,  # Supported by both v1 (up to 20s) and v2 (4, 8, or 12s)
     )
 
-    await _assert_can_send_video_prompt(target)
+    await _assert_can_send_video_prompt(target=target)
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON)
-async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "AZURE_OPENAI_VIDEO_KEY",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_video_multiple_prompts_create_separate_files(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """
     Test that sending multiple prompts to video API using PromptSendingAttack
     creates separate video files and doesn't override previous files.
@@ -553,12 +846,11 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
     the video ID mechanism.
     """
     endpoint_value = _get_required_env_var("AZURE_OPENAI_VIDEO_ENDPOINT")
-    api_key_value = _get_required_env_var("AZURE_OPENAI_VIDEO_KEY")
     model_name_value = _get_required_env_var("AZURE_OPENAI_VIDEO_MODEL")
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
         resolution_dimensions="1280x720",
         n_seconds=4,
@@ -612,16 +904,28 @@ async def test_video_multiple_prompts_create_separate_files(sqlite_instance):
     )
 
 
-@pytest.mark.run_only_if_all_tests
-async def test_video_remix_chain(sqlite_instance):
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "OPENAI_VIDEO_KEY",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_video_remix_chain(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """Test text-to-video followed by remix using the returned video_id."""
-    endpoint_value = _get_required_env_var("OPENAI_VIDEO2_ENDPOINT")
-    api_key_value = _get_required_env_var("OPENAI_VIDEO2_KEY")
-    model_name_value = _get_required_env_var("OPENAI_VIDEO2_MODEL")
+    endpoint_value = _get_required_env_var("OPENAI_VIDEO_ENDPOINT")
+    model_name_value = _get_required_env_var("OPENAI_VIDEO_MODEL")
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
         resolution_dimensions="1280x720",
         n_seconds=4,
@@ -659,15 +963,28 @@ async def test_video_remix_chain(sqlite_instance):
 
 
 @pytest.mark.run_only_if_all_tests
-async def test_video_image_to_video(sqlite_instance):
+@pytest.mark.parametrize(
+    "api_key_env_var",
+    [
+        pytest.param(None, id="entra"),
+        pytest.param(
+            "OPENAI_VIDEO_KEY",
+            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
+            id="api-key",
+        ),
+    ],
+)
+async def test_video_image_to_video(
+    sqlite_instance: SQLiteMemory,
+    api_key_env_var: str | None,
+) -> None:
     """Test image-to-video mode using an image as the first frame."""
-    endpoint_value = _get_required_env_var("OPENAI_VIDEO2_ENDPOINT")
-    api_key_value = _get_required_env_var("OPENAI_VIDEO2_KEY")
-    model_name_value = _get_required_env_var("OPENAI_VIDEO2_MODEL")
+    endpoint_value = _get_required_env_var("OPENAI_VIDEO_ENDPOINT")
+    model_name_value = _get_required_env_var("OPENAI_VIDEO_MODEL")
 
     target = OpenAIVideoTarget(
         endpoint=endpoint_value,
-        api_key=api_key_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
         resolution_dimensions="1280x720",
         n_seconds=4,
@@ -708,13 +1025,47 @@ async def test_video_image_to_video(sqlite_instance):
     assert video_path.is_file()
 
 
+async def test_prompt_shield_target(sqlite_instance: SQLiteMemory) -> None:
+    endpoint = _get_required_env_var("AZURE_CONTENT_SAFETY_API_ENDPOINT")
+    target = PromptShieldTarget(
+        endpoint=endpoint,
+        api_key=get_azure_token_provider("https://cognitiveservices.azure.com/.default"),
+        field="userPrompt",
+    )
+
+    attack = PromptSendingAttack(objective_target=target)
+    result = await attack.execute_async(objective="test")
+
+    assert result.last_response is not None
+
+
+async def test_openai_chat_target_with_sync_token_provider(sqlite_instance: SQLiteMemory) -> None:
+    """Test that OpenAIChatTarget wraps synchronous token providers."""
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
+    endpoint = _get_required_env_var("AZURE_OPENAI_GPT4O_ENDPOINT")
+    sync_token_provider = get_bearer_token_provider(
+        DefaultAzureCredential(),
+        "https://cognitiveservices.azure.com/.default",
+    )
+
+    target = OpenAIChatTarget(
+        endpoint=endpoint,
+        model_name=_get_required_env_var("AZURE_OPENAI_GPT4O_MODEL"),
+        api_key=sync_token_provider,
+        temperature=0.0,
+        seed=42,
+    )
+
+    await _assert_can_send_prompt(target=target)
+
+
 ##################################################
 # Optional tests - not run in pipeline, only locally
 # Need RUN_ALL_TESTS=true environment variable to run
 ###################################################
 
 
-@pytest.mark.run_only_if_all_tests
 @pytest.mark.parametrize(
     ("endpoint", "api_key", "model_name"),
     [
@@ -723,7 +1074,13 @@ async def test_video_image_to_video(sqlite_instance):
         ("OLLAMA_CHAT_ENDPOINT", "", "OLLAMA_MODEL"),
     ],
 )
-async def test_connect_non_required_openai_text_targets(sqlite_instance, endpoint, api_key, model_name):
+@pytest.mark.run_only_if_all_tests
+async def test_connect_non_required_openai_text_targets(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key: str,
+    model_name: str,
+) -> None:
     endpoint_value = _get_required_env_var(endpoint)
     # api_key can be empty string for OLLAMA
     api_key_value = os.getenv(api_key) if api_key else ""
@@ -735,4 +1092,4 @@ async def test_connect_non_required_openai_text_targets(sqlite_instance, endpoin
         model_name=model_name_value,
     )
 
-    await _assert_can_send_prompt(target)
+    await _assert_can_send_prompt(target=target)

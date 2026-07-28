@@ -39,6 +39,7 @@ project:
         - "https://www.youtube.com/watch?v=jq9DcEL3cHE"
   toc:
     - file: index.md
+    - file: security.md
     - file: getting_started/README.md
       children:
         - file: getting_started/install.md

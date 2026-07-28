@@ -110,6 +110,7 @@ class _SOSBenchDataset(_RemoteDatasetLoader):
                     "Fengbo Ma",
                     "Zhangchen Xu",
                     "Yuetai Li",
+                    "Zixin Rao",
                     "Bhaskar Ramasubramanian",
                     "Luyao Niu",
                     "Bo Li",

@@ -404,13 +404,14 @@ class _MossBenchDataset(_RemoteDatasetLoader):
         """
         meta = example.get("metadata") or {}
         raw_over = meta.get("over")
-        if raw_over not in _RAW_OVERSENSITIVITY_TO_ENUM:
+        enum_value = _RAW_OVERSENSITIVITY_TO_ENUM.get(raw_over) if isinstance(raw_over, str) else None
+        if enum_value is None:
             valid = ", ".join(sorted(_RAW_OVERSENSITIVITY_TO_ENUM))
             raise ValueError(
                 f"MOSSBench example pid={example.get('pid', '?')} has unknown over type "
                 f"{raw_over!r}; expected one of: {valid}."
             )
-        return _RAW_OVERSENSITIVITY_TO_ENUM[raw_over]
+        return enum_value
 
     @staticmethod
     def _extract_metadata(

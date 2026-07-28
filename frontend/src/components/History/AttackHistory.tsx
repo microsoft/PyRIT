@@ -180,8 +180,9 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
     <div className={styles.root}>
       <div className={styles.header} data-tour="history-filters">
         <div className={styles.headerRow}>
-          <Text size={500} weight="semibold">Attack History</Text>
+          <Text as="h1" size={500} weight="semibold">Attack History</Text>
           <Button
+            className={styles.touchTargetHeight}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={() => fetchAttacks()}
@@ -213,6 +214,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
               <MessageBarBody>{error}</MessageBarBody>
             </MessageBar>
             <Button
+              className={styles.touchTargetHeight}
               appearance="primary"
               icon={<ArrowSyncRegular />}
               onClick={() => fetchAttacks()}

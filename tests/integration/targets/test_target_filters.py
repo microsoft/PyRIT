@@ -13,10 +13,7 @@ from pyrit.prompt_target import (
     OpenAIVideoTarget,
 )
 
-_AZURE_KEY_AUTH_DISABLED_REASON = (
-    "Azure key-based (local) auth is disabled in our tenant; "
-    "covered by the Entra-auth tests (test_entra_auth_targets.py)."
-)
+_AZURE_KEY_AUTH_DISABLED_REASON = "Azure key-based (local) auth is disabled in our tenant."
 
 
 @pytest.mark.parametrize(

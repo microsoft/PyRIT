@@ -170,6 +170,7 @@ export default function HistoryFiltersBar({
       {hasActiveFilters && (
         <Tooltip content="Reset all filters" relationship="label">
           <Button
+            className={styles.touchTargetHeight}
             appearance="subtle"
             size="small"
             icon={<FilterDismissRegular />}
