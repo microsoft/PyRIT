@@ -9,6 +9,9 @@ import {
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
+
+import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
+
 import MessageList from './MessageList'
 import SystemPromptBanner from './SystemPromptBanner'
 import ChatInputArea from './ChatInputArea'
@@ -25,6 +28,7 @@ import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messa
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
 import { targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
+
 import { useChatWindowStyles } from './ChatWindow.styles'
 
 const NARROW_SCREEN_QUERY = '(max-width: 600px)'
@@ -73,6 +77,7 @@ export default function ChatWindow({
   relatedConversationCount,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
+  const mobileTouchTargets = useMobileTouchTargetStyles()
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
@@ -654,6 +659,7 @@ export default function ChatWindow({
                 aria-label="Toggle conversations panel"
                 aria-expanded={isPanelOpen}
                 aria-controls="conversation-panel"
+                className={mobileTouchTargets.control}
               />
             </Tooltip>
             <Tooltip content="New Attack" relationship="label">
@@ -664,7 +670,7 @@ export default function ChatWindow({
                 disabled={!attackResultId}
                 data-testid="new-attack-btn"
                 aria-label="New Attack"
-                className={styles.newAttackButton}
+                className={mergeClasses(styles.newAttackButton, mobileTouchTargets.control)}
               >
                 <span className={styles.newAttackLabel}>New Attack</span>
               </Button>

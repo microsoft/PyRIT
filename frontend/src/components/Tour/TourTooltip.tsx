@@ -3,6 +3,8 @@ import { DismissRegular } from '@fluentui/react-icons'
 
 import type { TooltipRenderProps } from 'react-joyride'
 
+import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
+
 import { useTourTooltipStyles } from './TourTooltip.styles'
 
 interface TourTooltipProps extends TooltipRenderProps {
@@ -30,6 +32,7 @@ export default function TourTooltip({
   isDarkMode = true,
 }: TourTooltipProps) {
   const styles = useTourTooltipStyles()
+  const mobileTouchTargets = useMobileTouchTargetStyles()
 
   return (
     <div {...tooltipProps}>
@@ -44,7 +47,7 @@ export default function TourTooltip({
                   appearance="subtle"
                   icon={<DismissRegular />}
                   size="small"
-                  className={styles.closeButton}
+                  className={mobileTouchTargets.control}
                 />
               )}
             </div>
@@ -62,19 +65,24 @@ export default function TourTooltip({
 
               <div className={styles.actions}>
                 {!isLastStep && (
-                  <Button {...skipProps} appearance="subtle" size="small" className={styles.actionButton}>
+                  <Button {...skipProps} appearance="subtle" size="small" className={mobileTouchTargets.control}>
                     Skip tour
                   </Button>
                 )}
 
                 {index > 0 && (
-                  <Button {...backProps} appearance="outline" size="small" className={styles.actionButton}>
+                  <Button {...backProps} appearance="outline" size="small" className={mobileTouchTargets.control}>
                     Back
                   </Button>
                 )}
 
                 {continuous && (
-                  <Button {...primaryProps} appearance="primary" size="small" className={styles.actionButton}>
+                  <Button
+                    {...primaryProps}
+                    appearance="primary"
+                    size="small"
+                    className={mobileTouchTargets.control}
+                  >
                     {isLastStep ? "Anchors Away!" : 'Next'}
                   </Button>
                 )}

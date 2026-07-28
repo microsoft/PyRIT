@@ -6,6 +6,7 @@ import {
   MessageBarBody,
   Spinner,
   Text,
+  mergeClasses,
   tokens,
 } from '@fluentui/react-components'
 import {
@@ -17,12 +18,16 @@ import {
   TagMultipleRegular,
   TargetRegular,
 } from '@fluentui/react-icons'
+
+import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
+
 import LabelsBar from '../Labels/LabelsBar'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, TargetInstance } from '../../types'
 import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
+
 import { useHomeStyles } from './Home.styles'
 
 const RECENT_ATTACKS_LIMIT = 50
@@ -107,6 +112,7 @@ export default function Home({
   onOpenAttack,
 }: HomeProps) {
   const styles = useHomeStyles()
+  const mobileTouchTargets = useMobileTouchTargetStyles()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -192,7 +198,7 @@ export default function Home({
                 iconPosition="after"
                 onClick={() => onNavigate('config')}
                 data-testid="home-configure-target-btn"
-                className={styles.mobilePrimaryAction}
+                className={mobileTouchTargets.control}
               >
                 {activeTarget ? 'Manage targets' : 'Configure a target'}
               </Button>
@@ -232,6 +238,7 @@ export default function Home({
                 appearance="primary"
                 onClick={() => onNavigate('chat')}
                 data-testid="home-start-attack-btn"
+                className={mobileTouchTargets.control}
               >
                 Go to chat
               </Button>
@@ -264,7 +271,7 @@ export default function Home({
                         <button
                           key={attack.attack_result_id}
                           type="button"
-                          className={styles.attackRow}
+                          className={mergeClasses(styles.attackRow, mobileTouchTargets.control)}
                           onClick={() => onOpenAttack(attack.attack_result_id)}
                           data-testid={`home-open-attack-${attack.attack_result_id}`}
                           title={attack.last_message_preview || attack.attack_type}

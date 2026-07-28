@@ -71,11 +71,6 @@ export const useHomeStyles = makeStyles({
     justifyContent: 'flex-end',
     gap: tokens.spacingHorizontalS,
   },
-  mobilePrimaryAction: {
-    '@media (max-width: 600px)': {
-      minHeight: '44px',
-    },
-  },
   targetSummary: {
     display: 'flex',
     flexDirection: 'column',

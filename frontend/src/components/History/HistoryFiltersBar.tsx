@@ -12,6 +12,8 @@ import {
   FilterRegular,
   FilterDismissRegular,
 } from '@fluentui/react-icons'
+import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
+
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import type { HistoryFilters } from './historyFilters'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
@@ -108,6 +110,7 @@ export default function HistoryFiltersBar({
   otherLabelOptions,
 }: HistoryFiltersBarProps) {
   const styles = useAttackHistoryStyles()
+  const mobileTouchTargets = useMobileTouchTargetStyles()
 
   const {
     attackTypes: attackTypeFilters,
@@ -175,13 +178,14 @@ export default function HistoryFiltersBar({
             icon={<FilterDismissRegular />}
             onClick={() => onFiltersChange({ ...DEFAULT_HISTORY_FILTERS })}
             data-testid="reset-filters-btn"
+            className={mobileTouchTargets.control}
           >
             Reset
           </Button>
         </Tooltip>
       )}
       <SearchableMultiCombobox
-        className={styles.filterDropdown}
+        className={mergeClasses(styles.filterDropdown, mobileTouchTargets.field)}
         placeholder="All attack types"
         selectedOptions={attackTypeFilters}
         options={attackTypeOptions}
@@ -189,7 +193,7 @@ export default function HistoryFiltersBar({
         testid="attack-type-filter"
       />
       <Combobox
-        className={styles.filterDropdown}
+        className={mergeClasses(styles.filterDropdown, mobileTouchTargets.field)}
         placeholder="All outcomes"
         value={OUTCOME_LABELS[outcomeFilter] ?? ''}
         selectedOptions={outcomeFilter ? [outcomeFilter] : []}
@@ -205,7 +209,7 @@ export default function HistoryFiltersBar({
         <Option value="undetermined">Undetermined</Option>
       </Combobox>
       <Combobox
-        className={styles.filterDropdown}
+        className={mergeClasses(styles.filterDropdown, mobileTouchTargets.field)}
         placeholder="All converters"
         multiselect
         freeform
@@ -279,7 +283,7 @@ export default function HistoryFiltersBar({
         </Tooltip>
       )}
       <SearchableMultiCombobox
-        className={styles.filterDropdown}
+        className={mergeClasses(styles.filterDropdown, mobileTouchTargets.field)}
         placeholder="All operators"
         selectedOptions={operatorFilters}
         options={operatorOptions}
@@ -287,7 +291,7 @@ export default function HistoryFiltersBar({
         testid="operator-filter"
       />
       <SearchableMultiCombobox
-        className={styles.filterDropdown}
+        className={mergeClasses(styles.filterDropdown, mobileTouchTargets.field)}
         placeholder="All operations"
         selectedOptions={operationFilters}
         options={operationOptions}
@@ -295,7 +299,7 @@ export default function HistoryFiltersBar({
         testid="operation-filter"
       />
       <Combobox
-        className={styles.filterDropdown}
+        className={mergeClasses(styles.filterDropdown, mobileTouchTargets.field)}
         placeholder="Filter labels..."
         multiselect
         selectedOptions={otherLabelFilters}

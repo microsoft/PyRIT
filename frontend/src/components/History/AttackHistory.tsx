@@ -7,9 +7,13 @@ import {
   MessageBarBody,
 } from '@fluentui/react-components'
 import { ArrowSyncRegular } from '@fluentui/react-icons'
+
+import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
+
 import { attacksApi, labelsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary } from '../../types'
+
 import type { HistoryFilters } from './historyFilters'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
 import HistoryFiltersBar from './HistoryFiltersBar'
@@ -46,6 +50,7 @@ function buildListParams(filters: HistoryFilters, pageCursor: string | undefined
 
 export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
+  const mobileTouchTargets = useMobileTouchTargetStyles()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -187,6 +192,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
             onClick={() => fetchAttacks()}
             disabled={loading}
             data-testid="refresh-btn"
+            className={mobileTouchTargets.control}
           >
             Refresh
           </Button>
@@ -218,6 +224,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
               onClick={() => fetchAttacks()}
               disabled={loading}
               data-testid="retry-btn"
+              className={mobileTouchTargets.control}
             >
               Retry
             </Button>

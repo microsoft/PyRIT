@@ -14,8 +14,11 @@ const TOUR_VIEWPORT_PADDING_PX = 12
 const JOYRIDE_FLOATING_OPTIONS = {
   hideArrow: true,
   shiftOptions: {
+    // The tooltip portal must use the viewport, not a target's narrower scroll parent.
+    boundary: [] as Element[],
     crossAxis: true,
     padding: TOUR_VIEWPORT_PADDING_PX,
+    rootBoundary: 'viewport',
   },
 } as const
 const JOYRIDE_OPTIONS = {

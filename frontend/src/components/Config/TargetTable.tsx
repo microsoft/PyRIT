@@ -11,6 +11,7 @@ import {
   Text,
   Tooltip,
   Select,
+  mergeClasses,
 } from '@fluentui/react-components'
 import {
   CheckmarkRegular,
@@ -29,8 +30,12 @@ import {
   ChevronRightRegular,
   ChevronDownRegular,
 } from '@fluentui/react-icons'
+
+import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
+
 import type { TargetInstance } from '../../types'
 import { targetEndpoint, targetModelName, targetType, targetUnderlyingModelName } from '../../utils/targetIdentity'
+
 import { useTargetTableStyles } from './TargetTable.styles'
 
 interface TargetTableProps {
@@ -242,6 +247,7 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
 
 export default function TargetTable({ targets, activeTarget, onSetActiveTarget }: TargetTableProps) {
   const styles = useTargetTableStyles()
+  const mobileTouchTargets = useMobileTouchTargetStyles()
   const typeFilterId = useId()
   const [typeFilter, setTypeFilter] = useState('')
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
@@ -295,6 +301,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                       icon={expandedRows.has(activeTarget.target_registry_name) ? <ChevronDownRegular /> : <ChevronRightRegular />}
                       onClick={() => toggleExpanded(activeTarget.target_registry_name)}
                       aria-label={expandedRows.has(activeTarget.target_registry_name) ? 'Collapse inner targets' : 'Expand inner targets'}
+                      className={mobileTouchTargets.control}
                     />
                   )}
                   <Text size={200}>{targetType(activeTarget)}</Text>
@@ -340,7 +347,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
           </label>
           <Select
             id={typeFilterId}
-            className={styles.filterSelect}
+            className={mergeClasses(styles.filterSelect, mobileTouchTargets.field)}
             value={typeFilter}
             onChange={(_, data) => setTypeFilter(data.value)}
           >
@@ -418,6 +425,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                         appearance="primary"
                         size="small"
                         onClick={() => onSetActiveTarget(target)}
+                        className={mobileTouchTargets.control}
                       >
                         Set Active
                       </Button>
@@ -433,6 +441,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                           icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
                           onClick={() => toggleExpanded(target.target_registry_name)}
                           aria-label={expanded ? 'Collapse inner targets' : 'Expand inner targets'}
+                          className={mobileTouchTargets.control}
                         />
                       )}
                       <Text size={200}>{targetType(target)}</Text>

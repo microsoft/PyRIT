@@ -41,12 +41,6 @@ export const useTourTooltipStyles = makeStyles({
     marginBottom: '-8px',
     marginTop: '-4px',
   },
-  closeButton: {
-    '@media (max-width: 600px)': {
-      minWidth: '44px',
-      minHeight: '44px',
-    },
-  },
   content: {
     color: tokens.colorNeutralForeground1,
     lineHeight: tokens.lineHeightBase300,
@@ -70,11 +64,5 @@ export const useTourTooltipStyles = makeStyles({
     marginLeft: 'auto',
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
-  },
-  actionButton: {
-    '@media (max-width: 600px)': {
-      minWidth: '44px',
-      minHeight: '44px',
-    },
   },
 })
