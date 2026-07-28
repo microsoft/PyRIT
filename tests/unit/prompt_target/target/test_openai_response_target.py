@@ -14,6 +14,7 @@ from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal,
 from unit.mocks import (
     get_audio_message_piece,
     get_image_message_piece,
+    get_mock_target_identifier,
     get_sample_conversations,
     openai_response_json_dict,
 )
@@ -23,9 +24,11 @@ from pyrit.exceptions.exception_classes import (
     PyritException,
     RateLimitException,
 )
+from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
+from pyrit.score import SelfAskRefusalScorer
 
 
 def create_mock_response(response_dict: dict = None) -> MagicMock:
@@ -1295,6 +1298,52 @@ async def test_send_prompt_async_returns_blocked_refusal(
     assert refusal_piece.original_value_data_type == "error"
     assert refusal_piece.response_error == "blocked"
     assert json.loads(refusal_piece.original_value)["message"] == refusal
+
+
+async def test_structured_refusal_is_persisted_scored_and_completes_attack(target: OpenAIResponseTarget):
+    refusal = "I cannot assist with that request."
+    output_message = ResponseOutputMessage(
+        id="refusal-message",
+        content=[ResponseOutputRefusal(refusal=refusal, type="refusal")],
+        role="assistant",
+        status="completed",
+        type="message",
+    )
+    mock_response = MagicMock()
+    mock_response.error = None
+    mock_response.status = "completed"
+    mock_response.output = [output_message]
+    target._async_client.responses.create = AsyncMock(return_value=mock_response)
+
+    results = await AttackExecutor(max_concurrency=1).execute_attack_async(
+        attack=PromptSendingAttack(objective_target=target),
+        objectives=["Test objective"],
+        return_partial_on_failure=True,
+    )
+
+    assert results.all_completed
+    assert len(results.completed_results) == 1
+    attack_result = results.completed_results[0]
+    assert attack_result.last_response is not None
+    refusal_piece = attack_result.last_response
+    assert refusal_piece.response_error == "blocked"
+    assert json.loads(refusal_piece.original_value)["message"] == refusal
+    assert json.loads(refusal_piece.converted_value)["message"] == refusal
+
+    persisted_messages = target._memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
+    persisted_piece = persisted_messages[-1].get_piece()
+    assert persisted_piece.id == refusal_piece.id
+    assert json.loads(persisted_piece.original_value)["message"] == refusal
+
+    scorer_target = MagicMock(spec=PromptTarget)
+    scorer_target.get_identifier.return_value = get_mock_target_identifier("RefusalScorerTarget")
+    scorer = SelfAskRefusalScorer(chat_target=scorer_target)
+    scores = await scorer.score_async(refusal_piece.to_message())
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+    assert scores[0].score_value_description == "Refusal detected"
+    scorer_target.send_prompt_async.assert_not_called()
 
 
 # ── Reasoning effort / summary tests ───────────────────────────────────────
