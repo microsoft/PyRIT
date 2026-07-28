@@ -45,9 +45,11 @@ def detect_response_content(message: Any) -> tuple[bool, bool, bool]:
         message (Any): The ``response.choices[0].message`` object.
 
     Returns:
-        tuple[bool, bool, bool]: ``(has_content, has_audio, has_tool_calls)``.
+        tuple[bool, bool, bool]: ``(has_content, has_audio, has_tool_calls)``. Structured
+            refusals count as content because they produce a valid blocked response.
     """
-    has_content = bool(getattr(message, "content", None))
+    refusal = getattr(message, "refusal", None)
+    has_content = bool(getattr(message, "content", None)) or (isinstance(refusal, str) and bool(refusal))
     has_audio = getattr(message, "audio", None) is not None
     has_tool_calls = bool(getattr(message, "tool_calls", None))
     return has_content, has_audio, has_tool_calls
@@ -104,6 +106,26 @@ def _build_text_piece(*, content: str, request: MessagePiece) -> MessagePiece:
         response_text_pieces=[content],
         response_type="text",
     ).message_pieces[0]
+
+
+def _build_blocked_message(
+    *,
+    response_text: str,
+    request: MessagePiece,
+    partial_content: str | None = None,
+) -> Message:
+    error_message = handle_bad_request_exception(
+        response_text=response_text,
+        request=request,
+        error_code=200,
+        is_content_filter=True,
+    )
+
+    if partial_content:
+        for piece in error_message.message_pieces:
+            piece.prompt_metadata["partial_content"] = partial_content
+
+    return error_message
 
 
 def _build_tool_pieces(*, message: Any, request: MessagePiece) -> list[MessagePiece]:
@@ -224,9 +246,10 @@ async def build_response_pieces_async(
     *, response: Any, request: MessagePiece, audio_format: str = "wav"
 ) -> list[MessagePiece]:
     """
-    Build all response pieces (text, audio, and tool calls) from a Chat Completions response.
+    Build all response pieces (refusal, text, audio, and tool calls) from a Chat Completions response.
 
-    Pieces are ordered text, then audio (transcript + file), then tool calls.
+    A structured refusal produces one blocked error piece. Otherwise, pieces are ordered text,
+    then audio (transcript + file), then tool calls.
 
     Args:
         response (Any): The Chat Completions response object.
@@ -240,6 +263,15 @@ async def build_response_pieces_async(
     pieces: list[MessagePiece] = []
 
     content = getattr(message, "content", None)
+    refusal = getattr(message, "refusal", None)
+    if isinstance(refusal, str) and refusal:
+        partial_content = content if isinstance(content, str) and content else None
+        return _build_blocked_message(
+            response_text=refusal,
+            request=request,
+            partial_content=partial_content,
+        ).message_pieces
+
     if content:
         pieces.append(_build_text_piece(content=content, request=request))
 
@@ -431,15 +463,8 @@ def build_content_filter_message(
         Message: The constructed error Message with ``error="blocked"``.
     """
     response_text = response.model_dump_json() if hasattr(response, "model_dump_json") else str(response)
-    error_message = handle_bad_request_exception(
+    return _build_blocked_message(
         response_text=response_text,
         request=request,
-        error_code=200,
-        is_content_filter=True,
+        partial_content=partial_content,
     )
-
-    if partial_content:
-        for piece in error_message.message_pieces:
-            piece.prompt_metadata["partial_content"] = partial_content
-
-    return error_message
