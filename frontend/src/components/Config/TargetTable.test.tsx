@@ -312,7 +312,7 @@ describe('TargetTable', () => {
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
 
     // Filter to OpenAIChatTarget
-    const select = screen.getByRole('combobox')
+    const select = screen.getByRole('combobox', { name: 'Filter by type:' })
     fireEvent.change(select, { target: { value: 'OpenAIChatTarget' } })
 
     expect(screen.getByText('gpt-4')).toBeInTheDocument()

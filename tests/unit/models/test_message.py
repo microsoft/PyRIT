@@ -220,6 +220,19 @@ class TestMessageFromPrompt:
         assert message.message_pieces[0].api_role == "system"
         assert message.message_pieces[0].original_value == "You are a helpful assistant"
 
+    def test_from_system_prompts_creates_system_messages_in_order(self) -> None:
+        """Test that from_system_prompts creates one system message per input, in order."""
+        messages = Message.from_system_prompts("You are X.", "Always cite sources.")
+
+        assert len(messages) == 2
+        assert all(len(m.message_pieces) == 1 for m in messages)
+        assert all(m.message_pieces[0].api_role == "system" for m in messages)
+        assert [m.message_pieces[0].original_value for m in messages] == ["You are X.", "Always cite sources."]
+
+    def test_from_system_prompts_with_no_arguments_returns_empty_list(self) -> None:
+        """Test that from_system_prompts returns an empty list when given no prompts."""
+        assert Message.from_system_prompts() == []
+
     def test_from_prompt_with_empty_string(self) -> None:
         """Test that from_prompt works with empty string."""
         message = Message.from_prompt(prompt="", role="user")

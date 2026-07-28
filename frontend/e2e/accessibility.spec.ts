@@ -1,5 +1,63 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { makeTarget } from "./_targets";
+
+async function expectMinimumTouchTarget(locator: Locator, minimum = 44): Promise<void> {
+  await expect(locator).toBeVisible();
+
+  const box = await locator.boundingBox();
+
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeGreaterThanOrEqual(minimum);
+  expect(box!.height).toBeGreaterThanOrEqual(minimum);
+}
+
+async function expectTourContained(page: Page, dialog: Locator, checkTouchTargets: boolean): Promise<void> {
+  await expect(dialog).toBeVisible();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      })
+  );
+
+  await expect
+    .poll(async () => {
+      const box = await dialog.boundingBox();
+      const viewport = page.viewportSize();
+      const dimensions = await page.evaluate(() => ({
+        clientHeight: document.documentElement.clientHeight,
+        clientWidth: document.documentElement.clientWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        scrollWidth: document.documentElement.scrollWidth,
+      }));
+
+      return (
+        box !== null &&
+        viewport !== null &&
+        box.x >= 0 &&
+        box.x + box.width <= viewport.width + 1 &&
+        box.y >= 0 &&
+        box.y + box.height <= viewport.height + 1 &&
+        dimensions.scrollHeight <= dimensions.clientHeight + 1 &&
+        dimensions.scrollWidth <= dimensions.clientWidth + 1
+      );
+    })
+    .toBe(true);
+
+  const actions = dialog.getByRole("button");
+  const actionCount = await actions.count();
+
+  expect(actionCount).toBeGreaterThan(0);
+
+  for (let index = 0; index < actionCount; index += 1) {
+    const action = actions.nth(index);
+    await expect(action).toBeVisible();
+
+    if (checkTouchTargets) {
+      await expectMinimumTouchTarget(action);
+    }
+  }
+}
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
@@ -159,6 +217,12 @@ test.describe("Accessibility", () => {
               endpoint: "https://test.com",
               model_name: "gpt-4o",
             }),
+            makeTarget({
+              target_registry_name: "a11y-second-target",
+              target_type: "TextTarget",
+              endpoint: "https://test.com/text",
+              model_name: "text-model",
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
@@ -172,7 +236,107 @@ test.describe("Accessibility", () => {
     // Table should exist
     const table = page.getByRole("table");
     await expect(table).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Filter by type:" })).toBeVisible();
   });
+
+  test("major views expose page headings and one primary navigation landmark", async ({ page }) => {
+    const navigation = page.getByRole("navigation", { name: "Primary" });
+
+    await expect(navigation).toHaveCount(1);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Welcome to Co-PyRIT" })
+    ).toBeVisible();
+    await expect(navigation.getByRole("button", { name: "Home" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+
+    const views = [
+      { button: "Attack History", heading: "Attack History" },
+      { button: "Configuration", heading: "Target Configuration" },
+      { button: "Chat", heading: "Chat" },
+    ];
+
+    for (const view of views) {
+      await navigation.getByRole("button", { name: view.button }).click();
+      await expect(
+        page.getByRole("heading", { level: 1, name: view.heading })
+      ).toBeAttached();
+      await expect(page.locator("main h1")).toHaveCount(1);
+      await expect(navigation.getByRole("button", { name: view.button })).toHaveAttribute(
+        "aria-current",
+        "page"
+      );
+    }
+  });
+
+  test("mobile audit controls provide 44px touch targets", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Configure a target" }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
+
+    await page.route(/\/api\/targets/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            makeTarget({
+              target_registry_name: "mobile-touch-target",
+              target_type: "OpenAIChatTarget",
+              endpoint: "https://test.com",
+              model_name: "gpt-4o",
+            }),
+          ],
+          pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+        }),
+      });
+    });
+
+    await page.getByRole("button", { name: "Configuration" }).click();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Target Configuration" })
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "New Target" }));
+  });
+
+  for (const viewport of [
+    { name: "mobile", width: 390, height: 844 },
+    { name: "desktop", width: 1280, height: 800 },
+  ]) {
+    test(`tour remains contained and actionable on ${viewport.name}`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.getByRole("button", { name: "Take a tour" }).click();
+
+      const dialog = page.getByRole("alertdialog");
+
+      for (let step = 0; step < 5; step += 1) {
+        await expect(dialog).toContainText(`${step + 1} of 5`);
+        await expectTourContained(page, dialog, viewport.name === "mobile");
+
+        if (viewport.name === "desktop" && step === 0) {
+          const targetBox = await page.locator('[data-tour="sidebar-nav"]').boundingBox();
+          const dialogBox = await dialog.boundingBox();
+
+          expect(targetBox).not.toBeNull();
+          expect(dialogBox).not.toBeNull();
+          expect(dialogBox!.x).toBeGreaterThanOrEqual(targetBox!.x + targetBox!.width);
+        }
+
+        if (step < 4) {
+          await dialog.getByRole("button", { name: "Next", exact: true }).click();
+        }
+      }
+
+      await dialog.getByRole("button", { name: "Anchors Away!", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await expect(page).toHaveURL(/\/$/);
+    });
+  }
 });
 
 test.describe("Visual Consistency", () => {

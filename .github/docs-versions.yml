@@ -8,13 +8,16 @@
 # To add a new release version: append an entry under `versions:`, and update
 # `default:` / `stable:` if the new release should become the landing page.
 
-default: "0.14.0"  # served at the site root (microsoft.github.io/PyRIT/)
-stable: "0.14.0"   # served at /stable/ and shown as "(stable)" in the picker
+default: "1.0.0"  # served at the site root (microsoft.github.io/PyRIT/)
+stable: "1.0.0"   # served at /stable/ and shown as "(stable)" in the picker
 
 versions:
   - slug: latest
     name: "latest (dev, main)"
     ref: main
+  - slug: "1.0.0"
+    name: "1.0.0"
+    ref: releases/v1.0.0
   - slug: "0.14.0"
     name: "0.14.0"
     ref: releases/v0.14.0

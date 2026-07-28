@@ -337,6 +337,20 @@ class Message(BaseModel):
         """
         return cls.from_prompt(prompt=system_prompt, role="system")
 
+    @classmethod
+    def from_system_prompts(cls, *system_prompts: str) -> list[Message]:
+        """
+        Build a list of system-role messages, ready to pass as ``prepended_conversation``.
+
+        Args:
+            *system_prompts (str): System instruction texts. When omitted, returns an empty list.
+
+        Returns:
+            list[Message]: One system-role message per input, in order.
+
+        """
+        return [cls.from_system_prompt(system_prompt) for system_prompt in system_prompts]
+
     def duplicate(self) -> Message:
         """
         Create a deep copy of this message with new IDs and timestamp for all message pieces.
