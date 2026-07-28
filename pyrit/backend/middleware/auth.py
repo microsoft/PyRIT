@@ -63,9 +63,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
 
     # Trusted URL for resolving group membership; built from a constant (not the
     # token-supplied endpoint) so token data cannot control the request destination.
-    _GRAPH_ME_URL: ClassVar[str] = (
-        "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
-    )
+    _GRAPH_ME_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
     _GRAPH_MEMBER_OBJECTS_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me/getMemberObjects"
     _GRAPH_TIMEOUT_SECONDS: ClassVar[float] = 10.0
     _GRAPH_MAX_MEMBERSHIP_PAGES: ClassVar[int] = 20
@@ -241,9 +239,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         """
         return bool(self._allowed_group_ids & set(user.groups))
 
-    async def _resolve_group_memberships_async(
-        self, *, client: httpx.AsyncClient, token: str
-    ) -> list[str]:
+    async def _resolve_group_memberships_async(self, *, client: httpx.AsyncClient, token: str) -> list[str]:
         """
         Resolve the current user's transitive group memberships through Graph.
 
