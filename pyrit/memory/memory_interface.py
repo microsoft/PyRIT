@@ -3148,22 +3148,21 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
-        normalized_state = ScenarioRunState(scenario_run_state)
         with closing(self.get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
             if not entry:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
-            entry.scenario_run_state = normalized_state.value
-            if error_message is not None or normalized_state != ScenarioRunState.FAILED:
+            entry.scenario_run_state = scenario_run_state.value
+            if error_message is not None or scenario_run_state != ScenarioRunState.FAILED:
                 entry.error_message = error_message
-            if error_type is not None or normalized_state != ScenarioRunState.FAILED:
+            if error_type is not None or scenario_run_state != ScenarioRunState.FAILED:
                 entry.error_type = error_type
 
             session.commit()
 
-        logger.info(f"Updated scenario {scenario_result_id} state to '{normalized_state.value}'")
+        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
 
     def update_scenario_metadata(
         self,
