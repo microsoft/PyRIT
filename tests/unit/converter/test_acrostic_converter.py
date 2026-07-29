@@ -57,3 +57,14 @@ async def test_acrostic_custom_word_bank():
     result = await converter.convert_async(prompt="hi", input_type="text")
     body = result.output_text.split("\n\n", 1)[1].splitlines()
     assert body == ["Hawk", "Iron"]
+
+
+async def test_acrostic_round_trip_with_multi_word_bank():
+    # Regression: word-bank values containing spaces must not be mistaken for
+    # the instruction line during decode.
+    bank = {"h": "Ice hockey", "i": "ice cream", "t": "tall tree", "e": "east wind", "r": "red car"}
+    converter = AcrosticConverter(word_bank=bank)
+    message = "hi there"
+    result = await converter.convert_async(prompt=message, input_type="text")
+    decoded = AcrosticConverter.decode(result.output_text)
+    assert decoded.lower() == message.lower()

@@ -93,7 +93,7 @@ class AcrosticConverter(Converter):
         """
         super().__init__()
         self._instruction = instruction or _DEFAULT_INSTRUCTION
-        self._word_bank = word_bank or _DEFAULT_WORD_BANK
+        self._word_bank = dict(word_bank) if word_bank else dict(_DEFAULT_WORD_BANK)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -144,9 +144,13 @@ class AcrosticConverter(Converter):
         """
         Reconstruct the hidden message from an acrostic produced by this converter.
 
-        Useful for round-trip verification. The leading instruction line contains
-        spaces and is therefore skipped; acrostic lines are single words or the
-        space sentinel.
+        Useful for round-trip verification. The leading instruction is separated
+        from the acrostic body by a blank line and is skipped; each remaining line
+        contributes its first character, and the space sentinel becomes a space.
+
+        Note: decoding is lossy. Only alphabetic characters and spaces survive the
+        round trip — digits and punctuation are dropped, and letters come back
+        uppercased (each acrostic word starts with a capital).
 
         Args:
             acrostic_text (str): The acrostic text produced by this converter.
@@ -154,10 +158,13 @@ class AcrosticConverter(Converter):
         Returns:
             str: The reconstructed message, with sentinel lines rendered as spaces.
         """
+        _, _, body = acrostic_text.partition("\n\n")
+        body = body or acrostic_text  # fall back if no separator is present
+
         chars: list[str] = []
-        for line in acrostic_text.splitlines():
+        for line in body.splitlines():
             line = line.strip()
-            if not line or " " in line:
+            if not line:
                 continue  # blank line or the instruction line
             chars.append(" " if line == _SPACE_SENTINEL else line[0])
         return "".join(chars)
