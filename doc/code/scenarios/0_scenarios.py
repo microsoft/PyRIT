@@ -231,11 +231,11 @@ print_scenario_list(items=response.items)
 #         RESPONSE --> SCORE["Apply configured scorer policy"]
 #         REFUSAL --> SCORE
 #         SCORE --> SCORE_RESULT{"Scoring result"}
+#         SCORE_RESULT -->|Objective not achieved| MORE{"Attack-specific attempt or turn remains?"}
+#         SCORE_RESULT -->|Objective achieved| SUCCESS["AttackResult<br/>AttackOutcome.SUCCESS"]
+#         SCORE_RESULT -->|No objective scorer| UNDETERMINED["AttackResult<br/>AttackOutcome.UNDETERMINED"]
 #         SCORE_RESULT -->|Invalid scorer JSON; retry remains| SCORE
 #         SCORE_RESULT -->|Scorer error or JSON retries exhausted| EXEC_ERROR
-#         SCORE_RESULT -->|Objective achieved| SUCCESS["AttackResult<br/>AttackOutcome.SUCCESS"]
-#         SCORE_RESULT -->|Objective not achieved| MORE{"Attack-specific attempt or turn remains?"}
-#         SCORE_RESULT -->|No objective scorer| UNDETERMINED["AttackResult<br/>AttackOutcome.UNDETERMINED"]
 #         MORE -->|Yes| TARGET
 #         MORE -->|No| FAILURE["AttackResult<br/>AttackOutcome.FAILURE"]
 #
