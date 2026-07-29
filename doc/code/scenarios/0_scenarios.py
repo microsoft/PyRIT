@@ -221,14 +221,14 @@ print_scenario_list(items=response.items)
 # :class: col-page-right
 #
 # ```{mermaid}
-# %%{init: {"themeVariables": {"fontSize": "24px"}, "flowchart": {"subGraphTitleMargin": {"bottom": 40}}}}%%
+# %%{init: {"flowchart": {"subGraphTitleMargin": {"bottom": 40}, "wrappingWidth": 260}}}%%
 # flowchart TB
-#     subgraph objective["One objective in an AtomicAttack"]
+#     subgraph objective["One objective in<br/>an AtomicAttack"]
 #         START["Execute attack objective"] --> TARGET["Send or continue conversation"]
 #         TARGET --> TARGET_RESULT{"Target result"}
 #
 #         TARGET_RESULT -->|Normal model output| RESPONSE["Persistable model response"]
-#         TARGET_RESULT -->|Handled refusal or content-filter response| REFUSAL["Persistable blocked model response<br/>not an execution failure"]
+#         TARGET_RESULT -->|Handled refusal or<br/>content-filter response| REFUSAL["Persistable blocked model response<br/>not an execution failure"]
 #         TARGET_RESULT --> RUNTIME_ERROR["Non-retryable runtime error"]
 #         TARGET_RESULT -->|Retryable target error| TARGET_RETRY{"Target retry budget remains?"}
 #         TARGET_RETRY -->|No / exhausted| EXEC_ERROR["Execution exception propagates"]
@@ -241,8 +241,8 @@ print_scenario_list(items=response.items)
 #         SCORE_RESULT -->|Objective not achieved| MORE{"Attack-specific attempt or turn remains?"}
 #         SCORE_RESULT -->|Objective achieved| SUCCESS["AttackResult<br/>AttackOutcome.SUCCESS"]
 #         SCORE_RESULT -->|No objective scorer| UNDETERMINED["AttackResult<br/>AttackOutcome.UNDETERMINED"]
-#         SCORE_RESULT -->|Invalid scorer JSON; retry remains| RETRY_SCORE["Repeat from<br/>Apply configured scorer policy"]
-#         SCORE_RESULT -->|Scorer error or JSON retries exhausted| EXEC_ERROR
+#         SCORE_RESULT -->|Invalid JSON;<br/>retry remains| RETRY_SCORE["Repeat from<br/>Apply configured scorer policy"]
+#         SCORE_RESULT -->|Scorer error or<br/>out of retries| EXEC_ERROR
 #         MORE -->|Yes| RETRY_ATTACK["Repeat from<br/>Send or continue conversation"]
 #         MORE -->|No| FAILURE["AttackResult<br/>AttackOutcome.FAILURE"]
 #
@@ -253,13 +253,13 @@ print_scenario_list(items=response.items)
 #         ERROR_ROW --> INCOMPLETE["Incomplete objective<br/>exception retained"]
 #     end
 #
-#     subgraph aggregation["Scenario aggregation and resiliency"]
+#     subgraph aggregation["Scenario aggregation<br/>and resiliency"]
 #         COMPLETE --> EXECUTOR_RESULT["AttackExecutorResult"]
 #         INCOMPLETE --> EXECUTOR_RESULT
 #         EXECUTOR_RESULT --> HAS_INCOMPLETE{"Any incomplete objectives?"}
 #
 #         HAS_INCOMPLETE -->|Yes| SCENARIO_RETRY{"Scenario retry budget remains?"}
-#         SCENARIO_RETRY -->|Yes; resume only incomplete objectives| RESUME["Repeat objective flow<br/>for incomplete objectives"]
+#         SCENARIO_RETRY -->|Yes; resume only<br/>incomplete objectives| RESUME["Repeat objective flow<br/>for incomplete objectives"]
 #         SCENARIO_RETRY -->|No / exhausted| PARTIAL["Raise ScenarioPartialFailureException<br/>structured counts, incomplete objectives, preserved cause<br/>completed_count may be zero"]
 #         PARTIAL --> SCENARIO_FAILED["Persist ScenarioRunState.FAILED"]
 #

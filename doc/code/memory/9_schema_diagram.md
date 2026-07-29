@@ -6,7 +6,6 @@ Our memory contains multiple components. This diagram  shows a mapping of our da
 :class: col-page-right
 
 ```{mermaid}
-%%{init: {"themeVariables": {"fontSize": "20px"}}}%%
 flowchart LR
  subgraph EmbeddingData["EmbeddingData"]
         E_id["id (UUID)"]

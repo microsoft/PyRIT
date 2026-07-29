@@ -69,7 +69,6 @@ print(df.to_string(index=False))
 # :class: col-page-right
 #
 # ```mermaid
-# %%{init: {"themeVariables": {"fontSize": "24px"}}}%%
 # classDiagram
 #     class Scorer { <<abstract>> }
 #     class FloatScaleScorer { <<abstract>> }
