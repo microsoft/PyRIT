@@ -239,8 +239,8 @@ print_scenario_list(items=response.items)
 #         MORE -->|Yes| TARGET
 #         MORE -->|No| FAILURE["AttackResult<br/>AttackOutcome.FAILURE"]
 #
-#         SUCCESS --> COMPLETE["Completed objective"]
-#         FAILURE --> COMPLETE
+#         FAILURE --> COMPLETE["Completed objective"]
+#         SUCCESS --> COMPLETE
 #         UNDETERMINED --> COMPLETE
 #         EXEC_ERROR --> ERROR_ROW["Error handler may persist<br/>AttackOutcome.ERROR for diagnostics"]
 #         ERROR_ROW --> INCOMPLETE["Incomplete objective<br/>exception retained"]
