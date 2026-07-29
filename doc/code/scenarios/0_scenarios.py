@@ -214,9 +214,14 @@ print_scenario_list(items=response.items)
 # refusals and content-filter responses as blocked model responses, applies the configured scoring
 # policy, and returns a completed `AttackResult`. A refusal that does not achieve the objective normally
 # produces `AttackOutcome.FAILURE`; a response that achieves it produces `AttackOutcome.SUCCESS`.
+
+# %% [markdown] class="col-page-right"
+#
+# :::{div}
+# :class: col-page-right
 #
 # ```{mermaid}
-# %%{init: {"themeVariables": {"fontSize": "36px"}}}%%
+# %%{init: {"themeVariables": {"fontSize": "24px"}}}%%
 # flowchart TB
 #     subgraph objective["One objective in an AtomicAttack"]
 #         START["Execute attack objective"] --> TARGET["Send or continue conversation"]
@@ -273,6 +278,9 @@ print_scenario_list(items=response.items)
 #     class SUCCESS,FAILURE,UNDETERMINED,COMPLETE,SCENARIO_COMPLETE complete;
 #     class RUNTIME_ERROR,EXEC_ERROR,ERROR_ROW,INCOMPLETE,PARTIAL,SCENARIO_FAILED incomplete;
 # ```
+# :::
+
+# %% [markdown]
 #
 # To keep retry paths readable, **Repeat from** nodes name the earlier step where execution resumes
 # instead of drawing long return arrows across unrelated branches.
