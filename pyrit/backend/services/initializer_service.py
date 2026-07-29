@@ -20,7 +20,6 @@ from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
     AdditionalInitializerSetting,
     ApplyInitializerResponse,
-    BaselineInitializerConfig,
     BaselineInitializerSetting,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
@@ -108,7 +107,7 @@ class InitializerService:
     async def list_initializer_settings_async(
         self,
         *,
-        baseline_initializers: Sequence[BaselineInitializerConfig],
+        baseline_initializers: Sequence[BaselineInitializerSetting],
     ) -> InitializerSettingsResponse:
         """
         List the read-only ``.pyrit_conf`` baseline plus the persisted additional initializers.
@@ -121,15 +120,6 @@ class InitializerService:
             Each entry references its initializer by ``initializer_name``; clients resolve
             catalog metadata from the registered-initializers list.
         """
-        baseline = [
-            BaselineInitializerSetting(
-                initializer_name=config.initializer_name,
-                parameters=config.parameters,
-                order_index=position,
-            )
-            for position, config in enumerate(baseline_initializers)
-        ]
-
         additional = [
             AdditionalInitializerSetting(
                 id=initializer.id,
@@ -140,7 +130,7 @@ class InitializerService:
             for initializer in self._memory.get_additional_initializers()
         ]
 
-        return InitializerSettingsResponse(baseline=baseline, additional=additional)
+        return InitializerSettingsResponse(baseline=list(baseline_initializers), additional=additional)
 
     async def create_additional_initializer_async(
         self,

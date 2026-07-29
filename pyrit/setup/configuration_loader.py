@@ -218,7 +218,7 @@ class ConfigurationLoader(YamlLoadable):
 
     @property
     def initializer_configs(self) -> Sequence[InitializerConfig]:
-        """The normalized, ordered list of ``initializers:`` entries from this configuration."""
+        """The ordered initializer configurations with registry names normalized to snake case."""
         return self._initializer_configs
 
     @classmethod
@@ -492,7 +492,7 @@ class ConfigurationLoader(YamlLoadable):
         Resolves the ``.pyrit_conf`` baseline initializers to instances and calls the core
         ``initialize_pyrit_async`` function. This method is intentionally unaware of any
         persisted additional initializers: consumers such as ``pyrit.backend.main.lifespan``
-        run those after the baseline, keeping DB-awareness out of the configuration loader.
+        run those after the baseline.
 
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.

@@ -21,7 +21,6 @@ __all__ = [
     "AdditionalInitializerSetting",
     "ApplyInitializerRequest",
     "ApplyInitializerResponse",
-    "BaselineInitializerConfig",
     "BaselineInitializerSetting",
     "CreateAdditionalInitializerRequest",
     "InitializerSettingsResponse",
@@ -47,18 +46,6 @@ class RegisterInitializerRequest(BaseModel):
         description="Registry name for the initializer (e.g., 'my_custom')",
     )
     script_content: str = Field(..., description="Python source code containing a PyRITInitializer subclass")
-
-
-class BaselineInitializerConfig(BaseModel):
-    """
-    One ``.pyrit_conf`` baseline initializer, as captured at backend startup.
-
-    Stashed on ``app.state`` by the startup lifespan so route/service layers can display the
-    read-only baseline without importing the configuration loader.
-    """
-
-    initializer_name: str = Field(..., description="Initializer registry name.")
-    parameters: dict[str, Any] | None = Field(default=None, description="Baseline parameters from the config.")
 
 
 class BaselineInitializerSetting(BaseModel):

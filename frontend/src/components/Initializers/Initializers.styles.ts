@@ -1,6 +1,6 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-export const useInitializerConfigStyles = makeStyles({
+export const useInitializersStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',

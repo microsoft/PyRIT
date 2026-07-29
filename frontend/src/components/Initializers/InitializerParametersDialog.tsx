@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Button,
   Dialog,
@@ -14,7 +14,8 @@ import {
 
 import type { RegisteredInitializer } from '@/types'
 
-import { useInitializerListStyles } from './InitializerList.styles'
+import { useAdditionalInitializersStyles } from './AdditionalInitializers.styles'
+import { formatSupportedParameterSummary } from './initializerFormatting'
 
 interface InitializerParametersDialogProps {
   open: boolean
@@ -46,17 +47,6 @@ function parseParametersText(text: string): Record<string, unknown> | null {
   return parsed as Record<string, unknown>
 }
 
-function formatSupportedParameterSummary(initializer: RegisteredInitializer): string[] {
-  if (initializer.supported_parameters.length === 0) {
-    return ['No declared parameters.']
-  }
-
-  return initializer.supported_parameters.map((parameter) => {
-    const requiredLabel = parameter.required ? 'required' : 'optional'
-    return `${parameter.name} (${parameter.type_name}, ${requiredLabel})`
-  })
-}
-
 export default function InitializerParametersDialog({
   open,
   mode,
@@ -66,16 +56,9 @@ export default function InitializerParametersDialog({
   onSubmit,
   onOpenChange,
 }: InitializerParametersDialogProps) {
-  const styles = useInitializerListStyles()
+  const styles = useAdditionalInitializersStyles()
   const [parametersText, setParametersText] = useState(() => serializeParameters(initialParameters))
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (open) {
-      setParametersText(serializeParameters(initialParameters))
-      setError(null)
-    }
-  }, [open, initialParameters])
 
   const handleSubmit = async (): Promise<void> => {
     let parameters: Record<string, unknown> | null

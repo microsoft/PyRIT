@@ -15,7 +15,7 @@ from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
     ApplyInitializerResponse,
-    BaselineInitializerConfig,
+    BaselineInitializerSetting,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisteredInitializer,
@@ -202,8 +202,16 @@ class TestInitializerServiceSettings:
             _make_initializer_metadata(registry_name="custom", class_name="CustomInitializer"),
         ]
         baseline_initializers = [
-            BaselineInitializerConfig(initializer_name="target", parameters={"tags": ["baseline"]}),
-            BaselineInitializerConfig(initializer_name="widget", parameters={"mode": "baseline"}),
+            BaselineInitializerSetting(
+                initializer_name="target",
+                parameters={"tags": ["baseline"]},
+                order_index=0,
+            ),
+            BaselineInitializerSetting(
+                initializer_name="widget",
+                parameters={"mode": "baseline"},
+                order_index=1,
+            ),
         ]
         additional = [
             AdditionalInitializer(id="a1", initializer_name="custom", parameters={"tags": ["extra"]}, order_index=0),
@@ -237,10 +245,10 @@ class TestInitializerServiceSettings:
             _make_initializer_metadata(registry_name="load_default_datasets", class_name="LoadDefaultDatasets"),
         ]
         baseline_initializers = [
-            BaselineInitializerConfig(initializer_name="technique"),
-            BaselineInitializerConfig(initializer_name="target"),
-            BaselineInitializerConfig(initializer_name="scorer"),
-            BaselineInitializerConfig(initializer_name="load_default_datasets"),
+            BaselineInitializerSetting(initializer_name="technique", order_index=0),
+            BaselineInitializerSetting(initializer_name="target", order_index=1),
+            BaselineInitializerSetting(initializer_name="scorer", order_index=2),
+            BaselineInitializerSetting(initializer_name="load_default_datasets", order_index=3),
         ]
 
         with patch.object(InitializerService, "__init__", lambda self: None):

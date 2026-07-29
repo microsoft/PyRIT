@@ -10,7 +10,7 @@ import type {
   RegisteredInitializer,
 } from '@/types'
 
-import InitializerConfig from './InitializerConfig'
+import Initializers from './Initializers'
 
 jest.mock('@/services/api', () => ({
   initializersApi: {
@@ -96,15 +96,15 @@ const sampleSettings: InitializerSettingsResponse = {
   additional: [additionalItem],
 }
 
-function renderInitializerConfig(): void {
+function renderInitializers(): void {
   render(
     <TestWrapper>
-      <InitializerConfig />
+      <Initializers />
     </TestWrapper>,
   )
 }
 
-describe('InitializerConfig', () => {
+describe('Initializers', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockedInitializersApi.getSettings.mockResolvedValue(sampleSettings)
@@ -135,13 +135,13 @@ describe('InitializerConfig', () => {
   it('should show loading state initially', () => {
     mockedInitializersApi.getSettings.mockReturnValue(new Promise(() => {}))
 
-    renderInitializerConfig()
+    renderInitializers()
 
     expect(screen.getByText('Loading initializer settings...')).toBeInTheDocument()
   })
 
   it('should render baseline and additional initializers', async () => {
-    renderInitializerConfig()
+    renderInitializers()
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Initializers' })).toBeInTheDocument()
     expect(await screen.findByRole('heading', { level: 2, name: 'Baseline initializers' })).toBeInTheDocument()
@@ -152,7 +152,7 @@ describe('InitializerConfig', () => {
 
   it('should refresh settings when the refresh button is clicked', async () => {
     const user = userEvent.setup()
-    renderInitializerConfig()
+    renderInitializers()
 
     await waitFor(() => {
       expect(mockedInitializersApi.getSettings).toHaveBeenCalledTimes(1)
@@ -169,7 +169,7 @@ describe('InitializerConfig', () => {
 
   it('should render a read-only catalog of all registered initializers in a dialog', async () => {
     const user = userEvent.setup()
-    renderInitializerConfig()
+    renderInitializers()
 
     await screen.findByRole('button', { name: 'Browse available initializers' })
     await openDialogByButton(user, 'Browse available initializers', 'Available initializers')
@@ -182,7 +182,7 @@ describe('InitializerConfig', () => {
 
   it('should create the selected initializer and show success feedback', async () => {
     const user = userEvent.setup()
-    renderInitializerConfig()
+    renderInitializers()
 
     await screen.findByTestId('initializer-row-additional-1')
     const dialog = await openDialogByButton(user, 'Add initializer', 'Add target initializer')
@@ -200,7 +200,7 @@ describe('InitializerConfig', () => {
 
   it('should let the user choose a non-target initializer to add', async () => {
     const user = userEvent.setup()
-    renderInitializerConfig()
+    renderInitializers()
 
     await screen.findByTestId('initializer-row-additional-1')
     const combobox = screen.getByRole('combobox', { name: 'Initializer to add' })
@@ -221,7 +221,7 @@ describe('InitializerConfig', () => {
 
   it('should save an additional initializer from the edit dialog', async () => {
     const user = userEvent.setup()
-    renderInitializerConfig()
+    renderInitializers()
 
     await screen.findByTestId('initializer-row-additional-1')
     const dialog = await openDialogByButton(user, 'Edit', 'Edit scorer initializer')
@@ -240,7 +240,7 @@ describe('InitializerConfig', () => {
 
   it('should apply an additional initializer', async () => {
     const user = userEvent.setup()
-    renderInitializerConfig()
+    renderInitializers()
 
     const additionalRow = await screen.findByTestId('initializer-row-additional-1')
     await user.click(within(additionalRow).getByRole('button', { name: 'Apply now' }))
@@ -254,7 +254,7 @@ describe('InitializerConfig', () => {
   })
 
   it('should not render an apply button on baseline initializers', async () => {
-    renderInitializerConfig()
+    renderInitializers()
 
     const baselineRow = await screen.findByTestId('baseline-initializer-row-target')
     expect(within(baselineRow).queryByRole('button', { name: 'Apply now' })).not.toBeInTheDocument()
@@ -262,7 +262,7 @@ describe('InitializerConfig', () => {
 
   it('should remove an additional initializer and show success feedback', async () => {
     const user = userEvent.setup()
-    renderInitializerConfig()
+    renderInitializers()
 
     const row = await screen.findByTestId('initializer-row-additional-1')
     await user.click(within(row).getByRole('button', { name: 'Remove' }))

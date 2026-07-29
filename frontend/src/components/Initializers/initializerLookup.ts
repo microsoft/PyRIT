@@ -9,9 +9,9 @@ import type { RegisteredInitializer } from '@/types'
  */
 export function resolveRegisteredInitializer(
   initializerName: string,
-  registered: RegisteredInitializer[],
+  registeredInitializers: RegisteredInitializer[],
 ): RegisteredInitializer {
-  const match = registered.find((item) => item.initializer_name === initializerName)
+  const match = registeredInitializers.find((item) => item.initializer_name === initializerName)
   if (match) {
     return match
   }

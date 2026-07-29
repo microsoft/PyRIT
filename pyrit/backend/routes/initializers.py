@@ -24,7 +24,7 @@ from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
     ApplyInitializerRequest,
     ApplyInitializerResponse,
-    BaselineInitializerConfig,
+    BaselineInitializerSetting,
     CreateAdditionalInitializerRequest,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
@@ -38,7 +38,7 @@ from pyrit.models.catalog.initializer import RegisteredInitializer
 router = APIRouter(prefix="/initializers", tags=["initializers"])
 
 
-def _baseline_initializers(request: Request) -> list[BaselineInitializerConfig]:
+def _baseline_initializers(request: Request) -> list[BaselineInitializerSetting]:
     """
     Read the read-only baseline initializer list captured at backend startup.
 
@@ -51,7 +51,7 @@ def _baseline_initializers(request: Request) -> list[BaselineInitializerConfig]:
         request: The incoming FastAPI request.
 
     Returns:
-        list[BaselineInitializerConfig]: The baseline initializers, or an empty list.
+        list[BaselineInitializerSetting]: The baseline initializers, or an empty list.
     """
     return list(getattr(request.app.state, "baseline_initializers", []))
 

@@ -7,8 +7,8 @@ import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
-import ConfigPage from './components/Config/ConfigPage'
-import InitializerConfig from './components/Config/InitializerConfig'
+import TargetConfig from './components/Config/TargetConfig'
+import Initializers from './components/Initializers/Initializers'
 import AttackHistory from './components/History/AttackHistory'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
@@ -388,13 +388,13 @@ function App() {
               <Route
                 path="/config"
                 element={
-                  <ConfigPage
+                  <TargetConfig
                     activeTarget={activeTarget}
                     onSetActiveTarget={handleSetActiveTarget}
                   />
                 }
               />
-              <Route path="/initializers" element={<InitializerConfig />} />
+              <Route path="/initializers" element={<Initializers />} />
               <Route
                 path="/history"
                 element={

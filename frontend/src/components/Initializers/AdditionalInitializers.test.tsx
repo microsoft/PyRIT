@@ -4,7 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import type { AdditionalInitializerSetting, RegisteredInitializer } from '@/types'
 
-import InitializerList from './InitializerList'
+import AdditionalInitializers from './AdditionalInitializers'
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
@@ -61,10 +61,12 @@ const sampleItems: AdditionalInitializerSetting[] = [
   },
 ]
 
-describe('InitializerList', () => {
+describe('AdditionalInitializers', () => {
   const defaultProps = {
     items: sampleItems,
     registeredInitializers: [targetInitializer, scorerInitializer],
+    creating: false,
+    onAdd: jest.fn().mockResolvedValue(true),
     onSave: jest.fn().mockResolvedValue(undefined),
     onApply: jest.fn().mockResolvedValue(undefined),
     onRemove: jest.fn().mockResolvedValue(undefined),
@@ -77,7 +79,7 @@ describe('InitializerList', () => {
   it('should render additional initializer rows and metadata', () => {
     render(
       <TestWrapper>
-        <InitializerList {...defaultProps} />
+        <AdditionalInitializers {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -90,7 +92,7 @@ describe('InitializerList', () => {
   it('should show the saved parameters read-only without an inline editor', () => {
     render(
       <TestWrapper>
-        <InitializerList {...defaultProps} />
+        <AdditionalInitializers {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -104,13 +106,13 @@ describe('InitializerList', () => {
 
     render(
       <TestWrapper>
-        <InitializerList {...defaultProps} />
+        <AdditionalInitializers {...defaultProps} />
       </TestWrapper>,
     )
 
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
 
-    await user.hover(screen.getByText('target'))
+    await user.hover(within(screen.getByTestId('initializer-row-additional-1')).getByText('target'))
 
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Registers targets.')
   })
@@ -120,7 +122,7 @@ describe('InitializerList', () => {
 
     render(
       <TestWrapper>
-        <InitializerList {...defaultProps} />
+        <AdditionalInitializers {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -144,7 +146,7 @@ describe('InitializerList', () => {
 
     render(
       <TestWrapper>
-        <InitializerList {...defaultProps} />
+        <AdditionalInitializers {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -159,7 +161,7 @@ describe('InitializerList', () => {
 
     render(
       <TestWrapper>
-        <InitializerList {...defaultProps} />
+        <AdditionalInitializers {...defaultProps} />
       </TestWrapper>,
     )
 
@@ -173,7 +175,7 @@ describe('InitializerList', () => {
 
     render(
       <TestWrapper>
-        <InitializerList {...defaultProps} />
+        <AdditionalInitializers {...defaultProps} />
       </TestWrapper>,
     )
 
