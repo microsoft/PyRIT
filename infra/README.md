@@ -9,9 +9,9 @@ managed identity, security response headers, and no embedded secrets.
 ```
 Users ──→ MSAL PKCE auth ──→ Container App
                                                        ↓
-                          Graph-backed authentication
+                                          Graph-backed authentication
                                                        ↓
-                        Microsoft Graph /me + memberships
+                                       Microsoft Graph /me + memberships
                                                        ↓
                                               User-Assigned MI
                                         ↙     ↙     ↓      ↘      ↘
@@ -62,7 +62,7 @@ Production is opt-in via `deployToProd: true`.
   Graph token, and the backend authenticates it through Graph `/me`. PKCE (public
   client) requires no client secrets or certificates.
 - **Authorization**: Entra group check via `allowedGroupObjectIds` param. Requires
-  delegated Graph `User.Read`; the backend calls `/me/getMemberObjects` and compares
+  delegated Graph `User.Read`; the backend calls `/me/checkMemberGroups` and compares
   the returned transitive memberships with the configured group IDs. Each security
   group must also be assigned to the enterprise app (see Prerequisites §3). Authenticated
   deployments require at least one allowed group and fail to start without one.
@@ -176,7 +176,7 @@ In Azure Portal → App registrations → your app → **API permissions**:
 
 The frontend requests `User.Read`. The backend treats the resulting Graph access
 token as opaque and forwards it only to fixed or allowlisted Graph endpoints. Graph
-validates the token when the backend calls `/me` and `/me/getMemberObjects`.
+validates the token when the backend calls `/me` and `/me/checkMemberGroups`.
 
 Or via CLI:
 ```bash

@@ -52,7 +52,7 @@ within an instance. The trust boundary is Entra group membership.
 > new instances monthly.
 
 The script configures delegated Microsoft Graph `User.Read`; the backend uses the
-token with `/me` and `/me/getMemberObjects` and requires at least one allowed group.
+token with `/me` and `/me/checkMemberGroups` and requires at least one allowed group.
 See [README.md](README.md#security) for the full authentication model.
 
 ## Quick Deploy

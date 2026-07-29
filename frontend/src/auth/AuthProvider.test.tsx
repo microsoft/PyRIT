@@ -37,7 +37,6 @@ const mockHandleRedirectPromise = jest.fn().mockResolvedValue(null);
 const mockGetActiveAccount = jest.fn().mockReturnValue(null);
 const mockGetAllAccounts = jest.fn().mockReturnValue([]);
 const mockSetActiveAccount = jest.fn();
-const mockAddEventCallback = jest.fn();
 const mockLoginRedirect = jest.fn().mockResolvedValue(undefined);
 
 jest.mock("@azure/msal-browser", () => ({
@@ -47,7 +46,6 @@ jest.mock("@azure/msal-browser", () => ({
     getActiveAccount: mockGetActiveAccount,
     getAllAccounts: mockGetAllAccounts,
     setActiveAccount: mockSetActiveAccount,
-    addEventCallback: mockAddEventCallback,
     loginRedirect: mockLoginRedirect,
   })),
   EventType: { LOGIN_SUCCESS: "msal:loginSuccess" },

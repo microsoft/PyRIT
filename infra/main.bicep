@@ -57,7 +57,6 @@ var normalizedAllowedGroupObjectIds = filter(
   map(split(allowedGroupObjectIds, ','), groupId => trim(groupId)),
   groupId => !empty(groupId)
 )
-assert allowedGroupsConfigured = length(normalizedAllowedGroupObjectIds) > 0
 
 @description('CIDR range allowed to reach the app (e.g., your corp VPN CIDR). Empty = no IP restriction, all traffic allowed.')
 param allowedCidr string = ''
