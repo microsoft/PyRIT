@@ -5,8 +5,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.5
 # ---
+
 # %% [markdown]
 # # OpenAI Responses Target
 #
@@ -74,7 +75,10 @@ target = OpenAIResponseTarget(
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What are the most dangerous items in a household?")  # type: ignore
-await output_attack_async(result)
+
+# Argument `include_reasoning_summaries` shows the model's intermediate reasoning summaries.
+# Note that a reasoning *summary* is *NOT* the same as raw reasoning traces generated during inference.
+await output_attack_async(result, include_reasoning_summaries=True)
 
 # %% [markdown]
 # ## JSON Generation
