@@ -223,10 +223,11 @@ print_scenario_list(items=response.items)
 #
 #         TARGET_RESULT -->|Normal model output| RESPONSE["Persistable model response"]
 #         TARGET_RESULT -->|Handled refusal or content-filter response| REFUSAL["Persistable blocked model response<br/>not an execution failure"]
+#         TARGET_RESULT --> RUNTIME_ERROR["Non-retryable runtime error"]
 #         TARGET_RESULT -->|Retryable target error| TARGET_RETRY{"Target retry budget remains?"}
-#         TARGET_RETRY -->|Yes| TARGET
 #         TARGET_RETRY -->|No / exhausted| EXEC_ERROR["Execution exception propagates"]
-#         TARGET_RESULT -->|Non-retryable runtime error| EXEC_ERROR
+#         TARGET_RETRY -->|Yes| RETRY_TARGET["Repeat from<br/>Send or continue conversation"]
+#         RUNTIME_ERROR --> EXEC_ERROR
 #
 #         RESPONSE --> SCORE["Apply configured scorer policy"]
 #         REFUSAL --> SCORE
@@ -234,9 +235,9 @@ print_scenario_list(items=response.items)
 #         SCORE_RESULT -->|Objective not achieved| MORE{"Attack-specific attempt or turn remains?"}
 #         SCORE_RESULT -->|Objective achieved| SUCCESS["AttackResult<br/>AttackOutcome.SUCCESS"]
 #         SCORE_RESULT -->|No objective scorer| UNDETERMINED["AttackResult<br/>AttackOutcome.UNDETERMINED"]
-#         SCORE_RESULT -->|Invalid scorer JSON; retry remains| SCORE
+#         SCORE_RESULT -->|Invalid scorer JSON; retry remains| RETRY_SCORE["Repeat from<br/>Apply configured scorer policy"]
 #         SCORE_RESULT -->|Scorer error or JSON retries exhausted| EXEC_ERROR
-#         MORE -->|Yes| TARGET
+#         MORE -->|Yes| RETRY_ATTACK["Repeat from<br/>Send or continue conversation"]
 #         MORE -->|No| FAILURE["AttackResult<br/>AttackOutcome.FAILURE"]
 #
 #         FAILURE --> COMPLETE["Completed objective"]
@@ -251,24 +252,29 @@ print_scenario_list(items=response.items)
 #         INCOMPLETE --> EXECUTOR_RESULT
 #         EXECUTOR_RESULT --> HAS_INCOMPLETE{"Any incomplete objectives?"}
 #
-#         HAS_INCOMPLETE -->|No| KEEP["Keep every completed AttackResult<br/>SUCCESS, FAILURE, and UNDETERMINED"]
-#         KEEP --> ALL_DONE{"All atomic attacks complete?"}
-#         ALL_DONE -->|No| START
-#         ALL_DONE -->|Yes| SCENARIO_COMPLETE["ScenarioResult<br/>ScenarioRunState.COMPLETED"]
-#
 #         HAS_INCOMPLETE -->|Yes| SCENARIO_RETRY{"Scenario retry budget remains?"}
-#         SCENARIO_RETRY -->|Yes; resume only incomplete objectives| START
+#         SCENARIO_RETRY -->|Yes; resume only incomplete objectives| RESUME["Repeat objective flow<br/>for incomplete objectives"]
 #         SCENARIO_RETRY -->|No / exhausted| PARTIAL["Raise ScenarioPartialFailureException<br/>structured counts, incomplete objectives, preserved cause<br/>completed_count may be zero"]
 #         PARTIAL --> SCENARIO_FAILED["Persist ScenarioRunState.FAILED"]
+#
+#         HAS_INCOMPLETE -->|No| KEEP["Keep every completed AttackResult<br/>SUCCESS, FAILURE, and UNDETERMINED"]
+#         KEEP --> ALL_DONE{"All atomic attacks complete?"}
+#         ALL_DONE -->|No| NEXT_ATTACK["Repeat objective flow<br/>for next atomic attack"]
+#         ALL_DONE -->|Yes| SCENARIO_COMPLETE["ScenarioResult<br/>ScenarioRunState.COMPLETED"]
 #     end
 #
 #     classDef model fill:#e8f0fe,stroke:#4285f4,color:#15233a;
 #     classDef complete fill:#e6f4ea,stroke:#34a853,color:#15233a;
 #     classDef incomplete fill:#fce8e6,stroke:#d93025,color:#15233a;
+#     classDef retry fill:#fff4e5,stroke:#f9ab00,color:#15233a;
 #     class RESPONSE,REFUSAL model;
+#     class RETRY_TARGET,RETRY_SCORE,RETRY_ATTACK,RESUME,NEXT_ATTACK retry;
 #     class SUCCESS,FAILURE,UNDETERMINED,COMPLETE,SCENARIO_COMPLETE complete;
-#     class EXEC_ERROR,ERROR_ROW,INCOMPLETE,PARTIAL,SCENARIO_FAILED incomplete;
+#     class RUNTIME_ERROR,EXEC_ERROR,ERROR_ROW,INCOMPLETE,PARTIAL,SCENARIO_FAILED incomplete;
 # ```
+#
+# To keep retry paths readable, **Repeat from** nodes name the earlier step where execution resumes
+# instead of drawing long return arrows across unrelated branches.
 #
 # A Scenario reaches `ScenarioRunState.COMPLETED` when every objective execution completes, regardless
 # of the mix of successful and unsuccessful attack outcomes. Scenario retries resume only objectives
