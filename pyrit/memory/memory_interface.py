@@ -3155,10 +3155,8 @@ class MemoryInterface(abc.ABC):
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
             entry.scenario_run_state = scenario_run_state.value
-            if error_message is not None or scenario_run_state != ScenarioRunState.FAILED:
-                entry.error_message = error_message
-            if error_type is not None or scenario_run_state != ScenarioRunState.FAILED:
-                entry.error_type = error_type
+            entry.error_message = error_message
+            entry.error_type = error_type
 
             session.commit()
 
