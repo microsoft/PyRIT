@@ -216,7 +216,7 @@ print_scenario_list(items=response.items)
 # produces `AttackOutcome.FAILURE`; a response that achieves it produces `AttackOutcome.SUCCESS`.
 #
 # ```{mermaid}
-# %%{init: {"themeVariables": {"fontSize": "18px"}}}%%
+# %%{init: {"themeVariables": {"fontSize": "36px"}}}%%
 # flowchart TB
 #     subgraph objective["One objective in an AtomicAttack"]
 #         START["Execute attack objective"] --> TARGET["Send or continue conversation"]
