@@ -75,4 +75,19 @@ describe('MarkdownContent', () => {
     expect(link).not.toBeNull()
     expect(link?.getAttribute('href') ?? '').not.toContain('javascript:')
   })
+
+  it('renders inline images as a click-through link, not an auto-loading <img>', () => {
+    render(
+      <TestWrapper>
+        <MarkdownContent content="![a cat](https://example.com/cat.png)" />
+      </TestWrapper>,
+    )
+    // No <img> is emitted, so nothing is fetched from the untrusted URL on render.
+    expect(document.querySelector('img')).toBeNull()
+    // Instead the operator gets a safe link they can choose to open.
+    const link = screen.getByRole('link', { name: 'a cat' })
+    expect(link).toHaveAttribute('href', 'https://example.com/cat.png')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  })
 })

@@ -16,12 +16,28 @@ interface MarkdownContentProps {
 // opened page from reaching back through `window.opener` (reverse tabnabbing).
 // We do not spread arbitrary props onto the anchor so no unexpected attributes
 // from the parsed source can leak through.
+//
+// Inline images (`![alt](url)`) are rendered as a click-through LINK rather than
+// an auto-loading <img>. Because the content is untrusted (model-generated),
+// auto-loading would fetch a model-controlled URL on render — a tracking-pixel /
+// internal-probe vector that silently leaks the operator's IP, a view timestamp,
+// and any query-encoded data. A link preserves the operator's ability to open
+// the image deliberately. (The `src`/`href` is already URL-sanitized by
+// react-markdown, so `javascript:` and other dangerous URIs are stripped.)
 const MARKDOWN_COMPONENTS: Components = {
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noopener noreferrer">
       {children}
     </a>
   ),
+  img: ({ src, alt }) => {
+    const href = typeof src === 'string' ? src : undefined
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer">
+        {alt || href}
+      </a>
+    )
+  },
 }
 
 // Hoisted so the same array identity is reused across renders.
