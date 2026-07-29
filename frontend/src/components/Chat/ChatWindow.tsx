@@ -647,6 +647,7 @@ export default function ChatWindow({
               <Button
                 {...restoreFocusTargetAttributes}
                 appearance="subtle"
+                className={styles.ribbonAction}
                 icon={<PanelRightRegular />}
                 onClick={() => setIsPanelOpen((open) => !open)}
                 disabled={!attackResultId}

@@ -560,6 +560,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                                     icon={<DeleteRegular />}
                                     aria-label={`Remove ${sel.registryName}`}
                                     onClick={() => removeInnerTarget(sel.registryName)}
+                                    className={styles.touchTarget}
                                   />
                                 </div>
                                 {weightError && (
