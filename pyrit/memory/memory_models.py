@@ -1504,7 +1504,13 @@ class AttackResultEntry(Base):
     """
 
     __tablename__ = "AttackResultEntries"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        # Serves the PARTITION BY conversation_id dedup window in _query_paginated_attack_results.
+        Index("ix_AttackResultEntries_conversation_id", "conversation_id"),
+        # Serves the History recency ORDER BY timestamp DESC, id DESC and its keyset seek.
+        Index("ix_AttackResultEntries_timestamp_id", "timestamp", "id"),
+        {"extend_existing": True},
+    )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     conversation_id = mapped_column(String, nullable=False)
     objective = mapped_column(Unicode, nullable=False)
