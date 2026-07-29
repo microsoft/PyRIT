@@ -1215,10 +1215,13 @@ class Scenario(ABC):
 
     def _mark_scenario_failed(self, *, scenario_result_id: str, error: BaseException) -> None:
         """Mark the scenario run as FAILED, deriving message/type from ``error``."""
+        error_message = str(error)
+        if error.__cause__ is not None:
+            error_message = f"{error_message} Caused by {type(error.__cause__).__name__}: {str(error.__cause__)}"
         self._memory.update_scenario_run_state(
             scenario_result_id=scenario_result_id,
             scenario_run_state=ScenarioRunState.FAILED,
-            error_message=str(error),
+            error_message=error_message,
             error_type=type(error).__name__,
         )
 
