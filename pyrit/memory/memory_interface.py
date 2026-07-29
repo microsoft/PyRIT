@@ -10,9 +10,9 @@ import weakref
 from collections.abc import Iterator, MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 
-from sqlalchemy import MetaData, and_, not_, or_, select
+from sqlalchemy import MetaData, and_, func, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -85,6 +85,63 @@ logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
+
+
+def _attack_result_recency_key(metadata: dict[str, Any]) -> str:
+    """
+    Compute the recency sort key for an attack result exactly as the SQL layer does.
+
+    Mirrors the ``COALESCE(<updated_at>, <created_at>, '')`` expression built by
+    ``MemoryInterface._attack_results_recency_expr``. Recency is always an ISO-8601 timestamp
+    *string*; only string values are honored (via ``isinstance``) so a non-string
+    ``updated_at``/``created_at`` (e.g. a JSON bool or number) falls through exactly like the
+    SQLite expression, which keeps only JSON ``text`` values. This matters because SQLite's
+    ``json_extract`` returns a typed scalar for non-string JSON (``0`` for a bool) and sorts
+    numbers before text: a stringified anchor would then never advance past such a row and
+    repeat it. Keeping this in lockstep with the SQL expression is what makes the keyset anchor
+    land on the same row the database ordered by, so pagination never skips or repeats a result.
+
+    Returns:
+        str: The coalesced recency key (``""`` when neither timestamp is a string).
+    """
+    value = metadata.get("updated_at")
+    if not isinstance(value, str):
+        value = metadata.get("created_at")
+    if not isinstance(value, str):
+        value = ""
+    return value
+
+
+class AttackResultsKeysetCursor(NamedTuple):
+    """
+    Keyset (seek) anchor identifying the last attack result on a page.
+
+    Captures the full recency ordering tuple — the coalesced ``updated_at``/``created_at``
+    recency string, the row ``timestamp``, and the unique ``attack_result_id`` — so the next
+    page can seek to rows strictly after this one under the
+    ``recency DESC, timestamp DESC, id DESC`` ordering. Unlike a numeric offset — which shifts
+    every later row when a row is inserted or deleted between page loads — a keyset anchor
+    stays pinned to its row, so inserts and deletions elsewhere no longer skip or duplicate
+    results at the page boundary.
+    """
+
+    recency: str
+    timestamp: datetime
+    attack_result_id: str
+
+    @classmethod
+    def from_attack_result(cls, result: AttackResult) -> "AttackResultsKeysetCursor":
+        """
+        Build the keyset anchor for ``result`` (typically the last row of a page).
+
+        Returns:
+            AttackResultsKeysetCursor: Anchor capturing the result's recency sort key.
+        """
+        return cls(
+            recency=_attack_result_recency_key(result.metadata),
+            timestamp=result.timestamp,
+            attack_result_id=result.attack_result_id,
+        )
 
 
 class MemoryInterface(abc.ABC):
@@ -312,6 +369,64 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: A database-specific SQLAlchemy condition.
         """
+
+    @abc.abstractmethod
+    def _attack_results_recency_expr(self) -> Any:
+        """
+        Return the SQL expression for an attack result's recency sort key.
+
+        Concrete subclasses translate this into their SQL dialect's JSON accessor
+        (SQLite ``json_extract`` / Azure SQL ``JSON_VALUE``) so the sort key matches the
+        per-backend JSON abstraction the attack-result filters already use. It reproduces the
+        previous service-side Python sort: ``COALESCE(<attack_metadata.updated_at>,
+        <attack_metadata.created_at>, '')``. This single expression backs both the recency
+        ORDER BY and the keyset seek predicate, guaranteeing they stay in lockstep (a keyset
+        seek that used a different expression than the ORDER BY would skip or repeat rows).
+
+        Returns:
+            Any: A SQLAlchemy expression yielding the coalesced recency string.
+        """
+
+    def _attack_results_recency_order_by(self) -> list[Any]:
+        """
+        Return the ORDER BY clauses that reproduce the History-view recency sort.
+
+        Orders by the recency expression (``updated_at`` falling back to ``created_at`` then
+        an empty string), all descending, with the real ``timestamp`` column and ``id`` as
+        deterministic descending tie-breaks (required for stable keyset pagination).
+
+        Returns:
+            list[Any]: SQLAlchemy ORDER BY clauses (all descending) for the recency sort,
+            suitable for splatting into ``_query_entries(order_by=...)``.
+        """
+        recency = self._attack_results_recency_expr()
+        return [recency.desc(), AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
+
+    def _attack_results_keyset_seek_condition(self, *, after: AttackResultsKeysetCursor) -> Any:
+        """
+        Build the keyset seek predicate selecting rows strictly after ``after``.
+
+        Under the ``recency DESC, timestamp DESC, id DESC`` ordering, a row comes after the
+        anchor when its ordering tuple is lexicographically smaller. The predicate is
+        OR-expanded (rather than a row-value ``(a, b, c) < (x, y, z)`` comparison) because
+        Azure SQL does not support row-value tuple comparisons. It uses the same recency
+        expression as the ORDER BY so the seek lands exactly on the ordering boundary. The
+        ``id`` bound is a ``uuid.UUID`` so it is compared through the column's own type
+        (``CHAR(36)`` on SQLite, native ``uniqueidentifier`` on Azure), matching how the
+        ORDER BY sorts it on each backend.
+
+        Returns:
+            Any: A SQLAlchemy boolean condition for the rows following the anchor.
+        """
+        recency = self._attack_results_recency_expr()
+        timestamp = AttackResultEntry.timestamp
+        entry_id = AttackResultEntry.id
+        anchor_id = uuid.UUID(after.attack_result_id)
+        return or_(
+            recency < after.recency,
+            and_(recency == after.recency, timestamp < after.timestamp),
+            and_(recency == after.recency, timestamp == after.timestamp, entry_id < anchor_id),
+        )
 
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
         """
@@ -1051,7 +1166,8 @@ class MemoryInterface(abc.ABC):
             conditions: SQLAlchemy filter conditions (Optional).
             distinct: Whether to return distinct rows only. Defaults to False.
             join_scores: Whether to join the scores table. Defaults to False.
-            order_by: SQLAlchemy order_by clause (Optional).
+            order_by: A single SQLAlchemy order_by clause, or a list/tuple of clauses for
+                multi-column ordering (Optional).
             limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
@@ -1073,7 +1189,10 @@ class MemoryInterface(abc.ABC):
                 if conditions is not None:
                     query = query.filter(conditions)
                 if order_by is not None:
-                    query = query.order_by(order_by)
+                    if isinstance(order_by, (list, tuple)):
+                        query = query.order_by(*order_by)
+                    else:
+                        query = query.order_by(order_by)
                 if distinct:
                     query = query.distinct()
                 if limit is not None:
@@ -2602,6 +2721,10 @@ class MemoryInterface(abc.ABC):
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
+        min_turns: int | None = None,
+        max_turns: int | None = None,
+        limit: int | None = None,
+        after: AttackResultsKeysetCursor | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -2656,6 +2779,21 @@ class MemoryInterface(abc.ABC):
                 specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
                 Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
                 removed per-scenario error_attack_result_ids manifest. Defaults to None.
+            min_turns (int | None, optional): If set, only return attacks whose
+                ``executed_turns`` is greater than or equal to this value. Applied after
+                per-conversation deduplication (i.e. to the surviving newest row per
+                conversation), so it never resurfaces an older duplicate. Defaults to None.
+            max_turns (int | None, optional): If set, only return attacks whose
+                ``executed_turns`` is less than or equal to this value. Applied after
+                deduplication, mirroring ``min_turns``. Defaults to None.
+            limit (int | None, optional): Maximum number of deduplicated attack results to
+                return, ordered by recency. When either ``limit`` or ``after`` is provided,
+                deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
+                instead of loading every row into memory. Defaults to None (return all).
+            after (AttackResultsKeysetCursor | None, optional): Keyset (seek) anchor from a
+                previous page. When provided, only results ordered strictly after the anchor
+                under the recency sort are returned, giving insert/delete-stable pagination
+                without a drifting numeric offset. Defaults to None (start at the first page).
 
         Returns:
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
@@ -2663,6 +2801,8 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If any label key contains characters outside the allowlist
                 ``[A-Za-z0-9_.-]+``.
+            ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
+                ``objective_sha256`` (id-batched lookups do not support SQL pagination).
         """
         # Handle empty list cases
         if attack_result_ids is not None and len(attack_result_ids) == 0:
@@ -2786,7 +2926,22 @@ class MemoryInterface(abc.ABC):
                 )
             )
 
+        paginating = limit is not None or after is not None
+        if paginating and (attack_result_ids or objective_sha256):
+            raise ValueError(
+                "limit/keyset pagination cannot be combined with attack_result_ids or objective_sha256 lookups."
+            )
+
         try:
+            if paginating:
+                return self._query_paginated_attack_results(
+                    conditions=conditions,
+                    min_turns=min_turns,
+                    max_turns=max_turns,
+                    limit=limit,
+                    after=after,
+                )
+
             list_params: list[tuple[InstrumentedAttribute[Any], Sequence[Any], str]] = []
             if attack_result_ids:
                 list_params.append((AttackResultEntry.id, list(attack_result_ids), "id"))
@@ -2798,10 +2953,104 @@ class MemoryInterface(abc.ABC):
                 conditions=conditions,
                 list_params=list_params,
             )
-            return self._dedup_attack_entries(entries)
+            results = self._dedup_attack_entries(entries)
+            return self._filter_attack_results_by_turns(results, min_turns=min_turns, max_turns=max_turns)
         except Exception as e:
             logger.exception(f"Failed to retrieve attack results with error {e}")
             raise
+
+    def _query_paginated_attack_results(
+        self,
+        *,
+        conditions: list[Any],
+        min_turns: int | None,
+        max_turns: int | None,
+        limit: int | None,
+        after: AttackResultsKeysetCursor | None,
+    ) -> list[AttackResult]:
+        """
+        Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
+
+        Ranks rows with ``ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY timestamp
+        DESC, id DESC)`` after applying ``conditions``, keeps only the newest row per
+        conversation (``rn == 1``) — reproducing the post-fetch Python dedup but *before*
+        pagination so page sizes stay correct — then applies the ``min_turns``/``max_turns``
+        bounds to those winners, orders by recency, seeks past the ``after`` keyset anchor,
+        and applies ``limit`` in the database. The turn bounds are applied to the winners (not
+        inside the ranking subquery) so they never resurrect an older duplicate that happens
+        to fall in range. Seeking on the recency ordering tuple (rather than a numeric offset)
+        keeps page boundaries stable when other rows are inserted or deleted between page loads
+        (offset pagination instead shifts every row after the change).
+
+        Args:
+            conditions (list[Any]): Scalar WHERE filters applied before deduplication.
+            min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
+            max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
+            limit (int | None): Maximum number of results to return.
+            after (AttackResultsKeysetCursor | None): Keyset anchor; only rows ordered strictly
+                after it are returned. ``None`` starts at the first page.
+
+        Returns:
+            list[AttackResult]: The deduplicated, recency-ordered page of attack results.
+        """
+        ranked = select(
+            AttackResultEntry.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=AttackResultEntry.conversation_id,
+                order_by=(AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()),
+            )
+            .label("rn"),
+        )
+        if conditions:
+            ranked = ranked.where(and_(*conditions))
+        ranked_subquery = ranked.subquery()
+
+        winner_ids = select(ranked_subquery.c.id).where(ranked_subquery.c.rn == 1)
+
+        page_conditions: list[Any] = [AttackResultEntry.id.in_(winner_ids)]
+        if min_turns is not None:
+            page_conditions.append(AttackResultEntry.executed_turns >= min_turns)
+        if max_turns is not None:
+            page_conditions.append(AttackResultEntry.executed_turns <= max_turns)
+        if after is not None:
+            page_conditions.append(self._attack_results_keyset_seek_condition(after=after))
+
+        entries = self._query_entries(
+            AttackResultEntry,
+            conditions=and_(*page_conditions),
+            order_by=self._attack_results_recency_order_by(),
+            limit=limit,
+        )
+        return [entry.get_attack_result() for entry in entries]
+
+    @staticmethod
+    def _filter_attack_results_by_turns(
+        results: list[AttackResult], *, min_turns: int | None, max_turns: int | None
+    ) -> list[AttackResult]:
+        """
+        Filter already-deduplicated attack results by their ``executed_turns`` bounds.
+
+        Applied after per-conversation dedup (matching the SQL paginated path) so the bounds
+        act on the surviving newest row per conversation, never resurfacing an older
+        duplicate that falls within range.
+
+        Args:
+            results (list[AttackResult]): Deduplicated attack results to filter.
+            min_turns (int | None): Inclusive lower bound on executed turns, or None.
+            max_turns (int | None): Inclusive upper bound on executed turns, or None.
+
+        Returns:
+            list[AttackResult]: Results whose ``executed_turns`` fall within the bounds.
+        """
+        if min_turns is None and max_turns is None:
+            return results
+        return [
+            result
+            for result in results
+            if (min_turns is None or result.executed_turns >= min_turns)
+            and (max_turns is None or result.executed_turns <= max_turns)
+        ]
 
     @staticmethod
     def _dedup_attack_entries(entries: Sequence[AttackResultEntry]) -> list[AttackResult]:

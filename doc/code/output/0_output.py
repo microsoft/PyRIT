@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -35,7 +35,6 @@ memory = CentralMemory.get_memory_instance()
 # To demonstrate the printers, we'll run a simple attack and use the result.
 
 # %%
-
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import (
@@ -142,6 +141,56 @@ conversation = memory.get_conversation_messages(conversation_id=attack_result.co
 
 # print the conversation using the print conversation helper
 await output_conversation_async(messages=conversation)  # type: ignore
+
+# %% [markdown]
+# ## Including Reasoning Summaries
+#
+# Reasoning-summary output is opt in: the conversation and attack-result helpers hide
+# reasoning by default. For OpenAI Responses targets, PyRIT renders
+# provider-generated reasoning summaries exposed by OpenAI, not raw hidden chain-of-thought.
+#
+# - Pretty output labels the summary as **💭 Reasoning** in subdued gray.
+# - Markdown output uses a blockquoted **💭 Reasoning** section.
+# - When a response follows reasoning in the same message, both formats add a
+#   **💬 Response** heading to make the boundary explicit.
+#
+# ```python
+# from pyrit.output import output_attack_async, output_conversation_async
+#
+# # Direct conversation
+# await output_conversation_async(messages=conversation, include_reasoning_summaries=True)
+#
+# # Attack result (Pretty or Markdown)
+# await output_attack_async(attack_result, include_reasoning_summaries=True)
+# await output_attack_async(attack_result, format="markdown", include_reasoning_summaries=True)
+# ```
+
+# %%
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import output_attack_async
+from pyrit.prompt_target import OpenAIResponseTarget
+
+objective_target = OpenAIResponseTarget(reasoning_effort="high", reasoning_summary="detailed")
+
+attack = PromptSendingAttack(objective_target=objective_target)
+prompt = """
+Solve this scheduling problem and return the earliest valid schedule.
+
+Five jobs, A through E, must each occupy one consecutive time slot from 1 to 5.
+
+Constraints:
+- A must occur before D.
+- C must occur immediately after A.
+- E cannot be in slot 1 or slot 5.
+- B must occur after E.
+- D cannot be adjacent to B.
+
+Determine the complete schedule. Verify every constraint in the final answer.
+"""
+
+result = await attack.execute_async(objective=prompt)  # type: ignore
+await output_attack_async(result, include_reasoning_summaries=True)
+
 
 # %% [markdown]
 # ## Printing Scores

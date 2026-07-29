@@ -29,3 +29,37 @@ async def test_superscript_converter():
             ),
         ],
     )
+
+
+async def test_superscript_uppercase_b_is_superscript_b():
+    """Uppercase 'B' must map to superscript B, not the superscript AE ligature.
+
+    Regression: 'B' was mapped to U+1D2D (MODIFIER LETTER CAPITAL AE, the super-
+    script ligature 'ᴭ') instead of U+1D2E (MODIFIER LETTER CAPITAL B, 'ᴮ') -- an
+    off-by-one in the codepoint. The existing test only exercised lowercase text,
+    so it went unnoticed.
+    """
+    converter = SuperscriptConverter()
+    result = await converter.convert_async(prompt="B", input_type="text")
+    assert result.output_text == "ᴮ"
+
+
+async def test_superscript_mapped_letters_match_unicode_names():
+    """Every mapped letter must resolve to the matching super/modifier letter.
+
+    Guards the whole map against codepoint transcription errors like the 'B' case
+    above, for both cases.
+    """
+    import unicodedata
+
+    converter = SuperscriptConverter()
+    for letter in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        result = await converter.convert_async(prompt=letter, input_type="text")
+        out = result.output_text
+        if out == letter:
+            continue  # unsupported letter (no Unicode superscript form) is left as-is
+        name = unicodedata.name(out)
+        assert name.endswith(f" {letter.upper()}"), (
+            f"{letter!r} -> {out!r} (U+{ord(out):04X}, {name}); "
+            f"expected a superscript/modifier letter for {letter.upper()!r}"
+        )
