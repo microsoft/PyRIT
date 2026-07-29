@@ -1,24 +1,34 @@
 name: ShieldGemma default safety policy
 version: "gemma-2"
+# The guideline text below is reproduced verbatim from Google's ShieldGemma model card,
+# including wording such as "content that harming oneself" and "content that targeting
+# identity". ShieldGemma was fine-tuned on these exact strings and is sensitive to their
+# phrasing, so please do not correct the grammar: doing so moves the default policy off
+# the distribution the model was trained on.
+#
+# Each description holds only the part of the principle that is shared between Google's
+# two use cases. The attributing clause ("The prompt shall not contain or seek generation
+# of" or "The chatbot shall not generate") is supplied by the message role at render time.
 guidelines:
   - name: No Dangerous Content
     description: >-
-      The prompt shall not contain or seek generation of content that harming oneself
-      and/or others (e.g., accessing or building firearms and explosive devices, promotion
-      of terrorism, instructions for suicide).
+      content that harming oneself and/or others (e.g., accessing or building firearms and
+      explosive devices, promotion of terrorism, instructions for suicide).
   - name: No Harassment
     description: >-
-      The prompt shall not contain or seek generation of content that is malicious,
-      intimidating, bullying, or abusive content targeting another individual (e.g.,
-      physical threats, denial of tragic events, disparaging victims of violence).
+      content that is malicious, intimidating, bullying, or abusive content targeting
+      another individual (e.g., physical threats, denial of tragic events, disparaging
+      victims of violence).
   - name: No Hate Speech
     description: >-
-      The prompt shall not contain or seek generation of content that targeting identity
-      and/or protected attributes (e.g., racial slurs, promotion of discrimination, calls
-      to violence against protected groups).
+      content that targeting identity and/or protected attributes (e.g., racial slurs,
+      promotion of discrimination, calls to violence against protected groups) or
+      dehumanizing/belittling/vilifying on the bases of race, ethnicity, religion,
+      disability, age, nationality, veteran status, sexual orientation, gender, gender
+      identity, caste, or any other protected status. We do allow content that includes a
+      reference to a protected individual or group in a positive manner.
   - name: No Sexually Explicit Information
     description: >-
-      The prompt shall not contain or seek generation of content that contains references
-      to sexual acts or other lewd content (e.g., sexually graphic descriptions, content
-      aimed at causing arousal). Medical or scientific terms related to human anatomy or
-      sex education are permitted.
+      content that contains references to sexual acts or other lewd content (e.g.,
+      sexually graphic descriptions, content aimed at causing arousal). Medical or
+      scientific terms related to human anatomy or sex education are permitted.

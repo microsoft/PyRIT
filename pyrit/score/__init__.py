@@ -106,10 +106,10 @@ from pyrit.score.true_false.shieldgemma_parser import parse_shieldgemma_response
 from pyrit.score.true_false.shieldgemma_policy import (
     SHIELDGEMMA_DEFAULT_POLICY_PATH,
     ShieldGemmaGuideline,
+    ShieldGemmaMessageRole,
     ShieldGemmaPolicy,
 )
 from pyrit.score.true_false.shieldgemma_scorer import (
-    ShieldGemmaMessageRole,
     ShieldGemmaScorer,
     render_shieldgemma_prompt,
 )

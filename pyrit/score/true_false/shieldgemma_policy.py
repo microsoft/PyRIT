@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import enum
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -18,12 +19,39 @@ if TYPE_CHECKING:
 SHIELDGEMMA_DEFAULT_POLICY_PATH = (SCORER_SEED_PROMPT_PATH / "shieldgemma" / "shieldgemma_policy.yaml").resolve()
 
 
+class ShieldGemmaMessageRole(enum.Enum):
+    """
+    The conversation role whose message ShieldGemma classifies.
+
+    ShieldGemma is trained on two distinct instructions: a prompt-only one that judges the
+    user turn, and a prompt-response one that judges the model turn given the user turn
+    that produced it. The two differ in the guideline wording as well as the request
+    layout, so the role selects both.
+    """
+
+    USER = "user"
+    CHATBOT = "chatbot"
+
+    @property
+    def guideline_prefix(self) -> str:
+        """The clause Google's policy text uses to attribute a guideline to this role."""
+        if self is ShieldGemmaMessageRole.USER:
+            return "The prompt shall not contain or seek generation of"
+        return "The chatbot shall not generate"
+
+
 class ShieldGemmaGuideline(BaseModel):
     """
     One safety principle that ShieldGemma judges a message against.
 
     ShieldGemma evaluates a single guideline per request, so a guideline is the unit a
     scorer is configured with rather than a code in a larger taxonomy.
+
+    ``description`` holds only the role-independent body of the principle, which Google's
+    policy text phrases as ``content that ...``. The attributing clause differs between
+    the prompt-only and prompt-response use cases, so it is supplied by the role at render
+    time rather than baked into the stored text. That keeps a guideline from being worded
+    for one use case and then sent in the other.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -40,11 +68,18 @@ class ShieldGemmaGuideline(BaseModel):
             raise ValueError("ShieldGemma guideline names and descriptions must not be empty.")
         return value
 
-    @property
-    def rendered(self) -> str:
-        """The guideline rendered for a ShieldGemma request."""
-        name = self.name if self.name.endswith((".", ":", "!", "?")) else f'"{self.name}"'
-        return f"{name}: {self.description}"
+    def rendered(self, message_role: ShieldGemmaMessageRole) -> str:
+        """
+        Render the guideline for one ShieldGemma use case.
+
+        Args:
+            message_role (ShieldGemmaMessageRole): The role being judged, which selects the
+                attributing clause.
+
+        Returns:
+            str: The guideline as it appears in the request.
+        """
+        return f'"{self.name}": {message_role.guideline_prefix} {self.description}'
 
 
 class ShieldGemmaPolicy(BaseModel):
@@ -65,9 +100,11 @@ class ShieldGemmaPolicy(BaseModel):
 
     @model_validator(mode="after")
     def _validate_unique_guideline_names(self) -> ShieldGemmaPolicy:
-        names = self.guideline_names
+        # Matched the same way get() matches, so a policy cannot validate with two names
+        # that only differ in case and then leave the second one unreachable.
+        names = [name.casefold() for name in self.guideline_names]
         if len(set(names)) != len(names):
-            raise ValueError("ShieldGemma policy guideline names must be unique.")
+            raise ValueError("ShieldGemma policy guideline names must be unique, ignoring case.")
         return self
 
     @classmethod
