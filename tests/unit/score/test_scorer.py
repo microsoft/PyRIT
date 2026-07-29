@@ -2193,8 +2193,15 @@ class TestSkipOnErrorWithBlockedContent:
         assert scores == []
         assert scorer.scored_pieces == []
 
-    async def test_skip_on_error_scores_structured_refusal_as_text(self):
-        scorer = _BlockedContentScorer()
+    @pytest.mark.parametrize(
+        "validator",
+        [
+            SelectiveValidator(enforce_all_pieces_valid=True),
+            SelectiveValidator(raise_on_no_valid_pieces=True),
+        ],
+    )
+    async def test_skip_on_error_scores_structured_refusal_as_text(self, validator: ScorerPromptValidator):
+        scorer = _BlockedContentScorer(validator=validator)
         refusal = "I cannot assist with that request."
         piece = _make_blocked_piece(structured_refusal=refusal)
         msg = Message(message_pieces=[piece])
