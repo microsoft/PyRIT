@@ -242,8 +242,8 @@ class OpenAIResponseTarget(OpenAITarget):
         Raises:
             ValueError: If the piece type is not supported for inline content.
         """
-        structured_refusal = piece.get_structured_refusal()
-        if piece.is_structured_refusal() and structured_refusal:
+        structured_refusal = piece.structured_refusal
+        if structured_refusal:
             if piece.api_role != "assistant":
                 raise ValueError("Structured refusals can only be serialized as assistant output.")
             return {
@@ -315,7 +315,7 @@ class OpenAIResponseTarget(OpenAITarget):
                     continue
 
                 # Inline content (text/images/structured refusals) - accumulate in content list
-                if dtype in {"text", "image_path"} or piece.is_structured_refusal():
+                if dtype in {"text", "image_path"} or piece.structured_refusal is not None:
                     content.append(await self._construct_input_item_from_piece_async(piece))
                     continue
 

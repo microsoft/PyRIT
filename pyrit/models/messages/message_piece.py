@@ -185,19 +185,13 @@ class MessagePiece(BaseModel):
             raise ValueError("Structured refusal text cannot be empty.")
         self.prompt_metadata[self.STRUCTURED_REFUSAL_METADATA_KEY] = refusal
 
-    def get_structured_refusal(self) -> str | None:
-        """
-        Return the SDK-provided refusal explanation, if present.
-
-        Returns:
-            The refusal explanation for a structured model refusal, otherwise ``None``.
-        """
+    @property
+    def structured_refusal(self) -> str | None:
+        """The SDK-provided refusal explanation for this blocked response, if present."""
+        if not self.is_blocked():
+            return None
         refusal = self.prompt_metadata.get(self.STRUCTURED_REFUSAL_METADATA_KEY)
         return refusal if isinstance(refusal, str) and refusal else None
-
-    def is_structured_refusal(self) -> bool:
-        """Return whether this piece represents an SDK-provided model refusal."""
-        return self.is_blocked() and self.get_structured_refusal() is not None
 
     # ------------------------------------------------------------------ #
     # Adversarial placeholder support

@@ -260,7 +260,7 @@ class Scorer(Identifiable, abc.ABC):
                 for piece in message.message_pieces
                 if piece.has_error() or piece.converted_value_data_type == "error"
             ]
-            only_structured_refusals = all(piece.is_structured_refusal() for piece in error_pieces)
+            only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
             # When score_blocked_content is enabled and the message has partial content,
             # don't skip — let _score_async handle the substitution.
             all_errors_have_partial_content = all(
@@ -425,8 +425,8 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             A text scoring view, or ``None`` when the piece is not a structured refusal.
         """
-        refusal = piece.get_structured_refusal()
-        if not piece.is_structured_refusal() or not refusal:
+        refusal = piece.structured_refusal
+        if not refusal:
             return None
         return cls._create_scoring_text_piece(
             piece=piece,
