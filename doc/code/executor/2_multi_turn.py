@@ -25,6 +25,11 @@
 # `AttackAdversarialConfig` naming the **adversarial target**. The adversarial target works best
 # **without** content moderation, so it doesn't refuse to generate adversarial prompts. The fixed-script
 # and streaming attacks (Multi-Prompt Sending, Chunked Request, Barge-In) use only the objective target.
+
+# %% [markdown] class="col-page-right"
+#
+# :::{div}
+# :class: col-page-right
 #
 # ```{mermaid}
 # flowchart LR
@@ -35,6 +40,9 @@
 #     decision -- Yes --> done("Done")
 #     decision -- No --> getPrompt
 # ```
+# :::
+
+# %% [markdown]
 #
 # | Attack | What it does |
 # |---|---|

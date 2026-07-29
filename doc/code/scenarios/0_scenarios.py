@@ -221,7 +221,7 @@ print_scenario_list(items=response.items)
 # :class: col-page-right
 #
 # ```{mermaid}
-# %%{init: {"themeVariables": {"fontSize": "24px"}}}%%
+# %%{init: {"themeVariables": {"fontSize": "24px"}, "flowchart": {"subGraphTitleMargin": {"bottom": 40}}}}%%
 # flowchart TB
 #     subgraph objective["One objective in an AtomicAttack"]
 #         START["Execute attack objective"] --> TARGET["Send or continue conversation"]
