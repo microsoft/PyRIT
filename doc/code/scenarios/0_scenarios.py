@@ -201,6 +201,87 @@ print_scenario_list(items=response.items)
 #
 # Scenarios can run for a long time, and because of that, things can go wrong. Network issues, rate limits, or other transient failures can interrupt execution. PyRIT provides built-in resiliency features to handle these situations gracefully.
 #
+# ### Attack Outcomes and Execution Health
+#
+# A Scenario tracks two independent axes for every objective:
+#
+# | Axis | Values | Meaning |
+# | --- | --- | --- |
+# | **Execution health** | completed or incomplete | A completed objective returned an `AttackResult`. An incomplete objective raised an exception before it could return one. |
+# | **Objective outcome** | `AttackOutcome.SUCCESS`, `FAILURE`, or `UNDETERMINED` | Whether a completed attack achieved its objective. `FAILURE` is a valid security result, not an execution error. |
+#
+# A model refusal therefore does not make an objective incomplete. PyRIT persists handled structured
+# refusals and content-filter responses as blocked model responses, applies the configured scoring
+# policy, and returns a completed `AttackResult`. A refusal that does not achieve the objective normally
+# produces `AttackOutcome.FAILURE`; a response that achieves it produces `AttackOutcome.SUCCESS`.
+#
+# ```{mermaid}
+# flowchart TB
+#     subgraph objective["One objective in an AtomicAttack"]
+#         START["Execute attack objective"] --> TARGET["Send or continue conversation"]
+#         TARGET --> TARGET_RESULT{"Target result"}
+#
+#         TARGET_RESULT -->|Normal model output| RESPONSE["Persistable model response"]
+#         TARGET_RESULT -->|Handled refusal or content-filter response| REFUSAL["Persistable blocked model response<br/>not an execution failure"]
+#         TARGET_RESULT -->|Retryable target error| TARGET_RETRY{"Target retry budget remains?"}
+#         TARGET_RETRY -->|Yes| TARGET
+#         TARGET_RETRY -->|No / exhausted| EXEC_ERROR["Execution exception propagates"]
+#         TARGET_RESULT -->|Non-retryable runtime error| EXEC_ERROR
+#
+#         RESPONSE --> SCORE["Apply configured scorer policy"]
+#         REFUSAL --> SCORE
+#         SCORE --> SCORE_RESULT{"Scoring result"}
+#         SCORE_RESULT -->|Invalid scorer JSON; retry remains| SCORE
+#         SCORE_RESULT -->|Scorer error or JSON retries exhausted| EXEC_ERROR
+#         SCORE_RESULT -->|Objective achieved| SUCCESS["AttackResult<br/>AttackOutcome.SUCCESS"]
+#         SCORE_RESULT -->|Objective not achieved| MORE{"Attack-specific attempt or turn remains?"}
+#         SCORE_RESULT -->|No objective scorer| UNDETERMINED["AttackResult<br/>AttackOutcome.UNDETERMINED"]
+#         MORE -->|Yes| TARGET
+#         MORE -->|No| FAILURE["AttackResult<br/>AttackOutcome.FAILURE"]
+#
+#         SUCCESS --> COMPLETE["Completed objective"]
+#         FAILURE --> COMPLETE
+#         UNDETERMINED --> COMPLETE
+#         EXEC_ERROR --> ERROR_ROW["Error handler may persist<br/>AttackOutcome.ERROR for diagnostics"]
+#         ERROR_ROW --> INCOMPLETE["Incomplete objective<br/>exception retained"]
+#     end
+#
+#     subgraph aggregation["Scenario aggregation and resiliency"]
+#         COMPLETE --> EXECUTOR_RESULT["AttackExecutorResult"]
+#         INCOMPLETE --> EXECUTOR_RESULT
+#         EXECUTOR_RESULT --> HAS_INCOMPLETE{"Any incomplete objectives?"}
+#
+#         HAS_INCOMPLETE -->|No| KEEP["Keep every completed AttackResult<br/>SUCCESS, FAILURE, and UNDETERMINED"]
+#         KEEP --> ALL_DONE{"All atomic attacks complete?"}
+#         ALL_DONE -->|No| START
+#         ALL_DONE -->|Yes| SCENARIO_COMPLETE["ScenarioResult<br/>ScenarioRunState.COMPLETED"]
+#
+#         HAS_INCOMPLETE -->|Yes| SCENARIO_RETRY{"Scenario retry budget remains?"}
+#         SCENARIO_RETRY -->|Yes; resume only incomplete objectives| START
+#         SCENARIO_RETRY -->|No / exhausted| PARTIAL["Raise ScenarioPartialFailureException<br/>structured counts, incomplete objectives, preserved cause<br/>completed_count may be zero"]
+#         PARTIAL --> SCENARIO_FAILED["Persist ScenarioRunState.FAILED"]
+#     end
+#
+#     classDef model fill:#e8f0fe,stroke:#4285f4,color:#15233a;
+#     classDef complete fill:#e6f4ea,stroke:#34a853,color:#15233a;
+#     classDef incomplete fill:#fce8e6,stroke:#d93025,color:#15233a;
+#     class RESPONSE,REFUSAL model;
+#     class SUCCESS,FAILURE,UNDETERMINED,COMPLETE,SCENARIO_COMPLETE complete;
+#     class EXEC_ERROR,ERROR_ROW,INCOMPLETE,PARTIAL,SCENARIO_FAILED incomplete;
+# ```
+#
+# A Scenario reaches `ScenarioRunState.COMPLETED` when every objective execution completes, regardless
+# of the mix of successful and unsuccessful attack outcomes. Scenario retries resume only objectives
+# that have not completed; already-persisted results are preserved.
+#
+# If retry exhaustion leaves any incomplete objectives, `ScenarioPartialFailureException` reports
+# `completed_count`, `incomplete_count`, and `incomplete_objectives`, and keeps the first objective
+# exception as its cause. This typed exception is also used when **none** of the objectives in the
+# returned `AttackExecutorResult` completed (`completed_count == 0`). If an `AtomicAttack` raises before
+# it can return an `AttackExecutorResult`, the Scenario instead retries and ultimately re-raises that
+# exception; multiple concurrent atomic-attack failures are surfaced as an `ExceptionGroup`. In every
+# terminal execution-failure case, the persisted Scenario state is `ScenarioRunState.FAILED`.
+#
 # ### Automatic Resume
 #
 # If you re-run a `scenario`, it will automatically start where it left off. The framework tracks completed attacks and objectives in memory, so you won't lose progress if something interrupts your scenario execution. This means you can safely stop and restart scenarios without duplicating work.
