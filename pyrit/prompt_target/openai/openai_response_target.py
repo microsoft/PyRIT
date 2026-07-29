@@ -19,7 +19,6 @@ from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
-    handle_bad_request_exception,
     pyrit_target_retry,
 )
 from pyrit.memory.storage import convert_local_image_to_data_url_async
@@ -694,17 +693,20 @@ class OpenAIResponseTarget(OpenAITarget):
         ]
         if refusal_parts:
             refusal_text = "\n".join(refusal_parts)
-            refusal_message = handle_bad_request_exception(
-                response_text=refusal_text,
-                request=message_piece,
-                error_code=200,
-                is_content_filter=True,
-            )
-            refusal_piece = refusal_message.message_pieces[0]
-            refusal_piece.mark_as_structured_refusal(refusal=refusal_text)
+            prompt_metadata = {
+                **message_piece.prompt_metadata,
+                MessagePiece.STRUCTURED_REFUSAL_METADATA_KEY: refusal_text,
+            }
             if text_parts:
-                refusal_piece.prompt_metadata["partial_content"] = "\n".join(text_parts)
-            return refusal_piece
+                prompt_metadata["partial_content"] = "\n".join(text_parts)
+            return MessagePiece(
+                role="assistant",
+                original_value=json.dumps({"status_code": 200, "message": refusal_text}),
+                conversation_id=message_piece.conversation_id,
+                original_value_data_type="error",
+                response_error="blocked",
+                prompt_metadata=prompt_metadata,
+            )
 
         piece_value = "\n".join(text_parts)
         if not piece_value:

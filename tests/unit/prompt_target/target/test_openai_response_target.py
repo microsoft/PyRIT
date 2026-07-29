@@ -1309,6 +1309,7 @@ async def test_send_prompt_async_returns_blocked_refusal(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
     refusal = "I cannot assist with that request."
+    dummy_text_message_piece.prompt_metadata["request_key"] = "request_value"
     output_message = ResponseOutputMessage(
         id="refusal-message",
         content=[ResponseOutputRefusal(refusal=refusal, type="refusal")],
@@ -1333,6 +1334,7 @@ async def test_send_prompt_async_returns_blocked_refusal(
     assert refusal_piece.response_error == "blocked"
     assert json.loads(refusal_piece.original_value)["message"] == refusal
     assert refusal_piece.structured_refusal == refusal
+    assert refusal_piece.prompt_metadata["request_key"] == "request_value"
 
 
 async def test_structured_refusal_is_persisted_scored_and_completes_attack(target: OpenAIResponseTarget):
