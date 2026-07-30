@@ -238,7 +238,17 @@ class Scorer(Identifiable, abc.ABC):
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        self._validator.validate(message, objective=objective)
+        # Structured refusals are persisted as blocked error pieces, but scorers should
+        # receive the refusal explanation as text. Keep response_error="blocked" so
+        # refusal scorers can still use their deterministic blocked-response path.
+        scoring_message = self._apply_structured_refusal_substitution(message)
+
+        # When score_blocked_content is enabled, blocked pieces with partial content
+        # take precedence and are replaced with text substitutes (response_error="none").
+        if self.score_blocked_content:
+            scoring_message = self._apply_blocked_content_substitution(scoring_message)
+
+        self._validator.validate(scoring_message, objective=objective)
 
         if role_filter is not None and message.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
@@ -250,7 +260,7 @@ class Scorer(Identifiable, abc.ABC):
                 for piece in message.message_pieces
                 if piece.has_error() or piece.converted_value_data_type == "error"
             ]
-            only_structured_refusals = all(piece.is_structured_refusal() for piece in error_pieces)
+            only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
             # When score_blocked_content is enabled and the message has partial content,
             # don't skip — let _score_async handle the substitution.
             all_errors_have_partial_content = all(
@@ -262,16 +272,6 @@ class Scorer(Identifiable, abc.ABC):
 
         if infer_objective_from_request and (not objective):
             objective = self._extract_objective_from_response(message)
-
-        # Structured refusals are persisted as blocked error pieces, but scorers should
-        # receive the refusal explanation as text. Keep response_error="blocked" so
-        # refusal scorers can still use their deterministic blocked-response path.
-        scoring_message = self._apply_structured_refusal_substitution(message)
-
-        # When score_blocked_content is enabled, blocked pieces with partial content
-        # take precedence and are replaced with text substitutes (response_error="none").
-        if self.score_blocked_content:
-            scoring_message = self._apply_blocked_content_substitution(scoring_message)
 
         try:
             scores = await self._score_async(
@@ -425,8 +425,8 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             A text scoring view, or ``None`` when the piece is not a structured refusal.
         """
-        refusal = piece.get_structured_refusal()
-        if not piece.is_structured_refusal() or not refusal:
+        refusal = piece.structured_refusal
+        if not refusal:
             return None
         return cls._create_scoring_text_piece(
             piece=piece,

@@ -12,6 +12,7 @@ import {
 } from '@fluentui/react-components'
 import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular } from '@fluentui/react-icons'
 import { Message, MessageAttachment } from '../../types'
+import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
 
 interface MessageListProps {
@@ -34,6 +35,8 @@ interface MessageListProps {
   isCrossTarget?: boolean
   /** True when no target is currently selected */
   noTargetSelected?: boolean
+  /** Conversation-wide default: render message text as Markdown. */
+  globalMarkdown?: boolean
 }
 
 /** Image that shows a spinner while loading. */
@@ -105,7 +108,7 @@ function tryFormatJson(text: string): string | null {
   }
 }
 
-export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
+export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -240,6 +243,16 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                     </Text>
                   )
                 }
+                // When Markdown rendering is enabled, it takes precedence over
+                // the JSON auto-format below.
+                if (globalMarkdown) {
+                  return (
+                    <MarkdownContent
+                      content={message.content}
+                      testId={`message-markdown-${index}`}
+                    />
+                  )
+                }
                 // For assistant / simulated_assistant messages, detect
                 // structured JSON responses (e.g. PromptShield verdicts) and
                 // render them pretty-printed inside a <pre> so the user can
@@ -328,7 +341,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onCopyToInput(index)}
                           data-testid={`copy-to-input-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -353,7 +366,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onCopyToNewConversation(index)}
                           data-testid={`copy-to-new-conv-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -380,7 +393,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onBranchConversation(index)}
                           data-testid={`branch-conv-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -398,7 +411,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                             icon={<ChatAddRegular />}
                             onClick={() => onBranchAttack(index)}
                             data-testid={`branch-attack-btn-${index}`}
-                            style={{ minWidth: 'auto', padding: '2px' }}
+                            className={styles.messageActionButton}
                           />
                         </Tooltip>
                       )
@@ -418,7 +431,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           icon={<ChatAddRegular />}
                           disabled
                           data-testid={`branch-attack-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -433,7 +446,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         icon={<ArrowDownloadRegular />}
                         onClick={() => handleDownload(att)}
                         data-testid={`download-btn-${index}-${ai}`}
-                        style={{ minWidth: 'auto', padding: '2px' }}
+                        className={styles.messageActionButton}
                       />
                     </Tooltip>
                   ))}

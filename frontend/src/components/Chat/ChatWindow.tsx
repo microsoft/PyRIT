@@ -3,6 +3,7 @@ import {
   Button,
   Drawer,
   mergeClasses,
+  Switch,
   Text,
   Tooltip,
   useRestoreFocusSource,
@@ -86,6 +87,8 @@ export default function ChatWindow({
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
+  // Conversation-wide default for rendering message text as Markdown.
+  const [globalMarkdown, setGlobalMarkdown] = useState(false)
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
@@ -643,10 +646,19 @@ export default function ChatWindow({
             )}
           </div>
           <div className={styles.ribbonActions}>
+            <Tooltip content="Render all messages as Markdown by default" relationship="label">
+              <Switch
+                checked={globalMarkdown}
+                onChange={(_ev, data) => setGlobalMarkdown(data.checked)}
+                label="Markdown"
+                data-testid="global-markdown-toggle"
+              />
+            </Tooltip>
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
                 {...restoreFocusTargetAttributes}
                 appearance="subtle"
+                className={styles.ribbonAction}
                 icon={<PanelRightRegular />}
                 onClick={() => setIsPanelOpen((open) => !open)}
                 disabled={!attackResultId}
@@ -683,6 +695,7 @@ export default function ChatWindow({
           isOperatorLocked={isOperatorLocked}
           isCrossTarget={isCrossTargetLocked}
           noTargetSelected={!activeTarget}
+          globalMarkdown={globalMarkdown}
         />
         <ChatInputArea
           ref={inputBoxRef}

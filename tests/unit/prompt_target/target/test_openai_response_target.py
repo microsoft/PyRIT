@@ -1309,6 +1309,7 @@ async def test_send_prompt_async_returns_blocked_refusal(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
     refusal = "I cannot assist with that request."
+    dummy_text_message_piece.prompt_metadata["request_key"] = "request_value"
     output_message = ResponseOutputMessage(
         id="refusal-message",
         content=[ResponseOutputRefusal(refusal=refusal, type="refusal")],
@@ -1332,7 +1333,8 @@ async def test_send_prompt_async_returns_blocked_refusal(
     assert refusal_piece.original_value_data_type == "error"
     assert refusal_piece.response_error == "blocked"
     assert json.loads(refusal_piece.original_value)["message"] == refusal
-    assert refusal_piece.get_structured_refusal() == refusal
+    assert refusal_piece.structured_refusal == refusal
+    assert refusal_piece.prompt_metadata["request_key"] == "request_value"
 
 
 async def test_structured_refusal_is_persisted_scored_and_completes_attack(target: OpenAIResponseTarget):
@@ -1371,7 +1373,7 @@ async def test_structured_refusal_is_persisted_scored_and_completes_attack(targe
     assert refusal_piece.response_error == "blocked"
     assert json.loads(refusal_piece.original_value)["message"] == refusal
     assert json.loads(refusal_piece.converted_value)["message"] == refusal
-    assert refusal_piece.get_structured_refusal() == refusal
+    assert refusal_piece.structured_refusal == refusal
     assert attack_result.last_score is not None
     assert attack_result.last_score.get_value() is False
     assert attack_result.outcome == AttackOutcome.FAILURE
@@ -1380,7 +1382,7 @@ async def test_structured_refusal_is_persisted_scored_and_completes_attack(targe
     persisted_piece = persisted_messages[-1].get_piece()
     assert persisted_piece.id == refusal_piece.id
     assert json.loads(persisted_piece.original_value)["message"] == refusal
-    assert persisted_piece.get_structured_refusal() == refusal
+    assert persisted_piece.structured_refusal == refusal
 
     scorer_target.send_prompt_async.assert_not_called()
 
@@ -1409,7 +1411,7 @@ async def test_reasoning_preceding_refusal_keeps_refusal_as_primary_response(
         responses = await target.send_prompt_async(message=request)
 
     pieces = responses[0].message_pieces
-    assert pieces[0].get_structured_refusal() == refusal
+    assert pieces[0].structured_refusal == refusal
     assert pieces[1].converted_value_data_type == "reasoning"
 
 

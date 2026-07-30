@@ -225,9 +225,9 @@ async def test_scenario_structured_refusals_are_completed_and_scored(
     attack_results = result.attack_results[_ATOMIC_ATTACK_NAME]
     expected_refusals = response_kinds.count("refusal")
     refusal_results = [
-        item for item in attack_results if item.last_response and item.last_response.is_structured_refusal()
+        item for item in attack_results if item.last_response and item.last_response.structured_refusal is not None
     ]
-    scored_refusals = [piece for piece in scorer.scored_pieces if piece.is_structured_refusal()]
+    scored_refusals = [piece for piece in scorer.scored_pieces if piece.structured_refusal is not None]
 
     assert result.scenario_run_state == ScenarioRunState.COMPLETED
     assert result.error_type is None
@@ -236,7 +236,7 @@ async def test_scenario_structured_refusals_are_completed_and_scored(
     assert all(item.outcome == AttackOutcome.FAILURE for item in attack_results)
     assert all(item.last_score and item.last_score.get_value() is False for item in attack_results)
     assert all(item.last_response.converted_value_data_type == "error" for item in refusal_results)
-    assert all(item.last_response.get_structured_refusal() == _REFUSAL for item in refusal_results)
+    assert all(item.last_response.structured_refusal == _REFUSAL for item in refusal_results)
     assert len(scored_refusals) == expected_refusals
     assert all(piece.converted_value_data_type == "text" for piece in scored_refusals)
     assert all(piece.converted_value == _REFUSAL for piece in scored_refusals)
@@ -268,7 +268,9 @@ async def test_scenario_counts_refusal_as_completed_when_another_objective_error
     )[0]
     stored_attack_results = stored_result.attack_results[_ATOMIC_ATTACK_NAME]
     refusal_results = [
-        item for item in stored_attack_results if item.last_response and item.last_response.is_structured_refusal()
+        item
+        for item in stored_attack_results
+        if item.last_response and item.last_response.structured_refusal is not None
     ]
 
     assert stored_result.scenario_run_state == ScenarioRunState.FAILED

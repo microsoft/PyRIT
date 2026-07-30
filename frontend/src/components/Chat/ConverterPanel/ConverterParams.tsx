@@ -1,4 +1,4 @@
-import { Button, Input, Select, Switch, Text, Tooltip } from '@fluentui/react-components'
+import { Button, Input, mergeClasses, Select, Switch, Text, Tooltip } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, InfoRegular } from '@fluentui/react-icons'
 import type { ConverterCatalogEntry, Parameter } from '../../../types'
 import { useConverterPanelStyles } from './ConverterPanel.styles'
@@ -42,6 +42,7 @@ function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: Pa
         appearance="subtle"
         size="small"
         onClick={() => onBrowse(param.name)}
+        className={styles.touchTarget}
         data-testid={`param-${param.name}-browse`}
       >
         Browse
@@ -86,7 +87,7 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
         size="small"
         icon={paramsExpanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
         onClick={onToggleExpanded}
-        className={styles.paramsSectionHeader}
+        className={mergeClasses(styles.paramsSectionHeader, styles.touchTarget)}
         data-testid="toggle-params-btn"
       >
         Parameters

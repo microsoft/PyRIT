@@ -312,6 +312,21 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
+  it("renders a global markdown switch that toggles on click", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    const toggle = screen.getByRole("switch", { name: /markdown/i });
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+  });
+
   it("should display existing messages", async () => {
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
     mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);

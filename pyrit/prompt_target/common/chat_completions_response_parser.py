@@ -108,31 +108,6 @@ def _build_text_piece(*, content: str, request: MessagePiece) -> MessagePiece:
     ).message_pieces[0]
 
 
-def _build_blocked_message(
-    *,
-    response_text: str,
-    request: MessagePiece,
-    partial_content: str | None = None,
-    structured_refusal: str | None = None,
-) -> Message:
-    error_message = handle_bad_request_exception(
-        response_text=response_text,
-        request=request,
-        error_code=200,
-        is_content_filter=True,
-    )
-
-    if partial_content:
-        for piece in error_message.message_pieces:
-            piece.prompt_metadata["partial_content"] = partial_content
-
-    if structured_refusal:
-        for piece in error_message.message_pieces:
-            piece.mark_as_structured_refusal(refusal=structured_refusal)
-
-    return error_message
-
-
 def _build_tool_pieces(*, message: Any, request: MessagePiece) -> list[MessagePiece]:
     """
     Build function_call response pieces from a message's ``tool_calls``.
@@ -271,12 +246,14 @@ async def build_response_pieces_async(
     refusal = getattr(message, "refusal", None)
     if isinstance(refusal, str) and refusal:
         partial_content = content if isinstance(content, str) and content else None
-        return _build_blocked_message(
-            response_text=refusal,
+        refusal_message = build_content_filter_message(
+            response=refusal,
             request=request,
             partial_content=partial_content,
-            structured_refusal=refusal,
-        ).message_pieces
+        )
+        for piece in refusal_message.message_pieces:
+            piece.mark_as_structured_refusal(refusal=refusal)
+        return refusal_message.message_pieces
 
     if content:
         pieces.append(_build_text_piece(content=content, request=request))
@@ -469,8 +446,15 @@ def build_content_filter_message(
         Message: The constructed error Message with ``error="blocked"``.
     """
     response_text = response.model_dump_json() if hasattr(response, "model_dump_json") else str(response)
-    return _build_blocked_message(
+    error_message = handle_bad_request_exception(
         response_text=response_text,
         request=request,
-        partial_content=partial_content,
+        error_code=200,
+        is_content_filter=True,
     )
+
+    if partial_content:
+        for piece in error_message.message_pieces:
+            piece.prompt_metadata["partial_content"] = partial_content
+
+    return error_message

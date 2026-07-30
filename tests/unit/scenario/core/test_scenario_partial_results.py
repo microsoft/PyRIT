@@ -274,6 +274,7 @@ class TestScenarioPartialAttackCompletion:
         assert len(scenario_results) == 1
         assert scenario_results[0].scenario_run_state == ScenarioRunState.FAILED
         assert scenario_results[0].error_type == "ScenarioPartialFailureException"
+        assert scenario_results[0].error_message.endswith("Caused by RuntimeError: Failed obj3")
         saved_results = scenario_results[0].attack_results["partial_save_attack"]
         assert len(saved_results) == 2
         assert saved_results[0].objective == "obj1"
