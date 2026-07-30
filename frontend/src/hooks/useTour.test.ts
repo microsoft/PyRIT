@@ -59,6 +59,30 @@ describe('useTour', () => {
     })
   })
 
+  it('uses visible setup guidance when no target is active', () => {
+    const { result } = renderHook(() => useTour(onNavigate, true, 'home', false))
+    const steps = result.current.tourProps.steps
+
+    expect(steps[2].content).toContain('target selection happens in Configuration')
+    expect(steps[2].content).toContain('choose Configure a target')
+    expect(steps[2].content).toContain('use Set Active there')
+    expect(steps[3].target).toBe('[data-tour="chat-prerequisite"]')
+    expect(steps[3].content).toContain('before the message composer is available')
+    expect(steps[3].content).toContain('converter control appear once a target is active')
+  })
+
+  it('uses the active target card and visible converter control when a target is active', () => {
+    const { result } = renderHook(() => useTour(onNavigate, true, 'home', true))
+    const steps = result.current.tourProps.steps
+
+    expect(steps[2].content).toContain('target currently active for Chat')
+    expect(steps[2].content).toContain('after the tour')
+    expect(steps[2].content).toContain('use Set Active in Configuration')
+    expect(steps[3].target).toBe('[data-tour="converter-toggle"]')
+    expect(steps[3].content).toContain('Chat shows the message composer')
+    expect(steps[3].content).toContain('Toggle converter panel')
+  })
+
   it('startTour navigates to home and defers step when on a different view', () => {
     const { result, rerender } = renderHook(
       ({ currentView }) => useTour(onNavigate, true, currentView),
