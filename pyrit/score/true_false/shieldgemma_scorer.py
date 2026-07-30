@@ -34,6 +34,12 @@ _DEFAULT_PROMPT_RESPONSE_PATH = _SHIELDGEMMA_DATA_PATH / "shieldgemma_response_p
 _PROMPT_ONLY_PARAMETERS = ("user_prompt", "guideline")
 _PROMPT_RESPONSE_PARAMETERS = ("user_prompt", "response", "guideline")
 
+_UNUSED_USER_PROMPT_MESSAGE = (
+    "user_prompt only applies to ShieldGemma response classification. Prompt-only "
+    "classification judges the scored message itself, so passing a separate user prompt "
+    "would be silently ignored. Drop user_prompt, or use ShieldGemmaMessageRole.CHATBOT."
+)
+
 _MISSING_USER_PROMPT_MESSAGE = (
     "ShieldGemma response classification needs the user prompt that produced the response, "
     "because the model is trained on a Human Question followed by a Chatbot Response. "
@@ -71,7 +77,8 @@ def render_shieldgemma_prompt(
         message_role (ShieldGemmaMessageRole): Which use case to render. Defaults to the
             response side.
         user_prompt (str | None): The user prompt that produced ``message``. Required for
-            the response side and ignored for the prompt side. Defaults to None.
+            the response side. The prompt side judges ``message`` itself, so supplying one
+            there is rejected rather than quietly dropped. Defaults to None.
         prompt_template (SeedPrompt | str | None): Custom request template. Defaults to the
             bundled template for the selected use case.
 
@@ -79,9 +86,12 @@ def render_shieldgemma_prompt(
         SeedPrompt: The rendered request prompt.
 
     Raises:
-        ValueError: If the response side is rendered without a user prompt.
+        ValueError: If the response side is rendered without a user prompt, or if the prompt
+            side is rendered with one.
     """
     if message_role is ShieldGemmaMessageRole.USER:
+        if user_prompt is not None:
+            raise ValueError(_UNUSED_USER_PROMPT_MESSAGE)
         render_params = {"user_prompt": message, "guideline": guideline.rendered(message_role)}
         required_parameters: tuple[str, ...] = _PROMPT_ONLY_PARAMETERS
     else:
@@ -140,15 +150,24 @@ class ShieldGemmaScorer(TrueFalseScorer):
                 Load one from ``ShieldGemmaPolicy.default()`` or supply a custom guideline.
             message_role (ShieldGemmaMessageRole): Whether the scored message is a user
                 prompt or a model response. Defaults to the response side.
-            user_prompt (str | None): Fixed user prompt to classify responses against. Only
-                used on the response side, where it takes precedence over the preceding
-                turn of the scored conversation. Defaults to None.
+            user_prompt (str | None): Fixed user prompt to classify responses against, which
+                takes precedence over the preceding turn of the scored conversation. Applies
+                only to the response side; supplying it with
+                ``ShieldGemmaMessageRole.USER`` raises rather than being ignored.
+                Defaults to None.
             prompt_template (SeedPrompt | str | None): Custom ShieldGemma request template.
                 Defaults to the bundled template for the selected use case.
             validator (ScorerPromptValidator | None): Custom validator. Defaults to text only.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for multi-piece scores.
                 Defaults to TrueFalseScoreAggregator.OR.
+
+        Raises:
+            ValueError: If ``user_prompt`` is supplied for prompt-only classification, where
+                it would have no effect.
         """
+        if message_role is ShieldGemmaMessageRole.USER and user_prompt is not None:
+            raise ValueError(_UNUSED_USER_PROMPT_MESSAGE)
+
         self._prompt_target = chat_target
         self._guideline = guideline
         self._message_role = message_role
@@ -280,12 +299,12 @@ def _resolve_prompt_template(
         raise TypeError("prompt_template must be a SeedPrompt, str, or None.")
 
     # Render once here so a template missing a parameter fails at construction rather than
-    # on the first scored message.
+    # on the first scored message. Prompt-only rendering takes no separate user prompt.
     render_shieldgemma_prompt(
         message="validation message",
         guideline=guideline,
         message_role=message_role,
-        user_prompt="validation prompt",
+        user_prompt="validation prompt" if message_role is ShieldGemmaMessageRole.CHATBOT else None,
         prompt_template=resolved,
     )
     return resolved

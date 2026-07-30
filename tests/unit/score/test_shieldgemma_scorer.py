@@ -112,6 +112,28 @@ def test_render_response_without_user_prompt_raises() -> None:
         render_shieldgemma_prompt(message="a response", guideline=CUSTOM_GUIDELINE)
 
 
+def test_render_prompt_only_rejects_a_separate_user_prompt() -> None:
+    """Prompt-only classification judges the message itself, so a second prompt is a mistake."""
+    with pytest.raises(ValueError, match="only applies to ShieldGemma response classification"):
+        render_shieldgemma_prompt(
+            message="a prompt",
+            guideline=CUSTOM_GUIDELINE,
+            message_role=ShieldGemmaMessageRole.USER,
+            user_prompt="a second prompt",
+        )
+
+
+def test_scorer_rejects_user_prompt_on_the_prompt_side(patch_central_database: None) -> None:
+    """The parameter would be silently ignored, so it fails at construction instead."""
+    with pytest.raises(ValueError, match="only applies to ShieldGemma response classification"):
+        ShieldGemmaScorer(
+            chat_target=_mock_target("No"),
+            guideline=CUSTOM_GUIDELINE,
+            message_role=ShieldGemmaMessageRole.USER,
+            user_prompt="ignored",
+        )
+
+
 def test_render_shieldgemma_prompt_rejects_template_missing_parameters() -> None:
     with pytest.raises(ValueError):
         render_shieldgemma_prompt(
