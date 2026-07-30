@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - 3.10 only
 
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioRunState
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
@@ -898,6 +898,13 @@ class TestScenarioBaselineOnlyExecution:
         # But running should fail because there are no atomic attacks
         with pytest.raises(ValueError, match="Cannot run scenario with no atomic attacks"):
             await scenario.run_async()
+
+        scenario_results = CentralMemory.get_memory_instance().get_scenario_results(
+            scenario_result_ids=[scenario._scenario_result_id]
+        )
+        assert scenario_results[0].scenario_run_state == ScenarioRunState.FAILED
+        assert scenario_results[0].error_type == "ValueError"
+        assert "Cannot run scenario with no atomic attacks" in scenario_results[0].error_message
 
     async def test_standalone_baseline_uses_dataset_config_seeds(self, mock_objective_target):
         """Test that standalone baseline uses seed groups from dataset_config."""
