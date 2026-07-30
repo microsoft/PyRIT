@@ -6,7 +6,7 @@ CoPyRIT GUI — Deploy a new isolated instance.
 
 Automates the full deployment of an isolated CoPyRIT GUI instance:
   1. Resource group
-    2. Entra app registration + delegated Microsoft Graph permission
+  2. Entra app registration + delegated Microsoft Graph permission
   3. Entra security group (optional — can use existing)
   4. Azure SQL server + database
   5. Storage account + blob container (auto-injects container URL into .env)
