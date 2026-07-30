@@ -54,6 +54,7 @@ jest.mock("../../utils/messageMapper", () => ({
 const mockedAttacksApi = attacksApi as jest.Mocked<typeof attacksApi>;
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>;
 const mockedMapper = messageMapper as jest.Mocked<typeof messageMapper>;
+const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -275,6 +276,7 @@ describe("ChatWindow Integration", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
     mockMatchMedia(false);
     // Default: panel API returns empty conversations
     mockedAttacksApi.getConversations.mockResolvedValue({
@@ -290,6 +292,10 @@ describe("ChatWindow Integration", () => {
     mockedConvertersApi.listConverterCatalog.mockResolvedValue({
       items: [],
     });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   // -----------------------------------------------------------------------
@@ -312,9 +318,20 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
-  it("renders a global markdown switch that toggles on click", async () => {
-    const user = userEvent.setup();
+  it("defaults to raw mode when no Markdown preference is stored", () => {
     render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("switch", { name: /markdown/i })).not.toBeChecked();
+    expect(window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("persists explicit Markdown and raw choices across remounts", async () => {
+    const user = userEvent.setup();
+    const firstRender = render(
       <TestWrapper>
         <ChatWindow {...defaultProps} />
       </TestWrapper>
@@ -323,6 +340,84 @@ describe("ChatWindow Integration", () => {
     const toggle = screen.getByRole("switch", { name: /markdown/i });
     expect(toggle).not.toBeChecked();
 
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)).toBe("markdown");
+
+    firstRender.unmount();
+    const secondRender = render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+    const remountedToggle = screen.getByRole("switch", { name: /markdown/i });
+    expect(remountedToggle).toBeChecked();
+
+    await user.click(remountedToggle);
+    expect(remountedToggle).not.toBeChecked();
+    expect(window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)).toBe("raw");
+
+    secondRender.unmount();
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+    expect(screen.getByRole("switch", { name: /markdown/i })).not.toBeChecked();
+  });
+
+  it("initializes Markdown mode from stored preference", () => {
+    window.localStorage.setItem(MARKDOWN_PREFERENCE_STORAGE_KEY, "markdown");
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("switch", { name: /markdown/i })).toBeChecked();
+  });
+
+  it("falls back to raw mode for an invalid stored preference", () => {
+    window.localStorage.setItem(MARKDOWN_PREFERENCE_STORAGE_KEY, "invalid");
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("switch", { name: /markdown/i })).not.toBeChecked();
+  });
+
+  it("falls back to raw mode when localStorage is unavailable during initialization", () => {
+    jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("Access denied", "SecurityError");
+    });
+
+    expect(() => {
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} />
+        </TestWrapper>
+      );
+    }).not.toThrow();
+    expect(screen.getByRole("switch", { name: /markdown/i })).not.toBeChecked();
+  });
+
+  it("keeps the in-memory choice when localStorage is unavailable during persistence", async () => {
+    const user = userEvent.setup();
+    jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    const toggle = screen.getByRole("switch", { name: /markdown/i });
     await user.click(toggle);
     expect(toggle).toBeChecked();
   });

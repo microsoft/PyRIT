@@ -74,6 +74,7 @@ const ATTACK_ROWS = [
   makeAttackRow("atk-success", "success"),
   makeAttackRow("atk-failure", "failure"),
 ];
+const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 
 /** Register every API mock the routing tests rely on. */
 async function mockRoutingAPIs(page: Page) {
@@ -238,5 +239,33 @@ test.describe("URL-driven routing", () => {
     await page.goBack();
     await expect(page).toHaveURL(/\/history$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
+  });
+
+  test("Markdown preference survives route remount and reload", async ({ page }) => {
+    await page.goto("/chat");
+
+    const markdownToggle = page.getByRole("switch", { name: "Markdown" });
+    await expect(markdownToggle).not.toBeChecked();
+    await markdownToggle.click();
+    await expect(markdownToggle).toBeChecked();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (storageKey: string) => window.localStorage.getItem(storageKey),
+          MARKDOWN_PREFERENCE_STORAGE_KEY,
+        ),
+      )
+      .toBe("markdown");
+
+    await page.getByTitle("Attack History").click();
+    await expect(page).toHaveURL(/\/history$/);
+    await expect(page.getByTestId("attacks-table")).toBeVisible();
+
+    await page.getByTitle("Chat").click();
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page.getByRole("switch", { name: "Markdown" })).toBeChecked();
+
+    await page.reload();
+    await expect(page.getByRole("switch", { name: "Markdown" })).toBeChecked();
   });
 });
