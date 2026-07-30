@@ -3,7 +3,6 @@
 
 import logging
 import posixpath
-from enum import Enum
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -13,6 +12,7 @@ from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
 from pyrit.common import default_values
+from pyrit.memory.storage.storage import SupportedContentType
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -20,16 +20,6 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
-
-
-class SupportedContentType(Enum):
-    """
-    All supported content types for uploading blobs to provided storage account container.
-    See all options here: https://www.iana.org/assignments/media-types/media-types.xhtml.
-    """
-
-    PLAIN_TEXT = "text/plain"
-    HTML = "text/html"
 
 
 class AzureBlobStorageTarget(PromptTarget):
@@ -49,7 +39,9 @@ class AzureBlobStorageTarget(PromptTarget):
             will be capped at the value provided.
     """
 
-    AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_CONTAINER_URL"
+    AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE: str = (
+        "AZURE_STORAGE_ACCOUNT_CONTAINER_URL"
+    )
     SAS_TOKEN_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_SAS_TOKEN"
 
     # A SAS token is the "api_key"; with no token the target falls back to
@@ -72,6 +64,18 @@ class AzureBlobStorageTarget(PromptTarget):
         )
     )
 
+    # Text-only content types supported by this target (which handles text prompts)
+    _TEXT_CONTENT_TYPES = frozenset(
+        {
+            SupportedContentType.PLAIN_TEXT,
+            SupportedContentType.HTML,
+            SupportedContentType.JSON,
+            SupportedContentType.XML,
+            SupportedContentType.CSV,
+            SupportedContentType.MARKDOWN,
+        }
+    )
+
     def __init__(
         self,
         *,
@@ -90,15 +94,26 @@ class AzureBlobStorageTarget(PromptTarget):
             sas_token (str, Optional): The SAS token for authentication.
                 Defaults to the AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable.
             blob_content_type (SupportedContentType): The content type for blobs.
+                Must be a text-based type (PLAIN_TEXT, HTML, JSON, XML, CSV, MARKDOWN).
                 Defaults to PLAIN_TEXT.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+
+        Raises:
+            ValueError: If blob_content_type is not a text-based type.
         """
+        if blob_content_type not in self._TEXT_CONTENT_TYPES:
+            supported_types = ", ".join(sorted(ct.value for ct in self._TEXT_CONTENT_TYPES))
+            raise ValueError(
+                "AzureBlobStorageTarget only supports text-based content types. "
+                f"Got {blob_content_type.value}. Supported types: {supported_types}"
+            )
         self._blob_content_type: str = blob_content_type.value
 
         self._container_url: str = default_values.get_required_value(
-            env_var_name=self.AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE, passed_value=container_url
+            env_var_name=self.AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE,
+            passed_value=container_url,
         )
 
         self._sas_token: str | None = sas_token
@@ -135,10 +150,13 @@ class AzureBlobStorageTarget(PromptTarget):
         container_url, _ = self._parse_url()
         try:
             sas_token: str = default_values.get_required_value(
-                env_var_name=self.SAS_TOKEN_ENVIRONMENT_VARIABLE, passed_value=self._sas_token
+                env_var_name=self.SAS_TOKEN_ENVIRONMENT_VARIABLE,
+                passed_value=self._sas_token,
             )
         except ValueError:
-            logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
+            logger.info(
+                "SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication."
+            )
             account_url, _, container_name = container_url.rpartition("/")
             self._credential = DefaultAzureCredential()
             self._client_async = AsyncContainerClient(
@@ -165,7 +183,9 @@ class AzureBlobStorageTarget(PromptTarget):
             if credential:
                 await credential.close()
 
-    async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
+    async def _upload_blob_async(
+        self, *, file_name: str, data: bytes, content_type: str
+    ) -> None:
         """
         (Async) Handles uploading blob to given storage container.
 
@@ -192,7 +212,9 @@ class AzureBlobStorageTarget(PromptTarget):
                 raise RuntimeError("Blob storage client not initialized")
             blob_client = self._client_async.get_blob_client(blob=blob_path)
             if await blob_client.exists():
-                logger.info(msg=f"Blob {blob_path} already exists. Deleting it before uploading a new version.")
+                logger.info(
+                    msg=f"Blob {blob_path} already exists. Deleting it before uploading a new version."
+                )
                 await blob_client.delete_blob()
             logger.info(msg=f"Uploading new blob to {blob_path}")
             await blob_client.upload_blob(data=data, content_settings=content_settings)
@@ -233,7 +255,9 @@ class AzureBlobStorageTarget(PromptTarget):
         return container_url, blob_prefix
 
     @limit_requests_per_minute
-    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+    async def _send_prompt_to_target_async(
+        self, *, normalized_conversation: list[Message]
+    ) -> list[Message]:
         """
         (Async) Sends prompt to target, which creates a file and uploads it as a blob
         to the provided storage container.
@@ -252,12 +276,16 @@ class AzureBlobStorageTarget(PromptTarget):
         # default file name is <conversation_id>.txt, but can be overridden by prompt metadata
         file_name = f"{request.conversation_id}.txt"
         if request.prompt_metadata.get("file_name"):
-            file_name = self._sanitize_file_name(str(request.prompt_metadata["file_name"]))
+            file_name = self._sanitize_file_name(
+                str(request.prompt_metadata["file_name"])
+            )
 
         data = str.encode(request.converted_value)
         blob_url = self._container_url + "/" + file_name
 
-        await self._upload_blob_async(file_name=file_name, data=data, content_type=self._blob_content_type)
+        await self._upload_blob_async(
+            file_name=file_name, data=data, content_type=self._blob_content_type
+        )
 
         response = construct_response_from_request(
             request=request, response_text_pieces=[blob_url], response_type="url"
@@ -282,6 +310,12 @@ class AzureBlobStorageTarget(PromptTarget):
         Raises:
             ValueError: If *file_name* contains path separators or traversal segments.
         """
-        if file_name != posixpath.basename(file_name) or file_name in (".", "..") or "\\" in file_name:
-            raise ValueError(f"Invalid file_name '{file_name}': must be a bare filename without path separators.")
+        if (
+            file_name != posixpath.basename(file_name)
+            or file_name in (".", "..")
+            or "\\" in file_name
+        ):
+            raise ValueError(
+                f"Invalid file_name '{file_name}': must be a bare filename without path separators."
+            )
         return file_name

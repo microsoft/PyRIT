@@ -71,19 +71,26 @@ async def test_disk_storage_io_create_directory_if_not_exists():
     storage = DiskStorageIO()
     directory_path = "sample_dir"
 
-    with patch("pathlib.Path.mkdir") as mock_mkdir, patch("pathlib.Path.exists", return_value=False) as mock_exists:
+    with (
+        patch("pathlib.Path.mkdir") as mock_mkdir,
+        patch("pathlib.Path.exists", return_value=False) as mock_exists,
+    ):
         await storage.create_directory_if_not_exists_async(directory_path)
         mock_exists.assert_called_once()
         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
 
 async def test_azure_blob_storage_io_read_file(azure_blob_storage_io):
-    azure_blob_storage_io._client_async = AsyncMock()  # Use Mock since get_blob_client is sync
+    azure_blob_storage_io._client_async = (
+        AsyncMock()
+    )  # Use Mock since get_blob_client is sync
 
     mock_blob_client = AsyncMock()
     mock_blob_stream = AsyncMock()
 
-    azure_blob_storage_io._client_async.get_blob_client = Mock(return_value=mock_blob_client)
+    azure_blob_storage_io._client_async.get_blob_client = Mock(
+        return_value=mock_blob_client
+    )
     mock_blob_client.download_blob = AsyncMock(return_value=mock_blob_stream)
     mock_blob_stream.readall = AsyncMock(return_value=b"Test file content")
     azure_blob_storage_io._client_async.close = AsyncMock()
@@ -95,7 +102,9 @@ async def test_azure_blob_storage_io_read_file(azure_blob_storage_io):
     assert result == b"Test file content"
 
 
-async def test_azure_blob_storage_io_read_file_with_relative_path(azure_blob_storage_io):
+async def test_azure_blob_storage_io_read_file_with_relative_path(
+    azure_blob_storage_io,
+):
     mock_container_client = AsyncMock()
     azure_blob_storage_io._client_async = mock_container_client
 
@@ -110,7 +119,9 @@ async def test_azure_blob_storage_io_read_file_with_relative_path(azure_blob_sto
     result = await azure_blob_storage_io.read_file_async("dir1/dir2/sample.png")
 
     assert result == b"Test file content"
-    mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/sample.png")
+    mock_container_client.get_blob_client.assert_called_once_with(
+        blob="dir1/dir2/sample.png"
+    )
 
 
 async def test_azure_blob_storage_io_write_file():
@@ -126,7 +137,9 @@ async def test_azure_blob_storage_io_write_file():
 
     mock_container_client.get_blob_client.return_value = mock_blob_client
 
-    with patch.object(azure_blob_storage_io, "_create_container_client_async", return_value=None):
+    with patch.object(
+        azure_blob_storage_io, "_create_container_client_async", return_value=None
+    ):
         azure_blob_storage_io._client_async = mock_container_client
         azure_blob_storage_io._upload_blob_async = AsyncMock()
 
@@ -136,7 +149,9 @@ async def test_azure_blob_storage_io_write_file():
         await azure_blob_storage_io.write_file_async(path, data_to_write)
 
         azure_blob_storage_io._upload_blob_async.assert_awaited_with(
-            file_name="testfile.txt", data=data_to_write, content_type=SupportedContentType.PLAIN_TEXT.value
+            file_name="testfile.txt",
+            data=data_to_write,
+            content_type=SupportedContentType.PLAIN_TEXT.value,
         )
 
 
@@ -148,12 +163,16 @@ async def test_azure_blob_storage_io_write_file_with_relative_path():
 
     mock_container_client = AsyncMock()
 
-    with patch.object(azure_blob_storage_io, "_create_container_client_async", return_value=None):
+    with patch.object(
+        azure_blob_storage_io, "_create_container_client_async", return_value=None
+    ):
         azure_blob_storage_io._client_async = mock_container_client
         azure_blob_storage_io._upload_blob_async = AsyncMock()
 
         data_to_write = b"Test data"
-        await azure_blob_storage_io.write_file_async("dir1/dir2/testfile.txt", data_to_write)
+        await azure_blob_storage_io.write_file_async(
+            "dir1/dir2/testfile.txt", data_to_write
+        )
 
         azure_blob_storage_io._upload_blob_async.assert_awaited_with(
             file_name="dir1/dir2/testfile.txt",
@@ -165,16 +184,21 @@ async def test_azure_blob_storage_io_write_file_with_relative_path():
 async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_token():
     container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
     sas_token = "explicit-sas-token"
-    azure_blob_storage_io = AzureBlobStorageIO(container_url=container_url, sas_token=sas_token)
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url=container_url, sas_token=sas_token
+    )
 
     mock_container_client = AsyncMock()
 
     with patch(
-        "azure.storage.blob.aio.ContainerClient.from_container_url", return_value=mock_container_client
+        "azure.storage.blob.aio.ContainerClient.from_container_url",
+        return_value=mock_container_client,
     ) as mock_from_container_url:
         await azure_blob_storage_io._create_container_client_async()
 
-    mock_from_container_url.assert_called_once_with(container_url=container_url, credential=sas_token)
+    mock_from_container_url.assert_called_once_with(
+        container_url=container_url, credential=sas_token
+    )
     assert azure_blob_storage_io._client_async is mock_container_client
     assert azure_blob_storage_io._credential is None
 
@@ -187,8 +211,12 @@ async def test_azure_blob_storage_io_create_container_client_uses_default_creden
     mock_credential = AsyncMock()
 
     with (
-        patch("azure.identity.aio.DefaultAzureCredential", return_value=mock_credential) as mock_credential_cls,
-        patch("azure.storage.blob.aio.ContainerClient", return_value=mock_container_client) as mock_container_cls,
+        patch(
+            "azure.identity.aio.DefaultAzureCredential", return_value=mock_credential
+        ) as mock_credential_cls,
+        patch(
+            "azure.storage.blob.aio.ContainerClient", return_value=mock_container_client
+        ) as mock_container_cls,
     ):
         await azure_blob_storage_io._create_container_client_async()
 
@@ -203,7 +231,9 @@ async def test_azure_blob_storage_io_create_container_client_uses_default_creden
 
 
 async def test_azure_blob_storage_io_close_client_async_closes_credential_and_client():
-    azure_blob_storage_io = AzureBlobStorageIO(container_url="https://youraccount.blob.core.windows.net/yourcontainer")
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url="https://youraccount.blob.core.windows.net/yourcontainer"
+    )
 
     mock_client = AsyncMock()
     mock_credential = AsyncMock()
@@ -219,7 +249,9 @@ async def test_azure_blob_storage_io_close_client_async_closes_credential_and_cl
 
 
 async def test_azure_blob_storage_io_create_container_client_raises_for_url_without_container():
-    azure_blob_storage_io = AzureBlobStorageIO(container_url="https://youraccount.blob.core.windows.net")
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url="https://youraccount.blob.core.windows.net"
+    )
 
     with pytest.raises(ValueError, match="expected a container name"):
         await azure_blob_storage_io._create_container_client_async()
@@ -227,10 +259,14 @@ async def test_azure_blob_storage_io_create_container_client_raises_for_url_with
 
     mock_blob_client = AsyncMock()
 
-    azure_blob_storage_io._client_async.get_blob_client = Mock(return_value=mock_blob_client)
+    azure_blob_storage_io._client_async.get_blob_client = Mock(
+        return_value=mock_blob_client
+    )
     mock_blob_client.get_blob_properties = AsyncMock()
     azure_blob_storage_io._client_async.close = AsyncMock()
-    file_path = "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
+    file_path = (
+        "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
+    )
     exists = await azure_blob_storage_io.path_exists_async(file_path)
     assert exists is True
 
@@ -248,7 +284,9 @@ async def test_azure_storage_io_path_exists_with_relative_path(azure_blob_storag
     exists = await azure_blob_storage_io.path_exists_async("dir1/dir2/blob_name.txt")
 
     assert exists is True
-    mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/blob_name.txt")
+    mock_container_client.get_blob_client.assert_called_once_with(
+        blob="dir1/dir2/blob_name.txt"
+    )
 
 
 async def test_azure_storage_io_is_file(azure_blob_storage_io):
@@ -256,11 +294,15 @@ async def test_azure_storage_io_is_file(azure_blob_storage_io):
 
     mock_blob_client = AsyncMock()
 
-    azure_blob_storage_io._client_async.get_blob_client = Mock(return_value=mock_blob_client)
+    azure_blob_storage_io._client_async.get_blob_client = Mock(
+        return_value=mock_blob_client
+    )
     mock_blob_properties = Mock(size=1024)
     mock_blob_client.get_blob_properties = AsyncMock(return_value=mock_blob_properties)
     azure_blob_storage_io._client_async.close = AsyncMock()
-    file_path = "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
+    file_path = (
+        "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
+    )
     is_file = await azure_blob_storage_io.is_file_async(file_path)
     assert is_file is True
 
@@ -279,11 +321,15 @@ async def test_azure_storage_io_is_file_with_relative_path(azure_blob_storage_io
     is_file = await azure_blob_storage_io.is_file_async("dir1/dir2/blob_name.txt")
 
     assert is_file is True
-    mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/blob_name.txt")
+    mock_container_client.get_blob_client.assert_called_once_with(
+        blob="dir1/dir2/blob_name.txt"
+    )
 
 
 def test_azure_storage_io_parse_blob_url_valid(azure_blob_storage_io):
-    file_path = "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
+    file_path = (
+        "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
+    )
     container_name, blob_name = azure_blob_storage_io.parse_blob_url(file_path)
 
     assert container_name == "container"
@@ -297,7 +343,9 @@ def test_azure_storage_io_parse_blob_url_invalid(azure_blob_storage_io):
 
 def test_azure_storage_io_parse_blob_url_without_scheme(azure_blob_storage_io):
     with pytest.raises(ValueError, match="Invalid blob URL"):
-        azure_blob_storage_io.parse_blob_url("example.blob.core.windows.net/container/dir1/blob_name.txt")
+        azure_blob_storage_io.parse_blob_url(
+            "example.blob.core.windows.net/container/dir1/blob_name.txt"
+        )
 
 
 def test_azure_storage_io_parse_blob_url_without_netloc(azure_blob_storage_io):
@@ -306,12 +354,17 @@ def test_azure_storage_io_parse_blob_url_without_netloc(azure_blob_storage_io):
 
 
 def test_resolve_blob_name_with_full_url(azure_blob_storage_io):
-    result = azure_blob_storage_io._resolve_blob_name("https://account.blob.core.windows.net/container/dir1/file.txt")
+    result = azure_blob_storage_io._resolve_blob_name(
+        "https://account.blob.core.windows.net/container/dir1/file.txt"
+    )
     assert result == "dir1/file.txt"
 
 
 def test_resolve_blob_name_with_relative_path(azure_blob_storage_io):
-    assert azure_blob_storage_io._resolve_blob_name("dir1/dir2/file.txt") == "dir1/dir2/file.txt"
+    assert (
+        azure_blob_storage_io._resolve_blob_name("dir1/dir2/file.txt")
+        == "dir1/dir2/file.txt"
+    )
 
 
 def test_resolve_blob_name_with_simple_filename(azure_blob_storage_io):
@@ -319,13 +372,18 @@ def test_resolve_blob_name_with_simple_filename(azure_blob_storage_io):
 
 
 def test_resolve_blob_name_normalizes_backslashes(azure_blob_storage_io):
-    assert azure_blob_storage_io._resolve_blob_name("dir1\\dir2\\file.txt") == "dir1/dir2/file.txt"
+    assert (
+        azure_blob_storage_io._resolve_blob_name("dir1\\dir2\\file.txt")
+        == "dir1/dir2/file.txt"
+    )
 
 
 def test_resolve_blob_name_with_path_object(azure_blob_storage_io):
     from pathlib import PurePosixPath
 
-    result = azure_blob_storage_io._resolve_blob_name(PurePosixPath("dir1/dir2/file.txt"))
+    result = azure_blob_storage_io._resolve_blob_name(
+        PurePosixPath("dir1/dir2/file.txt")
+    )
     assert result == "dir1/dir2/file.txt"
 
 
@@ -333,7 +391,9 @@ async def test_upload_blob_raises_when_client_async_none():
     obj = AzureBlobStorageIO.__new__(AzureBlobStorageIO)
     obj._client_async = None
     with pytest.raises(RuntimeError, match="Azure container client not initialized"):
-        await obj._upload_blob_async(file_name="test.txt", data=b"data", content_type="text/plain")
+        await obj._upload_blob_async(
+            file_name="test.txt", data=b"data", content_type="text/plain"
+        )
 
 
 async def test_read_file_lazy_initializes_client(azure_blob_storage_io):
@@ -417,3 +477,124 @@ async def test_is_file_lazy_initializes_client(azure_blob_storage_io):
 
     mock_create.assert_called_once()
     assert result is True
+
+
+def test_supported_content_type_has_expected_values():
+    """Test that SupportedContentType enum contains expected media types."""
+    # Text types
+    assert SupportedContentType.PLAIN_TEXT.value == "text/plain"
+    assert SupportedContentType.HTML.value == "text/html"
+    assert SupportedContentType.JSON.value == "application/json"
+    assert SupportedContentType.XML.value == "application/xml"
+    assert SupportedContentType.CSV.value == "text/csv"
+    assert SupportedContentType.MARKDOWN.value == "text/markdown"
+
+    # Image types
+    assert SupportedContentType.PNG.value == "image/png"
+    assert SupportedContentType.JPEG.value == "image/jpeg"
+    assert SupportedContentType.GIF.value == "image/gif"
+    assert SupportedContentType.WEBP.value == "image/webp"
+    assert SupportedContentType.SVG.value == "image/svg+xml"
+    assert SupportedContentType.BMP.value == "image/bmp"
+
+    # Audio types
+    assert SupportedContentType.WAV.value == "audio/wav"
+    assert SupportedContentType.MP3.value == "audio/mpeg"
+    assert SupportedContentType.OGG.value == "audio/ogg"
+    assert SupportedContentType.FLAC.value == "audio/flac"
+    assert SupportedContentType.M4A.value == "audio/mp4"
+
+    # Video types
+    assert SupportedContentType.MP4.value == "video/mp4"
+    assert SupportedContentType.WEBM.value == "video/webm"
+    assert SupportedContentType.OGG_VIDEO.value == "video/ogg"
+    assert SupportedContentType.AVI.value == "video/x-msvideo"
+
+    # Document types
+    assert SupportedContentType.PDF.value == "application/pdf"
+    assert SupportedContentType.ZIP.value == "application/zip"
+    assert SupportedContentType.TAR.value == "application/x-tar"
+    assert SupportedContentType.GZIP.value == "application/gzip"
+
+
+async def test_azure_blob_storage_io_write_file_infers_content_type_from_extension():
+    """write_file_async should infer content_type from file extension when not provided."""
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url=container_url, blob_content_type=SupportedContentType.PLAIN_TEXT
+    )
+
+    mock_container_client = AsyncMock()
+
+    with patch.object(
+        azure_blob_storage_io, "_create_container_client_async", return_value=None
+    ):
+        azure_blob_storage_io._client_async = mock_container_client
+        azure_blob_storage_io._upload_blob_async = AsyncMock()
+
+        data_to_write = b"<html>test</html>"
+        path = "https://youraccount.blob.core.windows.net/yourcontainer/testfile.html"
+
+        await azure_blob_storage_io.write_file_async(path, data_to_write)
+
+        azure_blob_storage_io._upload_blob_async.assert_awaited_with(
+            file_name="testfile.html",
+            data=data_to_write,
+            content_type="text/html",
+        )
+
+
+async def test_azure_blob_storage_io_write_file_with_explicit_content_type():
+    """write_file_async should use explicit content_type when provided."""
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url=container_url, blob_content_type=SupportedContentType.PLAIN_TEXT
+    )
+
+    mock_container_client = AsyncMock()
+
+    with patch.object(
+        azure_blob_storage_io, "_create_container_client_async", return_value=None
+    ):
+        azure_blob_storage_io._client_async = mock_container_client
+        azure_blob_storage_io._upload_blob_async = AsyncMock()
+
+        data_to_write = b"test data"
+        path = "https://youraccount.blob.core.windows.net/yourcontainer/testfile.txt"
+
+        await azure_blob_storage_io.write_file_async(
+            path, data_to_write, content_type="application/json"
+        )
+
+        azure_blob_storage_io._upload_blob_async.assert_awaited_with(
+            file_name="testfile.txt",
+            data=data_to_write,
+            content_type="application/json",
+        )
+
+
+async def test_azure_blob_storage_io_write_file_infers_image_content_type():
+    """write_file_async should infer image content types from extension."""
+    container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
+    azure_blob_storage_io = AzureBlobStorageIO(
+        container_url=container_url, blob_content_type=SupportedContentType.PLAIN_TEXT
+    )
+
+    mock_container_client = AsyncMock()
+
+    with patch.object(
+        azure_blob_storage_io, "_create_container_client_async", return_value=None
+    ):
+        azure_blob_storage_io._client_async = mock_container_client
+        azure_blob_storage_io._upload_blob_async = AsyncMock()
+
+        data_to_write = b"\x89PNG\r\n\x1a\n"
+        path = "https://youraccount.blob.core.windows.net/yourcontainer/image.png"
+
+        await azure_blob_storage_io.write_file_async(path, data_to_write)
+
+        azure_blob_storage_io._upload_blob_async.assert_awaited_with(
+            file_name="image.png",
+            data=data_to_write,
+            content_type="image/png",
+        )

@@ -25,8 +25,83 @@ class SupportedContentType(Enum):
     See all options here: https://www.iana.org/assignments/media-types/media-types.xhtml.
     """
 
-    # TODO, add other media supported types
+    # Text types
     PLAIN_TEXT = "text/plain"
+    HTML = "text/html"
+    JSON = "application/json"
+    XML = "application/xml"
+    CSV = "text/csv"
+    MARKDOWN = "text/markdown"
+
+    # Image types
+    PNG = "image/png"
+    JPEG = "image/jpeg"
+    GIF = "image/gif"
+    WEBP = "image/webp"
+    SVG = "image/svg+xml"
+    BMP = "image/bmp"
+
+    # Audio types
+    WAV = "audio/wav"
+    MP3 = "audio/mpeg"
+    OGG = "audio/ogg"
+    FLAC = "audio/flac"
+    M4A = "audio/mp4"
+
+    # Video types
+    MP4 = "video/mp4"
+    WEBM = "video/webm"
+    OGG_VIDEO = "video/ogg"
+    AVI = "video/x-msvideo"
+
+    # Document types
+    PDF = "application/pdf"
+    ZIP = "application/zip"
+    TAR = "application/x-tar"
+    GZIP = "application/gzip"
+
+
+# Deterministic mapping from file extensions to SupportedContentType.
+# This avoids platform-dependent behavior from mimetypes.guess_type.
+_EXTENSION_TO_CONTENT_TYPE: dict[str, SupportedContentType] = {
+    # Text types
+    ".txt": SupportedContentType.PLAIN_TEXT,
+    ".text": SupportedContentType.PLAIN_TEXT,
+    ".html": SupportedContentType.HTML,
+    ".htm": SupportedContentType.HTML,
+    ".json": SupportedContentType.JSON,
+    ".xml": SupportedContentType.XML,
+    ".csv": SupportedContentType.CSV,
+    ".md": SupportedContentType.MARKDOWN,
+    ".markdown": SupportedContentType.MARKDOWN,
+    # Image types
+    ".png": SupportedContentType.PNG,
+    ".jpg": SupportedContentType.JPEG,
+    ".jpeg": SupportedContentType.JPEG,
+    ".gif": SupportedContentType.GIF,
+    ".webp": SupportedContentType.WEBP,
+    ".svg": SupportedContentType.SVG,
+    ".bmp": SupportedContentType.BMP,
+    # Audio types
+    ".wav": SupportedContentType.WAV,
+    ".wave": SupportedContentType.WAV,
+    ".mp3": SupportedContentType.MP3,
+    ".ogg": SupportedContentType.OGG,
+    ".flac": SupportedContentType.FLAC,
+    ".m4a": SupportedContentType.M4A,
+    # Video types
+    ".mp4": SupportedContentType.MP4,
+    ".m4v": SupportedContentType.MP4,
+    ".webm": SupportedContentType.WEBM,
+    ".ogv": SupportedContentType.OGG_VIDEO,
+    ".avi": SupportedContentType.AVI,
+    # Document types
+    ".pdf": SupportedContentType.PDF,
+    ".zip": SupportedContentType.ZIP,
+    ".tar": SupportedContentType.TAR,
+    ".gz": SupportedContentType.GZIP,
+    ".gzip": SupportedContentType.GZIP,
+}
 
 
 class StorageIO(ABC):
@@ -41,7 +116,9 @@ class StorageIO(ABC):
         """
 
     @abstractmethod
-    async def write_file_async(self, path: Path | str, data: bytes) -> None:
+    async def write_file_async(
+        self, path: Path | str, data: bytes, content_type: str | None = None
+    ) -> None:
         """
         Asynchronously writes data to the given path.
         """
@@ -85,13 +162,16 @@ class DiskStorageIO(StorageIO):
         async with aiofiles.open(path, "rb") as file:
             return await file.read()
 
-    async def write_file_async(self, path: Path | str, data: bytes) -> None:
+    async def write_file_async(
+        self, path: Path | str, data: bytes, content_type: str | None = None
+    ) -> None:
         """
         Asynchronously writes data to a file on the local disk.
 
         Args:
             path (Path): The path to the file.
             data (bytes): The content to write to the file.
+            content_type (str | None): Optional content type (unused for local disk storage).
 
         """
         path = self._convert_to_path(path)
@@ -211,7 +291,9 @@ class AzureBlobStorageIO(StorageIO):
 
         from azure.identity.aio import DefaultAzureCredential
 
-        logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
+        logger.info(
+            "SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication."
+        )
         parsed_url = urlparse(self._container_url)
         path_parts = [part for part in parsed_url.path.split("/") if part]
         if not path_parts:
@@ -240,7 +322,9 @@ class AzureBlobStorageIO(StorageIO):
             if credential:
                 await credential.close()
 
-    async def _upload_blob_async(self, file_name: str, data: bytes, content_type: str) -> None:
+    async def _upload_blob_async(
+        self, file_name: str, data: bytes, content_type: str
+    ) -> None:
         """
         (Async) Handles uploading blob to given storage container.
 
@@ -368,7 +452,9 @@ class AzureBlobStorageIO(StorageIO):
         finally:
             await self._close_client_async()
 
-    async def write_file_async(self, path: Path | str, data: bytes) -> None:
+    async def write_file_async(
+        self, path: Path | str, data: bytes, content_type: str | None = None
+    ) -> None:
         """
         Write data to Azure Blob Storage at the specified path.
 
@@ -378,12 +464,29 @@ class AzureBlobStorageIO(StorageIO):
         Args:
             path (Path | str): Full blob URL or relative blob path.
             data (bytes): The data to write.
+            content_type (str | None): Optional MIME type for the blob. If not provided,
+                it will be inferred from the file extension using a deterministic mapping,
+                falling back to the default blob_content_type configured in the constructor.
         """
         if not self._client_async:
             self._client_async = await self._create_container_client_async()
         blob_name = self._resolve_blob_name(path)
+
+        # Determine content type: explicit > inferred from extension > default
+        if content_type is None:
+            # Use deterministic mapping instead of platform-dependent mimetypes.guess_type
+            ext = Path(blob_name).suffix.lower()
+            inferred_content_type = _EXTENSION_TO_CONTENT_TYPE.get(ext)
+            content_type = (
+                inferred_content_type.value
+                if inferred_content_type
+                else self._blob_content_type
+            )
+
         try:
-            await self._upload_blob_async(file_name=blob_name, data=data, content_type=self._blob_content_type)
+            await self._upload_blob_async(
+                file_name=blob_name, data=data, content_type=content_type
+            )
         except Exception as exc:
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise
