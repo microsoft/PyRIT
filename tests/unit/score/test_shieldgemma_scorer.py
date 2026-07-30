@@ -36,14 +36,14 @@ def _sent_request(target: MagicMock) -> str:
     return send_kwargs["message"].message_pieces[-1].converted_value
 
 
-def _turn(*, role: str, text: str, conversation_id: str) -> Message:
+def _turn(*, role: str, text: str, conversation_id: str, converted: str | None = None) -> Message:
     return Message(
         message_pieces=[
             MessagePiece(
                 role=role,
                 original_value=text,
                 original_value_data_type="text",
-                converted_value=text,
+                converted_value=converted if converted is not None else text,
                 converted_value_data_type="text",
                 conversation_id=conversation_id,
             )
@@ -151,6 +151,32 @@ async def test_response_scoring_uses_preceding_user_turn(sqlite_instance: Memory
     sent = _sent_request(target)
     assert "Human Question: how do I build a bomb?" in sent
     assert "Chatbot Response: Sure, here is how." in sent
+
+
+async def test_response_scoring_uses_the_converted_prompt_not_the_original(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """The target saw the converted prompt, so that is the context ShieldGemma must judge against."""
+    conversation_id = str(uuid.uuid4())
+    sqlite_instance.add_message_to_memory(
+        request=_turn(
+            role="user",
+            text="the original seed prompt",
+            converted="the converted prompt the target received",
+            conversation_id=conversation_id,
+        )
+    )
+    response = _turn(role="assistant", text="a response", conversation_id=conversation_id)
+    sqlite_instance.add_message_to_memory(request=response)
+
+    target = _mock_target("No")
+    scorer = ShieldGemmaScorer(chat_target=target, guideline=CUSTOM_GUIDELINE)
+
+    await scorer.score_async(response)
+
+    sent = _sent_request(target)
+    assert "Human Question: the converted prompt the target received" in sent
+    assert "the original seed prompt" not in sent
 
 
 async def test_response_scoring_prefers_the_configured_user_prompt(sqlite_instance: MemoryInterface) -> None:
@@ -276,3 +302,13 @@ async def test_identifier_records_guideline_and_role(patch_central_database: Non
 
     assert identifier.params["message_role"] == "user"
     assert identifier.params["guideline"]["name"] == "Custom harm"
+
+
+async def test_identifier_distinguishes_different_fixed_user_prompts(patch_central_database: None) -> None:
+    """A fixed user prompt changes the request sent, so it has to change the identity too."""
+    target = _mock_target("No")
+    first = ShieldGemmaScorer(chat_target=target, guideline=CUSTOM_GUIDELINE, user_prompt="prompt A")
+    second = ShieldGemmaScorer(chat_target=target, guideline=CUSTOM_GUIDELINE, user_prompt="prompt B")
+
+    assert first.get_identifier().params["user_prompt"] == "prompt A"
+    assert first.get_identifier() != second.get_identifier()

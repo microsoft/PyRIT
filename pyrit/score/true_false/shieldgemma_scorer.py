@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
@@ -175,12 +175,18 @@ class ShieldGemmaScorer(TrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
+        params: dict[str, Any] = {
+            "message_role": self._message_role.value,
+            "guideline": self._guideline.model_dump(),
+            "prompt_template": self._prompt_template.value,
+        }
+        # A fixed user prompt changes the request that gets sent, so it belongs in the
+        # identity. It is only read on the response side, so it only distinguishes there.
+        if self._message_role is ShieldGemmaMessageRole.CHATBOT:
+            params["user_prompt"] = self._user_prompt
+
         return self._create_identifier(
-            params={
-                "message_role": self._message_role.value,
-                "guideline": self._guideline.model_dump(),
-                "prompt_template": self._prompt_template.value,
-            },
+            params=params,
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
         )
@@ -202,11 +208,14 @@ class ShieldGemmaScorer(TrueFalseScorer):
             return None
 
         conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
+        # The converted value is what the target actually received. After a converter runs,
+        # the original value can be the seed prompt instead, which would have ShieldGemma
+        # judge the response against context the target never saw.
         preceding_turn = [
-            piece.original_value
+            piece.converted_value
             for piece in conversation
             if piece.sequence == message_piece.sequence - 1
-            and piece.original_value_data_type == "text"
+            and piece.converted_value_data_type == "text"
             and piece.api_role == "user"
         ]
         return "\n".join(preceding_turn) or None
