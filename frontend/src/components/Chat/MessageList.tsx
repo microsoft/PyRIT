@@ -12,6 +12,7 @@ import {
 } from '@fluentui/react-components'
 import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular } from '@fluentui/react-icons'
 import { Message, MessageAttachment } from '../../types'
+import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
 
 interface MessageListProps {
@@ -34,6 +35,8 @@ interface MessageListProps {
   isCrossTarget?: boolean
   /** True when no target is currently selected */
   noTargetSelected?: boolean
+  /** Conversation-wide default: render message text as Markdown. */
+  globalMarkdown?: boolean
 }
 
 /** Image that shows a spinner while loading. */
@@ -105,7 +108,7 @@ function tryFormatJson(text: string): string | null {
   }
 }
 
-export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
+export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -238,6 +241,16 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                     <Text className={styles.loadingEllipsis}>
                       {message.content}
                     </Text>
+                  )
+                }
+                // When Markdown rendering is enabled, it takes precedence over
+                // the JSON auto-format below.
+                if (globalMarkdown) {
+                  return (
+                    <MarkdownContent
+                      content={message.content}
+                      testId={`message-markdown-${index}`}
+                    />
                   )
                 }
                 // For assistant / simulated_assistant messages, detect

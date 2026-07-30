@@ -65,6 +65,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunState,
     Score,
     ScorerIdentifier,
     Seed,
@@ -3128,7 +3129,7 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         scenario_result_id: str,
-        scenario_run_state: str,
+        scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
     ) -> None:
@@ -3140,8 +3141,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             scenario_result_id (str): The ID of the scenario result to update.
-            scenario_run_state (str): The new state for the scenario
-                (e.g., "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED").
+            scenario_run_state (ScenarioRunState): The new state for the scenario.
             error_message (str | None): Optional scenario-level error message.
             error_type (str | None): Optional exception class name.
 
@@ -3154,15 +3154,13 @@ class MemoryInterface(abc.ABC):
             if not entry:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
-            entry.scenario_run_state = scenario_run_state
-            if error_message is not None:
-                entry.error_message = error_message
-            if error_type is not None:
-                entry.error_type = error_type
+            entry.scenario_run_state = scenario_run_state.value
+            entry.error_message = error_message
+            entry.error_type = error_type
 
             session.commit()
 
-        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
+        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
 
     def update_scenario_metadata(
         self,
