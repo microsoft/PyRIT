@@ -13,7 +13,7 @@ from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, JsonSchemaDefinition, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -194,11 +194,10 @@ class SelfAskTrueFalseScorer(TrueFalseScorer):
         )
         self._system_prompt = rendered_value
         self._question = resolved_question
-        # When the caller does not supply a response handler, the default JSON handler carries the
-        # schema (if any) declared by the system prompt, so the round-trip forwards it to the
-        # scoring target (enforced natively when supported, omitted via normalization otherwise). A
-        # caller-supplied handler owns its own response contract, including any schema.
-        self._response_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema)
+        # The wire-format handler parses the response; the outer handler enforces this scorer's
+        # true/false domain while parsing is still inside the JSON retry boundary.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema)
+        self._response_handler = TrueFalseResponseHandler(response_handler=wire_format_handler)
         self._score_category = [resolved_question.category]
 
     @staticmethod

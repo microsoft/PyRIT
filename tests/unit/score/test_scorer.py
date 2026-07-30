@@ -1956,12 +1956,17 @@ class _MockRefusalScorer(TrueFalseScorer):
         ]
 
 
-def _make_blocked_piece(*, partial_content: str | None = None, conversation_id: str = "test-convo") -> MessagePiece:
+def _make_blocked_piece(
+    *,
+    partial_content: str | None = None,
+    structured_refusal: str | None = None,
+    conversation_id: str = "test-convo",
+) -> MessagePiece:
     """Create a blocked MessagePiece, optionally with partial content metadata."""
     metadata: dict = {}
     if partial_content is not None:
         metadata["partial_content"] = partial_content
-    return MessagePiece(
+    piece = MessagePiece(
         role="assistant",
         original_value='{"status_code": 200, "message": "content_filter"}',
         converted_value='{"status_code": 200, "message": "content_filter"}',
@@ -1971,6 +1976,9 @@ def _make_blocked_piece(*, partial_content: str | None = None, conversation_id: 
         response_error="blocked",
         prompt_metadata=metadata,
     )
+    if structured_refusal:
+        piece.mark_as_structured_refusal(refusal=structured_refusal)
+    return piece
 
 
 def _make_normal_piece(*, conversation_id: str = "test-convo") -> MessagePiece:
@@ -2026,6 +2034,22 @@ class TestCreateTextPieceFromBlocked:
         assert substitute.response_error == "none"
         assert not substitute.is_blocked()
         assert not substitute.has_error()
+
+
+class TestCreateTextPieceFromStructuredRefusal:
+    def test_returns_blocked_text_piece_with_refusal_explanation(self):
+        piece = _make_blocked_piece(structured_refusal="I cannot assist with that request.")
+
+        substitute = Scorer._create_text_piece_from_structured_refusal(piece)
+
+        assert substitute is not None
+        assert substitute.converted_value == "I cannot assist with that request."
+        assert substitute.converted_value_data_type == "text"
+        assert substitute.response_error == "blocked"
+        assert substitute.id == piece.id
+
+    def test_returns_none_for_generic_blocked_response(self):
+        assert Scorer._create_text_piece_from_structured_refusal(_make_blocked_piece()) is None
 
 
 # ── score_async with score_blocked_content tests ─────────────────────────────
@@ -2149,6 +2173,71 @@ class TestSkipOnErrorWithBlockedContent:
         scorer.score_blocked_content = True
         scores = await scorer.score_async(msg, skip_on_error_result=True)
         assert scores == []
+
+    async def test_skip_on_error_skips_error_type_without_response_error_flag(self):
+        scorer = _BlockedContentScorer()
+        msg = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="transport failed",
+                    original_value_data_type="error",
+                    converted_value_data_type="error",
+                    response_error="none",
+                )
+            ]
+        )
+
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
+
+        assert scores == []
+        assert scorer.scored_pieces == []
+
+    @pytest.mark.parametrize(
+        "validator",
+        [
+            SelectiveValidator(enforce_all_pieces_valid=True),
+            SelectiveValidator(raise_on_no_valid_pieces=True),
+        ],
+    )
+    async def test_skip_on_error_scores_structured_refusal_as_text(self, validator: ScorerPromptValidator):
+        scorer = _BlockedContentScorer(validator=validator)
+        refusal = "I cannot assist with that request."
+        piece = _make_blocked_piece(structured_refusal=refusal)
+        msg = Message(message_pieces=[piece])
+
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
+
+        assert len(scores) == 1
+        assert scorer.scored_pieces[0].id == piece.id
+        assert scorer.scored_pieces[0].converted_value == refusal
+        assert scorer.scored_pieces[0].converted_value_data_type == "text"
+        assert scorer.scored_pieces[0].response_error == "blocked"
+
+    async def test_skip_on_error_still_skips_mixed_structured_and_runtime_errors(self):
+        scorer = _BlockedContentScorer()
+        scorer.score_blocked_content = True
+        msg = Message(
+            message_pieces=[
+                _make_blocked_piece(
+                    partial_content="Partial content",
+                    structured_refusal="I cannot assist.",
+                ),
+                MessagePiece(
+                    role="assistant",
+                    original_value="transport failed",
+                    original_value_data_type="error",
+                    converted_value_data_type="error",
+                    conversation_id="test-convo",
+                    response_error="processing",
+                ),
+            ]
+        )
+
+        scores = await scorer.score_async(msg, skip_on_error_result=True)
+
+        assert scores == []
+        assert scorer.scored_pieces == []
 
 
 # ── score_response_async passthrough tests ───────────────────────────────────

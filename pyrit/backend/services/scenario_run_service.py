@@ -173,7 +173,7 @@ class ScenarioRunService:
             return None
 
         scenario_result = results[0]
-        db_status = ScenarioRunState(scenario_result.scenario_run_state)
+        db_status = scenario_result.scenario_run_state
 
         if db_status in (ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED):
             raise ValueError(f"Cannot cancel run in '{db_status}' state.")
@@ -188,7 +188,7 @@ class ScenarioRunService:
         # Persist cancelled state to DB
         self._memory.update_scenario_run_state(
             scenario_result_id=scenario_result_id,
-            scenario_run_state="CANCELLED",
+            scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",
         )
@@ -592,7 +592,7 @@ class ScenarioRunService:
         if not error and active is not None:
             error = active.error
 
-        status = ScenarioRunState(scenario_result.scenario_run_state)
+        status = scenario_result.scenario_run_state
 
         # Build result fields from DB (always computed so in-progress runs show progress)
         total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
