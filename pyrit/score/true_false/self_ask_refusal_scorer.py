@@ -10,7 +10,7 @@ from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, JsonSchemaDefinition, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -126,10 +126,10 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         self._prompt_target = chat_target
         self._prompt_format_string = prompt_format_string or self.DEFAULT_REFUSAL_PROMPT_FORMAT
         self._system_prompt, schema = self._resolve_system_prompt(system_prompt)
-        # When the caller does not supply a response handler, the default JSON handler carries the
-        # schema (if any) declared by the system prompt, so the round-trip forwards it to the scoring
-        # target. A caller-supplied handler owns its own response contract.
-        self._response_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema)
+        # The wire-format handler parses the response; the outer handler enforces this scorer's
+        # true/false domain while parsing is still inside the JSON retry boundary.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema)
+        self._response_handler = TrueFalseResponseHandler(response_handler=wire_format_handler)
         # Normalize to a list so scores built directly (blocked / non-text early returns) satisfy
         # Score.score_category (list[str] | None).
         if score_category is None:
