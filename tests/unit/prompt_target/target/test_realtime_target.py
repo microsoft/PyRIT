@@ -903,6 +903,36 @@ def _write_wav(
     return str(path)
 
 
+async def test_send_audio_async_reads_wav_off_event_loop(target, tmp_path):
+    connection = AsyncMock()
+    target._existing_conversation["conv"] = connection
+    target.receive_events_async = AsyncMock(
+        return_value=RealtimeTargetResult(audio_bytes=b"response", transcripts=["transcript"])
+    )
+    target.send_response_create_async = AsyncMock()
+    target.save_audio_async = AsyncMock(return_value="output.wav")
+
+    pcm = b"\x01\x02" * 8
+    wav_path = _write_wav(tmp_path / "input.wav", pcm=pcm)
+    with patch(
+        "pyrit.prompt_target.openai.openai_realtime_target.asyncio.to_thread",
+        new_callable=AsyncMock,
+        wraps=asyncio.to_thread,
+    ) as to_thread_mock:
+        output_path, _ = await target.send_audio_async(filename=wav_path, conversation_id="conv")
+
+    assert output_path == "output.wav"
+    assert to_thread_mock.await_args.args[1] == wav_path
+    connection.conversation.item.create.assert_awaited_once_with(
+        item={
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_audio", "audio": base64.b64encode(pcm).decode("utf-8")}],
+        }
+    )
+    target.save_audio_async.assert_awaited_once_with(b"response", 1, 2, 24000)
+
+
 async def test_send_prompt_audio_path_calls_send_audio_async(target, tmp_path):
     """An audio_path message is routed through the atomic send_audio_async path."""
     wav_path = _write_wav(tmp_path / "in.wav")

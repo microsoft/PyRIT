@@ -837,14 +837,7 @@ class RealtimeTarget(OpenAITarget):
         """
         connection = self._get_connection(conversation_id=conversation_id)
 
-        with wave.open(filename, "rb") as wav_file:
-            # Read WAV parameters
-            num_channels = wav_file.getnchannels()
-            sample_width = wav_file.getsampwidth()  # Should be 2 bytes for PCM16
-            frame_rate = wav_file.getframerate()
-            num_frames = wav_file.getnframes()
-
-            audio_content = wav_file.readframes(num_frames)
+        audio_content, num_channels, sample_width, frame_rate = await asyncio.to_thread(self._read_wav_file, filename)
 
         receive_tasks = asyncio.create_task(self.receive_events_async(conversation_id=conversation_id))
 
@@ -883,3 +876,13 @@ class RealtimeTarget(OpenAITarget):
         This implementation exists to satisfy the abstract base class requirement.
         """
         raise NotImplementedError("RealtimeTarget uses receive_events for message construction")
+
+    @staticmethod
+    def _read_wav_file(filename: str) -> tuple[bytes, int, int, int]:
+        with wave.open(filename, "rb") as wav_file:
+            return (
+                wav_file.readframes(wav_file.getnframes()),
+                wav_file.getnchannels(),
+                wav_file.getsampwidth(),
+                wav_file.getframerate(),
+            )
