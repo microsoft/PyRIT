@@ -217,12 +217,17 @@ class JsonSchemaResponseHandler(ResponseHandler):
         Raises:
             ValueError: If a category is present in both the response and the argument, or the
                 parsed category is not a string or a list of strings.
-            InvalidJsonException: If the response is not valid JSON, is missing a required key, or
-                (when this handler is numeric) the score value is not parsable as a float.
+            InvalidJsonException: If the response is invalid JSON, is not a top-level JSON object,
+                is missing a required key, or (when this handler is numeric) the score value is not
+                parsable as a float.
         """
         response_json = remove_markdown_json(response_text)
         try:
             parsed_response = json.loads(response_json)
+            if not isinstance(parsed_response, dict):
+                raise InvalidJsonException(
+                    message=f"Invalid JSON response, expected a top-level object: {response_json}"
+                )
             score = _build_unvalidated_score(
                 parsed_response=parsed_response,
                 score_value_output_key=self._score_value_output_key,
@@ -252,6 +257,59 @@ class JsonSchemaResponseHandler(ResponseHandler):
                     message=f"Invalid JSON response, score_value should be a float not this: {score.raw_score_value}"
                 ) from None
 
+        return score
+
+
+class TrueFalseResponseHandler(ResponseHandler):
+    """Response-handler decorator that enforces the true/false score domain."""
+
+    def __init__(self, *, response_handler: ResponseHandler) -> None:
+        """
+        Initialize the decorator.
+
+        Args:
+            response_handler (ResponseHandler): Handler that parses the target's wire format.
+        """
+        self._response_handler = response_handler
+
+    @property
+    def json_response_config(self) -> JsonResponseConfig:
+        """The wrapped handler's JSON-response request."""
+        return self._response_handler.json_response_config
+
+    def parse(
+        self,
+        *,
+        response_text: str,
+        scorer_identifier: ComponentIdentifier,
+        scored_prompt_id: str | uuid.UUID,
+        category: Sequence[str] | str | None = None,
+        objective: str | None = None,
+    ) -> UnvalidatedScore:
+        """
+        Parse a response and require a true/false score value.
+
+        Returns:
+            UnvalidatedScore: The parsed score with a normalized true/false value.
+
+        Raises:
+            InvalidJsonException: If the parsed value is outside the true/false domain.
+        """
+        score = self._response_handler.parse(
+            response_text=response_text,
+            scorer_identifier=scorer_identifier,
+            scored_prompt_id=scored_prompt_id,
+            category=category,
+            objective=objective,
+        )
+
+        normalized_value = score.raw_score_value.lower()
+        if normalized_value not in {"true", "false"}:
+            raise InvalidJsonException(
+                message=f"True/false score_value must be 'true' or 'false', not {score.raw_score_value!r}."
+            )
+
+        score.raw_score_value = normalized_value
         return score
 
 
