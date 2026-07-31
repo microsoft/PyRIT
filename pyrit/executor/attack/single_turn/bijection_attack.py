@@ -113,12 +113,26 @@ class BijectionAttack(PromptSendingAttack):
         supports_system_prompt = self._objective_target.capabilities.supports_system_prompt
         messages = [Message.from_system_prompt(system_prompt=setup_prompt)] if supports_system_prompt else []
 
+        # @romanlutz's review on #1942 flagged that the original 5-sentence pool only covered
+        # 14 of 26 letters (missing b, f, i, j, k, m, p, q, u, v, x, z), so the target was never
+        # shown an encoding for those letters and had nothing to reproduce when generating
+        # cipher-text that needed them. This pool covers all 26 letters across its sentences,
+        # and is large enough that shot counts beyond 5 introduce new coverage instead of
+        # repeating the same demonstrations verbatim.
         examples = [
             "the quick brown fox",
             "jumps over the lazy dog",
             "hello world",
             "good morning",
             "yes please",
+            "zebras major exam quiz",
+            "violet jackets extra plush",
+            "wizard bakes fancy jam cake",
+            "crazy foxes jump quickly",
+            "six big trucks moved away",
+            "pack my box with five dozen liquor jugs",
+            "the job requires extra pluck and zeal",
+            "amazingly few discotheques provide jukeboxes",
         ]
 
         for i in range(self._num_teaching_shots):

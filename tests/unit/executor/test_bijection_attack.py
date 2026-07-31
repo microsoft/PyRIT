@@ -137,6 +137,25 @@ class TestBijectionTeachingMessages:
         assert messages[2].message_pieces[0].original_value == "uif rvjdl cspxo gpy"
 
     async def test_teaching_messages_cycle_examples(self, mock_objective_target):
+        # The example pool covers all 26 letters (per romanlutz's review on #1942) and is
+        # large enough (13 sentences) that shot counts within its size introduce new
+        # coverage instead of repeating; cycling back to the first example only happens
+        # once num_teaching_shots exceeds the pool size.
+        attack = BijectionAttack(
+            objective_target=mock_objective_target,
+            bijection_converter=LetterBijectionConverter(
+                mapping={letter: letter for letter in "abcdefghijklmnopqrstuvwxyz"}
+            ),
+            num_teaching_shots=14,
+        )
+
+        messages = await attack._build_teaching_messages()
+
+        # shot index 13 (14th shot, 0-indexed) cycles back to example index 13 % 13 == 0
+        assert messages[27].message_pieces[0].original_value == "the quick brown fox"
+        assert messages[28].message_pieces[0].original_value == "the quick brown fox"
+
+    async def test_teaching_messages_do_not_repeat_within_pool_size(self, mock_objective_target):
         attack = BijectionAttack(
             objective_target=mock_objective_target,
             bijection_converter=LetterBijectionConverter(
@@ -147,8 +166,8 @@ class TestBijectionTeachingMessages:
 
         messages = await attack._build_teaching_messages()
 
-        assert messages[11].message_pieces[0].original_value == "the quick brown fox"
-        assert messages[12].message_pieces[0].original_value == "the quick brown fox"
+        shot_texts = [messages[1 + 2 * i].message_pieces[0].original_value for i in range(6)]
+        assert len(set(shot_texts)) == 6
 
 
 @pytest.mark.usefixtures("patch_central_database")
