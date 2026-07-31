@@ -5,7 +5,7 @@ import string
 
 import pytest
 
-from pyrit.prompt_converter import BijectionConverter, DigitBijectionConverter, LetterBijectionConverter, TokenBijectionConverter
+from pyrit.converter import BijectionConverter, DigitBijectionConverter, LetterBijectionConverter, TokenBijectionConverter
 
 
 def test_mapping_generated():

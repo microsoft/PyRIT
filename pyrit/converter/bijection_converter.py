@@ -6,11 +6,11 @@ import random
 import re
 import string
 
+from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
-from pyrit.prompt_converter.prompt_converter import ConverterResult, PromptConverter
 
 
-class BijectionConverter(PromptConverter, abc.ABC):
+class BijectionConverter(Converter, abc.ABC):
     """
     Abstract base class for bijection converters.
     Converts a prompt using a one-to-one character mapping to bypass safety filters.

@@ -12,8 +12,8 @@ from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import SingleTurnAttackContext
 from pyrit.models import AttackResult, Message
-from pyrit.prompt_converter import BijectionConverter, LetterBijectionConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.converter import BijectionConverter, LetterBijectionConverter
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ class BijectionAttack(PromptSendingAttack):
         self._num_teaching_shots = num_teaching_shots
         self._bijection_converter = bijection_converter or LetterBijectionConverter()
 
-        bijection_cfg = PromptConverterConfiguration.from_converters(converters=[self._bijection_converter])
+        bijection_cfg = ConverterConfiguration.from_converters(converters=[self._bijection_converter])
         self._request_converters = bijection_cfg + self._request_converters
 
     async def _build_teaching_messages(self) -> list[Message]:

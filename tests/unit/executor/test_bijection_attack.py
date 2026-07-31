@@ -11,7 +11,7 @@ from pyrit.executor.attack.core import AttackParameters
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import SingleTurnAttackContext
 from pyrit.models import MessagePiece
 from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.prompt_converter import DigitBijectionConverter, LetterBijectionConverter
+from pyrit.converter import DigitBijectionConverter, LetterBijectionConverter
 from pyrit.prompt_target import PromptTarget, TargetCapabilities
 
 
@@ -191,7 +191,6 @@ class TestBijectionAttackEndToEnd:
                     role="assistant",
                     original_value=cipher_response,
                     conversation_id=last.message_pieces[0].conversation_id,
-                    labels=last.message_pieces[0].labels,
                 ).to_message()
             ]
 
@@ -225,7 +224,6 @@ class TestBijectionAttackEndToEnd:
                     role="assistant",
                     original_value=cipher_response,
                     conversation_id=last.message_pieces[0].conversation_id,
-                    labels=last.message_pieces[0].labels,
                 ).to_message()
             ]
 
@@ -257,7 +255,6 @@ class TestBijectionAttackEndToEnd:
                     role="assistant",
                     original_value="",
                     conversation_id=last.message_pieces[0].conversation_id,
-                    labels=last.message_pieces[0].labels,
                 ).to_message()
             ]
 
@@ -287,7 +284,6 @@ class TestBijectionAttackEndToEnd:
                     role="assistant",
                     original_value="this is a plaintext response",
                     conversation_id=last.message_pieces[0].conversation_id,
-                    labels=last.message_pieces[0].labels,
                 ).to_message()
             ]
 
@@ -318,7 +314,6 @@ class TestBijectionAttackEndToEnd:
                     role="assistant",
                     original_value="nsts bm lxv fkt dpoxdyte",
                     conversation_id=last.message_pieces[0].conversation_id,
-                    labels=last.message_pieces[0].labels,
                 ).to_message()
             ]
 
