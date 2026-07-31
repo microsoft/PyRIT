@@ -229,6 +229,44 @@ class DigitBijectionConverter(BijectionConverter):
             },
         )
 
+    # Digit tokens have no case of their own, so an uppercase source letter is marked
+    # with a leading _CASE_MARKER immediately before its digit token; decode() strips
+    # the marker and restores the uppercase letter. Without this, capitalization is
+    # silently destroyed at encode time (`"25".upper() == "25"`), not just mishandled
+    # at decode.
+    _CASE_MARKER = "'"
+
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        if not self.input_supported(input_type):
+            raise ValueError("Input type not supported")
+
+        encoded = ""
+        for char in prompt:
+            if char.lower() in self._mapping:
+                token = self._mapping[char.lower()]
+                encoded += (self._CASE_MARKER + token) if char.isupper() else token
+            else:
+                encoded += char
+
+        return ConverterResult(output_text=encoded, output_type="text")
+
+    def decode(self, encoded_text: str) -> str:
+        decoded = ""
+        i = 0
+        while i < len(encoded_text):
+            is_upper = encoded_text[i] == self._CASE_MARKER
+            start = i + 1 if is_upper else i
+            candidate = encoded_text[start : start + self._num_digits]
+            if candidate in self._inverse_mapping:
+                letter = self._inverse_mapping[candidate]
+                decoded += letter.upper() if is_upper else letter
+                i = start + self._num_digits
+            else:
+                decoded += encoded_text[i]
+                i += 1
+        return decoded
+
+
 class TokenBijectionConverter(BijectionConverter):
     """
     Bijection converter that maps letters to tokens from a tokenizer vocabulary.
