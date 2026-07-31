@@ -5,7 +5,6 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackOutcome, ScenarioResult
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 from pyrit.output.scorer.base import ScorerPrinterBase
@@ -97,7 +96,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines: list[str] = []
         lines.append("\n")
         lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        header_text = f"📊 SCENARIO RESULTS: {result.scenario_identifier.name}"
+        header_text = f"📊 SCENARIO RESULTS: {result.scenario_name}"
         lines.append(self._format_colored(header_text.center(self._width), Style.BRIGHT, Fore.CYAN))
         lines.append(self._format_colored("=" * self._width, Fore.CYAN))
         return "".join(lines)
@@ -154,32 +153,28 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         lines.append(self._render_section_header("Scenario Information"))
         lines.append(self._format_colored(f"{self._indent}📋 Scenario Details", Style.BRIGHT))
-        lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_identifier.name}", Fore.CYAN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_name}", Fore.CYAN))
         lines.append(
-            self._format_colored(
-                f"{self._indent * 2}• Scenario Version: {result.scenario_identifier.version}", Fore.CYAN
-            )
+            self._format_colored(f"{self._indent * 2}• Scenario Version: {result.scenario_version}", Fore.CYAN)
         )
-        lines.append(
-            self._format_colored(
-                f"{self._indent * 2}• PyRIT Version: {result.scenario_identifier.pyrit_version}", Fore.CYAN
-            )
-        )
+        lines.append(self._format_colored(f"{self._indent * 2}• PyRIT Version: {result.pyrit_version}", Fore.CYAN))
 
-        if result.scenario_identifier.description:
+        if result.scenario_description:
             lines.append(self._format_colored(f"{self._indent * 2}• Description:", Fore.CYAN))
             desc_indent = self._indent * 4
             available_width = 120 - len(desc_indent)
-            wrapped_lines = textwrap.wrap(
-                result.scenario_identifier.description, width=available_width, break_long_words=False
-            )
+            wrapped_lines = textwrap.wrap(result.scenario_description, width=available_width, break_long_words=False)
             lines.extend(self._format_colored(f"{desc_indent}{line}", Fore.CYAN) for line in wrapped_lines)
 
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT))
         target_id = result.objective_target_identifier
         target_type = target_id.class_name if target_id else "Unknown"
-        target_model = target_id.params.get("model_name", "Unknown") if target_id else "Unknown"
+        target_model = (
+            (target_id.params.get("underlying_model_name") or target_id.params.get("model_name") or "Unknown")
+            if target_id
+            else "Unknown"
+        )
         target_endpoint = target_id.params.get("endpoint", "Unknown") if target_id else "Unknown"
 
         lines.append(self._format_colored(f"{self._indent * 2}• Target Type: {target_type}", Fore.CYAN))
@@ -196,11 +191,11 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines = []
         lines.append(self._render_section_header("Overall Statistics"))
         total_results = sum(len(results) for results in result.attack_results.values())
-        total_strategies = len(result.get_strategies_used())
+        total_techniques = len(result.get_techniques_used())
         overall_rate = result.objective_achieved_rate()
 
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
-        lines.append(self._format_colored(f"{self._indent * 2}• Total Strategies: {total_strategies}", Fore.GREEN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Total Techniques: {total_techniques}", Fore.GREEN))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Attack Results: {total_results}", Fore.GREEN))
         lines.append(
             self._format_colored(
@@ -242,16 +237,6 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         parts.append("".join(lines))
 
         return "".join(parts)
-
-    async def print_summary_async(self, result: ScenarioResult) -> None:
-        """
-        Use ``write_async`` instead. This method is deprecated.
-
-        Args:
-            result (ScenarioResult): The scenario result to summarize.
-        """
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(result)
 
 
 class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):

@@ -127,6 +127,14 @@ def __init__(self, target: PromptTarget, scorer: Scorer | None = None, max_retri
     ...
 ```
 
+### Forwarded Constructor Parameters
+- When a registry-built class accepts `**kwargs` in `__init__` and passes them
+  to `super().__init__(**kwargs)`, decorate the constructor with
+  `@forward_init_parameters`.
+- Do not apply the decorator to open-ended keyword bags that are consumed
+  locally or are not forwarded. The registry uses the marker specifically to
+  include parent constructor parameters in the class's build contract.
+
 ### Single Parameter Functions
 - Functions with only one parameter don't need keyword-only enforcement
 
@@ -167,7 +175,7 @@ paths stay fast.
 
 ### Lazy `__init__.py` Exports (PEP 562)
 
-Public API packages (`pyrit.prompt_target`, `pyrit.prompt_converter`, `pyrit.score`)
+Public API packages (`pyrit.prompt_target`, `pyrit.converter`, `pyrit.score`)
 use `__getattr__`-based lazy loading so heavy symbols can be imported from the
 package without paying the cost at package load time. See
 `pyrit/prompt_target/__init__.py` for the canonical example. Rules:
@@ -181,8 +189,8 @@ package without paying the cost at package load time. See
 Import from the package root when the symbol is exported from `__init__.py`:
 
 ```python
-from pyrit.prompt_target import PromptChatTarget  # CORRECT
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget  # WRONG
+from pyrit.prompt_target import PromptTarget  # CORRECT
+from pyrit.prompt_target.common.prompt_target import PromptTarget  # WRONG
 ```
 
 Heavy submodules not re-exported from `__init__.py` are imported directly:
@@ -481,9 +489,18 @@ async def temporary_config(self, **kwargs):
 ### Property Decorators
 - Use @property for simple computed attributes
 - Use explicit getter/setter methods for complex logic
+- Property docstrings must be **noun phrases** describing the value (e.g.
+  `"""The display name."""`), not verb phrases (e.g. `"""Return the display
+  name."""`). This is enforced by Ruff `D421` (property-docstring-starts-with-verb).
 
 ```python
 # CORRECT
+@property
+def is_complete(self) -> bool:
+    """Whether the attack is complete."""
+    return self._status == AttackStatus.COMPLETE
+
+# INCORRECT - verb-phrase docstring, flagged by Ruff D421
 @property
 def is_complete(self) -> bool:
     """Check if the attack is complete."""
@@ -569,7 +586,7 @@ def process_large_dataset(self, *, file_path: Path) -> list[Result]:
 - If so, add it to the `_LAZY_IMPORTS` dict in that `__init__.py` instead of as an
   eager top-level import (see the Import Placement section for the pattern)
 - This is especially important for `pyrit/common/__init__.py`, `pyrit/prompt_target/__init__.py`,
-  `pyrit/prompt_converter/__init__.py`, and `pyrit/score/__init__.py` which are all on the
+  `pyrit/converter/__init__.py`, and `pyrit/score/__init__.py` which are all on the
   import path for CLI startup
 
 ## Final Checklist

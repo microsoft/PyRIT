@@ -12,8 +12,6 @@ from azure.storage.blob import (
 )
 from azure.storage.blob.aio import BlobServiceClient
 
-from pyrit.common.deprecation import print_deprecation_message
-
 
 class AzureStorageAuth:
     """
@@ -39,27 +37,6 @@ class AzureStorageAuth:
         return await blob_service_client.get_user_delegation_key(
             key_start_time=delegation_key_start_time, key_expiry_time=delegation_key_expiry_time
         )
-
-    @staticmethod
-    async def get_user_delegation_key(
-        blob_service_client: BlobServiceClient,
-    ) -> UserDelegationKey:  # pyrit-async-suffix-exempt
-        """
-        Retrieve a user delegation key (deprecated alias of ``get_user_delegation_key_async``).
-
-        Args:
-            blob_service_client (BlobServiceClient): An instance of BlobServiceClient to interact
-            with Azure Blob Storage.
-
-        Returns:
-            UserDelegationKey: A user delegation key valid for one day.
-        """
-        print_deprecation_message(
-            old_item="AzureStorageAuth.get_user_delegation_key",
-            new_item="AzureStorageAuth.get_user_delegation_key_async",
-            removed_in="0.16.0",
-        )
-        return await AzureStorageAuth.get_user_delegation_key_async(blob_service_client)
 
     @staticmethod
     async def get_sas_token_async(container_url: str) -> str:
@@ -117,21 +94,3 @@ class AzureStorageAuth:
             await credential.close()
 
         return sas_token
-
-    @staticmethod
-    async def get_sas_token(container_url: str) -> str:  # pyrit-async-suffix-exempt
-        """
-        Generate a SAS token (deprecated alias of ``get_sas_token_async``).
-
-        Args:
-            container_url (str): The URL of the Azure Blob Storage container.
-
-        Returns:
-            str: The generated SAS token.
-        """
-        print_deprecation_message(
-            old_item="AzureStorageAuth.get_sas_token",
-            new_item="AzureStorageAuth.get_sas_token_async",
-            removed_in="0.16.0",
-        )
-        return await AzureStorageAuth.get_sas_token_async(container_url)

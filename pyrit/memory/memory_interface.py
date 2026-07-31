@@ -7,29 +7,40 @@ import logging
 import re
 import uuid
 import weakref
-from collections.abc import MutableSequence, Sequence
+from collections.abc import Iterator, MutableSequence, Sequence
 from contextlib import closing
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 
-from sqlalchemy import MetaData, and_, not_, or_, select
+from sqlalchemy import MetaData, and_, func, not_, or_, select
 from sqlalchemy.engine.base import Engine
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm.attributes import InstrumentedAttribute
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
+from sqlalchemy.orm.session import Session
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory.memory_models import (
+    AtomicAttackIdentifierEntry,
+    AttackIdentifierEntry,
     AttackResultEntry,
+    AttackTechniqueIdentifierEntry,
     Base,
+    ComponentIdentifierEntry,
     ConversationEntry,
+    ConverterIdentifierEntry,
     EmbeddingDataEntry,
+    PromptConverterIdentifierEntry,
     PromptMemoryEntry,
+    ScenarioIdentifierEntry,
     ScenarioResultEntry,
     ScoreEntry,
+    ScorerIdentifierEntry,
     SeedEntry,
+    SeedIdentifierEntry,
+    TargetIdentifierEntry,
 )
 from pyrit.memory.storage import (
     DataTypeSerializer,
@@ -38,19 +49,31 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackResult,
+    AttackTechniqueIdentifier,
+    ComponentIdentifier,
     Conversation,
+    ConversationRetry,
+    ConversationRetryReason,
     ConversationStats,
+    ConverterIdentifier,
     IdentifierFilter,
     IdentifierType,
     Message,
     MessagePiece,
+    ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunState,
     Score,
+    ScorerIdentifier,
     Seed,
     SeedDataset,
     SeedGroup,
+    SeedIdentifier,
     SeedType,
+    TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
@@ -62,6 +85,64 @@ logger = logging.getLogger(__name__)
 
 
 Model = TypeVar("Model")
+IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
+
+
+def _attack_result_recency_key(metadata: dict[str, Any]) -> str:
+    """
+    Compute the recency sort key for an attack result exactly as the SQL layer does.
+
+    Mirrors the ``COALESCE(<updated_at>, <created_at>, '')`` expression built by
+    ``MemoryInterface._attack_results_recency_expr``. Recency is always an ISO-8601 timestamp
+    *string*; only string values are honored (via ``isinstance``) so a non-string
+    ``updated_at``/``created_at`` (e.g. a JSON bool or number) falls through exactly like the
+    SQLite expression, which keeps only JSON ``text`` values. This matters because SQLite's
+    ``json_extract`` returns a typed scalar for non-string JSON (``0`` for a bool) and sorts
+    numbers before text: a stringified anchor would then never advance past such a row and
+    repeat it. Keeping this in lockstep with the SQL expression is what makes the keyset anchor
+    land on the same row the database ordered by, so pagination never skips or repeats a result.
+
+    Returns:
+        str: The coalesced recency key (``""`` when neither timestamp is a string).
+    """
+    value = metadata.get("updated_at")
+    if not isinstance(value, str):
+        value = metadata.get("created_at")
+    if not isinstance(value, str):
+        value = ""
+    return value
+
+
+class AttackResultsKeysetCursor(NamedTuple):
+    """
+    Keyset (seek) anchor identifying the last attack result on a page.
+
+    Captures the full recency ordering tuple — the coalesced ``updated_at``/``created_at``
+    recency string, the row ``timestamp``, and the unique ``attack_result_id`` — so the next
+    page can seek to rows strictly after this one under the
+    ``recency DESC, timestamp DESC, id DESC`` ordering. Unlike a numeric offset — which shifts
+    every later row when a row is inserted or deleted between page loads — a keyset anchor
+    stays pinned to its row, so inserts and deletions elsewhere no longer skip or duplicate
+    results at the page boundary.
+    """
+
+    recency: str
+    timestamp: datetime
+    attack_result_id: str
+
+    @classmethod
+    def from_attack_result(cls, result: AttackResult) -> "AttackResultsKeysetCursor":
+        """
+        Build the keyset anchor for ``result`` (typically the last row of a page).
+
+        Returns:
+            AttackResultsKeysetCursor: Anchor capturing the result's recency sort key.
+        """
+        return cls(
+            recency=_attack_result_recency_key(result.metadata),
+            timestamp=result.timestamp,
+            attack_result_id=result.attack_result_id,
+        )
 
 
 class MemoryInterface(abc.ABC):
@@ -291,10 +372,72 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
+    def _attack_results_recency_expr(self) -> Any:
+        """
+        Return the SQL expression for an attack result's recency sort key.
+
+        Concrete subclasses translate this into their SQL dialect's JSON accessor
+        (SQLite ``json_extract`` / Azure SQL ``JSON_VALUE``) so the sort key matches the
+        per-backend JSON abstraction the attack-result filters already use. It reproduces the
+        previous service-side Python sort: ``COALESCE(<attack_metadata.updated_at>,
+        <attack_metadata.created_at>, '')``. This single expression backs both the recency
+        ORDER BY and the keyset seek predicate, guaranteeing they stay in lockstep (a keyset
+        seek that used a different expression than the ORDER BY would skip or repeat rows).
+
+        Returns:
+            Any: A SQLAlchemy expression yielding the coalesced recency string.
+        """
+
+    def _attack_results_recency_order_by(self) -> list[Any]:
+        """
+        Return the ORDER BY clauses that reproduce the History-view recency sort.
+
+        Orders by the recency expression (``updated_at`` falling back to ``created_at`` then
+        an empty string), all descending, with the real ``timestamp`` column and ``id`` as
+        deterministic descending tie-breaks (required for stable keyset pagination).
+
+        Returns:
+            list[Any]: SQLAlchemy ORDER BY clauses (all descending) for the recency sort,
+            suitable for splatting into ``_query_entries(order_by=...)``.
+        """
+        recency = self._attack_results_recency_expr()
+        return [recency.desc(), AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
+
+    def _attack_results_keyset_seek_condition(self, *, after: AttackResultsKeysetCursor) -> Any:
+        """
+        Build the keyset seek predicate selecting rows strictly after ``after``.
+
+        Under the ``recency DESC, timestamp DESC, id DESC`` ordering, a row comes after the
+        anchor when its ordering tuple is lexicographically smaller. The predicate is
+        OR-expanded (rather than a row-value ``(a, b, c) < (x, y, z)`` comparison) because
+        Azure SQL does not support row-value tuple comparisons. It uses the same recency
+        expression as the ORDER BY so the seek lands exactly on the ordering boundary. The
+        ``id`` bound is a ``uuid.UUID`` so it is compared through the column's own type
+        (``CHAR(36)`` on SQLite, native ``uniqueidentifier`` on Azure), matching how the
+        ORDER BY sorts it on each backend.
+
+        Returns:
+            Any: A SQLAlchemy boolean condition for the rows following the anchor.
+        """
+        recency = self._attack_results_recency_expr()
+        timestamp = AttackResultEntry.timestamp
+        entry_id = AttackResultEntry.id
+        anchor_id = uuid.UUID(after.attack_result_id)
+        return or_(
+            recency < after.recency,
+            and_(recency == after.recency, timestamp < after.timestamp),
+            and_(recency == after.recency, timestamp == after.timestamp, entry_id < anchor_id),
+        )
+
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
         """
         Load all EmbeddingData from the memory storage handler.
+
+        Returns:
+            Sequence[EmbeddingDataEntry]: All stored embedding entries.
         """
+        result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
+        return result
 
     @abc.abstractmethod
     def _init_storage_io(self) -> None:
@@ -396,20 +539,39 @@ class MemoryInterface(abc.ABC):
         self._validate_persistable_conversation_ids(message_pieces=pieces_to_insert)
         self._add_message_pieces_to_memory(message_pieces=pieces_to_insert)
 
-    @abc.abstractmethod
     def _add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
         """
         Persist already-validated message pieces to the backing store.
 
         Called by ``add_message_pieces_to_memory`` after ``not_in_memory`` pieces are
-        filtered out and conversation_ids are validated. Implementations only translate
-        the pieces into storage rows and insert them; they must not re-filter or
-        re-validate.
+        filtered out and conversation_ids are validated.
 
         Args:
             message_pieces (Sequence[MessagePiece]): Persistable pieces (none flagged
                 ``not_in_memory``), each carrying a non-empty ``conversation_id``.
+
+        Raises:
+            SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
+        entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        with closing(self.get_session()) as session:
+            try:
+                for piece, entry in zip(message_pieces, entries, strict=True):
+                    for position, identifier in enumerate(piece.converter_identifiers):
+                        converter_identifier = ConverterIdentifier.from_component_identifier(identifier)
+                        self._persist_identifier(session=session, identifier=converter_identifier)
+                        entry.converter_identifier_links.append(
+                            PromptConverterIdentifierEntry(
+                                position=position,
+                                converter_identifier_hash=converter_identifier.hash,
+                            )
+                        )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting prompt memory entries: {e}")
+                raise
 
     @staticmethod
     def _validate_persistable_conversation_ids(*, message_pieces: Sequence[MessagePiece]) -> None:
@@ -460,6 +622,13 @@ class MemoryInterface(abc.ABC):
             try:
                 existing = session.get(ConversationEntry, conversation.conversation_id)
                 if existing is None:
+                    if conversation.target_identifier is not None:
+                        self._persist_target_identifier(
+                            session=session,
+                            target_identifier=TargetIdentifier.from_component_identifier(
+                                conversation.target_identifier
+                            ),
+                        )
                     session.add(entry)
                 elif (
                     entry.target_identifier is not None
@@ -477,13 +646,509 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Error registering conversation {conversation.conversation_id}: {e}")
                 raise
 
-    @abc.abstractmethod
+    def add_conversation_retry(self, *, conversation_id: str, sequence: int, reason: ConversationRetryReason) -> None:
+        """
+        Append a retry record to the conversation-scoped metadata for ``conversation_id``.
+
+        Records that a turn had to be retried (e.g. because its response failed JSON
+        validation and was rolled back out of memory). The conversation's ``Conversations``
+        row is updated in place; if no row exists yet it is created. This is distinct from
+        the insert-only ``_insert_conversation``.
+
+        Args:
+            conversation_id (str): The conversation whose turn was retried.
+            sequence (int): The sequence the retried turn's request occupies.
+            reason (ConversationRetryReason): Why the turn was retried.
+
+        Raises:
+            SQLAlchemyError: If the database update fails; the transaction is rolled back first.
+        """
+        record = ConversationRetry(sequence=sequence, reason=reason).model_dump(mode="json")
+        with closing(self.get_session()) as session:
+            try:
+                entry = session.get(ConversationEntry, str(conversation_id))
+                if entry is None:
+                    entry = ConversationEntry(conversation=Conversation(conversation_id=str(conversation_id)))
+                    session.add(entry)
+                entry.retries = [*(entry.retries or []), record]
+                flag_modified(entry, "retries")
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error recording retry for conversation {conversation_id}: {e}")
+                raise
+
+    def delete_conversation_pieces_after_sequence(self, *, conversation_id: str, sequence: int) -> int:
+        """
+        Delete all message pieces in a conversation whose sequence is greater than ``sequence``.
+
+        Rolls a conversation back to a baseline so a failed turn can be resent on a clean
+        history. Dependent ``EmbeddingData`` rows for the deleted pieces are removed first to
+        avoid orphaned foreign keys. Pieces at or below ``sequence`` (e.g. the system prompt
+        and any prior good turns) are left intact.
+
+        Args:
+            conversation_id (str): The conversation to roll back.
+            sequence (int): The baseline sequence; pieces with a greater sequence are deleted.
+
+        Returns:
+            int: The number of ``PromptMemoryEntries`` deleted.
+
+        Raises:
+            SQLAlchemyError: If the deletion fails; the transaction is rolled back first.
+        """
+        with closing(self.get_session()) as session:
+            try:
+                pieces = (
+                    session.query(PromptMemoryEntry)
+                    .filter(
+                        PromptMemoryEntry.conversation_id == str(conversation_id),
+                        PromptMemoryEntry.sequence > sequence,
+                    )
+                    .all()
+                )
+                if not pieces:
+                    return 0
+                piece_ids = [piece.id for piece in pieces]
+                session.query(EmbeddingDataEntry).filter(EmbeddingDataEntry.id.in_(piece_ids)).delete(
+                    synchronize_session=False
+                )
+                for piece in pieces:
+                    session.delete(piece)
+                session.commit()
+                return len(pieces)
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error deleting conversation pieces for {conversation_id}: {e}")
+                raise
+
+    @classmethod
+    def _persist_target_identifier(cls, *, session: Any, target_identifier: TargetIdentifier) -> None:
+        """
+        Persist ``target_identifier`` and its inner targets as content-addressed rows.
+
+        Dependencies are persisted before the target row, whose ordered child edges
+        reference those rows by content hash. Identifier rows are immutable and keyed
+        by their content hash, so an identical target reused across many conversations
+        maps to a single row.
+
+        If the row already exists it was fully persisted before (children and edges
+        included, since rows are immutable), so this returns early. Otherwise the row and
+        its child edges are inserted inside a savepoint. If an ``IntegrityError`` occurs,
+        it is treated as a concurrent duplicate only when a fresh lookup confirms that
+        the identifier hash now exists; all other integrity failures are re-raised.
+
+        Args:
+            session (Any): The active SQLAlchemy session (the caller's transaction).
+            target_identifier (TargetIdentifier): The target identifier to persist.
+        """
+        cls._persist_identifier(session=session, identifier=target_identifier)
+
+    @classmethod
+    def _persist_identifier(cls, *, session: Any, identifier: ComponentIdentifier) -> None:
+        entry_type = cls._get_identifier_entry_type(identifier)
+        if session.get(entry_type, identifier.hash) is not None:
+            return
+
+        for dependency in cls._iter_identifier_dependencies(identifier):
+            cls._persist_identifier(session=session, identifier=dependency)
+
+        try:
+            with session.begin_nested():
+                session.add(entry_type.from_domain_model(identifier))
+                session.flush()
+        except IntegrityError:
+            with session.no_autoflush:
+                existing_entry = session.get(entry_type, identifier.hash, populate_existing=True)
+            if existing_entry is None:
+                raise
+
+    @staticmethod
+    def _get_identifier_entry_type(identifier: ComponentIdentifier) -> type[ComponentIdentifierEntry[Any]]:
+        if isinstance(identifier, AtomicAttackIdentifier):
+            return AtomicAttackIdentifierEntry
+        if isinstance(identifier, AttackTechniqueIdentifier):
+            return AttackTechniqueIdentifierEntry
+        if isinstance(identifier, AttackIdentifier):
+            return AttackIdentifierEntry
+        if isinstance(identifier, SeedIdentifier):
+            return SeedIdentifierEntry
+        if isinstance(identifier, TargetIdentifier):
+            return TargetIdentifierEntry
+        if isinstance(identifier, ConverterIdentifier):
+            return ConverterIdentifierEntry
+        if isinstance(identifier, ScorerIdentifier):
+            return ScorerIdentifierEntry
+        if isinstance(identifier, ScenarioIdentifier):
+            return ScenarioIdentifierEntry
+        raise TypeError(f"Identifier type {type(identifier).__name__} does not have a persistence entry.")
+
+    @staticmethod
+    def _iter_identifier_dependencies(identifier: ComponentIdentifier) -> Iterator[ComponentIdentifier]:
+        for field_name in identifier.promoted_child_field_names():
+            child = getattr(identifier, field_name)
+            if isinstance(child, ComponentIdentifier):
+                yield child
+            elif isinstance(child, list):
+                yield from (item for item in child if isinstance(item, ComponentIdentifier))
+
+    def _get_identifiers(
+        self,
+        *,
+        identifier_type: type[IdentifierModel],
+        entry_type: type[ComponentIdentifierEntry[Any]],
+        identifier_hashes: Sequence[str] | None,
+        filters: dict[str, Any],
+    ) -> Sequence[IdentifierModel]:
+        if identifier_hashes is not None and not identifier_hashes:
+            return []
+
+        list_filters = {name: value for name, value in filters.items() if isinstance(value, list)}
+        conditions = [
+            getattr(entry_type, name) == value
+            for name, value in filters.items()
+            if value is not None and name not in list_filters
+        ]
+        if identifier_hashes is not None:
+            entries = self._execute_batched_query(
+                entry_type,
+                batch_column=entry_type.hash,
+                batch_values=identifier_hashes,
+                other_conditions=conditions,
+                order_by=entry_type.hash,
+            )
+        else:
+            entries = self._query_entries(
+                entry_type,
+                conditions=and_(*conditions) if conditions else None,
+                order_by=entry_type.hash,
+            )
+
+        entries = [
+            entry
+            for entry in entries
+            if all(
+                getattr(entry, name) is not None and sorted(getattr(entry, name)) == sorted(value)
+                for name, value in list_filters.items()
+            )
+        ]
+        identifiers: list[IdentifierModel] = []
+        seen_hashes: set[str] = set()
+        for entry in sorted(entries, key=lambda item: item.hash):
+            if entry.hash in seen_hashes:
+                continue
+            if entry.identifier_json is None:
+                raise ValueError(f"Identifier row {entry.hash} in {entry_type.__tablename__} has no identifier JSON.")
+            identifier = identifier_type.model_validate(entry.identifier_json)
+            if identifier.hash != entry.hash:
+                raise ValueError(
+                    f"Identifier row {entry.hash} in {entry_type.__tablename__} does not match its stored JSON hash."
+                )
+            identifiers.append(identifier)
+            seen_hashes.add(entry.hash)
+        return identifiers
+
+    def get_target_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        endpoint: str | None = None,
+        model_name: str | None = None,
+        underlying_model_name: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_requests_per_minute: int | None = None,
+        supported_auth_modes: Sequence[str] | None = None,
+    ) -> Sequence[TargetIdentifier]:
+        """
+        Retrieve target identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            endpoint (str | None): Target endpoint to match.
+            model_name (str | None): Target model name to match.
+            underlying_model_name (str | None): Underlying model name to match.
+            temperature (float | None): Temperature to match.
+            top_p (float | None): Top-p value to match.
+            max_requests_per_minute (int | None): Request limit to match.
+            supported_auth_modes (Sequence[str] | None): Authentication modes to match exactly, in any order.
+
+        Returns:
+            Sequence[TargetIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=TargetIdentifier,
+            entry_type=TargetIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "endpoint": endpoint,
+                "model_name": model_name,
+                "underlying_model_name": underlying_model_name,
+                "temperature": temperature,
+                "top_p": top_p,
+                "max_requests_per_minute": max_requests_per_minute,
+                "supported_auth_modes": list(supported_auth_modes) if supported_auth_modes is not None else None,
+            },
+        )
+
+    def get_converter_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        supported_input_types: Sequence[str] | None = None,
+        supported_output_types: Sequence[str] | None = None,
+        converter_target_hash: str | None = None,
+        sub_converter_hash: str | None = None,
+    ) -> Sequence[ConverterIdentifier]:
+        """
+        Retrieve converter identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            supported_input_types (Sequence[str] | None): Input types to match exactly, in any order.
+            supported_output_types (Sequence[str] | None): Output types to match exactly, in any order.
+            converter_target_hash (str | None): Converter target hash to match.
+            sub_converter_hash (str | None): Nested converter hash to match.
+
+        Returns:
+            Sequence[ConverterIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ConverterIdentifier,
+            entry_type=ConverterIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "supported_input_types": (list(supported_input_types) if supported_input_types is not None else None),
+                "supported_output_types": (
+                    list(supported_output_types) if supported_output_types is not None else None
+                ),
+                "converter_target_hash": converter_target_hash,
+                "sub_converter_hash": sub_converter_hash,
+            },
+        )
+
+    def get_scorer_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        scorer_type: str | None = None,
+        score_aggregator: str | None = None,
+        prompt_target_hash: str | None = None,
+    ) -> Sequence[ScorerIdentifier]:
+        """
+        Retrieve scorer identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            scorer_type (str | None): Scorer type to match.
+            score_aggregator (str | None): Score aggregator to match.
+            prompt_target_hash (str | None): Scorer target hash to match.
+
+        Returns:
+            Sequence[ScorerIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ScorerIdentifier,
+            entry_type=ScorerIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "scorer_type": scorer_type,
+                "score_aggregator": score_aggregator,
+                "prompt_target_hash": prompt_target_hash,
+            },
+        )
+
+    def get_scenario_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        version: int | None = None,
+        techniques: Sequence[str] | None = None,
+        datasets: Sequence[str] | None = None,
+        objective_target_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[ScenarioIdentifier]:
+        """
+        Retrieve scenario identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            version (int | None): Scenario definition version to match.
+            techniques (Sequence[str] | None): Technique names to match exactly, in any order.
+            datasets (Sequence[str] | None): Dataset names to match exactly, in any order.
+            objective_target_hash (str | None): Objective target hash to match.
+            objective_scorer_hash (str | None): Objective scorer hash to match.
+
+        Returns:
+            Sequence[ScenarioIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=ScenarioIdentifier,
+            entry_type=ScenarioIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "version": version,
+                "techniques": list(techniques) if techniques is not None else None,
+                "datasets": list(datasets) if datasets is not None else None,
+                "objective_target_hash": objective_target_hash,
+                "objective_scorer_hash": objective_scorer_hash,
+            },
+        )
+
+    def get_seed_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        value: str | None = None,
+        value_sha256: str | None = None,
+        data_type: str | None = None,
+        dataset_name: str | None = None,
+        is_general_technique: bool | None = None,
+    ) -> Sequence[SeedIdentifier]:
+        """
+        Retrieve seed identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            value (str | None): Seed value to match.
+            value_sha256 (str | None): Seed value hash to match.
+            data_type (str | None): Seed data type to match.
+            dataset_name (str | None): Dataset name to match.
+            is_general_technique (bool | None): General-technique flag to match.
+
+        Returns:
+            Sequence[SeedIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=SeedIdentifier,
+            entry_type=SeedIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "value": value,
+                "value_sha256": value_sha256,
+                "data_type": data_type,
+                "dataset_name": dataset_name,
+                "is_general_technique": is_general_technique,
+            },
+        )
+
+    def get_attack_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        adversarial_system_prompt: str | None = None,
+        adversarial_seed_prompt: str | None = None,
+        objective_target_hash: str | None = None,
+        adversarial_chat_hash: str | None = None,
+        objective_scorer_hash: str | None = None,
+    ) -> Sequence[AttackIdentifier]:
+        """
+        Retrieve attack identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            adversarial_system_prompt (str | None): Adversarial system prompt to match.
+            adversarial_seed_prompt (str | None): Adversarial seed prompt to match.
+            objective_target_hash (str | None): Objective target hash to match.
+            adversarial_chat_hash (str | None): Adversarial chat target hash to match.
+            objective_scorer_hash (str | None): Objective scorer hash to match.
+
+        Returns:
+            Sequence[AttackIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AttackIdentifier,
+            entry_type=AttackIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "adversarial_system_prompt": adversarial_system_prompt,
+                "adversarial_seed_prompt": adversarial_seed_prompt,
+                "objective_target_hash": objective_target_hash,
+                "adversarial_chat_hash": adversarial_chat_hash,
+                "objective_scorer_hash": objective_scorer_hash,
+            },
+        )
+
+    def get_attack_technique_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_identifier_hash: str | None = None,
+    ) -> Sequence[AttackTechniqueIdentifier]:
+        """
+        Retrieve attack technique identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            attack_identifier_hash (str | None): Attack identifier hash to match.
+
+        Returns:
+            Sequence[AttackTechniqueIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AttackTechniqueIdentifier,
+            entry_type=AttackTechniqueIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "attack_identifier_hash": attack_identifier_hash,
+            },
+        )
+
+    def get_atomic_attack_identifiers(
+        self,
+        *,
+        identifier_hashes: Sequence[str] | None = None,
+        class_name: str | None = None,
+        attack_technique_identifier_hash: str | None = None,
+    ) -> Sequence[AtomicAttackIdentifier]:
+        """
+        Retrieve atomic attack identifiers using exact normalized-column filters.
+
+        Args:
+            identifier_hashes (Sequence[str] | None): Content hashes to include.
+            class_name (str | None): Component class name to match.
+            attack_technique_identifier_hash (str | None): Attack technique hash to match.
+
+        Returns:
+            Sequence[AtomicAttackIdentifier]: Matching identifiers ordered by content hash.
+        """
+        return self._get_identifiers(
+            identifier_type=AtomicAttackIdentifier,
+            entry_type=AtomicAttackIdentifierEntry,
+            identifier_hashes=identifier_hashes,
+            filters={
+                "class_name": class_name,
+                "attack_technique_identifier_hash": attack_technique_identifier_hash,
+            },
+        )
+
     def _add_embeddings_to_memory(self, *, embedding_data: Sequence[EmbeddingDataEntry]) -> None:
         """
         Insert embedding data into memory storage.
         """
+        self._insert_entries(entries=embedding_data)
 
-    @abc.abstractmethod
     def _query_entries(
         self,
         model_class: type[Model],
@@ -502,12 +1167,41 @@ class MemoryInterface(abc.ABC):
             conditions: SQLAlchemy filter conditions (Optional).
             distinct: Whether to return distinct rows only. Defaults to False.
             join_scores: Whether to join the scores table. Defaults to False.
-            order_by: SQLAlchemy order_by clause (Optional).
+            order_by: A single SQLAlchemy order_by clause, or a list/tuple of clauses for
+                multi-column ordering (Optional).
             limit (int | None): Maximum number of rows to return. Defaults to None (no limit).
 
         Returns:
             List of model instances representing the rows fetched from the table.
+
+        Raises:
+            SQLAlchemyError: If the query fails.
         """
+        with closing(self.get_session()) as session:
+            try:
+                query = session.query(model_class)
+                if join_scores and model_class == PromptMemoryEntry:
+                    query = query.options(joinedload(PromptMemoryEntry.scores))
+                elif model_class == AttackResultEntry:
+                    query = query.options(
+                        joinedload(AttackResultEntry.last_response).joinedload(PromptMemoryEntry.scores),
+                        joinedload(AttackResultEntry.last_score),
+                    )
+                if conditions is not None:
+                    query = query.filter(conditions)
+                if order_by is not None:
+                    if isinstance(order_by, (list, tuple)):
+                        query = query.order_by(*order_by)
+                    else:
+                        query = query.order_by(order_by)
+                if distinct:
+                    query = query.distinct()
+                if limit is not None:
+                    query = query.limit(limit)
+                return query.all()
+            except SQLAlchemyError as e:
+                logger.exception(f"Error fetching data from table {model_class.__tablename__}: {e}")  # type: ignore[ty:unresolved-attribute]
+                raise
 
     def _execute_batched_query(
         self,
@@ -664,21 +1358,46 @@ class MemoryInterface(abc.ABC):
 
         return results
 
-    @abc.abstractmethod
     def _insert_entry(self, entry: Base) -> None:
         """
         Insert an entry into the Table.
 
         Args:
             entry: An instance of a SQLAlchemy model to be added to the Table.
+
+        Raises:
+            SQLAlchemyError: If the insertion fails.
         """
+        with closing(self.get_session()) as session:
+            try:
+                session.add(entry)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting entry into the table: {e}")
+                raise
 
-    @abc.abstractmethod
     def _insert_entries(self, *, entries: Sequence[Base]) -> None:
-        """Insert multiple entries into the database."""
+        """
+        Insert multiple entries into the database.
+
+        Args:
+            entries (Sequence[Base]): A sequence of SQLAlchemy model instances to insert.
+
+        Raises:
+            SQLAlchemyError: If the insertion fails.
+        """
+        with closing(self.get_session()) as session:
+            try:
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting multiple entries into the table: {e}")
+                raise
 
     @abc.abstractmethod
-    def get_session(self) -> Any:
+    def get_session(self) -> Session:
         """
         Provide a SQLAlchemy session for transactional operations.
 
@@ -709,7 +1428,6 @@ class MemoryInterface(abc.ABC):
                 logger.exception(f"Error updating entry in the table: {e}")
                 raise
 
-    @abc.abstractmethod
     def _update_entries(self, *, entries: MutableSequence[Base], update_fields: dict[str, Any]) -> bool:
         """
         Update the given entries with the specified field values.
@@ -717,7 +1435,36 @@ class MemoryInterface(abc.ABC):
         Args:
             entries (Sequence[Base]): A list of SQLAlchemy model instances to be updated.
             update_fields (dict): A dictionary of field names and their new values.
+
+        Returns:
+            bool: True if the update was successful.
+
+        Raises:
+            ValueError: If update_fields is empty or contains an unknown field.
+            SQLAlchemyError: If the update fails.
         """
+        if not update_fields:
+            raise ValueError("update_fields must be provided to update prompt entries.")
+        with closing(self.get_session()) as session:
+            try:
+                for entry in entries:
+                    entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
+                    if entry_in_session is None:
+                        entry_in_session = session.merge(entry)
+                    for field, value in update_fields.items():
+                        if field not in vars(entry_in_session):
+                            session.rollback()
+                            raise ValueError(
+                                f"Field '{field}' does not exist in the table '{entry_in_session.__tablename__}'. "
+                                "Rolling back changes..."
+                            )
+                        setattr(entry_in_session, field, value)
+                session.commit()
+                return True
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error updating entries: {e}")
+                raise
 
     @abc.abstractmethod
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
@@ -745,7 +1492,7 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique attack class names from all stored attack results.
 
-        Extracts class_name from the attack_identifier JSON column via a
+        Extracts class_name from the atomic_attack_identifier JSON column via a
         database-level DISTINCT query.
 
         Returns:
@@ -757,8 +1504,8 @@ class MemoryInterface(abc.ABC):
         """
         Return sorted unique converter class names used across all attack results.
 
-        Extracts class_name values from the request_converter_identifiers array
-        within the attack_identifier JSON column via a database-level query.
+        Extracts class_name values from the nested request_converters array
+        within the atomic_attack_identifier JSON column via a database-level query.
 
         Returns:
             Sorted list of unique converter class name strings.
@@ -805,6 +1552,9 @@ class MemoryInterface(abc.ABC):
         Persisting the score even without a piece is intentional: aggregate
         analytics (e.g. refusal rate over a batch) still want the score row
         even when the scored content was never a real conversation turn.
+
+        Raises:
+            SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
         for score in scores:
             if score.message_piece_id:
@@ -816,7 +1566,26 @@ class MemoryInterface(abc.ABC):
                 # auto-link score to the original prompt id if the prompt is a duplicate
                 if pieces[0].original_prompt_id != pieces[0].id:
                     score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
-        self._insert_entries(entries=[ScoreEntry(entry=score) for score in scores])
+        entries = [ScoreEntry(entry=score) for score in scores]
+        with closing(self.get_session()) as session:
+            try:
+                for entry in entries:
+                    if entry.scorer_class_identifier:
+                        self._persist_scorer_identifier(
+                            session=session,
+                            scorer_identifier=ScorerIdentifier.model_validate(entry.scorer_class_identifier),
+                        )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error inserting scores: {e}")
+                raise
+
+    @classmethod
+    def _persist_scorer_identifier(cls, *, session: Any, scorer_identifier: ScorerIdentifier) -> None:
+        """Persist a complete scorer graph and its target dependencies."""
+        cls._persist_identifier(session=session, identifier=scorer_identifier)
 
     def get_scores(
         self,
@@ -885,7 +1654,6 @@ class MemoryInterface(abc.ABC):
     def get_prompt_scores(
         self,
         *,
-        attack_id: str | uuid.UUID | None = None,
         role: str | None = None,
         conversation_id: str | uuid.UUID | None = None,
         prompt_ids: Sequence[str | uuid.UUID] | None = None,
@@ -903,7 +1671,6 @@ class MemoryInterface(abc.ABC):
         Retrieve scores attached to message pieces based on the specified filters.
 
         Args:
-            attack_id (str | uuid.UUID | None, optional): The ID of the attack. Defaults to None.
             role (str | None, optional): The role of the prompt. Defaults to None.
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
@@ -924,7 +1691,6 @@ class MemoryInterface(abc.ABC):
             Sequence[Score]: A list of scores extracted from the message pieces.
         """
         message_pieces = self.get_message_pieces(
-            attack_id=attack_id,
             role=role,
             conversation_id=conversation_id,
             prompt_ids=prompt_ids,
@@ -962,31 +1728,16 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             MutableSequence[Message]: A list of chat memory entries with the specified conversation ID.
+
+        Raises:
+            ValueError: If conversation_id is empty or None. A falsy id would cause the underlying
+                get_message_pieces filter to be skipped, silently returning pieces from every
+                conversation in memory.
         """
+        if not conversation_id:
+            raise ValueError("get_conversation_messages requires a non-empty conversation_id")
         message_pieces = self.get_message_pieces(conversation_id=conversation_id)
         return group_conversation_message_pieces_by_sequence(message_pieces=message_pieces)
-
-    def get_conversation(self, *, conversation_id: str) -> MutableSequence[Message]:
-        """
-        Retrieve the messages for a conversation (deprecated alias).
-
-        .. deprecated::
-            Use ``get_conversation_messages`` instead. The ``get_conversation`` name is
-            being freed so it can return the conversation entity (currently exposed as
-            ``_get_conversation``) in a future release.
-
-        Args:
-            conversation_id (str): The conversation ID to match.
-
-        Returns:
-            MutableSequence[Message]: A list of chat memory entries with the specified conversation ID.
-        """
-        print_deprecation_message(
-            old_item="MemoryInterface.get_conversation",
-            new_item="MemoryInterface.get_conversation_messages",
-            removed_in="0.17.0",
-        )
-        return self.get_conversation_messages(conversation_id=conversation_id)
 
     def _get_conversation(self, *, conversation_id: str) -> Conversation | None:
         """
@@ -999,11 +1750,8 @@ class MemoryInterface(abc.ABC):
             Conversation | None: The conversation metadata (including the target
                 identifier), or ``None`` if no row exists for the conversation.
         """
-        # NOTE: The leading underscore is temporary. This method returns the conversation
-        # entity (metadata) and will be promoted to the public ``get_conversation`` once the
-        # deprecated, messages-returning ``get_conversation`` above is removed in 0.17.0. The
-        # underscore exists only to avoid colliding with that still-public method during the
-        # deprecation window.
+        # NOTE: The leading underscore is retained to distinguish this conversation-entity
+        # accessor from the messages-returning helpers (``get_conversation_messages``).
         entries = self._query_entries(
             ConversationEntry,
             conditions=ConversationEntry.conversation_id == str(conversation_id),
@@ -1032,33 +1780,6 @@ class MemoryInterface(abc.ABC):
 
         conversation = self.get_conversation_messages(conversation_id=response.conversation_id)
         return conversation[response.sequence - 1]
-
-    def _resolve_attack_id_to_conversation_condition(self, *, attack_id: str | uuid.UUID) -> Any:
-        """
-        Build a deprecated ``attack_id`` filter condition for ``get_message_pieces``.
-
-        The attack identifier is no longer stamped on every piece. Instead, resolve the
-        raw attack-strategy hash against persisted ``AttackResult`` rows and constrain
-        the query to those attacks' main conversations.
-
-        Args:
-            attack_id (str | uuid.UUID): The raw attack-strategy identifier hash.
-
-        Returns:
-            Any: A SQLAlchemy condition restricting pieces to the matching attacks'
-                main conversation ids (matches nothing when no attack matches).
-        """
-        print_deprecation_message(
-            old_item="get_message_pieces(attack_id=...) / get_prompt_scores(attack_id=...)",
-            new_item="get_message_pieces(conversation_id=...) resolved via get_attack_results(...)",
-            removed_in="0.17.0",
-        )
-        matching_conversation_ids = {
-            result.conversation_id
-            for result in self.get_attack_results()
-            if (strategy := result.get_attack_strategy_identifier()) is not None and strategy.hash == str(attack_id)
-        }
-        return PromptMemoryEntry.conversation_id.in_(matching_conversation_ids)
 
     def _build_message_piece_identifier_conditions(
         self, *, identifier_filters: Sequence[IdentifierFilter]
@@ -1110,7 +1831,6 @@ class MemoryInterface(abc.ABC):
     def get_message_pieces(
         self,
         *,
-        attack_id: str | uuid.UUID | None = None,
         role: str | None = None,
         conversation_id: str | uuid.UUID | None = None,
         prompt_ids: Sequence[str | uuid.UUID] | None = None,
@@ -1129,7 +1849,6 @@ class MemoryInterface(abc.ABC):
         Retrieve a list of MessagePiece objects based on the specified filters.
 
         Args:
-            attack_id (str | uuid.UUID | None, optional): The ID of the attack. Defaults to None.
             role (str | None, optional): The role of the prompt. Defaults to None.
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
@@ -1161,8 +1880,6 @@ class MemoryInterface(abc.ABC):
 
         try:
             conditions: list[Any] = []
-            if attack_id:
-                conditions.append(self._resolve_attack_id_to_conversation_condition(attack_id=attack_id))
             if role:
                 conditions.append(PromptMemoryEntry.role == role)
             if conversation_id:
@@ -1382,21 +2099,6 @@ class MemoryInterface(abc.ABC):
             logger.error(f"Failed to update entries with conversation_id {conversation_id}.")
         return success
 
-    def update_labels_by_conversation_id(self, *, conversation_id: str, labels: dict[str, Any]) -> bool:
-        """
-        Update the labels of prompt entries in memory for a given conversation ID.
-
-        Args:
-            conversation_id (str): The conversation ID of the entries to be updated.
-            labels (dict): New dictionary of labels.
-
-        Returns:
-            bool: True if the update was successful, False otherwise.
-        """
-        return self.update_prompt_entries_by_conversation_id(
-            conversation_id=conversation_id, update_fields={"labels": labels}
-        )
-
     def update_prompt_metadata_by_conversation_id(
         self, *, conversation_id: str, prompt_metadata: dict[str, str | int]
     ) -> bool:
@@ -1434,6 +2136,24 @@ class MemoryInterface(abc.ABC):
         run_schema_migrations(engine=self.engine, silent=silent)
         check_schema_migrations(engine=self.engine, silent=silent)
 
+    def _check_schema_migration(self, *, silent: bool = False) -> None:
+        """
+        Verify that the current database schema matches the models without modifying the database.
+
+        Args:
+            silent (bool): If True, suppresses Alembic console output. Defaults to False.
+
+        Raises:
+            RuntimeError: If the engine is not initialized.
+            AutogenerateDiffsDetected: If the schema does not match the models.
+        """
+        from pyrit.memory.migration import check_schema_migrations
+
+        logger.info("Checking schema migration compatibility.")
+        if self.engine is None:
+            raise RuntimeError("Engine must be initialized to check schema migrations.")
+        check_schema_migrations(engine=self.engine, silent=silent)
+
     def reset_database(self) -> None:
         """
         Drop and recreate all tables in the database.
@@ -1447,11 +2167,18 @@ class MemoryInterface(abc.ABC):
             raise RuntimeError("Engine is not initialized")
         reset_database(engine=self.engine)
 
-    @abc.abstractmethod
     def dispose_engine(self) -> None:
         """
         Dispose the engine and clean up resources.
         """
+        if self.engine:
+            self.engine.dispose()
+            previous_raise = logging.raiseExceptions
+            logging.raiseExceptions = False
+            try:
+                logger.info("Engine disposed successfully.")
+            finally:
+                logging.raiseExceptions = previous_raise
 
     def cleanup(self) -> None:
         """
@@ -1598,6 +2325,44 @@ class MemoryInterface(abc.ABC):
             serialized_prompt_value = str(serializer.value)
         return serialized_prompt_value or ""
 
+    async def _prepare_seed_for_storage_async(
+        self, *, prompt: Seed, added_by: str | None, current_time: datetime
+    ) -> None:
+        """
+        Prepare a seed in place for persistence.
+
+        Sets provenance and timestamp, serializes any media value to storage, and computes the
+        SHA256 used for identity and deduplication. Performs no database writes, so it is safe to
+        call before opening a transaction.
+
+        Args:
+            prompt (Seed): The seed to prepare; it is mutated in place.
+            added_by (str | None): The user to attribute the seed to; overrides an existing value.
+            current_time (datetime): The timestamp to apply when the seed has no ``date_added``.
+
+        Raises:
+            ValueError: If ``added_by`` is not set on the seed and none is provided.
+        """
+        if added_by:
+            prompt.added_by = added_by
+        if not prompt.added_by:
+            raise ValueError(
+                """The 'added_by' attribute must be set for each prompt.
+                Set it explicitly or pass a value to the 'added_by' parameter."""
+            )
+        if prompt.date_added is None:
+            prompt.date_added = current_time
+
+        # Only SeedPrompt has set_encoding_metadata for audio/video/image files
+        if hasattr(prompt, "set_encoding_metadata"):
+            prompt.set_encoding_metadata()  # type: ignore[ty:call-non-callable]
+
+        # Handle serialization for image, audio & video SeedPrompts
+        if prompt.data_type in ["image_path", "audio_path", "video_path"]:
+            prompt.value = await self._serialize_seed_value_async(prompt=prompt)
+
+        await set_seed_sha256_async(prompt)
+
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
@@ -1612,26 +2377,7 @@ class MemoryInterface(abc.ABC):
         entries: MutableSequence[SeedEntry] = []
         current_time = datetime.now(tz=timezone.utc)
         for prompt in seeds:
-            if added_by:
-                prompt.added_by = added_by
-            if not prompt.added_by:
-                raise ValueError(
-                    """The 'added_by' attribute must be set for each prompt.
-                    Set it explicitly or pass a value to the 'added_by' parameter."""
-                )
-            if prompt.date_added is None:
-                prompt.date_added = current_time
-
-            # Only SeedPrompt has set_encoding_metadata for audio/video/image files
-            if hasattr(prompt, "set_encoding_metadata"):
-                prompt.set_encoding_metadata()  # type: ignore[ty:call-non-callable]
-
-            # Handle serialization for image, audio & video SeedPrompts
-            if prompt.data_type in ["image_path", "audio_path", "video_path"]:
-                serialized_prompt_value = await self._serialize_seed_value_async(prompt=prompt)
-                prompt.value = serialized_prompt_value
-
-            await set_seed_sha256_async(prompt)
+            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
             if prompt.value_sha256 and not self.get_seeds(
                 value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name
@@ -1673,6 +2419,81 @@ class MemoryInterface(abc.ABC):
         except Exception as e:
             logger.exception(f"Failed to retrieve dataset names with error {e}")
             raise
+
+    async def replace_seeds_for_dataset_async(
+        self, *, dataset_name: str, seeds: Sequence[Seed], added_by: str | None = None
+    ) -> int:
+        """
+        Atomically replace all stored seeds for a dataset with a new set.
+
+        Every existing ``SeedPromptEntries`` row for ``dataset_name`` is deleted and the provided
+        seeds are inserted in a single transaction and commit; if the insert fails the delete is
+        rolled back with it, so the previously stored seeds are preserved. Seeds are prepared
+        (media serialized, SHA256 computed) before the transaction opens. Deduplication is
+        intentionally skipped: this is a full replace, so the provided seeds are stored as given.
+
+        The isolation guarantee is the database transaction boundary: a reader that queries after
+        the commit sees the complete new set. This holds on the file-backed SQLite and Azure SQL
+        backends, where each session has its own connection. The in-memory SQLite backend shares a
+        single connection across all sessions, so it does not isolate concurrent sessions from one
+        another; callers that need to read a dataset while it is being replaced should use a
+        file-backed or Azure SQL backend. ``RefreshDatasets`` replaces datasets sequentially, so it
+        does not rely on cross-session isolation.
+
+        ``SeedPromptEntries`` has no dependent foreign keys, so no related rows are removed first.
+        Deleting media-backed seeds (``image_path``, ``audio_path``, ``video_path``) removes only the
+        database rows; any serialized media files they reference are left on disk. This matches every
+        other seed-delete path and results in disk bloat, not data loss.
+
+        Args:
+            dataset_name (str): The name of the dataset whose seeds should be replaced.
+            seeds (Sequence[Seed]): The new seeds to store for the dataset; must be non-empty and
+                every seed's ``dataset_name`` must equal ``dataset_name``.
+            added_by (str | None): The user to attribute the new seeds to.
+
+        Returns:
+            int: The number of ``SeedPromptEntries`` deleted before the new seeds were inserted.
+
+        Raises:
+            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, or any seed's
+                ``dataset_name`` does not match ``dataset_name``.
+            SQLAlchemyError: If the replacement fails; the transaction is rolled back first.
+        """
+        if not dataset_name:
+            raise ValueError("dataset_name must be a non-empty string.")
+        if not seeds:
+            raise ValueError("seeds must be non-empty; refusing to replace a dataset with nothing.")
+        mismatched = sorted(
+            {seed.dataset_name for seed in seeds if seed.dataset_name != dataset_name},
+            key=lambda name: (name is None, name or ""),
+        )
+        if mismatched:
+            raise ValueError(
+                f"All seeds must belong to dataset '{dataset_name}', but got mismatched "
+                f"dataset_name(s): {mismatched}. Refusing to delete '{dataset_name}' and insert "
+                "seeds tagged for another dataset."
+            )
+
+        current_time = datetime.now(tz=timezone.utc)
+        entries: list[SeedEntry] = []
+        for prompt in seeds:
+            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
+            entries.append(SeedEntry(entry=prompt))
+
+        with closing(self.get_session()) as session:
+            try:
+                deleted = (
+                    session.query(SeedEntry)
+                    .filter(SeedEntry.dataset_name == dataset_name)
+                    .delete(synchronize_session=False)
+                )
+                session.add_all(entries)
+                session.commit()
+                return deleted
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error replacing seeds for dataset {dataset_name}: {e}")
+                raise
 
     async def add_seed_groups_to_memory_async(
         self, *, prompt_groups: Sequence[SeedGroup], added_by: str | None = None
@@ -1806,6 +2627,14 @@ class MemoryInterface(abc.ABC):
         entries = [AttackResultEntry(entry=attack_result) for attack_result in attack_results]
         with closing(self.get_session()) as session:
             try:
+                for attack_result in attack_results:
+                    if attack_result.atomic_attack_identifier is not None:
+                        self._persist_identifier(
+                            session=session,
+                            identifier=AtomicAttackIdentifier.from_component_identifier(
+                                attack_result.atomic_attack_identifier
+                            ),
+                        )
                 session.add_all(entries)
                 session.commit()
             except SQLAlchemyError:
@@ -1893,6 +2722,10 @@ class MemoryInterface(abc.ABC):
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
+        min_turns: int | None = None,
+        max_turns: int | None = None,
+        limit: int | None = None,
+        after: AttackResultsKeysetCursor | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -1906,8 +2739,8 @@ class MemoryInterface(abc.ABC):
             outcome (str | None, optional): The outcome to filter by (success, failure, undetermined).
                 Defaults to None.
             attack_classes (Sequence[str] | None, optional): Filter by exact attack class_name in
-                attack_identifier. Returns attacks matching ANY of the listed class names (OR logic,
-                case-sensitive). An empty sequence applies no filter. Defaults to None.
+                atomic_attack_identifier. Returns attacks matching ANY of the listed class names
+                (OR logic, case-sensitive). An empty sequence applies no filter. Defaults to None.
             atomic_attack_eval_hashes (Sequence[str] | None, optional): Filter by behavioral
                 equivalence hash on ``atomic_attack_identifier.eval_hash`` (auto-stamped on persistence
                 by ``AtomicAttackEvaluationIdentifier``). Returns results matching ANY of the listed
@@ -1947,6 +2780,21 @@ class MemoryInterface(abc.ABC):
                 specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
                 Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
                 removed per-scenario error_attack_result_ids manifest. Defaults to None.
+            min_turns (int | None, optional): If set, only return attacks whose
+                ``executed_turns`` is greater than or equal to this value. Applied after
+                per-conversation deduplication (i.e. to the surviving newest row per
+                conversation), so it never resurfaces an older duplicate. Defaults to None.
+            max_turns (int | None, optional): If set, only return attacks whose
+                ``executed_turns`` is less than or equal to this value. Applied after
+                deduplication, mirroring ``min_turns``. Defaults to None.
+            limit (int | None, optional): Maximum number of deduplicated attack results to
+                return, ordered by recency. When either ``limit`` or ``after`` is provided,
+                deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
+                instead of loading every row into memory. Defaults to None (return all).
+            after (AttackResultsKeysetCursor | None, optional): Keyset (seek) anchor from a
+                previous page. When provided, only results ordered strictly after the anchor
+                under the recency sort are returned, giving insert/delete-stable pagination
+                without a drifting numeric offset. Defaults to None (start at the first page).
 
         Returns:
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
@@ -1954,6 +2802,8 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If any label key contains characters outside the allowlist
                 ``[A-Za-z0-9_.-]+``.
+            ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
+                ``objective_sha256`` (id-batched lookups do not support SQL pagination).
         """
         # Handle empty list cases
         if attack_result_ids is not None and len(attack_result_ids) == 0:
@@ -2077,7 +2927,22 @@ class MemoryInterface(abc.ABC):
                 )
             )
 
+        paginating = limit is not None or after is not None
+        if paginating and (attack_result_ids or objective_sha256):
+            raise ValueError(
+                "limit/keyset pagination cannot be combined with attack_result_ids or objective_sha256 lookups."
+            )
+
         try:
+            if paginating:
+                return self._query_paginated_attack_results(
+                    conditions=conditions,
+                    min_turns=min_turns,
+                    max_turns=max_turns,
+                    limit=limit,
+                    after=after,
+                )
+
             list_params: list[tuple[InstrumentedAttribute[Any], Sequence[Any], str]] = []
             if attack_result_ids:
                 list_params.append((AttackResultEntry.id, list(attack_result_ids), "id"))
@@ -2089,10 +2954,104 @@ class MemoryInterface(abc.ABC):
                 conditions=conditions,
                 list_params=list_params,
             )
-            return self._dedup_attack_entries(entries)
+            results = self._dedup_attack_entries(entries)
+            return self._filter_attack_results_by_turns(results, min_turns=min_turns, max_turns=max_turns)
         except Exception as e:
             logger.exception(f"Failed to retrieve attack results with error {e}")
             raise
+
+    def _query_paginated_attack_results(
+        self,
+        *,
+        conditions: list[Any],
+        min_turns: int | None,
+        max_turns: int | None,
+        limit: int | None,
+        after: AttackResultsKeysetCursor | None,
+    ) -> list[AttackResult]:
+        """
+        Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
+
+        Ranks rows with ``ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY timestamp
+        DESC, id DESC)`` after applying ``conditions``, keeps only the newest row per
+        conversation (``rn == 1``) — reproducing the post-fetch Python dedup but *before*
+        pagination so page sizes stay correct — then applies the ``min_turns``/``max_turns``
+        bounds to those winners, orders by recency, seeks past the ``after`` keyset anchor,
+        and applies ``limit`` in the database. The turn bounds are applied to the winners (not
+        inside the ranking subquery) so they never resurrect an older duplicate that happens
+        to fall in range. Seeking on the recency ordering tuple (rather than a numeric offset)
+        keeps page boundaries stable when other rows are inserted or deleted between page loads
+        (offset pagination instead shifts every row after the change).
+
+        Args:
+            conditions (list[Any]): Scalar WHERE filters applied before deduplication.
+            min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
+            max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
+            limit (int | None): Maximum number of results to return.
+            after (AttackResultsKeysetCursor | None): Keyset anchor; only rows ordered strictly
+                after it are returned. ``None`` starts at the first page.
+
+        Returns:
+            list[AttackResult]: The deduplicated, recency-ordered page of attack results.
+        """
+        ranked = select(
+            AttackResultEntry.id.label("id"),
+            func.row_number()
+            .over(
+                partition_by=AttackResultEntry.conversation_id,
+                order_by=(AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()),
+            )
+            .label("rn"),
+        )
+        if conditions:
+            ranked = ranked.where(and_(*conditions))
+        ranked_subquery = ranked.subquery()
+
+        winner_ids = select(ranked_subquery.c.id).where(ranked_subquery.c.rn == 1)
+
+        page_conditions: list[Any] = [AttackResultEntry.id.in_(winner_ids)]
+        if min_turns is not None:
+            page_conditions.append(AttackResultEntry.executed_turns >= min_turns)
+        if max_turns is not None:
+            page_conditions.append(AttackResultEntry.executed_turns <= max_turns)
+        if after is not None:
+            page_conditions.append(self._attack_results_keyset_seek_condition(after=after))
+
+        entries = self._query_entries(
+            AttackResultEntry,
+            conditions=and_(*page_conditions),
+            order_by=self._attack_results_recency_order_by(),
+            limit=limit,
+        )
+        return [entry.get_attack_result() for entry in entries]
+
+    @staticmethod
+    def _filter_attack_results_by_turns(
+        results: list[AttackResult], *, min_turns: int | None, max_turns: int | None
+    ) -> list[AttackResult]:
+        """
+        Filter already-deduplicated attack results by their ``executed_turns`` bounds.
+
+        Applied after per-conversation dedup (matching the SQL paginated path) so the bounds
+        act on the surviving newest row per conversation, never resurfacing an older
+        duplicate that falls within range.
+
+        Args:
+            results (list[AttackResult]): Deduplicated attack results to filter.
+            min_turns (int | None): Inclusive lower bound on executed turns, or None.
+            max_turns (int | None): Inclusive upper bound on executed turns, or None.
+
+        Returns:
+            list[AttackResult]: Results whose ``executed_turns`` fall within the bounds.
+        """
+        if min_turns is None and max_turns is None:
+            return results
+        return [
+            result
+            for result in results
+            if (min_turns is None or result.executed_turns >= min_turns)
+            and (max_turns is None or result.executed_turns <= max_turns)
+        ]
 
     @staticmethod
     def _dedup_attack_entries(entries: Sequence[AttackResultEntry]) -> list[AttackResult]:
@@ -2115,12 +3074,6 @@ class MemoryInterface(abc.ABC):
         """
         Return all unique label key-value pairs across attack results.
 
-        Labels may live on ``PromptMemoryEntry.labels`` (joined via
-        conversation_id) **or** directly on ``AttackResultEntry.labels``.
-        Both sources are queried (OR logic, mirroring the label filter
-        behaviour in ``get_attack_results``), and unique key-value pairs
-        are aggregated in Python.
-
         Returns:
             dict[str, list[str]]: Mapping of label keys to sorted lists of
             unique values.
@@ -2128,24 +3081,11 @@ class MemoryInterface(abc.ABC):
         label_values: dict[str, set[str]] = {}
 
         with closing(self.get_session()) as session:
-            # Labels from PromptMemoryEntry linked to an attack
-            pme_rows = (
-                session.query(PromptMemoryEntry.labels)
-                .join(
-                    AttackResultEntry,
-                    PromptMemoryEntry.conversation_id == AttackResultEntry.conversation_id,
-                )
-                .filter(PromptMemoryEntry.labels.isnot(None))
-                .distinct()
-                .all()
-            )
-
-            # Labels directly on AttackResultEntry
             are_rows = (
                 session.query(AttackResultEntry.labels).filter(AttackResultEntry.labels.isnot(None)).distinct().all()
             )
 
-        for (labels,) in (*pme_rows, *are_rows):
+        for (labels,) in are_rows:
             if not isinstance(labels, dict):
                 continue
             for key, value in labels.items():
@@ -2162,16 +3102,34 @@ class MemoryInterface(abc.ABC):
 
         Args:
             scenario_results: Sequence of ScenarioResult objects to store in the database.
+
+        Raises:
+            SQLAlchemyError: If a scenario result or identifier graph cannot be persisted.
         """
-        self._insert_entries(
-            entries=[ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
-        )
+        entries = [ScenarioResultEntry(entry=scenario_result) for scenario_result in scenario_results]
+        with closing(self.get_session()) as session:
+            try:
+                for scenario_result in scenario_results:
+                    self._persist_scenario_identifier(
+                        session=session,
+                        scenario_identifier=scenario_result.scenario_identifier,
+                    )
+                session.add_all(entries)
+                session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                raise
+
+    @classmethod
+    def _persist_scenario_identifier(cls, *, session: Any, scenario_identifier: ScenarioIdentifier) -> None:
+        """Persist a scenario identifier and its target and scorer dependencies."""
+        cls._persist_identifier(session=session, identifier=scenario_identifier)
 
     def update_scenario_run_state(
         self,
         *,
         scenario_result_id: str,
-        scenario_run_state: str,
+        scenario_run_state: ScenarioRunState,
         error_message: str | None = None,
         error_type: str | None = None,
     ) -> None:
@@ -2179,16 +3137,11 @@ class MemoryInterface(abc.ABC):
         Update the run state of an existing scenario result.
 
         Performs a targeted UPDATE of only the state/error columns instead of
-        rebuilding the entire ``ScenarioResultEntry`` row. The full-row rebuild
-        used to read the stored row, mutate the ScenarioResult, and re-serialize
-        every column — including ``attack_results_json`` which is being phased
-        out and could be stale during the deprecation window. A targeted UPDATE
-        avoids clobbering manifest data and is also cheaper.
+        rebuilding the entire ``ScenarioResultEntry`` row.
 
         Args:
             scenario_result_id (str): The ID of the scenario result to update.
-            scenario_run_state (str): The new state for the scenario
-                (e.g., "CREATED", "IN_PROGRESS", "COMPLETED", "FAILED").
+            scenario_run_state (ScenarioRunState): The new state for the scenario.
             error_message (str | None): Optional scenario-level error message.
             error_type (str | None): Optional exception class name.
 
@@ -2201,15 +3154,13 @@ class MemoryInterface(abc.ABC):
             if not entry:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
 
-            entry.scenario_run_state = scenario_run_state
-            if error_message is not None:
-                entry.error_message = error_message
-            if error_type is not None:
-                entry.error_type = error_type
+            entry.scenario_run_state = scenario_run_state.value
+            entry.error_message = error_message
+            entry.error_type = error_type
 
             session.commit()
 
-        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state}'")
+        logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
 
     def update_scenario_metadata(
         self,

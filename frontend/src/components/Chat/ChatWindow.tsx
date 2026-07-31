@@ -1,11 +1,22 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   Button,
+  Drawer,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
+  mergeClasses,
+  Switch,
   Text,
   Tooltip,
+  useRestoreFocusSource,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
-import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowDownloadRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
+import SystemPromptBanner from './SystemPromptBanner'
 import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
@@ -17,9 +28,20 @@ import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
+import { exportConversation } from '../../utils/conversationExport'
+import type { ExportFormat } from '../../utils/conversationExport'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
+import { targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
+
+const NARROW_SCREEN_QUERY = '(max-width: 600px)'
+
+function matchesNarrowScreen(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia(NARROW_SCREEN_QUERY).matches
+}
 
 interface ChatWindowProps {
   onNewAttack: () => void
@@ -59,6 +81,8 @@ export default function ChatWindow({
   relatedConversationCount,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
+  const restoreFocusTargetAttributes = useRestoreFocusTarget()
+  const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
   // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
@@ -68,13 +92,30 @@ export default function ChatWindow({
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
+  // Conversation-wide default for rendering message text as Markdown.
+  const [globalMarkdown, setGlobalMarkdown] = useState(false)
   const [chatInputText, setChatInputText] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
   const [attachmentData, setAttachmentData] = useState<Record<string, string>>({})
   const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return
+    }
+
+    const mediaQuery = window.matchMedia(NARROW_SCREEN_QUERY)
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsNarrowScreen(event.matches)
+    }
+    mediaQuery.addEventListener('change', handleChange)
+    return () => mediaQuery.removeEventListener('change', handleChange)
+  }, [])
 
   const handleAttachmentsChange = useCallback((types: string[], data: Record<string, string>) => {
     setAttachmentTypes(types)
@@ -116,7 +157,9 @@ export default function ChatWindow({
     && relatedConversationCount > 0
   ) {
     setAutoOpenedForAttack(attackResultId)
-    setIsPanelOpen(true)
+    if (!isNarrowScreen) {
+      setIsPanelOpen(true)
+    }
   }
   // Set by panel click to bypass the in-flight guard on the next useEffect cycle.
   // This lets users switch to a sending conversation while still protecting
@@ -132,6 +175,8 @@ export default function ChatWindow({
   // Used to restore the user's input when switching back to an in-flight conversation.
   const pendingUserMessagesRef = useRef<Map<string, Message[]>>(new Map())
 
+  const supportsSystemPrompt = activeTarget?.capabilities?.supports_system_prompt === true
+
   // Clear internal messages when attack state is reset (e.g. New Attack).
   // Uses the "adjust state during render" pattern (see React docs:
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders)
@@ -142,6 +187,18 @@ export default function ChatWindow({
     if (!attackResultId) {
       setMessages([])
       setLoadedConversationId(null)
+      setSystemPrompt('')
+    }
+  }
+
+  // Clear a retained system prompt when switching to a target that can't use it,
+  // so it isn't silently dropped on send. Preserved across supporting targets to
+  // keep the A/B-testing workflow intact.
+  const [prevTargetName, setPrevTargetName] = useState(activeTarget?.target_registry_name)
+  if (activeTarget?.target_registry_name !== prevTargetName) {
+    setPrevTargetName(activeTarget?.target_registry_name)
+    if (!supportsSystemPrompt) {
+      setSystemPrompt('')
     }
   }
 
@@ -203,10 +260,13 @@ export default function ChatWindow({
   const handlePanelSelectConversation = useCallback((convId: string) => {
     forceLoadRef.current = true
     onSelectConversation(convId)
+    if (isNarrowScreen) {
+      setIsPanelOpen(false)
+    }
     if (convId === activeConversationId && attackResultId) {
       loadConversation(attackResultId, convId)
     }
-  }, [attackResultId, activeConversationId, onSelectConversation, loadConversation])
+  }, [attackResultId, activeConversationId, isNarrowScreen, onSelectConversation, loadConversation])
 
   const handleSend = async (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => {
     if (!activeTarget) { return }
@@ -289,6 +349,7 @@ export default function ChatWindow({
         const createResponse = await attacksApi.createAttack({
           target_registry_name: activeTarget.target_registry_name,
           labels: labels,
+          system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
         })
         currentAttackResultId = createResponse.attack_result_id
         currentConversationId = createResponse.conversation_id
@@ -347,8 +408,21 @@ export default function ChatWindow({
         setLoadedConversationId(effectiveConvId!)
       }
     } catch (err) {
+      const viewedConversationId = viewedConvRef.current
+      const isViewingFailedConversation = viewedConversationId === sendConvId
+        || viewedConversationId === (activeConversationId ?? conversationId)
+        || (viewedConversationId == null && sendConvId !== '__pending__')
+
       // Only show error in UI if user is still on this conversation
-      if (viewedConvRef.current === sendConvId || viewedConvRef.current === (activeConversationId ?? conversationId)) {
+      if (isViewingFailedConversation) {
+        // Mark the viewed conversation as loaded so first-send failures do not
+        // get stuck behind the "Loading conversation..." placeholder.
+        if (viewedConversationId) {
+          setLoadedConversationId(viewedConversationId)
+        } else if (sendConvId !== '__pending__') {
+          setLoadedConversationId(sendConvId)
+        }
+
         const apiError = toApiError(err)
         let description: string
         if (apiError.isNetworkError) {
@@ -398,11 +472,11 @@ export default function ChatWindow({
     try {
       const response = await attacksApi.createConversation(attackResultId, {})
       onSelectConversation(response.conversation_id)
-      setIsPanelOpen(true)
+      setIsPanelOpen(!isNarrowScreen)
     } catch {
       // Silently fail
     }
-  }, [attackResultId, onSelectConversation])
+  }, [attackResultId, isNarrowScreen, onSelectConversation])
 
   // -------------------------------------------------------------------
   // Message action handlers (4 buttons on each assistant message)
@@ -429,7 +503,7 @@ export default function ChatWindow({
     try {
       const response = await attacksApi.createConversation(attackResultId, {})
       onSelectConversation(response.conversation_id)
-      setIsPanelOpen(true)
+      setIsPanelOpen(!isNarrowScreen)
       // Small delay so the panel/messages update first
       setTimeout(() => {
         if (msg.content) inputBoxRef.current?.setText(msg.content)
@@ -443,7 +517,7 @@ export default function ChatWindow({
       // If creating fails, fall back to current conversation
       if (msg.content) inputBoxRef.current?.setText(msg.content)
     }
-  }, [attackResultId, messages, onSelectConversation])
+  }, [attackResultId, isNarrowScreen, messages, onSelectConversation])
 
   /** 3. Branch into a new conversation within the same attack (clone up to clicked message) */
   const handleBranchConversation = useCallback(async (messageIndex: number) => {
@@ -455,7 +529,7 @@ export default function ChatWindow({
         cutoff_index: messageIndex,
       })
       onSelectConversation(response.conversation_id)
-      setIsPanelOpen(true)
+      setIsPanelOpen(!isNarrowScreen)
       // Load the cloned messages
       const messagesResp = await attacksApi.getMessages(attackResultId, response.conversation_id)
       const frontendMessages = backendMessagesToFrontend(messagesResp.messages)
@@ -463,7 +537,7 @@ export default function ChatWindow({
     } catch (err) {
       console.error('Failed to branch into new conversation:', err)
     }
-  }, [attackResultId, activeConversationId, onSelectConversation])
+  }, [attackResultId, activeConversationId, isNarrowScreen, onSelectConversation])
 
   /** 4. Branch into a brand-new attack (clone up to clicked message with new labels) */
   const handleBranchAttack = useCallback(async (messageIndex: number) => {
@@ -512,11 +586,10 @@ export default function ChatWindow({
   // from the currently configured target, prevent sending new messages.
   // The user can "Continue with your target" to branch into a new attack with their target.
   const isCrossTargetLocked = Boolean(
-    attackResultId && attackTarget && activeTarget && (
-      attackTarget.target_type !== activeTarget.target_type ||
-      (attackTarget.endpoint ?? '') !== (activeTarget.endpoint ?? '') ||
-      (attackTarget.model_name ?? '') !== (activeTarget.model_name ?? '')
-    )
+    attackResultId &&
+    attackTarget &&
+    activeTarget &&
+    !targetInfoMatchesTarget(attackTarget, activeTarget)
   )
 
   // "Continue with your target" — clone the current conversation into a new attack
@@ -549,8 +622,26 @@ export default function ChatWindow({
     }
   }, [attackResultId, activeTarget, activeConversationId, messages, labels, onConversationCreated])
 
+  const systemMessage = messages.find(message => message.role === 'system')
+
+  // Export is available whenever there is a stable, viewable conversation:
+  // not while empty, loading, or mid-send. A lone system prompt (rendered only
+  // in the banner, not the chat body) does not count as an exportable message.
+  // Read-only / operator-lock / cross-target states do not block export.
+  const canExportConversation =
+    messages.some((message) => !message.isLoading && message.role !== 'system') &&
+    !isSending &&
+    !isLoadingAttack &&
+    !isLoadingMessages &&
+    !awaitingConversationLoad
+
+  const handleExport = (format: ExportFormat) => {
+    exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+  }
+
   return (
     <div className={styles.root}>
+      <h1 className={styles.pageHeading}>Chat</h1>
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
@@ -562,7 +653,7 @@ export default function ChatWindow({
           }}
         />
       )}
-      <div className={styles.chatArea}>
+      <div className={styles.chatArea} data-testid="chat-area">
         <div className={styles.ribbon} data-tour="chat-area">
           <div className={styles.conversationInfo}>
             {activeTarget ? (
@@ -577,14 +668,50 @@ export default function ChatWindow({
             )}
           </div>
           <div className={styles.ribbonActions}>
+            <Tooltip content="Render all messages as Markdown by default" relationship="label">
+              <Switch
+                checked={globalMarkdown}
+                onChange={(_ev, data) => setGlobalMarkdown(data.checked)}
+                label="Markdown"
+                data-testid="global-markdown-toggle"
+              />
+            </Tooltip>
+            <Menu>
+              <MenuTrigger disableButtonEnhancement>
+                <Tooltip content="Export conversation" relationship="label">
+                  <Button
+                    appearance="subtle"
+                    className={styles.ribbonAction}
+                    icon={<ArrowDownloadRegular />}
+                    disabled={!canExportConversation}
+                    aria-label="Export conversation"
+                    data-testid="export-conversation-btn"
+                  />
+                </Tooltip>
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  <MenuItem onClick={() => handleExport('markdown')} data-testid="export-markdown-item">
+                    Export as Markdown (.md)
+                  </MenuItem>
+                  <MenuItem onClick={() => handleExport('json')} data-testid="export-json-item">
+                    Export as JSON (.json)
+                  </MenuItem>
+                </MenuList>
+              </MenuPopover>
+            </Menu>
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
+                {...restoreFocusTargetAttributes}
                 appearance="subtle"
+                className={styles.ribbonAction}
                 icon={<PanelRightRegular />}
-                onClick={() => setIsPanelOpen(!isPanelOpen)}
+                onClick={() => setIsPanelOpen((open) => !open)}
                 disabled={!attackResultId}
                 data-testid="toggle-panel-btn"
                 aria-label="Toggle conversations panel"
+                aria-expanded={isPanelOpen}
+                aria-controls="conversation-panel"
               />
             </Tooltip>
             <Tooltip content="New Attack" relationship="label">
@@ -602,6 +729,7 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
+        {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
           onCopyToInput={handleCopyToInput}
@@ -613,10 +741,15 @@ export default function ChatWindow({
           isOperatorLocked={isOperatorLocked}
           isCrossTarget={isCrossTargetLocked}
           noTargetSelected={!activeTarget}
+          globalMarkdown={globalMarkdown}
         />
         <ChatInputArea
           ref={inputBoxRef}
           onSend={handleSend}
+          showSystemPrompt={!attackResultId}
+          supportsSystemPrompt={supportsSystemPrompt}
+          systemPrompt={systemPrompt}
+          onSystemPromptChange={setSystemPrompt}
           disabled={isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}
@@ -661,7 +794,20 @@ export default function ChatWindow({
           })}
         />
       </div>
-      {isPanelOpen && (
+      <Drawer
+        as="aside"
+        {...restoreFocusSourceAttributes}
+        type={isNarrowScreen ? 'overlay' : 'inline'}
+        position="end"
+        separator
+        open={isPanelOpen}
+        onOpenChange={(_, { open }) => setIsPanelOpen(open)}
+        className={mergeClasses(
+          styles.conversationDrawer,
+          isNarrowScreen && styles.narrowConversationDrawer,
+        )}
+        aria-label="Attack Conversations"
+      >
         <ConversationPanel
           attackResultId={attackResultId}
           activeConversationId={activeConversationId}
@@ -677,7 +823,7 @@ export default function ChatWindow({
           }
           refreshKey={panelRefreshKey}
         />
-      )}
+      </Drawer>
     </div>
   )
 }

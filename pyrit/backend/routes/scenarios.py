@@ -17,14 +17,16 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
-    RegisteredScenario,
-    RunScenarioRequest,
     ScenarioRunListResponse,
-    ScenarioRunSummary,
 )
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.backend.services.scenario_service import get_scenario_service
 from pyrit.models import ScenarioResult
+from pyrit.models.catalog.scenario import (
+    RegisteredScenario,
+    RunScenarioRequest,
+    ScenarioRunSummary,
+)
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -45,7 +47,7 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
     """
     List all available scenarios.
 
-    Returns scenario metadata including strategies, datasets, and defaults.
+    Returns scenario metadata including techniques, datasets, and defaults.
     Use GET /api/scenarios/catalog/{scenario_name} for full details on a specific scenario.
 
     Returns:
@@ -94,7 +96,7 @@ async def get_scenario(scenario_name: str) -> RegisteredScenario:  # pyrit-async
     response_model=ScenarioRunSummary,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
-        400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/strategy)"},
+        400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/technique)"},
     },
 )
 async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt

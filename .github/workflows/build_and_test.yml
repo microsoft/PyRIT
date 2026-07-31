@@ -32,19 +32,19 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history is required so pre-commit hooks (notably
           # enforce_alembic_revision_immutability) can compute merge-bases and
           # diff ranges against origin/main.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PRE_COMMIT_PYTHON_VERSION }}
 
       - name: Cache pre-commit environments
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -52,7 +52,7 @@ jobs:
             pre-commit-${{ runner.os }}-
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           # Install a specific version of uv.
           version: "0.9.17"
@@ -68,19 +68,15 @@ jobs:
         shell: bash
         run: df -all -h
 
-      - name: Run pre-commit incrementally (on PR)
-        if: github.event_name == 'pull_request'
-        env:
-          RUN_LONG_PRECOMMIT: true
+      - name: Run pre-commit (all files)
+        # Always lint the ENTIRE repository on every event (pull_request,
+        # merge_group, push to main, workflow_dispatch). Running --all-files on
+        # PRs -- rather than only the files changed since origin/main -- ensures
+        # latent violations in untouched files, including the tests/integration,
+        # tests/partner_integration, and tests/end_to_end tiers, are caught before
+        # merge instead of only on the post-merge run against main.
         run: |
           git fetch origin main
-          uv run pre-commit run --from-ref origin/main --to-ref HEAD
-
-      - name: Run pre-commit fully (on main)
-        if: github.ref == 'refs/heads/main'
-        env:
-          RUN_LONG_PRECOMMIT: true
-        run: |
           uv run pre-commit run --all-files
 
   # Main job runs only if pre-commit succeeded
@@ -100,15 +96,15 @@ jobs:
       checks: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Set up Python
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           # Install a specific version of uv.
           version: "0.9.17"
@@ -132,7 +128,7 @@ jobs:
         run: make unit-test-junit
 
       - name: Publish Pytest Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
         if: runner.os == 'ubuntu-latest'
         with:
           files: '**/test-*.xml'

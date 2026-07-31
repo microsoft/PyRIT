@@ -11,9 +11,12 @@ schema into the prompt text the target receives -- which is what these tests
 assert.
 """
 
+import json
+
 from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import AttackAdversarialConfig, AttackParameters
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.multi_turn.crescendo import (
     ConversationSession,
     CrescendoAttack,
@@ -23,6 +26,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TreeOfAttacksWithPruningAttack,
     _TreeOfAttacksNode,
 )
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_normalizer import PromptNormalizer
 
 # Text the JsonSchemaNormalizer appends when the target cannot enforce a schema
@@ -30,9 +34,36 @@ from pyrit.prompt_normalizer import PromptNormalizer
 SCHEMA_MARKER = "conform to the following JSON schema"
 SCHEMA_PROPERTIES = ('"next_message"', '"last_response_summary"')
 
+# A schema-valid adversarial reply so the manager's send/parse cycle completes; the tests still assert
+# on what actually reached the adversarial target (populated on send, before parsing).
+_VALID_ADVERSARIAL_JSON = json.dumps(
+    {"next_message": "crafted attack", "rationale": "because", "last_response_summary": "summary"}
+)
+
+
+class _JsonReturningTarget(MockPromptTarget):
+    """A MockPromptTarget whose reply is schema-valid adversarial JSON.
+
+    Crescendo and TAP now route the adversarial send through ``_AdversarialConversationManager``, which
+    parses every reply against the ``adversarial_chat`` schema. The stock mock echoes a non-JSON
+    ``"default"``, which the manager's json-retry would reject; returning valid JSON lets these tests
+    drive the real send/parse path while still asserting the schema reached the target.
+    """
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        message = normalized_conversation[-1]
+        self.prompt_sent.append(message.get_value())
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=_VALID_ADVERSARIAL_JSON,
+                conversation_id=message.message_pieces[0].conversation_id,
+            ).to_message()
+        ]
+
 
 async def test_crescendo_forwards_schema_to_adversarial_target(patch_central_database):
-    adversarial = MockPromptTarget()
+    adversarial = _JsonReturningTarget()
     objective = MockPromptTarget()
 
     attack = CrescendoAttack(
@@ -48,7 +79,7 @@ async def test_crescendo_forwards_schema_to_adversarial_target(patch_central_dat
         session=ConversationSession(),
     )
 
-    await attack._send_prompt_to_adversarial_chat_async(prompt_text="hello", context=context)
+    await attack._build_adversarial_manager(context=context).generate_adversarial_reply_async(prompt_text="hello")
 
     assert adversarial.prompt_sent, "adversarial chat received nothing"
     sent = adversarial.prompt_sent[-1]
@@ -57,7 +88,7 @@ async def test_crescendo_forwards_schema_to_adversarial_target(patch_central_dat
 
 
 async def test_tap_forwards_schema_to_adversarial_target(patch_central_database):
-    adversarial = MockPromptTarget()
+    adversarial = _JsonReturningTarget()
     objective = MockPromptTarget()
 
     attack = TreeOfAttacksWithPruningAttack(
@@ -83,6 +114,7 @@ async def test_tap_forwards_schema_to_adversarial_target(patch_central_database)
         auxiliary_scorers=[],
         attack_id=attack.get_identifier(),
         attack_strategy_name="TreeOfAttacksWithPruningAttack",
+        modality_router=_ModalityFeedbackRouter(adversarial_chat=adversarial, objective_target=objective),
     )
 
     await node._send_to_adversarial_chat_async(prompt_text="hello")

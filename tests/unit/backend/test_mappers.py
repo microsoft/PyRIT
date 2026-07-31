@@ -50,24 +50,23 @@ def _make_attack_result(
     *,
     conversation_id: str = "attack-1",
     has_target: bool = True,
+    target_identifier: ComponentIdentifier | None = None,
     name: str = "Test Attack",
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED,
 ) -> AttackResult:
     """Create an AttackResult for mapper tests."""
     now = datetime.now(timezone.utc)
 
-    target_identifier = (
-        ComponentIdentifier(
+    effective_target_identifier = None
+    if has_target:
+        effective_target_identifier = target_identifier or ComponentIdentifier(
             class_name="TextTarget",
             class_module="pyrit.prompt_target",
         )
-        if has_target
-        else None
-    )
 
     children = {}
-    if target_identifier:
-        children["objective_target"] = target_identifier
+    if effective_target_identifier:
+        children["objective_target"] = effective_target_identifier
 
     return AttackResult(
         conversation_id=conversation_id,
@@ -156,6 +155,36 @@ class TestAttackResultToSummary:
         assert summary.attack_type == "My Attack"
         assert summary.target is not None
         assert summary.target.target_type == "TextTarget"
+
+    async def test_round_robin_target_includes_canonical_identifier_hash(self) -> None:
+        """Composite targets retain their full identity even when root display fields are absent."""
+        target_identifier = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+            children={
+                "targets": [
+                    ComponentIdentifier(
+                        class_name="TextTarget",
+                        class_module="pyrit.prompt_target",
+                        params={"model_name": "e2e-dummy-model"},
+                    ),
+                    ComponentIdentifier(
+                        class_name="TextTarget",
+                        class_module="pyrit.prompt_target",
+                        params={"model_name": "e2e-dummy-model"},
+                    ),
+                ]
+            },
+        )
+        ar = _make_attack_result(target_identifier=target_identifier)
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.target is not None
+        assert summary.target.target_type == "RoundRobinTarget"
+        assert summary.target.model_name is None
+        assert summary.target.identifier_hash == target_identifier.hash
 
     async def test_empty_pieces_gives_zero_messages(self) -> None:
         """Test mapping with no message pieces."""
@@ -820,6 +849,11 @@ class TestIsAzureBlobUrl:
     def test_local_path_not_detected(self) -> None:
         assert _is_azure_blob_url("/tmp/test.png") is False
 
+    def test_userinfo_spoofed_host_not_detected(self) -> None:
+        # The real host is 127.0.0.1; the blob-looking segment is userinfo and must
+        # not be treated as the host (SSRF bypass regression test).
+        assert _is_azure_blob_url("https://a.blob.core.windows.net:80@127.0.0.1:6666") is False
+
 
 class TestSignBlobUrlAsync:
     """Tests for _sign_blob_url_async helper."""
@@ -955,52 +989,6 @@ class TestRequestToPyritMessage:
         assert result.message_pieces[0].conversation_id == "conv-1"
         assert result.message_pieces[0].sequence == 0
 
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning through mapper helper."""
-        request = MagicMock()
-        request.role = "user"
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.prompt_metadata = None
-        piece.mime_type = None
-        piece.original_prompt_id = None
-        request.pieces = [piece]
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_to_pyrit_message(
-                request=request,
-                conversation_id="conv-1",
-                sequence=0,
-                labels={"env": "prod"},
-            )
-
-        assert mock_deprecation.call_count == 2
-
-    def test_empty_labels_no_deprecation_warning(self) -> None:
-        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
-        request = MagicMock()
-        request.role = "user"
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.prompt_metadata = None
-        piece.mime_type = None
-        piece.original_prompt_id = None
-        request.pieces = [piece]
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_to_pyrit_message(
-                request=request,
-                conversation_id="conv-1",
-                sequence=0,
-                labels={},
-            )
-
-        mock_deprecation.assert_not_called()
-
 
 class TestRequestPieceToPyritMessagePiece:
     """Tests for request_piece_to_pyrit_message_piece function."""
@@ -1100,87 +1088,6 @@ class TestRequestPieceToPyritMessagePiece:
         )
 
         assert result.prompt_metadata == {}
-
-    def test_labels_are_stamped_on_piece(self) -> None:
-        """Test that labels are passed through to the MessagePiece."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        result = request_piece_to_pyrit_message_piece(
-            piece=piece,
-            role="user",
-            conversation_id="conv-1",
-            sequence=0,
-            labels={"env": "prod"},
-        )
-
-        assert result.labels == {"env": "prod"}
-
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_piece_to_pyrit_message_piece(
-                piece=piece,
-                role="user",
-                conversation_id="conv-1",
-                sequence=0,
-                labels={"env": "prod"},
-            )
-
-        mock_deprecation.assert_called_once()
-
-    def test_empty_labels_no_deprecation_warning(self) -> None:
-        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_piece_to_pyrit_message_piece(
-                piece=piece,
-                role="user",
-                conversation_id="conv-1",
-                sequence=0,
-                labels={},
-            )
-
-        mock_deprecation.assert_not_called()
-
-    def test_labels_default_to_empty_dict(self) -> None:
-        """Test that labels default to empty dict when not provided."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        result = request_piece_to_pyrit_message_piece(
-            piece=piece,
-            role="user",
-            conversation_id="conv-1",
-            sequence=0,
-        )
-
-        assert result.labels == {}
 
     def test_original_prompt_id_forwarded_when_provided(self) -> None:
         """Test that original_prompt_id is passed through for lineage tracking."""
@@ -1316,7 +1223,8 @@ class TestTargetObjectToInstance:
 
     def test_maps_target_with_identifier(self) -> None:
         """Test mapping a target object that has get_identifier."""
-        target_obj = MagicMock()
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(
             class_name="OpenAIChatTarget",
             class_module="pyrit.prompt_target",
@@ -1331,19 +1239,20 @@ class TestTargetObjectToInstance:
         result = target_object_to_instance("t-1", target_obj)
 
         assert result.target_registry_name == "t-1"
-        assert result.target_type == "OpenAIChatTarget"
-        assert result.endpoint == "http://test"
-        assert result.model_name == "gpt-4"
-        assert result.temperature == 0.7
-        # identifier_hash is auto-populated by the ComponentIdentifier validator and
-        # surfaced on the DTO so the frontend can dedupe targets that resolve to the
+        assert result.identifier.class_name == "OpenAIChatTarget"
+        assert result.identifier.endpoint == "http://test"
+        assert result.identifier.model_name == "gpt-4"
+        assert result.identifier.temperature == 0.7
+        # hash is auto-populated by the ComponentIdentifier validator and surfaced on
+        # the embedded identifier so the frontend can dedupe targets that resolve to the
         # same underlying configuration.
-        assert result.identifier_hash is not None
-        assert result.identifier_hash == mock_identifier.hash
+        assert result.identifier.hash is not None
+        assert result.identifier.hash == mock_identifier.hash
 
     def test_no_endpoint_returns_none(self) -> None:
         """Test that missing endpoint returns None."""
-        target_obj = MagicMock()
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(
             class_name="TextTarget",
             class_module="pyrit.prompt_target",
@@ -1352,21 +1261,22 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.target_type == "TextTarget"
-        assert result.endpoint is None
-        assert result.model_name is None
+        assert result.identifier.class_name == "TextTarget"
+        assert result.identifier.endpoint is None
+        assert result.identifier.model_name is None
 
     def test_no_get_identifier_uses_class_name(self) -> None:
         """Test that target uses class name from identifier."""
-        target_obj = MagicMock()
+        target_obj = MagicMock(spec=PromptTarget)
+        target_obj.capabilities = TargetCapabilities()
         mock_identifier = ComponentIdentifier(class_name="FakeTarget", class_module="pyrit.prompt_target")
         target_obj.get_identifier.return_value = mock_identifier
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.target_type == "FakeTarget"
-        assert result.endpoint is None
-        assert result.model_name is None
+        assert result.identifier.class_name == "FakeTarget"
+        assert result.identifier.endpoint is None
+        assert result.identifier.model_name is None
 
     def test_supports_multi_turn_true_when_capability_set(self) -> None:
         """Test that targets with supports_multi_turn capability expose it via capabilities."""
@@ -1480,7 +1390,7 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.temperature == 1.0
+        assert result.identifier.temperature == 1.0
         assert result.target_specific_params is not None
         assert result.target_specific_params["reasoning_effort"] == "high"
         assert result.target_specific_params["reasoning_summary"] == "auto"
@@ -1504,8 +1414,8 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.temperature == 0.7
-        assert result.top_p == 0.9
+        assert result.identifier.temperature == 0.7
+        assert result.identifier.top_p == 0.9
         assert result.target_specific_params is None
 
     def test_none_valued_extra_params_excluded(self) -> None:
@@ -1576,8 +1486,8 @@ class TestTargetObjectToInstance:
 
         result = target_object_to_instance("t-1", target_obj)
 
-        assert result.temperature == 0.7
-        assert result.top_p == 0.9
+        assert result.identifier.temperature == 0.7
+        assert result.identifier.top_p == 0.9
         assert result.target_specific_params is not None
         assert result.target_specific_params["frequency_penalty"] == 0.5
         assert result.target_specific_params["presence_penalty"] == 0.3
@@ -1729,7 +1639,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"endpoint": "https://b.openai.azure.com", "model_name": "gpt-4o"},
         )
 
-        rr._targets = [inner_a, inner_b]
+        rr.inner_targets = [inner_a, inner_b]
         rr.get_identifier.return_value = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="pyrit.prompt_target.round_robin_target",
@@ -1738,14 +1648,19 @@ class TestTargetObjectToInstanceRoundRobin:
 
         result = target_object_to_instance("rr-1", rr)
 
-        assert result.target_type == "RoundRobinTarget"
+        assert result.identifier.class_name == "RoundRobinTarget"
         assert result.inner_targets is not None
         assert len(result.inner_targets) == 2
-        assert result.inner_targets[0].endpoint == "https://a.openai.azure.com"
-        assert result.inner_targets[1].endpoint == "https://b.openai.azure.com"
+        assert result.inner_targets[0].identifier.endpoint == "https://a.openai.azure.com"
+        assert result.inner_targets[1].identifier.endpoint == "https://b.openai.azure.com"
 
-    def test_round_robin_hoists_model_name_when_all_inner_targets_match(self) -> None:
-        """model_name is hoisted only when all inner targets share the same deployment name."""
+    def test_round_robin_identifier_carries_no_model_name(self) -> None:
+        """The composite identifier owns no model_name; inner targets carry theirs.
+
+        Hoisting a shared model name for display is now the frontend's concern
+        (``targetIdentity.hoistFromInner``); the mapper faithfully reflects that a
+        RoundRobinTarget's own identifier has no model_name.
+        """
         from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 
         rr = MagicMock(spec=RoundRobinTarget)
@@ -1767,7 +1682,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"model_name": "gpt-4o", "underlying_model_name": "gpt-4o"},
         )
 
-        rr._targets = [inner_a, inner_b]
+        rr.inner_targets = [inner_a, inner_b]
         rr.get_identifier.return_value = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="pyrit.prompt_target.round_robin_target",
@@ -1776,11 +1691,14 @@ class TestTargetObjectToInstanceRoundRobin:
 
         result = target_object_to_instance("rr-2", rr)
 
-        assert result.model_name == "gpt-4o"
-        assert result.underlying_model_name == "gpt-4o"
+        assert result.identifier.model_name is None
+        assert result.identifier.underlying_model_name is None
+        assert result.inner_targets is not None
+        assert result.inner_targets[0].identifier.model_name == "gpt-4o"
+        assert result.inner_targets[1].identifier.underlying_model_name == "gpt-4o"
 
-    def test_round_robin_omits_model_name_when_inner_targets_differ(self) -> None:
-        """model_name is None when inner targets have different deployment names."""
+    def test_round_robin_inner_targets_retain_distinct_models(self) -> None:
+        """Inner targets keep their own deployment names; the mapper does not merge them."""
         from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 
         rr = MagicMock(spec=RoundRobinTarget)
@@ -1802,7 +1720,7 @@ class TestTargetObjectToInstanceRoundRobin:
             params={"model_name": "deploy-us", "underlying_model_name": "gpt-4o"},
         )
 
-        rr._targets = [inner_a, inner_b]
+        rr.inner_targets = [inner_a, inner_b]
         rr.get_identifier.return_value = ComponentIdentifier(
             class_name="RoundRobinTarget",
             class_module="pyrit.prompt_target.round_robin_target",
@@ -1811,10 +1729,10 @@ class TestTargetObjectToInstanceRoundRobin:
 
         result = target_object_to_instance("rr-3", rr)
 
-        # model_name should be None since deployments differ
-        assert result.model_name is None
-        # underlying_model_name should still be hoisted (they all share gpt-4o)
-        assert result.underlying_model_name == "gpt-4o"
+        assert result.identifier.model_name is None
+        assert result.inner_targets is not None
+        assert result.inner_targets[0].identifier.model_name == "deploy-japan"
+        assert result.inner_targets[1].identifier.model_name == "deploy-us"
 
     def test_non_round_robin_has_no_inner_targets(self) -> None:
         """Regular targets return None for inner_targets."""
@@ -1839,7 +1757,7 @@ class TestConverterObjectToInstance:
     """Tests for converter_object_to_instance function."""
 
     def test_maps_converter_with_identifier(self) -> None:
-        """Test mapping a converter object."""
+        """Test mapping a converter object onto the nested identifier."""
         converter_obj = MagicMock()
         identifier = ComponentIdentifier(
             class_name="Base64Converter",
@@ -1855,32 +1773,13 @@ class TestConverterObjectToInstance:
         result = converter_object_to_instance("c-1", converter_obj)
 
         assert result.converter_id == "c-1"
-        assert result.converter_type == "Base64Converter"
-        assert result.display_name is None
-        assert result.supported_input_types == ["text"]
-        assert result.supported_output_types == ["text"]
-        assert result.converter_specific_params == {"param1": "value1"}
-        assert result.sub_converter_ids is None
+        assert result.identifier.class_name == "Base64Converter"
+        assert result.identifier.supported_input_types == ["text"]
+        assert result.identifier.supported_output_types == ["text"]
+        assert result.identifier.params["param1"] == "value1"
 
-    def test_sub_converter_ids_passed_through(self) -> None:
-        """Test that sub_converter_ids are passed through when provided."""
-        converter_obj = MagicMock()
-        identifier = ComponentIdentifier(
-            class_name="PipelineConverter",
-            class_module="pyrit.converters",
-            params={
-                "supported_input_types": ("text",),
-                "supported_output_types": ("text",),
-            },
-        )
-        converter_obj.get_identifier.return_value = identifier
-
-        result = converter_object_to_instance("c-1", converter_obj, sub_converter_ids=["sub-1", "sub-2"])
-
-        assert result.sub_converter_ids == ["sub-1", "sub-2"]
-
-    def test_none_input_output_types_returns_empty_lists(self) -> None:
-        """Test that None supported types produce empty lists."""
+    def test_none_input_output_types_stay_none(self) -> None:
+        """Test that absent supported types stay None on the identifier."""
         converter_obj = MagicMock()
         identifier = ComponentIdentifier(
             class_name="CustomConverter",
@@ -1890,10 +1789,9 @@ class TestConverterObjectToInstance:
 
         result = converter_object_to_instance("c-1", converter_obj)
 
-        assert result.supported_input_types == []
-        assert result.supported_output_types == []
-        assert result.converter_specific_params is None
-        assert result.sub_converter_ids is None
+        assert result.identifier.supported_input_types is None
+        assert result.identifier.supported_output_types is None
+        assert result.identifier.params == {}
 
 
 # ============================================================================

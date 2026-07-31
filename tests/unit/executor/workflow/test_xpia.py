@@ -329,7 +329,6 @@ class TestXPIAWorkflowPerform:
         # Check that message was passed (converted from seed_group)
         assert "message" in call_args.kwargs
         assert call_args.kwargs["target"] == workflow._attack_setup_target
-        assert call_args.kwargs["labels"] == valid_context.memory_labels
         assert call_args.kwargs["conversation_id"] == valid_context.attack_setup_target_conversation_id
 
     @patch("pyrit.executor.workflow.xpia.CentralMemory")

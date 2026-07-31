@@ -68,7 +68,7 @@ jobs:
           steps.check.outputs.already_triaged == 'false' &&
           contains(github.event.issue.labels.*.name, 'praise')
         id: praise_check
-        uses: actions/ai-inference@v2
+        uses: actions/ai-inference@a7805884c80886efc241e94a5351df715968a0ad # v2.1.1
         with:
           model: openai/gpt-4o-mini
           max-tokens: 150

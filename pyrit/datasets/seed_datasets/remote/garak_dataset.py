@@ -67,8 +67,19 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
     DATA_TYPE: ClassVar[PromptDataType] = "text"
 
     # Shared provenance metadata for the garak dataset family.
-    SOURCE_AUTHORS: ClassVar[list[str]] = ["garak Team", "NVIDIA"]
-    SOURCE_GROUPS: ClassVar[list[str]] = ["NVIDIA"]
+    SOURCE_AUTHORS: ClassVar[list[str]] = [
+        "Leon Derczynski",
+        "Erick Galinkin",
+        "Jeffrey Martin",
+        "Subho Majumdar",
+        "Nanna Inie",
+    ]
+    SOURCE_GROUPS: ClassVar[list[str]] = [
+        "NVIDIA",
+        "IT University of Copenhagen",
+        "University of Washington",
+        "Vijil.ai",
+    ]
 
     def __init__(self, *, max_examples: int | None = None) -> None:
         """
@@ -85,13 +96,13 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
 
     @property
     def _source_url(self) -> str:
-        """Return the canonical HuggingFace URL for this dataset."""
+        """The canonical HuggingFace URL for this dataset."""
         return f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
 
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the short garak dataset name."""
+        """The short garak dataset name."""
         return self._DATASET_NAME
 
     def _extract_metadata(self, item: dict[str, Any]) -> dict[str, Any]:

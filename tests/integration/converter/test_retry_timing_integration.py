@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from integration.mocks import MockPromptTarget
 
-from pyrit.prompt_converter import TranslationConverter
+from pyrit.converter import TranslationConverter
 
 
 async def test_translation_converter_exponential_backoff_timing(sqlite_instance):

@@ -10,27 +10,12 @@ available attacks against specified datasets.
 """
 
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from inspect import signature
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from pyrit.common import REQUIRED_VALUE, apply_defaults
-from pyrit.common.deprecation import print_deprecation_message  # Deprecated. Will be removed in 0.16.0.
-from pyrit.datasets import TextJailBreak
-from pyrit.executor.attack import (
-    CrescendoAttack,
-    PromptSendingAttack,
-    RedTeamingAttack,
-    TreeOfAttacksWithPruningAttack,
-)
-from pyrit.executor.attack.core.attack_config import (
-    AttackAdversarialConfig,
-    AttackConverterConfig,
-    AttackScoringConfig,
-)
-from pyrit.models import SeedAttackGroup
-from pyrit.prompt_converter import (
+from pyrit.common import apply_defaults
+from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
     AtbashConverter,
@@ -38,11 +23,11 @@ from pyrit.prompt_converter import (
     CaesarConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
+    Converter,
     DiacriticConverter,
     FlipConverter,
     LeetspeakConverter,
     MorseConverter,
-    PromptConverter,
     ROT13Converter,
     StringJoinConverter,
     SuffixAppendConverter,
@@ -52,22 +37,26 @@ from pyrit.prompt_converter import (
     UnicodeSubstitutionConverter,
     UrlConverter,
 )
-from pyrit.prompt_converter.binary_converter import BinaryConverter
-from pyrit.prompt_converter.token_smuggling.ascii_smuggler_converter import (
-    AsciiSmugglerConverter,
-)
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
-)
+from pyrit.converter.binary_converter import BinaryConverter
+from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmugglerConverter
+from pyrit.datasets import TextJailBreak
+from pyrit.executor.attack import CrescendoAttack, PromptSendingAttack, RedTeamingAttack, TreeOfAttacksWithPruningAttack
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.models import AttackSeedGroup
+from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 
 AttackStrategyT = TypeVar("AttackStrategyT", bound="AttackStrategy[Any, Any]")
@@ -77,86 +66,86 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FoundryComposite:
     """
-    A typed composition of Foundry attack strategies.
+    A typed composition of Foundry attack techniques.
 
-    Exactly one attack strategy (e.g., Crescendo) paired with zero or more
-    converter strategies (e.g., Base64, ROT13). When no attack is specified,
+    Exactly one attack technique (e.g., Crescendo) paired with zero or more
+    converter techniques (e.g., Base64, ROT13). When no attack is specified,
     a PromptSendingAttack is used.
     """
 
-    attack: "FoundryStrategy | None"
-    converters: "list[FoundryStrategy]" = field(default_factory=list)
+    attack: "FoundryTechnique | None"
+    converters: "list[FoundryTechnique]" = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """
-        Validate that attack and converter slots contain correctly tagged strategies.
+        Validate that attack and converter slots contain correctly tagged techniques.
 
         Raises:
-            ValueError: If attack slot contains a non-attack-tagged strategy, or if
-                converters list contains any non-converter-tagged strategy (including aggregates).
+            ValueError: If attack slot contains a non-attack-tagged technique, or if
+                converters list contains any non-converter-tagged technique (including aggregates).
         """
         if self.attack is not None and "attack" not in self.attack.tags:
             raise ValueError(
-                f"FoundryComposite.attack must be an attack-tagged strategy "
+                f"FoundryComposite.attack must be an attack-tagged technique "
                 f"(e.g., Crescendo, MultiTurn), got '{self.attack.value}'. "
-                f"Converter strategies belong in the converters list."
+                f"Converter techniques belong in the converters list."
             )
         misrouted = [s for s in self.converters if "converter" not in s.tags]
         if misrouted:
             raise ValueError(
-                f"FoundryComposite.converters must only contain converter-tagged strategies, "
+                f"FoundryComposite.converters must only contain converter-tagged techniques, "
                 f"got {[s.value for s in misrouted]}. "
-                f"Attack strategies belong in the attack parameter; aggregates must be expanded first."
+                f"Attack techniques belong in the attack parameter; aggregates must be expanded first."
             )
 
     @property
     def name(self) -> str:
-        """Return a human-readable name for this composite."""
+        """A human-readable name for this composite."""
         if not self.converters:
             return self.attack.value if self.attack else "baseline"
         if self.attack is None and len(self.converters) == 1:
             return str(self.converters[0].value)
         attack_name = self.attack.value if self.attack else "baseline"
         converter_names = ", ".join(c.value for c in self.converters)
-        return f"ComposedStrategy({attack_name}, {converter_names})"
+        return f"ComposedTechnique({attack_name}, {converter_names})"
 
 
-class FoundryStrategy(ScenarioStrategy):
+class FoundryTechnique(ScenarioTechnique):
     """
-    Strategies for attacks with tag-based categorization.
+    Techniques for attacks with tag-based categorization.
 
     Each enum member is defined as (value, tags) where:
-    - value: The strategy name (string)
+    - value: The technique name (string)
     - tags: Set of tags for categorization (e.g., {"easy", "converter"})
 
     Tags can include complexity levels (easy, moderate, difficult) and other
     characteristics (converter, multi_turn, jailbreak, llm_assisted, etc.).
 
     Aggregate tags (EASY, MODERATE, DIFFICULT, ALL) can be used to expand
-    into all strategies with that tag.
+    into all techniques with that tag.
 
     Example:
-        >>> strategy = FoundryStrategy.Base64
-        >>> print(strategy.value)  # "base64"
-        >>> print(strategy.tags)  # {"easy", "converter"}
+        >>> technique = FoundryTechnique.Base64
+        >>> print(technique.value)  # "base64"
+        >>> print(technique.tags)  # {"easy", "converter"}
         >>>
-        >>> # Get all easy strategies
-        >>> easy_strategies = FoundryStrategy.get_strategies_by_tag("easy")
+        >>> # Get all easy techniques
+        >>> easy_techniques = FoundryTechnique.get_techniques_by_tag("easy")
         >>>
-        >>> # Get all converter strategies
-        >>> converter_strategies = FoundryStrategy.get_strategies_by_tag("converter")
+        >>> # Get all converter techniques
+        >>> converter_techniques = FoundryTechnique.get_techniques_by_tag("converter")
         >>>
-        >>> # Expand EASY to all easy strategies
-        >>> scenario = Foundry(target, attack_strategies={FoundryStrategy.EASY})
+        >>> # Expand EASY to all easy techniques
+        >>> scenario = Foundry(target, attack_techniques={FoundryTechnique.EASY})
     """
 
-    # Aggregate members (special markers that expand to strategies with matching tags)
+    # Aggregate members (special markers that expand to techniques with matching tags)
     ALL = ("all", {"all"})
     EASY = ("easy", {"easy"})
     MODERATE = ("moderate", {"moderate"})
     DIFFICULT = ("difficult", {"difficult"})
 
-    # Easy strategies
+    # Easy techniques
     AnsiAttack = ("ansi_attack", {"easy", "converter"})
     AsciiArt = ("ascii_art", {"easy", "converter"})
     AsciiSmuggler = ("ascii_smuggler", {"easy", "converter"})
@@ -178,10 +167,10 @@ class FoundryStrategy(ScenarioStrategy):
     Url = ("url", {"easy", "converter"})
     Jailbreak = ("jailbreak", {"easy", "converter"})
 
-    # Moderate strategies
+    # Moderate techniques
     Tense = ("tense", {"moderate", "converter"})
 
-    # Difficult strategies
+    # Difficult techniques
     MultiTurn = ("multi_turn", {"difficult", "attack"})
     Crescendo = ("crescendo", {"difficult", "attack"})
     Pair = ("pair", {"difficult", "attack"})
@@ -198,16 +187,21 @@ class FoundryStrategy(ScenarioStrategy):
         # Include base class aggregates ("all") and add Foundry-specific ones
         return super().get_aggregate_tags() | {"easy", "moderate", "difficult", "converter", "attack"}
 
+    @classmethod
+    def default(cls) -> "FoundryTechnique":
+        """Return the default technique (``EASY``) used when the caller selects nothing."""
+        return cls.EASY
+
 
 class RedTeamAgent(Scenario):
     """
     RedTeamAgent is a preconfigured scenario that automatically generates multiple
-    AtomicAttack instances based on the specified attack strategies. It supports both
+    AtomicAttack instances based on the specified attack techniques. It supports both
     single-turn attacks (with various converters) and multi-turn attacks (Crescendo,
     RedTeaming), making it easy to quickly test a target against multiple attack vectors.
 
     The scenario can expand difficulty levels (EASY, MODERATE, DIFFICULT) into their
-    constituent attack strategies, or you can specify individual strategies directly.
+    constituent attack techniques, or you can specify individual techniques directly.
 
     This scenario is designed for use with the Foundry AI Red Teaming Agent library,
     providing a consistent PyRIT contract for their integration.
@@ -222,10 +216,9 @@ class RedTeamAgent(Scenario):
         adversarial_chat: PromptTarget | None = None,
         attack_scoring_config: AttackScoringConfig | None = None,
         scenario_result_id: str | None = None,
-        include_baseline: bool | None = None,  # Deprecated. Will be removed in 0.16.0.
     ) -> None:
         """
-        Initialize a Foundry Scenario with the specified attack strategies.
+        Initialize a Foundry Scenario with the specified attack techniques.
 
         Args:
             adversarial_chat (PromptTarget | None): Target for multi-turn attacks
@@ -235,11 +228,9 @@ class RedTeamAgent(Scenario):
                 including the objective scorer and auxiliary scorers. If not provided, creates a default
                 configuration with a composite scorer using Azure Content Filter and SelfAsk Refusal scorers.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
-            include_baseline (bool | None): **Deprecated.** Will be removed in 0.16.0. Pass
-                ``include_baseline`` to ``initialize_async`` instead.
 
         Raises:
-            ValueError: If attack_strategies is empty or contains unsupported strategies.
+            ValueError: If attack_techniques is empty or contains unsupported techniques.
         """
         self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
         if not attack_scoring_config:
@@ -256,248 +247,214 @@ class RedTeamAgent(Scenario):
         # Call super().__init__() first to initialize self._memory
         super().__init__(
             version=self.VERSION,
-            strategy_class=FoundryStrategy,
-            default_strategy=FoundryStrategy.EASY,
-            default_dataset_config=DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
+            technique_class=FoundryTechnique,
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
-        # Deprecated constructor-time baseline override. Will be removed in 0.16.0, along with
-        # the include_baseline kwarg above.
-        if include_baseline is not None:
-            print_deprecation_message(
-                old_item="RedTeamAgent(include_baseline=...)",
-                new_item="RedTeamAgent.initialize_async(include_baseline=...)",
-                removed_in="0.16.0",
-            )
-            self._legacy_include_baseline = include_baseline
-
         self._scenario_composites: list[FoundryComposite] = []
 
-    @apply_defaults
-    async def initialize_async(
+    def _resolve_scenario_techniques(
         self,
         *,
-        objective_target: PromptTarget = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
-        scenario_strategies: Sequence["FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy"] | None = None,
-        dataset_config: DatasetConfiguration | None = None,
-        max_concurrency: int = 4,
-        max_retries: int = 0,
-        memory_labels: dict[str, str] | None = None,
-        include_baseline: bool | None = None,
-    ) -> None:
+        scenario_techniques: "Sequence[FoundryTechnique | FoundryComposite] | None",
+    ) -> list[ScenarioTechnique]:
         """
-        Initialize the scenario.
+        Resolve Foundry techniques, expanding composites up-front.
+
+        Overrides the base hook to widen the accepted technique types (``FoundryComposite``
+        is a dataclass, not a ``ScenarioTechnique`` enum member) and to expand composites:
+        ``_resolve_foundry_techniques`` populates ``self._scenario_composites`` (consumed by
+        ``_build_atomic_attacks_async``) and returns the flat concrete technique list the base
+        class tracks. The bag stores ``scenario_techniques`` as an opaque value, so
+        ``FoundryComposite`` objects reach this hook unchanged.
 
         Args:
-            objective_target (PromptTarget): The target system to attack.
-            scenario_strategies (Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy] | None): The
-                strategies to execute. Accepts bare FoundryStrategy enum members, FoundryComposite
-                objects (for pairing an attack with converters), or a mix of both. Passing
-                ScenarioCompositeStrategy is deprecated — use FoundryComposite instead.
+            scenario_techniques (Sequence[FoundryTechnique | FoundryComposite] | None):
+                The techniques to execute. Accepts bare ``FoundryTechnique`` enum members,
+                ``FoundryComposite`` objects (pairing an attack with converters), or a mix.
                 If None, uses the default aggregate (EASY).
-            dataset_config (DatasetConfiguration | None): Configuration for the dataset source.
-            max_concurrency (int): Maximum number of concurrent attack executions. Defaults to 4.
-            max_retries (int): Maximum number of retries on failure. Defaults to 0.
-            memory_labels (dict[str, str] | None): Labels to attach to all memory entries.
-            include_baseline (bool | None): See ``Scenario.initialize_async``.
-        """
-        # This override exists purely for type-widening: FoundryComposite is a dataclass,
-        # not a ScenarioStrategy enum member, so the base class signature would reject it.
-        # All logic lives in _prepare_strategies (also overridden below).
-        await super().initialize_async(
-            objective_target=objective_target,
-            scenario_strategies=scenario_strategies,
-            dataset_config=dataset_config,
-            max_concurrency=max_concurrency,
-            max_retries=max_retries,
-            memory_labels=memory_labels,
-            include_baseline=include_baseline,
-        )
-
-    def _prepare_strategies(  # type: ignore[ty:invalid-method-override]
-        self,
-        strategies: "Sequence[FoundryStrategy | FoundryComposite | ScenarioCompositeStrategy] | None",
-    ) -> list[ScenarioStrategy]:
-        """
-        Resolve strategies and build FoundryComposite objects.
-
-        Accepts bare FoundryStrategy members (each becomes its own composite) or
-        FoundryComposite objects (used as-is, enabling attack+converter pairings).
-        None and [] both resolve to the default strategy aggregate.
-
-        Args:
-            strategies: FoundryStrategy enums, FoundryComposite objects, or None/[] for default.
 
         Returns:
-            list[ScenarioStrategy]: Flat list of constituent strategies for base-class tracking.
+            list[ScenarioTechnique]: Flat list of constituent techniques for base-class tracking.
         """
-        if not strategies:
-            resolved = FoundryStrategy.resolve(None, default=cast("FoundryStrategy", self._default_strategy))
-            self._scenario_composites = [self._strategy_to_composite(s) for s in resolved]
+        return self._resolve_foundry_techniques(scenario_techniques)
+
+    def _resolve_foundry_techniques(
+        self,
+        techniques: "Sequence[FoundryTechnique | FoundryComposite] | None",
+    ) -> list[ScenarioTechnique]:
+        """
+        Resolve techniques and build FoundryComposite objects.
+
+        Accepts bare FoundryTechnique members (each becomes its own composite) or
+        FoundryComposite objects (used as-is, enabling attack+converter pairings).
+        None and [] both resolve to the default technique aggregate.
+
+        Args:
+            techniques: FoundryTechnique enums, FoundryComposite objects, or None/[] for default.
+
+        Returns:
+            list[ScenarioTechnique]: Flat list of constituent techniques for base-class tracking.
+        """
+        if not techniques:
+            resolved = FoundryTechnique.resolve(None, default=cast("FoundryTechnique", self._default_technique))
+            self._scenario_composites = [self._technique_to_composite(s) for s in resolved]
             return list(resolved)
 
-        # Process in input order, expanding aggregates for bare strategies in-place
+        # Process in input order, expanding aggregates for bare techniques in-place
         composites: list[FoundryComposite] = []
-        flat: list[ScenarioStrategy] = []
-        seen: set[FoundryStrategy] = set()
+        flat: list[ScenarioTechnique] = []
+        seen: set[FoundryTechnique] = set()
 
-        for item in strategies:
-            if isinstance(item, ScenarioCompositeStrategy):
-                # Legacy backward-compat: convert to FoundryComposite (ScenarioCompositeStrategy
-                # is deprecated — use FoundryComposite directly instead).
-                # Route by tags rather than position: the first attack-tagged strategy
-                # becomes `attack`; all converter-tagged strategies become `converters`.
-                foundry_strats = [s for s in item.strategies if isinstance(s, FoundryStrategy)]
-                if not foundry_strats:
-                    continue
-                attack_strat = next((s for s in foundry_strats if "attack" in s.tags), None)
-                converter_strats = [s for s in foundry_strats if "attack" not in s.tags]
-                item = FoundryComposite(attack=attack_strat, converters=converter_strats)
-
+        for item in techniques:
             if isinstance(item, FoundryComposite):
                 composites.append(item)
                 if item.attack:
                     flat.append(item.attack)
                 flat.extend(item.converters)
             else:
-                for s in FoundryStrategy.resolve([item], default=cast("FoundryStrategy", self._default_strategy)):
+                for s in FoundryTechnique.resolve([item], default=cast("FoundryTechnique", self._default_technique)):
                     if s not in seen:
                         seen.add(s)
-                        composites.append(self._strategy_to_composite(s))
+                        composites.append(self._technique_to_composite(s))
                         flat.append(s)
 
         self._scenario_composites = composites
         return flat
 
     @staticmethod
-    def _strategy_to_composite(strategy: ScenarioStrategy) -> "FoundryComposite":
+    def _technique_to_composite(technique: ScenarioTechnique) -> "FoundryComposite":
         """
-        Wrap a single FoundryStrategy in a FoundryComposite.
+        Wrap a single FoundryTechnique in a FoundryComposite.
 
         Returns:
-            FoundryComposite: Attack-slotted composite for attack-tagged strategies;
+            FoundryComposite: Attack-slotted composite for attack-tagged techniques;
                 converter-slotted composite otherwise.
 
         Raises:
-            ValueError: If strategy is not a FoundryStrategy instance.
+            ValueError: If technique is not a FoundryTechnique instance.
         """
-        if not isinstance(strategy, FoundryStrategy):
-            raise ValueError(f"Expected FoundryStrategy, got {type(strategy)}")
-        if "attack" in strategy.tags:
-            return FoundryComposite(attack=strategy)
-        return FoundryComposite(attack=None, converters=[strategy])
+        if not isinstance(technique, FoundryTechnique):
+            raise ValueError(f"Expected FoundryTechnique, got {type(technique)}")
+        if "attack" in technique.tags:
+            return FoundryComposite(attack=technique)
+        return FoundryComposite(attack=None, converters=[technique])
 
-    def _resolve_seed_groups(self) -> list[SeedAttackGroup]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Resolve seed groups from the dataset configuration.
+        Build one ``AtomicAttack`` per resolved FoundryComposite.
 
-        Returns:
-            list[SeedGroup]: The resolved seed groups.
-        """
-        return self._dataset_config.get_all_seed_attack_groups()
-
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
-        """
-        Retrieve the list of AtomicAttack instances in this scenario.
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
         """
-        # Resolve seed groups now that initialize_async has been called
-        self._seed_groups = self._resolve_seed_groups()
-
-        atomic_attacks = [self._get_attack_from_strategy(composition) for composition in self._scenario_composites]
-
-        if self._include_baseline:
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=self._seed_groups))
-
+        seed_groups = list(context.seed_groups)
+        atomic_attacks: list[AtomicAttack] = []
+        if context.include_baseline:
+            atomic_attacks.append(
+                build_baseline_atomic_attack(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=seed_groups,
+                    memory_labels=context.memory_labels,
+                )
+            )
+        atomic_attacks.extend(
+            self._get_attack_from_technique(composite=composition, seed_groups=seed_groups)
+            for composition in self._scenario_composites
+        )
         return atomic_attacks
 
-    def _get_attack_from_strategy(self, composite: FoundryComposite) -> AtomicAttack:
+    def _get_attack_from_technique(
+        self, *, composite: FoundryComposite, seed_groups: list[AttackSeedGroup]
+    ) -> AtomicAttack:
         """
         Get an atomic attack for the specified FoundryComposite.
 
         Args:
-            composite (FoundryComposite): Typed composite with an optional attack strategy
-                and zero or more converter strategies.
+            composite (FoundryComposite): Typed composite with an optional attack technique
+                and zero or more converter techniques.
+            seed_groups (list[AttackSeedGroup]): Seed groups the attack draws from.
 
         Returns:
             AtomicAttack: The configured atomic attack.
 
         Raises:
-            ValueError: If a converter strategy in the composite is not recognized.
+            ValueError: If a converter technique in the composite is not recognized.
         """
         attack: AttackStrategy[Any, Any]
 
         attack_type: type[AttackStrategy[Any, Any]] = PromptSendingAttack
         attack_kwargs: dict[str, Any] = {}
         if composite.attack is not None:
-            if composite.attack == FoundryStrategy.Crescendo:
+            if composite.attack == FoundryTechnique.Crescendo:
                 attack_type = CrescendoAttack
-            elif composite.attack == FoundryStrategy.MultiTurn:
+            elif composite.attack == FoundryTechnique.MultiTurn:
                 attack_type = RedTeamingAttack
-            elif composite.attack == FoundryStrategy.Pair:
+            elif composite.attack == FoundryTechnique.Pair:
                 attack_type = TreeOfAttacksWithPruningAttack
                 attack_kwargs = {"tree_width": 1}
-            elif composite.attack == FoundryStrategy.Tap:
+            elif composite.attack == FoundryTechnique.Tap:
                 attack_type = TreeOfAttacksWithPruningAttack
 
-        converters: list[PromptConverter] = []
-        for strategy in composite.converters:
-            if strategy == FoundryStrategy.AnsiAttack:
+        converters: list[Converter] = []
+        for technique in composite.converters:
+            if technique == FoundryTechnique.AnsiAttack:
                 converters.append(AnsiAttackConverter())
-            elif strategy == FoundryStrategy.AsciiArt:
+            elif technique == FoundryTechnique.AsciiArt:
                 converters.append(AsciiArtConverter())
-            elif strategy == FoundryStrategy.AsciiSmuggler:
+            elif technique == FoundryTechnique.AsciiSmuggler:
                 converters.append(AsciiSmugglerConverter())
-            elif strategy == FoundryStrategy.Atbash:
+            elif technique == FoundryTechnique.Atbash:
                 converters.append(AtbashConverter())
-            elif strategy == FoundryStrategy.Base64:
+            elif technique == FoundryTechnique.Base64:
                 converters.append(Base64Converter())
-            elif strategy == FoundryStrategy.Binary:
+            elif technique == FoundryTechnique.Binary:
                 converters.append(BinaryConverter())
-            elif strategy == FoundryStrategy.Caesar:
+            elif technique == FoundryTechnique.Caesar:
                 converters.append(CaesarConverter(caesar_offset=3))
-            elif strategy == FoundryStrategy.CharacterSpace:
+            elif technique == FoundryTechnique.CharacterSpace:
                 converters.append(CharacterSpaceConverter())
-            elif strategy == FoundryStrategy.CharSwap:
+            elif technique == FoundryTechnique.CharSwap:
                 converters.append(CharSwapConverter())
-            elif strategy == FoundryStrategy.Diacritic:
+            elif technique == FoundryTechnique.Diacritic:
                 converters.append(DiacriticConverter())
-            elif strategy == FoundryStrategy.Flip:
+            elif technique == FoundryTechnique.Flip:
                 converters.append(FlipConverter())
-            elif strategy == FoundryStrategy.Leetspeak:
+            elif technique == FoundryTechnique.Leetspeak:
                 converters.append(LeetspeakConverter())
-            elif strategy == FoundryStrategy.Morse:
+            elif technique == FoundryTechnique.Morse:
                 converters.append(MorseConverter())
-            elif strategy == FoundryStrategy.ROT13:
+            elif technique == FoundryTechnique.ROT13:
                 converters.append(ROT13Converter())
-            elif strategy == FoundryStrategy.SuffixAppend:
+            elif technique == FoundryTechnique.SuffixAppend:
                 converters.append(SuffixAppendConverter(suffix="!!!"))
-            elif strategy == FoundryStrategy.StringJoin:
+            elif technique == FoundryTechnique.StringJoin:
                 converters.append(StringJoinConverter())
-            elif strategy == FoundryStrategy.Tense:
+            elif technique == FoundryTechnique.Tense:
                 converters.append(TenseConverter(tense="past", converter_target=self._adversarial_chat))
-            elif strategy == FoundryStrategy.UnicodeConfusable:
+            elif technique == FoundryTechnique.UnicodeConfusable:
                 converters.append(UnicodeConfusableConverter())
-            elif strategy == FoundryStrategy.UnicodeSubstitution:
+            elif technique == FoundryTechnique.UnicodeSubstitution:
                 converters.append(UnicodeSubstitutionConverter())
-            elif strategy == FoundryStrategy.Url:
+            elif technique == FoundryTechnique.Url:
                 converters.append(UrlConverter())
-            elif strategy == FoundryStrategy.Jailbreak:
+            elif technique == FoundryTechnique.Jailbreak:
                 jailbreak_template = TextJailBreak(random_template=True)
                 converters.append(TextJailbreakConverter(jailbreak_template=jailbreak_template))
             else:
-                raise ValueError(f"Unknown strategy: {strategy}")
+                raise ValueError(f"Unknown technique: {technique}")
 
         attack = self._get_attack(attack_type=attack_type, converters=converters, attack_kwargs=attack_kwargs)
 
         return AtomicAttack(
             atomic_attack_name=composite.name,
             attack_technique=AttackTechnique(attack=attack),
-            seed_groups=self._seed_groups,
+            seed_groups=seed_groups,
             adversarial_chat=self._adversarial_chat,
             objective_scorer=self._attack_scoring_config.objective_scorer,
             memory_labels=self._memory_labels,
@@ -507,7 +464,7 @@ class RedTeamAgent(Scenario):
         self,
         *,
         attack_type: type[AttackStrategyT],
-        converters: list[PromptConverter],
+        converters: list[Converter],
         attack_kwargs: dict[str, Any] | None = None,
     ) -> AttackStrategyT:
         """
@@ -527,7 +484,7 @@ class RedTeamAgent(Scenario):
         Args:
             attack_type (type[AttackStrategyT]): The attack strategy class to instantiate.
                 Must accept objective_target and attack_converter_config parameters.
-            converters (list[PromptConverter]): List of converters to apply as request converters.
+            converters (list[Converter]): List of converters to apply as request converters.
             attack_kwargs (dict[str, Any] | None): Additional attack-specific keyword arguments
                 to pass to the attack constructor (e.g., tree_width for TreeOfAttacksWithPruningAttack).
 
@@ -538,7 +495,7 @@ class RedTeamAgent(Scenario):
             ValueError: If the attack requires an adversarial target but self._adversarial_chat is None.
         """
         attack_converter_config = AttackConverterConfig(
-            request_converters=PromptConverterConfiguration.from_converters(converters=converters)
+            request_converters=ConverterConfiguration.from_converters(converters=converters)
         )
 
         # Build kwargs with required parameters
@@ -561,7 +518,7 @@ class RedTeamAgent(Scenario):
 
             # Create the adversarial config from self._adversarial_target
             attack_adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
-            kwargs["attack_adversarial_config"] = attack_adversarial_config  # type: ignore[ty:invalid-assignment]
+            kwargs["attack_adversarial_config"] = attack_adversarial_config
 
         # Add attack-specific kwargs if provided
         if attack_kwargs:

@@ -137,6 +137,23 @@ class TestRemoteDatasetLoader:
             file_type="json",
         )
 
+    def test_standardize_harm_categories_supports_one_to_many_alias(self):
+        loader = ConcreteRemoteLoader()
+
+        standardized = loader._standardize_harm_categories("sexual violence")
+
+        assert standardized == ["SEXUAL_CONTENT", "VIOLENT_CONTENT"]
+
+    def test_standardize_harm_categories_supports_dataset_overrides(self):
+        loader = ConcreteRemoteLoader()
+
+        standardized = loader._standardize_harm_categories(
+            "ableism",
+            alias_overrides={"ableism": ["HATE_SPEECH", "REPRESENTATIONAL"]},
+        )
+
+        assert standardized == ["HATE_SPEECH", "REPRESENTATIONAL"]
+
     def test_fetch_from_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()
         with pytest.raises(ValueError, match="Invalid file_type"):
@@ -274,3 +291,27 @@ class TestFetchZipFromUrl:
         loader = ConcreteRemoteLoader()
         with pytest.raises(ValueError, match="Invalid file_type"):
             await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["bad.parquet"], cache=False)
+
+
+class TestFetchFromHuggingFaceDownloadMode:
+    """The cache flag must drive the HuggingFace download_mode so cache=False re-downloads."""
+
+    async def test_cache_true_reuses_dataset(self):
+        from datasets import DownloadMode
+
+        loader = ConcreteRemoteLoader()
+        with patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load:
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=True)
+
+        assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.REUSE_DATASET_IF_EXISTS
+        assert mock_load.call_args.kwargs["cache_dir"] is not None
+
+    async def test_cache_false_forces_redownload(self):
+        from datasets import DownloadMode
+
+        loader = ConcreteRemoteLoader()
+        with patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load:
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=False)
+
+        assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.FORCE_REDOWNLOAD
+        assert mock_load.call_args.kwargs["cache_dir"] is None

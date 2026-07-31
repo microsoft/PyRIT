@@ -7,7 +7,7 @@ techniques per-objective using a ``TechniqueSelector``.
 
 Owns selector wiring, dispatcher construction, and per-dataset atomic-attack
 emission. Concrete subclasses (``TextAdaptive``, future ``ImageAdaptive`` /
-``AudioAdaptive``) only declare strategy class, default datasets, version,
+``AudioAdaptive``) only declare technique class, default datasets, version,
 and atomic-attack prefix.
 
 Baseline policy is ``Enabled``: prompt_sending runs as a separate baseline
@@ -25,23 +25,19 @@ from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
-from pyrit.scenario.scenarios.adaptive.dispatcher import (
-    AdaptiveTechniqueDispatcher,
-    TechniqueBundle,
-)
-from pyrit.scenario.scenarios.adaptive.selectors import (
-    EpsilonGreedyTechniqueSelector,
-    TechniqueSelector,
-)
+from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher, TechniqueBundle
+from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector, TechniqueSelector
 
 if TYPE_CHECKING:
-    from pyrit.models import SeedAttackGroup
+    from pyrit.models import AttackSeedGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-    from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+    from pyrit.scenario.core.scenario_context import ScenarioContext
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
@@ -72,20 +68,14 @@ class AdaptiveScenario(Scenario):
 
     @classmethod
     @abstractmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """Return the scenario's strategy enum (subclasses must override)."""
+    def get_technique_class(cls) -> type[ScenarioTechnique]:
+        """Return the scenario's technique enum (subclasses must override)."""
         raise NotImplementedError
 
     @classmethod
     @abstractmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """Return the scenario's default strategy aggregate (subclasses must override)."""
-        raise NotImplementedError
-
-    @classmethod
-    @abstractmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the scenario's default ``DatasetConfiguration`` (subclasses must override)."""
+    def default_dataset_config(cls) -> DatasetAttackConfiguration:
+        """Return the scenario's default ``DatasetAttackConfiguration`` (subclasses must override)."""
         raise NotImplementedError
 
     def __init__(
@@ -112,8 +102,7 @@ class AdaptiveScenario(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=self.get_strategy_class(),
-            default_strategy=self.get_default_strategy(),
+            technique_class=self.get_technique_class(),
             default_dataset_config=self.default_dataset_config(),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -126,15 +115,15 @@ class AdaptiveScenario(Scenario):
         ``AttackTechniqueRegistry``.
 
         The catalog defines the deterministic baseline pool — it is also the
-        source of truth for the strategy enum's valid values, so iteration
+        source of truth for the technique enum's valid values, so iteration
         order and presence of techniques do not depend on registry
         initialization order. Registry-registered factories whose name
         matches a catalog entry **override** the catalog default, letting
         operators swap in tuned configurations (custom adversarial chat,
         different converter chain, etc.) without editing core. Factories
-        registered only in the registry (no matching strategy enum value)
+        registered only in the registry (no matching technique enum value)
         are returned too but the scenario will only consume those whose
-        names appear in ``self._scenario_strategies``. When the registry
+        names appear in ``self._scenario_techniques``. When the registry
         has not been initialized yet, the catalog alone is used.
 
         Subclasses may override to further customize the pool.
@@ -142,56 +131,61 @@ class AdaptiveScenario(Scenario):
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
         """
-        # Local import: ``scenario_techniques`` imports ``pyrit.scenario.core``,
+        # Local import: ``techniques`` imports ``pyrit.scenario.core``,
         # which transitively re-imports this module, so a top-level import
         # would form a cycle during ``pyrit.scenario`` package initialization.
-        from pyrit.setup.initializers.components.scenario_techniques import (
-            build_scenario_technique_factories,
-        )
+        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.setup.initializers.techniques import build_technique_factories
 
-        catalog = {factory.name: factory for factory in build_scenario_technique_factories()}
+        catalog = {factory.name: factory for factory in build_technique_factories()}
         try:
-            registry_overrides = super()._get_attack_technique_factories()
+            registry_overrides = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
         except RuntimeError:
             # Registry not initialized yet (e.g. bare CLI parse before
-            # ScenarioTechniqueInitializer has run). Catalog alone is the
-            # safe fallback and matches the strategy enum's value set.
+            # TechniqueInitializer has run). Catalog alone is the
+            # safe fallback and matches the technique enum's value set.
             registry_overrides = {}
         return {**catalog, **registry_overrides}
 
-    async def _get_atomic_attacks_async(self) -> list[AtomicAttack]:
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Build one ``AtomicAttack`` per (dataset, compatible seed group) pair.
 
         For each dataset, construct a single ``AdaptiveTechniqueDispatcher``
         shared across that dataset's seed groups. For each seed group, ask
         the dispatcher to build its per-objective ``SequentialAttack`` and
-        wrap it in its own ``AtomicAttack``. All dispatchers across all
+        wrap it in its own ``AtomicAttack``.         All dispatchers across all
         datasets share one ``TechniqueSelector`` instance so learning
         accumulates globally; selection is committed up-front during
         scenario initialization, before any execution starts.
 
-        When ``self._include_baseline`` is true (the default under
-        ``BASELINE_ATTACK_POLICY = Enabled``), a baseline ``AtomicAttack``
-        named ``"baseline"`` is prepended at index 0.
+        The scenario prepends the baseline ``AtomicAttack`` (named ``"baseline"``) at index 0
+        when ``context.include_baseline`` is true (the default under
+        ``BASELINE_ATTACK_POLICY = Enabled``).
+
+        Args:
+            context (ScenarioContext): The resolved runtime inputs for this run.
 
         Returns:
             list[AtomicAttack]: One ``AtomicAttack`` per compatible
-                seed group across all datasets, with the baseline (when
-                enabled) prepended at index 0.
+                seed group across all datasets.
 
         Raises:
-            ValueError: If ``self._objective_target`` is not set, or if
-                ``_build_techniques_dict`` finds no usable techniques.
+            ValueError: If ``_build_techniques_dict`` finds no usable techniques.
         """
-        if self._objective_target is None:
-            raise ValueError("objective_target must be set before creating attacks")
+        techniques = self._build_techniques_dict(objective_target=context.objective_target)
 
-        techniques = self._build_techniques_dict(objective_target=self._objective_target)
-
-        seed_groups_by_dataset = self._dataset_config.get_seed_attack_groups()
         atomic_attacks: list[AtomicAttack] = []
-        for dataset_name, seed_groups in seed_groups_by_dataset.items():
+        if context.include_baseline:
+            atomic_attacks.append(
+                build_baseline_atomic_attack(
+                    objective_target=context.objective_target,
+                    objective_scorer=self._objective_scorer,
+                    seed_groups=list(context.seed_groups),
+                    memory_labels=context.memory_labels,
+                )
+            )
+        for dataset_name, seed_groups in context.seed_groups_by_dataset.items():
             atomic_attacks.extend(
                 await self._build_atomics_for_dataset_async(
                     dataset_name=dataset_name,
@@ -201,10 +195,6 @@ class AdaptiveScenario(Scenario):
                 )
             )
 
-        if self._include_baseline:
-            all_seed_groups = [g for groups in seed_groups_by_dataset.values() for g in groups]
-            atomic_attacks.insert(0, self._build_baseline_atomic_attack(seed_groups=all_seed_groups))
-
         return atomic_attacks
 
     def _build_techniques_dict(
@@ -213,13 +203,13 @@ class AdaptiveScenario(Scenario):
         objective_target: PromptTarget,
     ) -> dict[str, TechniqueBundle]:
         """
-        Resolve selected strategies into a ``{eval_hash: TechniqueBundle}`` map.
+        Resolve selected techniques into a ``{eval_hash: TechniqueBundle}`` map.
 
-        Each bundle carries the inner attack strategy along with the factory's
+        Each bundle carries the inner attack technique along with the factory's
         ``seed_technique`` and ``adversarial_chat`` so the dispatcher can
         reproduce the static ``AtomicAttack`` execution path per attempt.
 
-        Technique keys are eval hashes derived from the inner attack strategy's
+        Technique keys are eval hashes derived from the inner attack technique's
         identifier (run through ``AtomicAttackEvaluationIdentifier`` so seeds,
         scorers, and operational target params are excluded). The same hash is
         auto-stamped on every persisted ``AttackResultEntry.atomic_attack_identifier``
@@ -236,13 +226,13 @@ class AdaptiveScenario(Scenario):
 
         Returns:
             dict[str, TechniqueBundle]: Mapping from technique eval hash to its
-                bundle, in the order selected strategies were resolved.
+                bundle, in the order selected techniques were resolved.
 
         Raises:
             ValueError: If no techniques remain after filtering. Includes the
                 requested techniques and skip reasons.
         """
-        selected_techniques = sorted({s.value for s in self._scenario_strategies})
+        selected_techniques = sorted({s.value for s in self._scenario_techniques})
         factories = self._get_attack_technique_factories()
 
         techniques: dict[str, TechniqueBundle] = {}
@@ -290,8 +280,8 @@ class AdaptiveScenario(Scenario):
                 details.append(f"incompatible with scenario scorer: {sorted(skipped_incompatible)}")
             suffix = f" ({'; '.join(details)})" if details else ""
             raise ValueError(
-                f"{type(self).__name__}: no usable techniques after resolving strategies. "
-                f"Check the --strategies selection.{suffix}"
+                f"{type(self).__name__}: no usable techniques after resolving techniques. "
+                f"Check the --techniques selection.{suffix}"
             )
 
         return techniques
@@ -332,7 +322,7 @@ class AdaptiveScenario(Scenario):
         self,
         *,
         dataset_name: str,
-        seed_groups: list[SeedAttackGroup],
+        seed_groups: list[AttackSeedGroup],
         techniques: dict[str, TechniqueBundle],
         selector: TechniqueSelector,
     ) -> list[AtomicAttack]:
@@ -356,7 +346,7 @@ class AdaptiveScenario(Scenario):
 
         Raises:
             ValueError: If ``self._objective_target`` is not set
-                (defensive guard; ``_get_atomic_attacks_async`` enforces
+                (defensive guard; ``_build_atomic_attacks_async`` enforces
                 this earlier).
         """
         if self._objective_target is None:  # pragma: no cover - defensive

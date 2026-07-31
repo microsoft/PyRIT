@@ -5,6 +5,7 @@ import { getApiScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
   TargetListResponse,
+  TargetCatalogResponse,
   ConverterCatalogResponse,
   ConverterInstance,
   ConverterListResponse,
@@ -146,6 +147,11 @@ export const versionApi = {
 }
 
 export const targetsApi = {
+  listTargetCatalog: async (): Promise<TargetCatalogResponse> => {
+    const response = await apiClient.get('/targets/catalog')
+    return response.data
+  },
+
   listTargets: async (limit = 50, cursor?: string): Promise<TargetListResponse> => {
     const params: Record<string, string | number> = { limit }
     if (cursor) params.cursor = cursor

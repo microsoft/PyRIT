@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 8. Seed Database Management
+# # Seed Database Management
 #
 # Beyond storing attack results and conversation history, PyRIT memory also serves as a powerful repository for managing seed datasets. Storing seeds in the database enables:
 #

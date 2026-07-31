@@ -10,9 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai import BadRequestError, RateLimitError
+from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
 from unit.mocks import (
     get_audio_message_piece,
     get_image_message_piece,
+    get_mock_target_identifier,
     get_sample_conversations,
     openai_response_json_dict,
 )
@@ -22,10 +24,11 @@ from pyrit.exceptions.exception_classes import (
     PyritException,
     RateLimitException,
 )
+from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import AttackOutcome, JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
+from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 
 
 def create_mock_response(response_dict: dict = None) -> MagicMock:
@@ -62,12 +65,23 @@ def create_mock_response(response_dict: dict = None) -> MagicMock:
 
             # Handle different section types
             if section.get("type") == "message":
-                # Mock content array with text attribute
                 content_mocks = []
                 for content_item in section.get("content", []):
-                    content_mock = MagicMock()
-                    content_mock.text = content_item.get("text", "")
-                    content_mocks.append(content_mock)
+                    if content_item.get("type") == "refusal":
+                        content_mocks.append(
+                            ResponseOutputRefusal(
+                                refusal=content_item["refusal"],
+                                type="refusal",
+                            )
+                        )
+                    else:
+                        content_mocks.append(
+                            ResponseOutputText(
+                                annotations=content_item.get("annotations", []),
+                                text=content_item.get("text", ""),
+                                type="output_text",
+                            )
+                        )
                 section_mock.content = content_mocks
 
             # Add model_dump for JSON serialization
@@ -87,7 +101,7 @@ def fake_construct_response_from_request(request, response_text_pieces):
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -212,13 +226,13 @@ async def test_construct_request_body_includes_extra_body_params(
 
     request = Message(message_pieces=[dummy_text_message_piece])
 
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["key"] == "value"
 
 
 async def test_construct_request_body_json_object(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
-    json_response_config = _JsonResponseConfig(enabled=True)
+    json_response_config = JsonResponseConfig(enabled=True)
     request = Message(message_pieces=[dummy_text_message_piece])
 
     body = await target._construct_request_body_async(conversation=[request], json_config=json_response_config)
@@ -227,7 +241,7 @@ async def test_construct_request_body_json_object(target: OpenAIResponseTarget, 
 
 async def test_construct_request_body_json_schema(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     schema_object = {"type": "object", "properties": {"name": {"type": "string"}}}
-    json_response_config = _JsonResponseConfig.from_metadata(
+    json_response_config = JsonResponseConfig.from_metadata(
         metadata={"response_format": "json", "json_schema": schema_object}
     )
     request = Message(message_pieces=[dummy_text_message_piece])
@@ -248,7 +262,7 @@ async def test_construct_request_body_removes_empty_values(
 ):
     request = Message(message_pieces=[dummy_text_message_piece])
 
-    json_response_config = _JsonResponseConfig(enabled=False)
+    json_response_config = JsonResponseConfig(enabled=False)
     body = await target._construct_request_body_async(conversation=[request], json_config=json_response_config)
     assert "max_completion_tokens" not in body
     assert "max_tokens" not in body
@@ -264,7 +278,7 @@ async def test_construct_request_body_serializes_text_message(
 ):
     request = Message(message_pieces=[dummy_text_message_piece])
 
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["input"][0]["content"][0]["text"] == "dummy text"
 
@@ -276,7 +290,7 @@ async def test_construct_request_body_serializes_complex_message(
     dummy_text_message_piece.conversation_id = image_piece.conversation_id
 
     request = Message(message_pieces=[dummy_text_message_piece, image_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
 
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     messages = body["input"][0]["content"]
@@ -306,7 +320,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -315,7 +328,6 @@ async def test_send_prompt_async_empty_response_adds_to_memory(
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )
@@ -395,7 +407,6 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIRespo
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -404,7 +415,6 @@ async def test_send_prompt_async(openai_response_json: dict, target: OpenAIRespo
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )
@@ -437,7 +447,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value="hello",
                 original_value_data_type="text",
                 converted_value_data_type="text",
-                labels={"test": "test"},
             ),
             MessagePiece(
                 role="user",
@@ -446,7 +455,6 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
                 converted_value=tmp_file_name,
                 original_value_data_type="image_path",
                 converted_value_data_type="image_path",
-                labels={"test": "test"},
             ),
         ]
     )
@@ -671,14 +679,15 @@ async def test_build_input_for_multi_modal_async_image_and_text(target: OpenAIRe
     assert result[0]["role"] == "user"
     assert result[0]["content"][0]["type"] == "input_text"
     assert result[0]["content"][1]["type"] == "input_image"
-    assert result[0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert result[0]["content"][1]["detail"] == "auto"
+    assert result[0]["content"][1]["image_url"].startswith("data:image/jpeg;base64,")
 
 
 async def test_construct_request_body_filters_none(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
     req = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[req], json_config=jrc)
     assert "max_output_tokens" not in body or body["max_output_tokens"] is None
     assert "temperature" not in body or body["temperature"] is None
@@ -762,6 +771,40 @@ async def test_build_input_for_multi_modal_async_filters_reasoning(target: OpenA
     assert result[2]["role"] == "user"
     assert result[2]["content"][0]["type"] == "input_text"
     assert result[2]["content"][0]["text"] == "Hello indeed"
+
+
+async def test_build_input_for_multi_modal_async_serializes_structured_refusal(target: OpenAIResponseTarget):
+    refusal = "I cannot assist with that request."
+    refusal_piece = MessagePiece(
+        role="assistant",
+        original_value='{"status_code":200,"message":"refusal"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="blocked",
+    )
+    refusal_piece.mark_as_structured_refusal(refusal=refusal)
+
+    result = await target._build_input_for_multi_modal_async([Message(message_pieces=[refusal_piece])])
+
+    assert result == [
+        {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": refusal}],
+        }
+    ]
+
+
+async def test_build_input_for_multi_modal_async_rejects_generic_error(target: OpenAIResponseTarget):
+    error_piece = MessagePiece(
+        role="assistant",
+        original_value="transport failed",
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="processing",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported data type 'error'"):
+        await target._build_input_for_multi_modal_async([Message(message_pieces=[error_piece])])
 
 
 # New pytests
@@ -848,12 +891,10 @@ def test_make_tool_piece_serializes_output_and_sets_call_id(target: OpenAIRespon
         role="user",
         original_value="test",
         conversation_id="test-conv-123",
-        labels={"existing": "label"},
     )
     piece = target._make_tool_piece(out, call_id="tool-1", reference_piece=reference_piece)
     assert piece.original_value_data_type == "function_call_output"
     assert piece.conversation_id == "test-conv-123"
-    assert piece.labels["call_id"] == "tool-1"
     payload = json.loads(piece.original_value)
     assert payload["type"] == "function_call_output"
     assert payload["call_id"] == "tool-1"
@@ -950,7 +991,13 @@ async def test_send_prompt_async_agentic_loop_executes_function_and_returns_fina
     second_sdk_response.error = None
     second_msg_section = MagicMock()
     second_msg_section.type = "message"
-    second_msg_section.content = [MagicMock(text="Done: 14")]
+    second_msg_section.content = [
+        ResponseOutputText(
+            annotations=[],
+            text="Done: 14",
+            type="output_text",
+        )
+    ]
     second_sdk_response.output = [second_msg_section]
 
     call_counter = {"n": 0}
@@ -1088,27 +1135,37 @@ def test_check_content_filter_ignores_incomplete_status_without_content_filter_r
 class TestExtractPartialContentResponseTarget:
     def test_extracts_completed_message_content(self, target: OpenAIResponseTarget):
         """Extract text from completed output messages, skip incomplete ones."""
-        from pyrit.prompt_target.openai.openai_response_target import MessagePieceType
-
-        completed_section = MagicMock()
-        completed_section.type = MessagePieceType.MESSAGE
-        completed_section.status = "completed"
-        content_item = MagicMock()
-        content_item.text = "Partial harmful content"
-        completed_section.content = [content_item]
-
-        incomplete_section = MagicMock()
-        incomplete_section.type = MessagePieceType.MESSAGE
-        incomplete_section.status = "incomplete"
-        refusal_item = MagicMock()
-        refusal_item.text = "I'm sorry, but I cannot assist with that request."
-        incomplete_section.content = [refusal_item]
+        completed_section = ResponseOutputMessage(
+            id="completed-message",
+            content=[
+                ResponseOutputText(
+                    annotations=[],
+                    text="Partial content",
+                    type="output_text",
+                )
+            ],
+            role="assistant",
+            status="completed",
+            type="message",
+        )
+        incomplete_section = ResponseOutputMessage(
+            id="incomplete-message",
+            content=[
+                ResponseOutputRefusal(
+                    refusal="I cannot assist with that request.",
+                    type="refusal",
+                )
+            ],
+            role="assistant",
+            status="incomplete",
+            type="message",
+        )
 
         mock_response = MagicMock()
         mock_response.output = [completed_section, incomplete_section]
 
         result = target._extract_partial_content(mock_response)
-        assert result == "Partial harmful content"
+        assert result == "Partial content"
 
     def test_returns_none_when_no_output(self, target: OpenAIResponseTarget):
         mock_response = MagicMock()
@@ -1117,14 +1174,18 @@ class TestExtractPartialContentResponseTarget:
 
     def test_returns_none_when_only_incomplete_messages(self, target: OpenAIResponseTarget):
         """All messages are incomplete (refusals) — no partial content."""
-        from pyrit.prompt_target.openai.openai_response_target import MessagePieceType
-
-        section = MagicMock()
-        section.type = MessagePieceType.MESSAGE
-        section.status = "incomplete"
-        content_item = MagicMock()
-        content_item.text = "I cannot help with that."
-        section.content = [content_item]
+        section = ResponseOutputMessage(
+            id="incomplete-message",
+            content=[
+                ResponseOutputRefusal(
+                    refusal="I cannot help with that.",
+                    type="refusal",
+                )
+            ],
+            role="assistant",
+            status="incomplete",
+            type="message",
+        )
 
         mock_response = MagicMock()
         mock_response.output = [section]
@@ -1214,6 +1275,173 @@ async def test_construct_message_from_response(target: OpenAIResponseTarget, dum
         mock_parse.assert_called_once()
 
 
+async def test_handle_openai_request_output_text(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
+    output_message = ResponseOutputMessage(
+        id="text-message",
+        content=[
+            ResponseOutputText(
+                annotations=[],
+                text="Hello from Response API",
+                type="output_text",
+            )
+        ],
+        role="assistant",
+        status="completed",
+        type="message",
+    )
+    mock_response = MagicMock()
+    mock_response.error = None
+    mock_response.status = "completed"
+    mock_response.output = [output_message]
+    request = Message(message_pieces=[dummy_text_message_piece])
+
+    with patch.object(target._async_client.responses, "create", new=AsyncMock(return_value=mock_response)):
+        responses = await target.send_prompt_async(message=request)
+
+    assert len(responses) == 1
+    result = responses[0]
+    assert len(result.message_pieces) == 1
+    assert result.message_pieces[0].original_value == "Hello from Response API"
+    assert result.message_pieces[0].response_error == "none"
+
+
+async def test_send_prompt_async_returns_blocked_refusal(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    refusal = "I cannot assist with that request."
+    dummy_text_message_piece.prompt_metadata["request_key"] = "request_value"
+    output_message = ResponseOutputMessage(
+        id="refusal-message",
+        content=[ResponseOutputRefusal(refusal=refusal, type="refusal")],
+        role="assistant",
+        status="completed",
+        type="message",
+    )
+    mock_response = MagicMock()
+    mock_response.error = None
+    mock_response.status = "completed"
+    mock_response.output = [output_message]
+    request = Message(message_pieces=[dummy_text_message_piece])
+
+    with patch.object(target._async_client.responses, "create", new=AsyncMock(return_value=mock_response)):
+        responses = await target.send_prompt_async(message=request)
+
+    assert len(responses) == 1
+    result = responses[0]
+    assert len(result.message_pieces) == 1
+    refusal_piece = result.message_pieces[0]
+    assert refusal_piece.original_value_data_type == "error"
+    assert refusal_piece.response_error == "blocked"
+    assert json.loads(refusal_piece.original_value)["message"] == refusal
+    assert refusal_piece.structured_refusal == refusal
+    assert refusal_piece.prompt_metadata["request_key"] == "request_value"
+
+
+async def test_structured_refusal_is_persisted_scored_and_completes_attack(target: OpenAIResponseTarget):
+    refusal = "I cannot assist with that request."
+    output_message = ResponseOutputMessage(
+        id="refusal-message",
+        content=[ResponseOutputRefusal(refusal=refusal, type="refusal")],
+        role="assistant",
+        status="completed",
+        type="message",
+    )
+    mock_response = MagicMock()
+    mock_response.error = None
+    mock_response.status = "completed"
+    mock_response.output = [output_message]
+    target._async_client.responses.create = AsyncMock(return_value=mock_response)
+
+    scorer_target = MagicMock(spec=PromptTarget)
+    scorer_target.get_identifier.return_value = get_mock_target_identifier("RefusalScorerTarget")
+    refusal_scorer = SelfAskRefusalScorer(chat_target=scorer_target)
+    objective_scorer = TrueFalseInverterScorer(scorer=refusal_scorer)
+    results = await AttackExecutor(max_concurrency=1).execute_attack_async(
+        attack=PromptSendingAttack(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=objective_scorer),
+        ),
+        objectives=["Test objective"],
+        return_partial_on_failure=True,
+    )
+
+    assert results.all_completed
+    assert len(results.completed_results) == 1
+    attack_result = results.completed_results[0]
+    assert attack_result.last_response is not None
+    refusal_piece = attack_result.last_response
+    assert refusal_piece.response_error == "blocked"
+    assert json.loads(refusal_piece.original_value)["message"] == refusal
+    assert json.loads(refusal_piece.converted_value)["message"] == refusal
+    assert refusal_piece.structured_refusal == refusal
+    assert attack_result.last_score is not None
+    assert attack_result.last_score.get_value() is False
+    assert attack_result.outcome == AttackOutcome.FAILURE
+
+    persisted_messages = target._memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
+    persisted_piece = persisted_messages[-1].get_piece()
+    assert persisted_piece.id == refusal_piece.id
+    assert json.loads(persisted_piece.original_value)["message"] == refusal
+    assert persisted_piece.structured_refusal == refusal
+
+    scorer_target.send_prompt_async.assert_not_called()
+
+
+async def test_reasoning_preceding_refusal_keeps_refusal_as_primary_response(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    reasoning = MagicMock()
+    reasoning.type = "reasoning"
+    reasoning.model_dump.return_value = {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "Reasoning summary."}],
+    }
+    refusal = "I cannot assist with that request."
+    output_message = ResponseOutputMessage(
+        id="refusal-message",
+        content=[ResponseOutputRefusal(refusal=refusal, type="refusal")],
+        role="assistant",
+        status="completed",
+        type="message",
+    )
+    mock_response = MagicMock(error=None, status="completed", output=[reasoning, output_message])
+    request = Message(message_pieces=[dummy_text_message_piece])
+
+    with patch.object(target._async_client.responses, "create", new=AsyncMock(return_value=mock_response)):
+        responses = await target.send_prompt_async(message=request)
+
+    pieces = responses[0].message_pieces
+    assert pieces[0].structured_refusal == refusal
+    assert pieces[1].converted_value_data_type == "reasoning"
+
+
+async def test_reasoning_preceding_text_keeps_text_as_primary_response(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    reasoning = MagicMock()
+    reasoning.type = "reasoning"
+    reasoning.model_dump.return_value = {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "Reasoning summary."}],
+    }
+    output_message = ResponseOutputMessage(
+        id="text-message",
+        content=[ResponseOutputText(annotations=[], text="Final answer", type="output_text")],
+        role="assistant",
+        status="completed",
+        type="message",
+    )
+    mock_response = MagicMock(error=None, status="completed", output=[reasoning, output_message])
+    request = Message(message_pieces=[dummy_text_message_piece])
+
+    with patch.object(target._async_client.responses, "create", new=AsyncMock(return_value=mock_response)):
+        responses = await target.send_prompt_async(message=request)
+
+    pieces = responses[0].message_pieces
+    assert pieces[0].converted_value == "Final answer"
+    assert pieces[1].converted_value_data_type == "reasoning"
+
+
 # ── Reasoning effort / summary tests ───────────────────────────────────────
 
 
@@ -1269,7 +1497,7 @@ async def test_construct_request_body_includes_reasoning_effort(
         reasoning_effort="medium",
     )
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["reasoning"] == {"effort": "medium"}
 
@@ -1284,7 +1512,7 @@ async def test_construct_request_body_includes_reasoning_summary(
         reasoning_summary="detailed",
     )
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["reasoning"] == {"summary": "detailed"}
 
@@ -1300,7 +1528,7 @@ async def test_construct_request_body_includes_reasoning_effort_and_summary(
         reasoning_summary="auto",
     )
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert body["reasoning"] == {"effort": "high", "summary": "auto"}
 
@@ -1309,7 +1537,7 @@ async def test_construct_request_body_omits_reasoning_when_not_set(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
 ):
     request = Message(message_pieces=[dummy_text_message_piece])
-    jrc = _JsonResponseConfig.from_metadata(metadata=None)
+    jrc = JsonResponseConfig.from_metadata(metadata=None)
     body = await target._construct_request_body_async(conversation=[request], json_config=jrc)
     assert "reasoning" not in body
 

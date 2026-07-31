@@ -18,6 +18,12 @@ import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInstance, TargetInfo } from './types'
+import {
+  targetEndpoint,
+  targetIdentifierHash,
+  targetModelName,
+  targetType,
+} from './utils/targetIdentity'
 import { attacksApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { useTour } from './hooks/useTour'
@@ -166,9 +172,9 @@ function App() {
     setActiveTarget(prev => {
       const isSame = prev &&
         prev.target_registry_name === target.target_registry_name &&
-        prev.target_type === target.target_type &&
-        (prev.endpoint ?? '') === (target.endpoint ?? '') &&
-        (prev.model_name ?? '') === (target.model_name ?? '')
+        targetType(prev) === targetType(target) &&
+        (targetEndpoint(prev) ?? '') === (targetEndpoint(target) ?? '') &&
+        (targetModelName(prev) ?? '') === (targetModelName(target) ?? '')
       if (isSame) return prev
       // Switching targets no longer clears the loaded attack.  The cross-target
       // guard in ChatWindow prevents sending to a mismatched target, and the
@@ -280,9 +286,10 @@ function App() {
     // its next fetch for this id, so the attack opens without a redundant load.
     const target: TargetInfo | null = activeTarget
       ? {
-          target_type: activeTarget.target_type,
-          endpoint: activeTarget.endpoint,
-          model_name: activeTarget.model_name,
+          target_type: targetType(activeTarget),
+          endpoint: targetEndpoint(activeTarget),
+          model_name: targetModelName(activeTarget),
+          identifier_hash: targetIdentifierHash(activeTarget),
         }
       : null
     skipNextLoadForAttackId.current = arId
@@ -405,7 +412,7 @@ function App() {
               context={{
                 app_version: appVersion || undefined,
                 current_view: currentView,
-                target_type: activeTarget?.target_type,
+                target_type: activeTarget ? targetType(activeTarget) : undefined,
               }}
             />
           )}

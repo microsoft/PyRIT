@@ -14,24 +14,33 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pyrit.backend.models.scenarios import (
+from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.memory import CentralMemory
+from pyrit.models import AttackOutcome, ScenarioResult, ScenarioRunState
+from pyrit.models.catalog.scenario import (
+    AttackErrorSummary,
+    AttackRetrySummary,
     RunScenarioRequest,
-    ScenarioRunListResponse,
-    ScenarioRunStatus,
     ScenarioRunSummary,
 )
-from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, ScenarioResult
-from pyrit.registry import InitializerRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.registry import (
+    ConverterRegistry,
+    InitializerRegistry,
+    ScenarioRegistry,
+    TargetRegistry,
+)
 from pyrit.scenario import Scenario
-from pyrit.scenario.core import DatasetConfiguration
+from pyrit.scenario.core import DatasetAttackConfiguration
 
 if TYPE_CHECKING:
+    from pyrit.converter import Converter
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CONCURRENT_RUNS = 3
+
+_CONVERTER_MODIFIER_PREFIX = "converter."
 
 
 @dataclass
@@ -64,7 +73,7 @@ class ScenarioRunService:
         Start a new scenario run as a background task.
 
         Performs all validation and initialization eagerly (initializers, target
-        resolution, strategy validation, scenario.initialize_async) so errors are
+        resolution, technique validation, scenario.initialize_async) so errors are
         returned immediately. On success, spawns a background task that only
         executes scenario.run_async.
 
@@ -75,7 +84,7 @@ class ScenarioRunService:
             ScenarioRunResponse with run_id and RUNNING status.
 
         Raises:
-            ValueError: If scenario, target, initializer, or strategy cannot be found,
+            ValueError: If scenario, target, initializer, or technique cannot be found,
                 or concurrent limit exceeded.
         """
         if self._run_semaphore.locked():
@@ -164,9 +173,9 @@ class ScenarioRunService:
             return None
 
         scenario_result = results[0]
-        db_status = ScenarioRunStatus(scenario_result.scenario_run_state)
+        db_status = scenario_result.scenario_run_state
 
-        if db_status in (ScenarioRunStatus.COMPLETED, ScenarioRunStatus.FAILED, ScenarioRunStatus.CANCELLED):
+        if db_status in (ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED):
             raise ValueError(f"Cannot cancel run in '{db_status}' state.")
 
         # Cancel the asyncio task if active and wait for it to finish
@@ -179,7 +188,7 @@ class ScenarioRunService:
         # Persist cancelled state to DB
         self._memory.update_scenario_run_state(
             scenario_result_id=scenario_result_id,
-            scenario_run_state="CANCELLED",
+            scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",
         )
@@ -220,13 +229,13 @@ class ScenarioRunService:
 
         initializer_registry = InitializerRegistry.get_registry_singleton()
         for initializer_name in request.initializers:
+            initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
-                initializer_class = initializer_registry.get_class(initializer_name)
+                instance = initializer_registry.create_and_configure(
+                    initializer_name, initializer_params=initializer_params
+                )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
-            instance = initializer_class()
-            if request.initializer_args and initializer_name in request.initializer_args:
-                instance.set_params_from_args(args=request.initializer_args[initializer_name])
             await instance.initialize_async()
 
     def _resolve_target(self, *, request: RunScenarioRequest) -> "PromptTarget":
@@ -243,9 +252,9 @@ class ScenarioRunService:
             ValueError: If the target is not found in the registry.
         """
         target_registry = TargetRegistry.get_registry_singleton()
-        objective_target = target_registry.get_instance_by_name(request.target_name)
+        objective_target = target_registry.instances.get(request.target_name)
         if objective_target is None:
-            available_names = target_registry.get_names()
+            available_names = target_registry.instances.get_names()
             if not available_names:
                 raise ValueError(
                     f"Target '{request.target_name}' not found. The target registry is empty. "
@@ -263,14 +272,14 @@ class ScenarioRunService:
         """
         Build the kwargs dict for scenario.initialize_async.
 
-        Resolves strategies and dataset configuration from the request.
+        Resolves techniques and dataset configuration from the request.
 
         Dataset configuration is built so that the scenario's default
-        ``DatasetConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
+        ``DatasetAttackConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
         is preserved when the caller overrides ``dataset_names`` or
         ``max_dataset_size``. Subclasses commonly override
-        ``get_all_seed_attack_groups()`` or ``_load_seed_groups_for_dataset()``
-        to shape seeds into scenario-appropriate ``SeedAttackGroup`` objects.
+        ``_build_attack_groups()`` to shape seeds into scenario-appropriate
+        ``AttackSeedGroup`` objects.
 
         Args:
             request: The run request.
@@ -281,9 +290,9 @@ class ScenarioRunService:
             Dict of kwargs to pass to scenario.initialize_async.
 
         Raises:
-            ValueError: If a strategy name is invalid for the scenario, or the
+            ValueError: If a technique name is invalid for the scenario, or the
                 scenario class cannot be instantiated with no arguments when
-                introspection is required to resolve strategies or dataset
+                introspection is required to resolve techniques or dataset
                 configuration.
         """
         init_kwargs: dict[str, Any] = {
@@ -295,15 +304,23 @@ class ScenarioRunService:
         if request.labels:
             init_kwargs["memory_labels"] = request.labels
 
-        # Resolve strategies and dataset config from a temporary instance of the
+        # The request model has already validated the filter keys and coerced values into
+        # lists, so the service can consume them directly.
+        dataset_filters = request.dataset_filters or {}
+
+        # Resolve techniques and dataset config from a temporary instance of the
         # scenario. The downstream _initialize_scenario_async builds its own
         # instance (so scenario_result_id can be passed), so this is a cheap
         # throwaway used only for introspection. Introspection is required
-        # whenever the caller wants to override strategies, dataset names, or
-        # the sample cap, because each of those needs the scenario's own
-        # strategy enum or dataset-config subclass to be resolved correctly.
+        # whenever the caller wants to override techniques, dataset names, the
+        # sample cap, or dataset filters, because each of those needs the
+        # scenario's own technique enum or dataset-config subclass to be resolved
+        # correctly.
         needs_introspection = (
-            bool(request.strategies) or bool(request.dataset_names) or request.max_dataset_size is not None
+            bool(request.techniques)
+            or bool(request.dataset_names)
+            or request.max_dataset_size is not None
+            or bool(dataset_filters)
         )
         if not needs_introspection:
             return init_kwargs
@@ -316,21 +333,18 @@ class ScenarioRunService:
                 f"scenario class is not instantiable without arguments ({exc})."
             ) from exc
 
-        if request.strategies:
-            strategy_class = introspection_instance._strategy_class
-            strategy_enums = []
-            for name in request.strategies:
-                try:
-                    strategy_enums.append(strategy_class(name))
-                except ValueError:
-                    available_strategies = [s.value for s in strategy_class]
-                    raise ValueError(
-                        f"Strategy '{name}' not found for scenario '{request.scenario_name}'. "
-                        f"Available: {', '.join(available_strategies)}"
-                    ) from None
-            init_kwargs["scenario_strategies"] = strategy_enums
+        if request.techniques:
+            technique_class = introspection_instance._technique_class
+            technique_enums, technique_converters = self._resolve_techniques_and_converters(
+                tokens=request.techniques,
+                technique_class=technique_class,
+                scenario_name=request.scenario_name,
+            )
+            init_kwargs["scenario_techniques"] = technique_enums
+            if technique_converters:
+                init_kwargs["technique_converters"] = technique_converters
 
-        if request.dataset_names or request.max_dataset_size is not None:
+        if request.dataset_names or request.max_dataset_size is not None or dataset_filters:
             default_config = introspection_instance._default_dataset_config
 
             if request.dataset_names:
@@ -341,54 +355,160 @@ class ScenarioRunService:
                     init_kwargs["dataset_config"] = default_config_class(
                         dataset_names=request.dataset_names,
                         max_dataset_size=request.max_dataset_size,
+                        filters=dataset_filters or None,
                     )
                 except TypeError as exc:
                     # The subclass __init__ takes extra required kwargs we cannot
                     # supply from a backend request. Fall back to the base
-                    # DatasetConfiguration so the run can still proceed; downstream
+                    # DatasetAttackConfiguration so the run can still proceed; downstream
                     # scenarios that strictly require the subclass should either
                     # define a no-extra-required-args constructor or surface the
                     # incompatibility through their own initialize_async validation.
                     logger.warning(
-                        "Cannot construct %s(dataset_names=..., max_dataset_size=...) (%s). "
-                        "Falling back to a generic DatasetConfiguration; scenario-specific "
+                        "Cannot construct %s(dataset_names=..., max_dataset_size=..., filters=...) (%s). "
+                        "Falling back to a generic DatasetAttackConfiguration; scenario-specific "
                         "dataset-config behavior may be lost.",
                         default_config_class.__name__,
                         exc,
                     )
-                    init_kwargs["dataset_config"] = DatasetConfiguration(
+                    init_kwargs["dataset_config"] = DatasetAttackConfiguration(
                         dataset_names=request.dataset_names,
                         max_dataset_size=request.max_dataset_size,
+                        filters=dataset_filters or None,
                     )
-            elif request.max_dataset_size is not None:
+            else:
                 # Reuse the scenario's default dataset config (preserves subtype +
                 # the scenario's own default dataset names) and override only the
-                # sample cap. Safe because the introspection instance is throwaway.
-                default_config.max_dataset_size = request.max_dataset_size
+                # sample cap and/or filters. Safe because the introspection instance
+                # is throwaway.
+                if request.max_dataset_size is not None:
+                    default_config.max_dataset_size = request.max_dataset_size
+                if dataset_filters:
+                    default_config.update_filters(filters=dataset_filters)
                 init_kwargs["dataset_config"] = default_config
 
         return init_kwargs
 
+    def _resolve_techniques_and_converters(
+        self,
+        *,
+        tokens: list[str],
+        technique_class: type[Any],
+        scenario_name: str,
+    ) -> tuple[list[Any], dict[str, list["Converter"]]]:
+        """
+        Resolve ``--techniques`` tokens into technique enums and per-technique converters.
+
+        Each token has the form ``<technique>[:converter.<name>[:converter.<name>...]]``.
+        The base ``<technique>`` is resolved to a ``ScenarioTechnique`` enum member (which may
+        be an aggregate). Each ``converter.<name>`` modifier is resolved to a registered
+        converter instance and appended (in token order) to every concrete technique that the
+        base technique expands to.
+
+        Args:
+            tokens: The raw technique tokens from the request.
+            technique_class: The scenario's ``ScenarioTechnique`` subclass.
+            scenario_name: The scenario name, used for error messages.
+
+        Returns:
+            A tuple of (technique enums to pass as ``scenario_techniques``, mapping from concrete
+            technique name to the list of converters to append for that technique).
+
+        Raises:
+            ValueError: If a base technique name is unknown, a modifier is malformed, or a
+                converter name is not registered.
+        """
+        technique_enums: list[Any] = []
+        technique_converters: dict[str, list[Converter]] = {}
+
+        for token in tokens:
+            base_name, _, remainder = token.partition(":")
+            modifiers = [m for m in remainder.split(":") if m] if remainder else []
+
+            try:
+                technique_enum = technique_class(base_name)
+            except ValueError:
+                available_techniques = [s.value for s in technique_class]
+                raise ValueError(
+                    f"Technique '{base_name}' not found for scenario '{scenario_name}'. "
+                    f"Available: {', '.join(available_techniques)}"
+                ) from None
+            technique_enums.append(technique_enum)
+
+            converters = self._resolve_converter_modifiers(modifiers=modifiers, token=token)
+            if not converters:
+                continue
+
+            for concrete in technique_class.expand({technique_enum}):
+                technique_converters.setdefault(concrete.value, []).extend(converters)
+
+        return technique_enums, technique_converters
+
+    def _resolve_converter_modifiers(self, *, modifiers: list[str], token: str) -> list["Converter"]:
+        """
+        Resolve the converter modifiers of a single technique token to converter instances.
+
+        Args:
+            modifiers: The modifier segments of the token (everything after the base technique).
+            token: The full original token, used for error messages.
+
+        Returns:
+            The resolved converter instances in token order.
+
+        Raises:
+            ValueError: If a modifier does not use the ``converter.`` prefix or names a
+                converter that is not registered.
+        """
+        if not modifiers:
+            return []
+
+        instances = ConverterRegistry.get_registry_singleton().instances
+        converters: list[Converter] = []
+        for modifier in modifiers:
+            if not modifier.startswith(_CONVERTER_MODIFIER_PREFIX):
+                raise ValueError(
+                    f"Unknown technique modifier '{modifier}' in '{token}'. "
+                    f"Supported modifiers must use the '{_CONVERTER_MODIFIER_PREFIX}' prefix "
+                    f"(e.g. '{_CONVERTER_MODIFIER_PREFIX}translation_spanish')."
+                )
+            converter_name = modifier[len(_CONVERTER_MODIFIER_PREFIX) :]
+            converter = instances.get(converter_name)
+            if converter is None:
+                available = instances.get_names()
+                available_text = ", ".join(available) if available else "(none registered)"
+                raise ValueError(
+                    f"Converter '{converter_name}' in '{token}' is not a registered converter "
+                    f"instance. Available converters: {available_text}"
+                )
+            converters.append(converter)
+        return converters
+
     async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
         """
-        Instantiate the scenario and call initialize_async.
+        Build and initialize the scenario via the registry.
+
+        Delegates the full create + set-parameters + initialize lifecycle to
+        ``ScenarioRegistry.create_and_initialize_async`` so the registry owns
+        scenario creation and initialization. The run-specific common parameters
+        (target, techniques, dataset config, concurrency) are resolved by
+        ``_build_init_kwargs`` and forwarded as ``init_kwargs``.
 
         Args:
             request: The run request (for scenario_name, scenario_params, and
                 scenario_result_id).
-            init_kwargs: The kwargs to pass to scenario.initialize_async.
+            init_kwargs: The resolved common parameters to pass to
+                scenario.initialize_async.
 
         Returns:
             The fully initialized Scenario instance ready for run_async.
         """
-        constructor_kwargs: dict[str, Any] = {}
-        if request.scenario_result_id:
-            constructor_kwargs["scenario_result_id"] = request.scenario_result_id
         scenario_registry = ScenarioRegistry.get_registry_singleton()
-        scenario = scenario_registry.create_instance(request.scenario_name, **constructor_kwargs)
-        scenario.set_params_from_args(args=request.scenario_params or {})
-        await scenario.initialize_async(**init_kwargs)
-        return scenario
+        return await scenario_registry.create_and_initialize_async(
+            request.scenario_name,
+            scenario_params=request.scenario_params or {},
+            scenario_result_id=request.scenario_result_id or None,
+            **init_kwargs,
+        )
 
     async def _execute_run_async(self, *, scenario_result_id: str) -> None:
         """
@@ -472,26 +592,61 @@ class ScenarioRunService:
         if not error and active is not None:
             error = active.error
 
-        status = ScenarioRunStatus(scenario_result.scenario_run_state)
+        status = scenario_result.scenario_run_state
 
         # Build result fields from DB (always computed so in-progress runs show progress)
         total_attacks = sum(len(results) for results in scenario_result.attack_results.values())
         completed_attacks = total_attacks
-        strategies_used = scenario_result.get_strategies_used()
+        techniques_used = scenario_result.get_techniques_used()
+
+        # Surface per-attack errors and retry pressure regardless of overall run status:
+        # a COMPLETED scenario can still hide errored objectives or rate-limit retries.
+        failed_attacks: list[AttackErrorSummary] = []
+        attack_retries: list[AttackRetrySummary] = []
+        total_retries = 0
+        for atomic_attack_name, results in scenario_result.attack_results.items():
+            for attack_result in results:
+                retries = getattr(attack_result, "total_retries", 0)
+                if isinstance(retries, int):
+                    total_retries += retries
+
+                retry_events = getattr(attack_result, "retry_events", None)
+                if isinstance(retry_events, list) and retry_events:
+                    attack_retries.append(
+                        AttackRetrySummary(
+                            attack_result_id=str(attack_result.attack_result_id),
+                            atomic_attack_name=atomic_attack_name,
+                            retries=retry_events,
+                        )
+                    )
+
+                if attack_result.outcome == AttackOutcome.ERROR:
+                    failed_attacks.append(
+                        AttackErrorSummary(
+                            atomic_attack_name=atomic_attack_name,
+                            objective=attack_result.objective,
+                            error_type=attack_result.error_type,
+                            error_message=attack_result.error_message,
+                            total_retries=retries if isinstance(retries, int) else 0,
+                        )
+                    )
 
         return ScenarioRunSummary(
             scenario_result_id=scenario_result_id,
-            scenario_name=scenario_result.scenario_identifier.name,
-            scenario_version=scenario_result.scenario_identifier.version,
+            scenario_name=scenario_result.scenario_name,
+            scenario_version=scenario_result.scenario_version,
             status=status,
             created_at=scenario_result.creation_time,
             updated_at=scenario_result.completion_time or scenario_result.creation_time,
             error=error,
             error_type=error_type,
-            strategies_used=strategies_used,
+            techniques_used=techniques_used,
             total_attacks=total_attacks,
             completed_attacks=completed_attacks,
             objective_achieved_rate=scenario_result.objective_achieved_rate(),
+            failed_attacks=failed_attacks,
+            attack_retries=attack_retries,
+            total_retries=total_retries,
             labels=scenario_result.labels,
             completed_at=scenario_result.completion_time,
         )
@@ -516,7 +671,7 @@ class ScenarioRunService:
         scenario_result = results[0]
         run_response = self._build_response_from_db(scenario_result=scenario_result)
 
-        if run_response.status != ScenarioRunStatus.COMPLETED:
+        if run_response.status != ScenarioRunState.COMPLETED:
             raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
 
         return scenario_result

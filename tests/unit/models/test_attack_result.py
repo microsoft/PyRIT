@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import warnings
 from contextlib import closing
 from datetime import datetime, timezone
 
@@ -307,8 +306,9 @@ def test_to_dict_from_dict_roundtrip():
         ],
         total_retries=1,
     )
-    roundtripped = AttackResult.from_dict(original.to_dict())
-    assert original.to_dict() == roundtripped.to_dict()
+    dumped = original.model_dump(mode="json")
+    roundtripped = AttackResult.model_validate(dumped)
+    assert dumped == roundtripped.model_dump(mode="json")
 
 
 class TestAttackResultValidation:
@@ -334,34 +334,6 @@ class TestAttackResultValidation:
         """An ISO string carrying an offset is parsed without altering the instant."""
         result = AttackResult(conversation_id="c1", objective="test", timestamp="2026-01-01T12:00:00+00:00")
         assert result.timestamp == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-
-class TestAttackResultLegacyDictDeprecation:
-    """to_dict()/from_dict() are retained as deprecated shims and must warn."""
-
-    def test_to_dict_emits_deprecation_warning(self) -> None:
-        result = AttackResult(conversation_id="c1", objective="test")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result.to_dict()
-
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1
-        assert "to_dict" in str(deprecation_warnings[0].message).lower()
-
-    def test_from_dict_emits_deprecation_warning(self) -> None:
-        result = AttackResult(conversation_id="c1", objective="test")
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            payload = result.to_dict()
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            AttackResult.from_dict(payload)
-
-        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert len(deprecation_warnings) >= 1
-        assert "from_dict" in str(deprecation_warnings[0].message).lower()
 
 
 class TestAttackResultDuplicate:

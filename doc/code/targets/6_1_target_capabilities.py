@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 6.1 Target Capabilities
+# # Target Capabilities
 #
 # Every `PromptTarget` carries a `TargetConfiguration` that declares what it natively supports, what to do
 # when a capability is missing, and how to adapt the conversation when adaptation is permitted. This notebook
@@ -88,7 +88,7 @@ for flag in (
 #
 # Components that need particular capabilities declare them as a `TargetRequirements` and validate at
 # construction time. PyRIT ships a `CHAT_TARGET_REQUIREMENTS` constant for the common case of needing
-# multi-turn + editable history — the replacement for the deprecated `PromptChatTarget` type check.
+# multi-turn + editable history — the replacement for the former `PromptChatTarget` type check.
 #
 # `TargetRequirements.validate` collects every missing capability and raises a single `ValueError` so
 # callers see all violations at once.
@@ -304,7 +304,7 @@ from pyrit.prompt_target import discover_target_capabilities_async
 def _ok_response():
     return [
         Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="assistant",
                     original_value="ok",

@@ -34,10 +34,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
@@ -50,7 +50,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: coverage-report
@@ -68,22 +68,22 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.9.17"
           enable-cache: true
@@ -101,13 +101,15 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run E2E tests (mock mode — no backend/secrets needed)
-        run: npx playwright test --project=mock
+      - name: Run E2E tests (mock and seeded — no credentials needed)
+        run: npx playwright test --fail-on-flaky-tests --project=mock --project=seeded
         env:
           CI: true
+          E2E_SEEDED_MODE: true
+          FAIL_ON_SKIPPED_TESTS: true
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: playwright-report
@@ -115,7 +117,7 @@ jobs:
           retention-days: 7
 
       - name: Upload test results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: test-results
@@ -133,10 +135,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
@@ -150,3 +152,6 @@ jobs:
 
       - name: Run TypeScript type check
         run: npx tsc --noEmit
+
+      - name: Build production frontend
+        run: npm run build

@@ -50,7 +50,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return self._dataset_name
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:

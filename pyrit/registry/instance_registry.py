@@ -29,6 +29,8 @@ from pyrit.models import ComponentIdentifier, Identifiable
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    from pyrit.registry.tag_query import TagQuery
+
 T = TypeVar("T", bound=Identifiable)  # The type of items stored
 
 
@@ -94,6 +96,10 @@ class InstanceRegistry(Protocol[T]):
 
     def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
         """Return entries carrying ``tag`` (optionally matching ``value``), sorted by name."""
+        ...
+
+    def query_by_tags(self, *, query: TagQuery) -> list[RegistryEntry[T]]:
+        """Return entries whose tag keys satisfy the composable ``TagQuery``, sorted by name."""
         ...
 
     def add_tags(self, *, name: str, tags: dict[str, str] | list[str]) -> None:
@@ -196,7 +202,9 @@ class DefaultInstanceRegistry(Generic[T]):
         return resolved
 
     @staticmethod
-    def _normalize_tags(tags: dict[str, str] | list[str] | None = None) -> dict[str, str]:
+    def _normalize_tags(
+        tags: dict[str, str] | list[str] | None = None,
+    ) -> dict[str, str]:
         """
         Normalize tags into a ``dict[str, str]``.
 
@@ -316,6 +324,23 @@ class DefaultInstanceRegistry(Generic[T]):
                 results.append(entry)
         return results
 
+    def query_by_tags(self, *, query: TagQuery) -> list[RegistryEntry[T]]:
+        """
+        Get entries whose tag keys satisfy a composable ``TagQuery``.
+
+        Where ``get_by_tag`` matches a single key (optionally a value), this
+        evaluates an arbitrary AND / OR / exclude predicate built with ``TagQuery``
+        (e.g. ``TagQuery.all("core") & TagQuery.any_of("fast", "cheap")``). Matching
+        is on the tag *keys* only; tag values are not considered.
+
+        Args:
+            query (TagQuery): The predicate to evaluate against each entry's tag keys.
+
+        Returns:
+            list[RegistryEntry[T]]: Matching entries sorted by name.
+        """
+        return [entry for entry in self.get_all_instances() if query.matches(set(entry.tags))]
+
     def add_tags(self, *, name: str, tags: dict[str, str] | list[str]) -> None:
         """
         Add tags to an existing entry.
@@ -391,7 +416,7 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             list[ComponentIdentifier]: The identifier metadata for each instance.
         """
-        from pyrit.registry.base import _matches_filters
+        from pyrit.registry.registry import _matches_filters
 
         if self._metadata_cache is None:
             self._metadata_cache = [

@@ -12,9 +12,9 @@ from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
-from pyrit.setup.initializers.components.scenario_techniques import build_scenario_technique_factories
+from pyrit.setup.initializers.techniques import build_technique_factories
 
 
 class _StubAttack:
@@ -51,10 +51,10 @@ class TestAttackTechniqueRegistrySingleton:
     """Tests for the singleton pattern."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_get_registry_singleton_returns_same_instance(self):
         instance1 = AttackTechniqueRegistry.get_registry_singleton()
@@ -67,9 +67,9 @@ class TestAttackTechniqueRegistrySingleton:
 
         assert isinstance(instance, AttackTechniqueRegistry)
 
-    def test_reset_instance_clears_singleton(self):
+    def test_reset_registry_singleton_clears_singleton(self):
         instance1 = AttackTechniqueRegistry.get_registry_singleton()
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         instance2 = AttackTechniqueRegistry.get_registry_singleton()
 
         assert instance1 is not instance2
@@ -79,19 +79,19 @@ class TestAttackTechniqueRegistryRegister:
     """Tests for registering technique factories."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         self.registry = AttackTechniqueRegistry.get_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_register_technique_stores_factory(self):
         factory = AttackTechniqueFactory(name="stub_attack", attack_class=_StubAttack)
 
         self.registry.register_technique(name="stub_attack", factory=factory)
 
-        assert "stub_attack" in self.registry
-        assert self.registry._registry_items["stub_attack"].instance is factory
+        assert "stub_attack" in self.registry.instances
+        assert self.registry.instances.get_entry("stub_attack").instance is factory
 
     def test_register_technique_with_tags(self):
         factory = AttackTechniqueFactory(name="stub_attack", attack_class=_StubAttack)
@@ -102,7 +102,7 @@ class TestAttackTechniqueRegistryRegister:
             tags=["single_turn", "encoding"],
         )
 
-        entries = self.registry.get_by_tag(tag="single_turn")
+        entries = self.registry.instances.get_by_tag(tag="single_turn")
         assert len(entries) == 1
         assert entries[0].name == "stub_attack"
 
@@ -117,25 +117,25 @@ class TestAttackTechniqueRegistryRegister:
         self.registry.register_technique(name="stub_5", factory=factory1)
         self.registry.register_technique(name="stub_20", factory=factory2)
 
-        assert len(self.registry) == 2
-        assert self.registry.get_names() == ["stub_20", "stub_5"]
+        assert len(self.registry.instances) == 2
+        assert self.registry.instances.get_names() == ["stub_20", "stub_5"]
 
 
 class TestAttackTechniqueRegistryMetadata:
     """Tests for metadata / list_metadata on the registry."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         self.registry = AttackTechniqueRegistry.get_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_build_metadata_returns_component_identifier(self):
         factory = AttackTechniqueFactory(name="stub", attack_class=_StubAttack)
         self.registry.register_technique(name="stub", factory=factory)
 
-        metadata = self.registry.list_metadata()
+        metadata = self.registry.instances.list_metadata()
 
         assert len(metadata) == 1
         assert isinstance(metadata[0], ComponentIdentifier)
@@ -145,35 +145,35 @@ class TestAttackTechniqueRegistryMetadata:
         factory = AttackTechniqueFactory(name="stub", attack_class=_StubAttack)
         self.registry.register_technique(name="stub", factory=factory)
 
-        metadata = self.registry.list_metadata()
+        metadata = self.registry.instances.list_metadata()
 
         assert metadata[0] == factory.get_identifier()
 
 
 class TestAttackTechniqueRegistryInherited:
-    """Tests for inherited BaseInstanceRegistry methods."""
+    """Tests for the registry's ``.instances`` surface."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         self.registry = AttackTechniqueRegistry.get_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_contains(self):
         factory = AttackTechniqueFactory(name="exists", attack_class=_StubAttack)
         self.registry.register_technique(name="exists", factory=factory)
 
-        assert "exists" in self.registry
-        assert "missing" not in self.registry
+        assert "exists" in self.registry.instances
+        assert "missing" not in self.registry.instances
 
     def test_len(self):
-        assert len(self.registry) == 0
+        assert len(self.registry.instances) == 0
 
         factory = AttackTechniqueFactory(name="a", attack_class=_StubAttack)
         self.registry.register_technique(name="a", factory=factory)
 
-        assert len(self.registry) == 1
+        assert len(self.registry.instances) == 1
 
     def test_get_names_returns_sorted(self):
         factory_zeta = AttackTechniqueFactory(name="zeta", attack_class=_StubAttack)
@@ -183,7 +183,7 @@ class TestAttackTechniqueRegistryInherited:
         self.registry.register_technique(name="alpha", factory=factory_alpha)
         self.registry.register_technique(name="beta", factory=factory_beta)
 
-        assert self.registry.get_names() == ["alpha", "beta", "zeta"]
+        assert self.registry.instances.get_names() == ["alpha", "beta", "zeta"]
 
     def test_tag_based_queries(self):
         factory1 = AttackTechniqueFactory(name="f1", attack_class=_StubAttack)
@@ -192,11 +192,11 @@ class TestAttackTechniqueRegistryInherited:
         self.registry.register_technique(name="f1", factory=factory1, tags=["multi_turn"])
         self.registry.register_technique(name="f2", factory=factory2, tags=["single_turn"])
 
-        multi = self.registry.get_by_tag(tag="multi_turn")
+        multi = self.registry.instances.get_by_tag(tag="multi_turn")
         assert len(multi) == 1
         assert multi[0].name == "f1"
 
-        single = self.registry.get_by_tag(tag="single_turn")
+        single = self.registry.instances.get_by_tag(tag="single_turn")
         assert len(single) == 1
         assert single[0].name == "f2"
 
@@ -206,7 +206,7 @@ class TestAttackTechniqueRegistryInherited:
         self.registry.register_technique(name="b", factory=factory_b)
         self.registry.register_technique(name="a", factory=factory_a)
 
-        assert list(self.registry) == ["a", "b"]
+        assert list(self.registry.instances) == ["a", "b"]
 
     def test_get_factories_returns_dict_mapping(self):
         factory_a = AttackTechniqueFactory(name="alpha", attack_class=_StubAttack)
@@ -246,11 +246,11 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
     """Tests for the scorer_override_policy property on the registry."""
 
     def setup_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
         self.registry = AttackTechniqueRegistry.get_registry_singleton()
 
     def teardown_method(self):
-        AttackTechniqueRegistry.reset_instance()
+        AttackTechniqueRegistry.reset_registry_singleton()
 
     def test_default_policy_is_warn(self):
         """Registry defaults to WARN policy."""
@@ -263,10 +263,10 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
 
     def test_policy_passed_to_factories_via_register_from_factories(self):
         """Factories registered via register_from_factories inherit the registry's default policy."""
-        factory = AttackTechniqueFactory(name="stub_policy", attack_class=_StubAttack, strategy_tags=["test"])
+        factory = AttackTechniqueFactory(name="stub_policy", attack_class=_StubAttack, technique_tags=["test"])
         self.registry.register_from_factories([factory])
 
-        stored = self.registry._registry_items["stub_policy"].instance
+        stored = self.registry.instances.get_entry("stub_policy").instance
         assert stored._scorer_override_policy == ScorerOverridePolicy.WARN
 
 
@@ -280,19 +280,19 @@ def _scenario_factories() -> list[AttackTechniqueFactory]:
     not depend on environment variables or OpenAIChatTarget.
     """
     if not SCENARIO_FACTORIES_FIXTURE:
-        TargetRegistry.reset_instance()
+        TargetRegistry.reset_registry_singleton()
         adv_target = MagicMock(spec=PromptTarget)
         adv_target.capabilities.includes.return_value = True
-        TargetRegistry.get_registry_singleton().register_instance(adv_target, name="adversarial_chat")
-        SCENARIO_FACTORIES_FIXTURE.extend(build_scenario_technique_factories())
+        TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
+        SCENARIO_FACTORIES_FIXTURE.extend(build_technique_factories())
         # This runs at collection time (parametrize). Reset so we don't leak the mock
         # "adversarial_chat" into the global TargetRegistry singleton of every xdist worker.
-        TargetRegistry.reset_instance()
+        TargetRegistry.reset_registry_singleton()
     return SCENARIO_FACTORIES_FIXTURE
 
 
 class TestScenarioTechniqueFactoriesValid:
-    """Validate that every factory built by ``build_scenario_technique_factories`` is well-formed."""
+    """Validate that every factory built by ``build_technique_factories`` is well-formed."""
 
     @pytest.mark.parametrize("factory", _scenario_factories(), ids=lambda f: f.name)
     def test_factory_attack_class_set(self, factory: AttackTechniqueFactory):
@@ -314,17 +314,17 @@ class TestScenarioTechniqueFactoriesValid:
 
 
 class TestPairTechniqueRegistration:
-    """Targeted tests for the PAIR technique factory in build_scenario_technique_factories()."""
+    """Targeted tests for the PAIR technique factory in build_technique_factories()."""
 
     def test_pair_factory_registered_with_pair_attack_class(self):
         from pyrit.executor.attack import PAIRAttack
 
-        factories = build_scenario_technique_factories()
+        factories = build_technique_factories()
         pair_factories = [f for f in factories if f.name == "pair"]
         assert len(pair_factories) == 1, "Expected exactly one 'pair' factory"
         factory = pair_factories[0]
         assert factory.attack_class is PAIRAttack
-        assert set(factory.strategy_tags) >= {"core", "multi_turn"}
+        assert set(factory.technique_tags) >= {"extra", "multi_turn"}
         assert not factory._attack_kwargs, "PAIR defaults are encoded on PAIRAttack itself, not via attack_kwargs"
 
 
@@ -578,3 +578,122 @@ class TestScorerOverrideTypeInference:
 
         assert technique is not None
         assert not any("does not accept" in record.message for record in caplog.records)
+
+
+def _make_pool() -> list[AttackTechniqueFactory]:
+    """A small pool of tagged factories for exercising the technique-class builder."""
+    return [
+        AttackTechniqueFactory(name="alpha", attack_class=_StubAttack, technique_tags=["light", "single_turn"]),
+        AttackTechniqueFactory(name="beta", attack_class=_StubAttack, technique_tags=["light", "multi_turn"]),
+        AttackTechniqueFactory(name="gamma", attack_class=_StubAttack, technique_tags=["multi_turn"]),
+    ]
+
+
+class TestBuildTechniqueClassFromFactories:
+    """Tests for the ``build_technique_class_from_factories`` default/aggregate contract."""
+
+    def test_catalog_tags_auto_promote_to_aggregates(self):
+        """Every catalog tag in the pool becomes a selectable aggregate expanding to its techniques."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="AutoAggTechnique",
+            factories=_make_pool(),
+        )
+        aggregates = cls.get_aggregate_tags()
+        assert {"all", "light", "single_turn", "multi_turn"} <= aggregates
+        assert {c.value for c in cls.expand({cls("light")})} == {"alpha", "beta"}
+
+    def test_default_tags_builds_default_aggregate_and_default_returns_it(self):
+        """``default_tags`` builds the DEFAULT aggregate; ``default()`` returns it, expanding to tagged techniques."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="DefaultTagsTechnique",
+            factories=_make_pool(),
+            default_tags={"light"},
+        )
+        assert cls.default() == cls("default")
+        assert {c.value for c in cls.expand({cls.default()})} == {"alpha", "beta"}
+
+    def test_default_names_builds_default_aggregate_from_names(self):
+        """``default_names`` builds the DEFAULT aggregate from exact names."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="DefaultNamesTechnique",
+            factories=_make_pool(),
+            default_names={"gamma"},
+        )
+        assert cls.default() == cls("default")
+        assert {c.value for c in cls.expand({cls.default()})} == {"gamma"}
+
+    def test_no_default_leaves_attribute_unset_and_falls_back_to_all(self):
+        """With no default, the builder records nothing and ``default()`` owns the single ALL fallback."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="NoDefaultTechnique",
+            factories=_make_pool(),
+        )
+        assert not hasattr(cls, "_default_technique_value")
+        assert "default" not in cls.get_aggregate_tags()
+        assert cls.default() == cls["ALL"]
+
+    def test_default_selection_matching_nothing_falls_back_to_all(self):
+        """A default set that matches no pool technique builds no DEFAULT and falls back to ALL."""
+        cls = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="EmptyDefaultTechnique",
+            factories=_make_pool(),
+            default_tags={"nonexistent"},
+        )
+        assert not hasattr(cls, "_default_technique_value")
+        assert cls.default() == cls["ALL"]
+
+    def test_both_default_tags_and_names_raises(self):
+        """``default_tags`` and ``default_names`` are mutually exclusive."""
+        with pytest.raises(ValueError, match="at most one of default_tags or default_names"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="BothDefaultsTechnique",
+                factories=_make_pool(),
+                default_tags={"light"},
+                default_names={"gamma"},
+            )
+
+    @pytest.mark.parametrize("name", ["ALL", "all", "DEFAULT", "default"])
+    def test_reserved_factory_name_raises(self, name: str):
+        """Factories cannot shadow the synthetic ALL or DEFAULT members."""
+        factories = [AttackTechniqueFactory(name=name, attack_class=_StubAttack)]
+
+        with pytest.raises(ValueError, match="reserved aggregate"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="ReservedFactoryTechnique",
+                factories=factories,
+            )
+
+    def test_duplicate_factory_name_raises(self):
+        """Duplicate factory names fail instead of silently overwriting an enum member."""
+        factories = [
+            AttackTechniqueFactory(name="duplicate", attack_class=_StubAttack),
+            AttackTechniqueFactory(name="duplicate", attack_class=_StubAttack),
+        ]
+
+        with pytest.raises(ValueError, match="enum member name 'duplicate'"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="DuplicateFactoryTechnique",
+                factories=factories,
+            )
+
+    def test_reserved_aggregate_tag_raises(self):
+        """An uppercase reserved tag cannot overwrite the synthetic ALL member."""
+        factories = [AttackTechniqueFactory(name="alpha", attack_class=_StubAttack, technique_tags=["ALL"])]
+
+        with pytest.raises(ValueError, match="enum member name 'ALL'"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="ReservedTagTechnique",
+                factories=factories,
+            )
+
+    def test_case_colliding_aggregate_tags_raise(self):
+        """Tags that normalize to the same enum member name fail explicitly."""
+        factories = [
+            AttackTechniqueFactory(name="alpha", attack_class=_StubAttack, technique_tags=["foo", "FOO"]),
+        ]
+
+        with pytest.raises(ValueError, match="enum member name 'FOO'"):
+            AttackTechniqueRegistry.build_technique_class_from_factories(
+                class_name="CollidingTagTechnique",
+                factories=factories,
+            )

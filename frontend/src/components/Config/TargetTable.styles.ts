@@ -1,8 +1,16 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import {
+  TOUCH_INPUT_QUERY,
+  MINIMUM_TOUCH_TARGET_SIZE,
+  mobileTouchTarget,
+  mobileTouchTargetHeight,
+} from '../../styles/touchTargets'
 
 export const useTargetTableStyles = makeStyles({
   tableContainer: {
     flex: 1,
+    minWidth: 0,
+    maxWidth: '100%',
     overflow: 'auto',
   },
   table: {
@@ -71,6 +79,28 @@ export const useTargetTableStyles = makeStyles({
   },
   helpHeader: {
     cursor: 'help',
+  },
+  filterRow: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    minWidth: 0,
+    marginBottom: tokens.spacingVerticalS,
+    gap: tokens.spacingHorizontalS,
+  },
+  filterSelect: {
+    flex: '1 1 12.5rem',
+    minWidth: 0,
+    maxWidth: '20rem',
+    ...mobileTouchTargetHeight,
+    '& > select': {
+      [TOUCH_INPUT_QUERY]: {
+        minHeight: MINIMUM_TOUCH_TARGET_SIZE,
+      },
+    },
+  },
+  rowAction: {
+    ...mobileTouchTarget,
   },
   /** Sub-row for inner targets of a RoundRobinTarget — visually indented with a
    *  lighter background so it's clear these are children, not standalone targets. */

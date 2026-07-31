@@ -45,7 +45,7 @@ def hf_chat_target(hf_token, hf_endpoint, sqlite_instance) -> OpenAIChatTarget:
         endpoint=hf_endpoint,
         api_key=hf_token,
         model_name=DEFAULT_HF_MODEL,
-        max_tokens=30,
+        extra_body_parameters={"max_tokens": 30},
     )
 
 
@@ -86,7 +86,7 @@ async def test_chat_completion_with_temperature(hf_token, hf_endpoint, sqlite_in
         endpoint=hf_endpoint,
         api_key=hf_token,
         model_name=DEFAULT_HF_MODEL,
-        max_tokens=30,
+        extra_body_parameters={"max_tokens": 30},
         temperature=0.7,
     )
 

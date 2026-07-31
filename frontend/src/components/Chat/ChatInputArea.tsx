@@ -10,6 +10,7 @@ import {
 import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular } from '@fluentui/react-icons'
 import { MessageAttachment, TargetInstance } from '../../types'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
+import SystemPromptSetup from './SystemPromptSetup'
 import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
 
 // ---------------------------------------------------------------------------
@@ -32,9 +33,10 @@ interface StatusBannerProps {
   className: string
   textClassName: string
   buttonTestId?: string
+  buttonClassName?: string
 }
 
-function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId }: StatusBannerProps) {
+function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId, buttonClassName }: StatusBannerProps) {
   return (
     <div className={className} data-testid={testId}>
       {icon}
@@ -43,6 +45,7 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
       </Text>
       {onButtonClick && buttonText && (
         <Button
+          className={buttonClassName}
           appearance="primary"
           icon={buttonIcon}
           onClick={onButtonClick}
@@ -329,9 +332,15 @@ interface ChatInputAreaProps {
   /** Chip describing a text→file conversion (e.g. PDFConverter output). */
   convertedFileChip?: ConvertedFileChip | null
   onClearConvertedFileChip?: () => void
+  /** Whether to show the system-prompt setup (only for a brand-new conversation). */
+  showSystemPrompt?: boolean
+  /** Whether the active target supports system prompts (gates the setup's enabled state). */
+  supportsSystemPrompt?: boolean
+  systemPrompt?: string
+  onSystemPromptChange?: (value: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -497,6 +506,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onButtonClick={onConfigureTarget}
             testId="no-target-banner"
             buttonTestId="configure-target-input-btn"
+            buttonClassName={styles.touchTarget}
           />
         ) : operatorLocked ? (
           <StatusBanner
@@ -509,6 +519,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onButtonClick={onUseAsTemplate}
             testId="operator-locked-banner"
             buttonTestId="use-as-template-btn"
+            buttonClassName={styles.touchTarget}
           />
         ) : crossTargetLocked ? (
           <StatusBanner
@@ -521,6 +532,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onButtonClick={onUseAsTemplate}
             testId="cross-target-banner"
             buttonTestId="use-as-template-btn"
+            buttonClassName={styles.touchTarget}
           />
         ) : singleTurnLimitReached ? (
           <StatusBanner
@@ -533,10 +545,18 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onButtonClick={onNewConversation}
             testId="single-turn-banner"
             buttonTestId="new-conversation-btn"
+            buttonClassName={styles.touchTarget}
           />
         ) : (
         <>
         <div className={styles.inputWrapper}>
+          {showSystemPrompt && onSystemPromptChange && (
+            <SystemPromptSetup
+              value={systemPrompt}
+              onChange={onSystemPromptChange}
+              disabled={!!activeTarget && !supportsSystemPrompt}
+            />
+          )}
           <input
             ref={fileInputRef}
             type="file"

@@ -5,7 +5,7 @@
 High-level scenario classes for running attack configurations.
 
 Core classes can be imported directly from this module:
-    from pyrit.scenario import Scenario, AtomicAttack, ScenarioStrategy
+    from pyrit.scenario import Scenario, AtomicAttack, ScenarioTechnique
 
 Specific scenarios should be imported from their subpackages:
     from pyrit.scenario.airt import RapidResponse, Cyber
@@ -18,17 +18,20 @@ import pkgutil
 import sys
 from types import ModuleType
 
-from pyrit.common.parameter import Parameter
 from pyrit.models import ScenarioIdentifier, ScenarioResult
+from pyrit.models.parameter import Parameter
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
     AttackTechniqueFactory,
     BaselineAttackPolicy,
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
     DatasetConfiguration,
+    DatasetSourceKind,
+    ResolvedDataset,
     Scenario,
-    ScenarioCompositeStrategy,
-    ScenarioStrategy,
+    ScenarioTechnique,
 )
 
 # Import scenario submodules directly and register them as virtual subpackages
@@ -79,11 +82,14 @@ __all__ = [
     "AttackTechnique",
     "AttackTechniqueFactory",
     "BaselineAttackPolicy",
+    "CompoundDatasetAttackConfiguration",
+    "DatasetAttackConfiguration",
     "DatasetConfiguration",
+    "DatasetSourceKind",
     "Parameter",
+    "ResolvedDataset",
     "Scenario",
-    "ScenarioCompositeStrategy",
-    "ScenarioStrategy",
+    "ScenarioTechnique",
     "ScenarioIdentifier",
     "ScenarioResult",
     "adaptive",

@@ -165,3 +165,8 @@ def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(pat
 
     assert result is mock_metrics
     mock_find.assert_called_once()
+
+
+def test_general_true_false_no_chat_target_raises():
+    with pytest.raises(ValueError, match="A chat_target must be provided"):
+        SelfAskGeneralTrueFalseScorer(chat_target=None, system_prompt_format_string="prompt")

@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import abc
 import asyncio
-import json
 import logging
-import uuid
 from abc import abstractmethod
 from typing import (
     TYPE_CHECKING,
@@ -16,27 +14,19 @@ from typing import (
     cast,
 )
 
-from pyrit.exceptions import (
-    InvalidJsonException,
-    PyritException,
-    pyrit_json_retry,
-    remove_markdown_json,
-)
+from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
-    JSON_SCHEMA_METADATA_KEY,
     ChatMessageRole,
     ComponentIdentifier,
     Identifiable,
-    JsonSchemaDefinition,
     Message,
     MessagePiece,
-    PromptDataType,
+    PromptResponseError,
     Score,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     ScoreType,
-    UnvalidatedScore,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
@@ -85,6 +75,15 @@ class Scorer(Identifiable, abc.ABC):
     #: Note: Partial content extraction is supported for ``OpenAIChatTarget``
     #: (Chat Completions API) and ``OpenAIResponseTarget`` (Responses API).
     score_blocked_content: bool = False
+
+    #: Controls what happens when the scorer's *own* LLM response is blocked by content
+    #: filtering (common in red-teaming, since the scorer's rationale quotes harmful content).
+    #: When True (default), scoring raises ``ScorerLLMResponseBlockedException`` — a blocked
+    #: scorer endpoint is treated as a real error. When False, scoring returns the scorer's
+    #: type default instead (False for true/false scorers, 0.0 for float-scale). This is
+    #: distinct from ``score_blocked_content``, which concerns the target-under-test response.
+    #: Set this on scorer instances before use. Defaults to True.
+    raise_if_scorer_blocks: bool = True
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -141,7 +140,7 @@ class Scorer(Identifiable, abc.ABC):
     @property
     def scorer_type(self) -> ScoreType:
         """
-        Get the scorer type based on class hierarchy.
+        The scorer type based on class hierarchy.
 
         Returns:
             ScoreType: "true_false" for TrueFalseScorer subclasses,
@@ -224,8 +223,9 @@ class Scorer(Identifiable, abc.ABC):
                 Use "assistant" to score only real assistant responses, or "simulated_assistant"
                 to score only simulated responses. Defaults to None (no filtering).
             skip_on_error_result (bool): If True, skip scoring if the message contains an error.
-                When self.score_blocked_content is also True, blocked responses with partial content
-                will still be scored instead of skipping. Defaults to False.
+                SDK-provided structured refusals remain scoreable. When self.score_blocked_content
+                is also True, blocked responses with partial content will still be scored instead
+                of skipping. Defaults to False.
             infer_objective_from_request (bool): If True, infer the objective from the message's previous request
                 when objective is not provided. Defaults to False.
 
@@ -233,36 +233,69 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: A list of Score objects representing the results.
 
         Raises:
+            ScorerLLMResponseBlockedException: If the scorer's own LLM response is blocked by
+                content filtering and ``raise_if_scorer_blocks`` is True (the default).
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        self._validator.validate(message, objective=objective)
+        # Structured refusals are persisted as blocked error pieces, but scorers should
+        # receive the refusal explanation as text. Keep response_error="blocked" so
+        # refusal scorers can still use their deterministic blocked-response path.
+        scoring_message = self._apply_structured_refusal_substitution(message)
+
+        # When score_blocked_content is enabled, blocked pieces with partial content
+        # take precedence and are replaced with text substitutes (response_error="none").
+        if self.score_blocked_content:
+            scoring_message = self._apply_blocked_content_substitution(scoring_message)
+
+        self._validator.validate(scoring_message, objective=objective)
 
         if role_filter is not None and message.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
 
         if skip_on_error_result and message.is_error():
+            error_pieces = [
+                piece
+                for piece in message.message_pieces
+                if piece.has_error() or piece.converted_value_data_type == "error"
+            ]
+            only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
             # When score_blocked_content is enabled and the message has partial content,
             # don't skip — let _score_async handle the substitution.
-            has_partial = any(
-                p.prompt_metadata.get("partial_content") for p in message.message_pieces if p.is_blocked()
+            all_errors_have_partial_content = all(
+                piece.is_blocked() and piece.prompt_metadata.get("partial_content") for piece in error_pieces
             )
-            if not (self.score_blocked_content and has_partial):
+            if not only_structured_refusals and not (self.score_blocked_content and all_errors_have_partial_content):
                 logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
                 return []
 
         if infer_objective_from_request and (not objective):
             objective = self._extract_objective_from_response(message)
 
-        # When score_blocked_content is enabled, create a modified message where blocked pieces
-        # with partial content are replaced with text-type substitutes (response_error="none").
-        scoring_message = self._apply_blocked_content_substitution(message) if self.score_blocked_content else message
-
         try:
             scores = await self._score_async(
                 scoring_message,
                 objective=objective,
+            )
+        except ScorerLLMResponseBlockedException as e:
+            # The scorer's own LLM response was content-filtered. By default this is a real
+            # error and re-raised; when raise_if_scorer_blocks is False, fall back to the
+            # scorer's type default (False / 0.0) instead. The decision lives here in the
+            # Scorer, not the transport (see doc/code/framework.md).
+            if self.raise_if_scorer_blocks:
+                e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
+                e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
+                raise
+            logger.info(
+                "Scorer %s LLM response was blocked by content filtering; "
+                "returning default score (raise_if_scorer_blocks=False).",
+                self.__class__.__name__,
+            )
+            scores = self._build_fallback_score(
+                message=scoring_message,
+                objective=objective,
+                scorer_response_blocked=True,
             )
         except PyritException as e:
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
@@ -329,7 +362,37 @@ class Scorer(Identifiable, abc.ABC):
         raise NotImplementedError
 
     @staticmethod
-    def _create_text_piece_from_blocked(piece: MessagePiece) -> MessagePiece | None:
+    def _create_scoring_text_piece(
+        *,
+        piece: MessagePiece,
+        content: str,
+        response_error: PromptResponseError,
+    ) -> MessagePiece:
+        """
+        Create a text-typed scoring view that retains the persisted piece identity.
+
+        Returns:
+            A text piece for scorer consumption.
+        """
+        return MessagePiece(
+            id=piece.id,
+            role=piece.api_role,
+            original_value=piece.original_value,
+            converted_value=content,
+            original_value_data_type=piece.original_value_data_type,
+            converted_value_data_type="text",
+            conversation_id=piece.conversation_id,
+            sequence=piece.sequence,
+            prompt_metadata=dict(piece.prompt_metadata),
+            converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
+            response_error=response_error,
+            timestamp=piece.timestamp,
+            original_prompt_id=piece.original_prompt_id,
+            not_in_memory=piece.not_in_memory,
+        )
+
+    @classmethod
+    def _create_text_piece_from_blocked(cls, piece: MessagePiece) -> MessagePiece | None:
         """
         Create a text-typed copy of a blocked MessagePiece using its partial content.
 
@@ -348,21 +411,47 @@ class Scorer(Identifiable, abc.ABC):
         if not partial_content:
             return None
 
-        return MessagePiece(
-            id=piece.id,
-            role=piece.api_role,
-            original_value=piece.original_value,
-            converted_value=partial_content,
-            original_value_data_type=piece.original_value_data_type,
-            converted_value_data_type="text",
-            conversation_id=piece.conversation_id,
-            sequence=piece.sequence,
-            labels=piece.labels,
-            prompt_metadata=piece.prompt_metadata,
-            converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
+        return cls._create_scoring_text_piece(
+            piece=piece,
+            content=partial_content,
             response_error="none",
-            timestamp=piece.timestamp,
         )
+
+    @classmethod
+    def _create_text_piece_from_structured_refusal(cls, piece: MessagePiece) -> MessagePiece | None:
+        """
+        Create a blocked text scoring view for an SDK-provided structured refusal.
+
+        Returns:
+            A text scoring view, or ``None`` when the piece is not a structured refusal.
+        """
+        refusal = piece.structured_refusal
+        if not refusal:
+            return None
+        return cls._create_scoring_text_piece(
+            piece=piece,
+            content=refusal,
+            response_error="blocked",
+        )
+
+    def _apply_structured_refusal_substitution(self, message: Message) -> Message:
+        """
+        Expose structured refusal explanations as text while preserving blocked semantics.
+
+        Returns:
+            A scoring message with structured refusals substituted, or the original message.
+        """
+        substituted = False
+        new_pieces: list[MessagePiece] = []
+        for piece in message.message_pieces:
+            substitute = self._create_text_piece_from_structured_refusal(piece)
+            if substitute:
+                new_pieces.append(substitute)
+                substituted = True
+                continue
+            new_pieces.append(piece)
+
+        return Message(message_pieces=new_pieces) if substituted else message
 
     def _apply_blocked_content_substitution(self, message: Message) -> Message:
         """
@@ -406,7 +495,9 @@ class Scorer(Identifiable, abc.ABC):
         ]
 
     @abstractmethod
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         """
         Return neutral fallback ``Score`` objects when ``_score_async`` produced no scores.
 
@@ -425,6 +516,9 @@ class Scorer(Identifiable, abc.ABC):
         Args:
             message (Message): The (possibly substituted) message that was scored.
             objective (str | None): The objective associated with this scoring call.
+            scorer_response_blocked (bool): When True, the fallback was triggered because the
+                scorer's *own* LLM response was blocked by content filtering (not the
+                target-under-test). Subclasses should reflect this in the rationale.
 
         Returns:
             list[Score]: One or more fallback scores. Must not be empty.
@@ -667,182 +761,6 @@ class Scorer(Identifiable, abc.ABC):
             return 0.0
 
         return (value - min_value) / (max_value - min_value)
-
-    @pyrit_json_retry
-    async def _score_value_with_llm_async(
-        self,
-        *,
-        prompt_target: PromptTarget,
-        system_prompt: str,
-        message_value: str,
-        message_data_type: PromptDataType,
-        scored_prompt_id: str,
-        prepended_text_message_piece: str | None = None,
-        category: Sequence[str] | str | None = None,
-        objective: str | None = None,
-        score_value_output_key: str = "score_value",
-        rationale_output_key: str = "rationale",
-        description_output_key: str = "description",
-        metadata_output_key: str = "metadata",
-        category_output_key: str = "category",
-        response_json_schema: JsonSchemaDefinition | None = None,
-    ) -> UnvalidatedScore:
-        """
-        Send a request to a target, and take care of retries.
-
-        The scorer target response should be JSON with value, rationale, and optional metadata and
-        description fields.
-
-        Args:
-            prompt_target (PromptTarget): The target LLM to send the message to.
-            system_prompt (str): The system-level prompt that guides the behavior of the target LLM.
-            message_value (str): The actual value or content to be scored by the LLM (e.g., text, image path,
-                audio path).
-            message_data_type (PromptDataType): The type of the data being sent in the message (e.g., "text",
-                "image_path", "audio_path").
-            scored_prompt_id (str): The ID of the scored prompt.
-            prepended_text_message_piece (str | None): Text context to prepend before the main
-                message_value. When provided, creates a multi-piece message with this text first, followed
-                by the message_value. Useful for adding objective/context when scoring non-text content.
-                Defaults to None.
-            category (Sequence[str] | str | None): The category of the score. Can also be parsed from
-                the JSON response if not provided. Defaults to None.
-            objective (str | None): A description of the objective that is associated with the score,
-                used for contextualizing the result. Defaults to None.
-            score_value_output_key (str): The key in the JSON response that contains the score value.
-                Defaults to "score_value".
-            rationale_output_key (str): The key in the JSON response that contains the rationale.
-                Defaults to "rationale".
-            description_output_key (str): The key in the JSON response that contains the description.
-                Defaults to "description".
-            metadata_output_key (str): The key in the JSON response that contains the metadata.
-                Defaults to "metadata".
-            category_output_key (str): The key in the JSON response that contains the category.
-                Defaults to "category".
-            response_json_schema (JsonSchemaDefinition | None): An optional JSON schema constraining
-                the scoring response. When provided, it is written to the request metadata; targets
-                that natively support JSON schemas enforce it, while others have it omitted by the
-                normalization pipeline. Defaults to None.
-
-        Returns:
-            UnvalidatedScore: The score object containing the response from the target LLM.
-                score_value still needs to be normalized and validated.
-
-        Raises:
-            ValueError: If required keys are missing from the response or if the response format is invalid.
-            InvalidJsonException: If the response is not valid JSON.
-            Exception: For other unexpected errors during scoring.
-        """
-        conversation_id = str(uuid.uuid4())
-
-        prompt_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=conversation_id,
-        )
-        prompt_metadata: dict[str, Any] = {"response_format": "json"}
-        if response_json_schema is not None:
-            # Always forward the schema; the target's normalization pipeline omits it
-            # when the target cannot natively enforce a JSON schema.
-            prompt_metadata[JSON_SCHEMA_METADATA_KEY] = response_json_schema
-
-        # Build message pieces - prepended text context first (if provided), then the main message being scored
-        message_pieces: list[MessagePiece] = []
-
-        # Add prepended text context piece if provided (e.g., objective context for non-text scoring)
-        if prepended_text_message_piece:
-            message_pieces.append(
-                MessagePiece(
-                    role="user",
-                    original_value=prepended_text_message_piece,
-                    original_value_data_type="text",
-                    converted_value_data_type="text",
-                    conversation_id=conversation_id,
-                    prompt_metadata=prompt_metadata,
-                )
-            )
-
-        # Add the main message piece being scored
-        message_pieces.append(
-            MessagePiece(
-                role="user",
-                original_value=message_value,
-                original_value_data_type=message_data_type,
-                converted_value_data_type=message_data_type,
-                conversation_id=conversation_id,
-                prompt_metadata=prompt_metadata,
-            )
-        )
-
-        scorer_llm_request = Message(message_pieces=message_pieces)
-        try:
-            response = await prompt_target.send_prompt_async(message=scorer_llm_request)
-        except Exception as ex:
-            raise Exception(f"Error scoring prompt with original prompt ID: {scored_prompt_id}") from ex
-
-        response_json: str = ""
-        try:
-            # Get the text piece which contains the JSON response containing the score_value and rationale from the LLM
-            text_piece = next(
-                piece for piece in response[0].message_pieces if piece.converted_value_data_type == "text"
-            )
-            response_json = text_piece.converted_value
-
-            response_json = remove_markdown_json(response_json)
-            parsed_response = json.loads(response_json)
-            category_response = parsed_response.get(category_output_key)
-
-            if category_response and category:
-                raise ValueError("Category is present in the response and an argument")
-
-            # Validate and normalize category to a list of strings
-            cat_val = category_response if category_response is not None else category
-            normalized_category: list[str] | None
-            if cat_val is None:
-                normalized_category = None
-            elif isinstance(cat_val, str):
-                normalized_category = [cat_val]
-            elif isinstance(cat_val, list):
-                if not all(isinstance(x, str) for x in cat_val):
-                    raise ValueError("'category' must be a string or a list of strings")
-                normalized_category = cat_val  # type: ignore[ty:invalid-assignment]
-            else:
-                # JSON must yield either a string or a list of strings
-                raise ValueError("'category' must be a string or a list of strings")
-
-            # Normalize metadata to a dictionary with string keys and string/int/float values
-            raw_md = parsed_response.get(metadata_output_key)
-            normalized_md: dict[str, str | int | float] | None
-            if raw_md is None:
-                normalized_md = None
-            elif isinstance(raw_md, dict):
-                # Coerce keys to str and filter to str/int/float values only
-                normalized_md = {str(k): v for k, v in raw_md.items() if isinstance(v, (str, int, float))}
-                # If dictionary becomes empty after filtering, keep as empty dict
-            elif isinstance(raw_md, (str, int, float)):
-                # Wrap primitive metadata into a namespaced field
-                normalized_md = {"metadata": raw_md}
-            else:
-                # Unrecognized metadata shape; drop to avoid downstream errors
-                normalized_md = None
-
-            score = UnvalidatedScore(
-                raw_score_value=str(parsed_response[score_value_output_key]),
-                score_value_description=parsed_response.get(description_output_key),
-                score_category=normalized_category,
-                score_rationale=parsed_response[rationale_output_key],
-                scorer_class_identifier=self.get_identifier(),
-                score_metadata=normalized_md,
-                message_piece_id=scored_prompt_id,
-                objective=objective,
-            )
-
-        except json.JSONDecodeError:
-            raise InvalidJsonException(message=f"Invalid JSON response: {response_json}") from None
-
-        except KeyError:
-            raise InvalidJsonException(message=f"Invalid JSON response, missing Key: {response_json}") from None
-
-        return score
 
     def _extract_objective_from_response(self, response: Message) -> str:
         """

@@ -56,6 +56,15 @@
   note      = {NeurIPS 2024 Datasets and Benchmarks Track},
 }
 
+@article{han2024wildguard,
+  title     = {{WildGuard}: Open One-Stop Moderation Tools for Safety Risks, Jailbreaks, and Refusals of {LLMs}},
+  author    = {Seungju Han and Kavel Rao and Allyson Ettinger and Liwei Jiang and Bill Yuchen Lin and Nathan Lambert and Yejin Choi and Nouha Dziri},
+  journal   = {arXiv preprint arXiv:2406.18495},
+  year      = {2024},
+  url       = {https://arxiv.org/abs/2406.18495},
+  note      = {NeurIPS 2024 Datasets and Benchmarks Track},
+}
+
 @article{sheshadri2024lat,
   title     = {Latent Adversarial Training Improves Robustness to Persistent Harmful Behaviors in {LLMs}},
   author    = {Abhay Sheshadri and Aidan Ewart and Phillip Guo and Aengus Lynch and Cindy Wu and Vivek Hebbar and Henry Sleight and Asa Cooper Stickland and Ethan Perez and Dylan Hadfield-Menell and Stephen Casper},
@@ -68,8 +77,8 @@
   title     = {The Trojan Detection Challenge 2023 ({LLM} Edition)},
   author    = {Mantas Mazeika and Andy Zou and Norman Mu and Long Phan and Zifan Wang and Chunru Yu and Adam Khoja and Fengqing Jiang and Aidan O'Gara and Ellie Sakhaee and Zhen Xiang and Arezoo Rajabi and Dan Hendrycks and Radha Poovendran and Bo Li and David Forsyth},
   year      = {2023},
-  url       = {https://trojandetection.ai/},
-  note      = {NeurIPS 2023 Trojan Detection Challenge competition. No canonical paper write-up; the cited URL is the official competition website.},
+  url       = {https://proceedings.mlr.press/v220/mazeika23a.html},
+  note      = {NeurIPS Trojan Detection Challenge series. Official challenge site may be unavailable; using the proceedings page for archival access.},
 }
 
 @misc{promptfoo2025ccp,
@@ -99,9 +108,12 @@
 @article{inie2025summon,
   title     = {Summon a Demon and Bind it: A Grounded Theory of {LLM} Red Teaming},
   author    = {Nanna Inie and Jonathan Stray and Leon Derczynski},
-  journal   = {PLoS ONE},
+  journal   = {PLOS ONE},
+  volume    = {20},
+  number    = {1},
+  pages     = {e0314658},
   year      = {2025},
-  url       = {https://arxiv.org/abs/2311.06237},
+  url       = {https://doi.org/10.1371/journal.pone.0314658},
 }
 
 @misc{vantaylor2024socialbias,
@@ -258,6 +270,15 @@
   year      = {2024},
   url       = {https://arxiv.org/abs/2404.01833},
   note      = {Accepted at USENIX Security 2025. Project site: \url{https://crescendo-the-multiturn-jailbreak.github.io/}},
+}
+
+@article{russinovich2025cca,
+  title     = {Jailbreaking is (Mostly) Simpler Than You Think},
+  author    = {Mark Russinovich and Ahmed Salem},
+  journal   = {arXiv preprint arXiv:2503.05264},
+  year      = {2025},
+  url       = {https://arxiv.org/abs/2503.05264},
+  note      = {Introduces the Context Compliance Attack (CCA).},
 }
 
 @article{aqrawi2024singleturncrescendo,
@@ -471,12 +492,15 @@
   url       = {https://arxiv.org/abs/2307.04657},
 }
 
-@article{shen2023donotanything,
+@inproceedings{shen2023donotanything,
   title     = {``Do Anything Now'': Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models},
   author    = {Xinyue Shen and Zeyuan Chen and Michael Backes and Yun Shen and Yang Zhang},
-  journal   = {arXiv preprint arXiv:2308.03825},
-  year      = {2023},
-  url       = {https://arxiv.org/abs/2308.03825},
+  booktitle = {Proceedings of the 2024 ACM SIGSAC Conference on Computer and Communications Security},
+  pages     = {1671--1685},
+  year      = {2024},
+  url       = {https://doi.org/10.1145/3658644.3670388},
+  doi       = {10.1145/3658644.3670388},
+  note      = {Official dataset: https://huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts},
 }
 
 @article{aakanksha2024multilingual,
@@ -517,6 +541,14 @@
   journal   = {arXiv preprint arXiv:2503.13081},
   year      = {2025},
   url       = {https://arxiv.org/abs/2503.13081},
+}
+
+@article{choi2026xlsafetybench,
+  title     = {{XL-SafetyBench}: A Country-Grounded Cross-Cultural Benchmark for LLM Safety and Cultural Sensitivity},
+  author    = {Dasol Choi and Eugenia Kim and Jaewon Noh and Sang Seo and Eunmi Kim and Myunggyo Oh and Yunjin Park and Brigitta Jesica Kartono and Josef Pichlmeier and Helena Berndt and Sai Krishna Mendu and Glenn Johannes Tungka and {\"O}zlem G{\"o}k{\c{c}}e and Suresh Gehlot and Katherine Pratt and Amanda Minnich and Haon Park},
+  journal   = {arXiv preprint arXiv:2605.05662},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2605.05662},
 }
 
 @article{cui2024orbench,
@@ -641,17 +673,19 @@
   url       = {https://arxiv.org/abs/2501.10057},
 }
 
-@article{zong2024vlguard,
+@inproceedings{zong2024vlguard,
   title     = {Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models},
   author    = {Yongshuo Zong and Ondrej Bohdal and Tingyang Yu and Yongxin Yang and Timothy Hospedales},
-  journal   = {arXiv preprint arXiv:2402.02207},
+  booktitle = {Proceedings of the 41st International Conference on Machine Learning (ICML)},
+  pages     = {62867--62891},
   year      = {2024},
-  url       = {https://arxiv.org/abs/2402.02207},
+  publisher = {PMLR},
+  url       = {https://proceedings.mlr.press/v235/zong24a.html},
 }
 
 @article{lopez2024pyrit,
   title     = {{PyRIT}: A Framework for Security Risk Identification and Red Teaming in Generative {AI} Systems},
-  author    = {Gary D. Lopez Munoz and Amanda J. Minnich and Roman Lutz and Richard Lundeen and Raja Sekhar Rao Dheekonda and Nina Chikanov and Bolor-Erdene Jagdagdorj and Martin Pouliot and Shiven Chawla and Whitney Maxwell and Blake Bullwinkel and Katherine Pratt and Joris de Gruyter and Charlotte Siska and Pete Bryan and Tori Westerhoff and Chang Kawaguchi and Christian Seifert and Ram Shankar Siva Kumar and Yonatan Zunger},
+  author    = {Gary D. {Lopez Munoz} and Amanda J. Minnich and Roman Lutz and Richard Lundeen and Raja Sekhar Rao Dheekonda and Nina Chikanov and Bolor-Erdene Jagdagdorj and Martin Pouliot and Shiven Chawla and Whitney Maxwell and Blake Bullwinkel and Katherine Pratt and Joris de Gruyter and Charlotte Siska and Pete Bryan and Tori Westerhoff and Chang Kawaguchi and Christian Seifert and Ram Shankar Siva Kumar and Yonatan Zunger},
   journal   = {arXiv preprint arXiv:2410.02828},
   year      = {2024},
   url       = {https://arxiv.org/abs/2410.02828},
@@ -675,12 +709,13 @@
   note      = {Introduces the {SIUO} (Safe Inputs but Unsafe Output) benchmark},
 }
 
-@misc{darkbench2025,
-  title     = {{DarkBench}: A Comprehensive Benchmark for Dark Design Patterns in Large Language Models},
-  author    = {{Apart Research}},
+@inproceedings{darkbench2025,
+  title     = {{DarkBench}: Benchmarking Dark Patterns in Large Language Models},
+  author    = {Esben Kran and Hieu Minh "Jord" Nguyen and Akash Kundu and Sami Jawhar and Jinsuk Park and Mateusz Maria Jurewicz},
+  booktitle = {International Conference on Learning Representations (ICLR)},
   year      = {2025},
-  url       = {https://darkbench.ai/},
-  note      = {OpenReview: https://openreview.net/forum?id=odjMSBSWRt},
+  url       = {https://arxiv.org/abs/2503.10728},
+  note      = {Oral presentation at ICLR 2025},
 }
 
 @misc{embracethered2025sneakybits,
@@ -738,4 +773,12 @@
   booktitle = {Proceedings of the European Conference on Computer Vision (ECCV)},
   year      = {2024},
   url       = {https://arxiv.org/abs/2311.17600},
+}
+
+@misc{hiddenlayer2025policypuppetry,
+  title     = {Novel Universal Bypass for All Major {LLMs}},
+  author    = {{HiddenLayer}},
+  year      = {2025},
+  url       = {https://hiddenlayer.com/innovation-hub/novel-universal-bypass-for-all-major-llms/},
+  note      = {HiddenLayer Innovation Hub. Introduces the Policy Puppetry prompt injection technique},
 }

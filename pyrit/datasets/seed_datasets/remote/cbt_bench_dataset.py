@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import warnings
 from typing import Any
 
 from typing_extensions import override
@@ -11,6 +10,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,6 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         *,
         source: str = "Psychotherapy-LLM/CBT-Bench",
         config: str = "core_fine_seed",
-        split: str | None = None,
     ) -> None:
         """
         Initialize the CBT-Bench dataset loader.
@@ -49,25 +48,14 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
         Args:
             source: HuggingFace dataset identifier. Defaults to "Psychotherapy-LLM/CBT-Bench".
             config: Dataset configuration/subset to load. Defaults to "core_fine_seed".
-            split: **Deprecated.** Every config of ``Psychotherapy-LLM/CBT-Bench`` publishes
-                only the ``"train"`` split, so this kwarg has no effect. It will be removed
-                in v0.16.0.
         """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Every config of Psychotherapy-LLM/CBT-Bench publishes only the 'train' "
-                "split, so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.source = source
         self.config = config
 
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "cbt_bench"
 
     @override
@@ -117,6 +105,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
             "in assisting Cognitive Behavioral Therapy (CBT). The dataset covers basic CBT knowledge, "
             "cognitive model understanding, and therapeutic response generation."
         )
+        harm_categories = self._standardize_harm_categories([HarmCategory.EMOTIONAL, HarmCategory.MENTAL_HEALTH])
 
         seed_prompts: list[SeedUnion] = []
 
@@ -149,7 +138,7 @@ class _CBTBenchDataset(_RemoteDatasetLoader):
                 value=value,
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=["psycho-social harms"],
+                harm_categories=harm_categories,
                 description=description,
                 source=f"https://huggingface.co/datasets/{self.source}",
                 authors=authors,

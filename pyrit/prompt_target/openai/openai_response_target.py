@@ -6,13 +6,16 @@ import logging
 from collections.abc import Awaitable, Callable, MutableSequence
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Literal,
     cast,
 )
 
+from openai.types.responses import ResponseOutputRefusal, ResponseOutputText
 from openai.types.shared import ReasoningEffort
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -21,12 +24,12 @@ from pyrit.exceptions import (
 from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
+    JsonResponseConfig,
     Message,
     MessagePiece,
     PromptDataType,
     PromptResponseError,
 )
-from pyrit.prompt_target.common.json_response_config import _JsonResponseConfig
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
@@ -36,6 +39,9 @@ from pyrit.prompt_target.common.utils import (
 )
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
+
+if TYPE_CHECKING:
+    from openai.types.responses import ResponseInputImageParam
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,7 @@ class OpenAIResponseTarget(OpenAITarget):
         )
     )
 
+    @forward_init_parameters
     def __init__(
         self,
         *,
@@ -226,15 +233,22 @@ class OpenAIResponseTarget(OpenAITarget):
         Convert a single inline piece into a Responses API content item.
 
         Args:
-            piece: The inline piece (text or image_path).
+            piece: The inline piece (text, image_path, or structured refusal).
 
         Returns:
             A dict in the Responses API content item shape.
 
         Raises:
-            ValueError: If the piece type is not supported for inline content. Supported types are text and
-                image paths.
+            ValueError: If the piece type is not supported for inline content.
         """
+        structured_refusal = piece.structured_refusal
+        if structured_refusal:
+            if piece.api_role != "assistant":
+                raise ValueError("Structured refusals can only be serialized as assistant output.")
+            return {
+                "type": "output_text",
+                "text": structured_refusal,
+            }
         if piece.converted_value_data_type == "text":
             return {
                 "type": "input_text" if piece.api_role in ["developer", "user"] else "output_text",
@@ -242,7 +256,12 @@ class OpenAIResponseTarget(OpenAITarget):
             }
         if piece.converted_value_data_type == "image_path":
             data_url = await convert_local_image_to_data_url_async(piece.converted_value)
-            return {"type": "input_image", "image_url": {"url": data_url}}
+            image_item: ResponseInputImageParam = {
+                "detail": "auto",
+                "type": "input_image",
+                "image_url": data_url,
+            }
+            return dict(image_item)
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
     async def _build_input_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
@@ -294,8 +313,8 @@ class OpenAIResponseTarget(OpenAITarget):
                 if dtype == "reasoning":
                     continue
 
-                # Inline content (text/images) - accumulate in content list
-                if dtype in {"text", "image_path"}:
+                # Inline content (text/images/structured refusals) - accumulate in content list
+                if dtype in {"text", "image_path"} or piece.structured_refusal is not None:
                     content.append(await self._construct_input_item_from_piece_async(piece))
                     continue
 
@@ -362,7 +381,7 @@ class OpenAIResponseTarget(OpenAITarget):
         return input_items
 
     async def _construct_request_body_async(
-        self, *, conversation: MutableSequence[Message], json_config: _JsonResponseConfig
+        self, *, conversation: MutableSequence[Message], json_config: JsonResponseConfig
     ) -> dict[str, Any]:
         """
         Construct the request body to send to the Responses API.
@@ -416,7 +435,7 @@ class OpenAIResponseTarget(OpenAITarget):
             reasoning["summary"] = self._reasoning_summary
         return reasoning
 
-    def _build_text_format(self, json_config: _JsonResponseConfig) -> dict[str, Any] | None:
+    def _build_text_format(self, json_config: JsonResponseConfig) -> dict[str, Any] | None:
         if not json_config.enabled:
             return None
 
@@ -488,10 +507,11 @@ class OpenAIResponseTarget(OpenAITarget):
                 if getattr(section, "status", None) != "completed":
                     continue
                 content = getattr(section, "content", None)
-                if content and len(content) > 0:
-                    text = getattr(content[0], "text", None)
-                    if text:
-                        parts.append(text)
+                parts.extend(
+                    content_item.text
+                    for content_item in content or []
+                    if isinstance(content_item, ResponseOutputText) and content_item.text
+                )
             return "\n".join(parts) if parts else None
         except (AttributeError, IndexError, TypeError):
             return None
@@ -554,6 +574,11 @@ class OpenAIResponseTarget(OpenAITarget):
             if piece is None:
                 continue
             extracted_response_pieces.append(piece)
+
+        # Consumers use the first piece as the semantic response. Responses API
+        # reasoning commonly precedes the actual message in provider output, so
+        # retain it for memory/debugging after the actionable response pieces.
+        extracted_response_pieces.sort(key=lambda piece: piece.converted_value_data_type == "reasoning")
 
         return Message(message_pieces=extracted_response_pieces)
 
@@ -627,6 +652,73 @@ class OpenAIResponseTarget(OpenAITarget):
         # Return all responses (normalizer will persist all of them to memory)
         return responses_to_return
 
+    def _parse_response_message_content(
+        self,
+        *,
+        content: list[ResponseOutputText | ResponseOutputRefusal],
+        message_piece: MessagePiece,
+        error: PromptResponseError | None,
+    ) -> MessagePiece:
+        """
+        Parse a Responses API message content union into a PyRIT message piece.
+
+        Args:
+            content (list[ResponseOutputText | ResponseOutputRefusal]): Typed message content.
+            message_piece (MessagePiece): The original request piece.
+            error (PromptResponseError | None): Any response error classification.
+
+        Returns:
+            MessagePiece: A text piece or blocked-error refusal piece.
+
+        Raises:
+            EmptyResponseException: If the message content has no usable value.
+            PyritException: If the SDK returns an unsupported message content model.
+        """
+        if not content:
+            raise EmptyResponseException(message="The chat returned an empty message section.")
+
+        unsupported = [
+            content_item
+            for content_item in content
+            if not isinstance(content_item, (ResponseOutputText, ResponseOutputRefusal))
+        ]
+        if unsupported:
+            raise PyritException(
+                message=f"Unsupported Responses API message content type: {type(unsupported[0]).__name__}"
+            )
+
+        text_parts = [content_item.text for content_item in content if isinstance(content_item, ResponseOutputText)]
+        refusal_parts = [
+            content_item.refusal for content_item in content if isinstance(content_item, ResponseOutputRefusal)
+        ]
+        if refusal_parts:
+            refusal_text = "\n".join(refusal_parts)
+            prompt_metadata = {
+                **message_piece.prompt_metadata,
+                MessagePiece.STRUCTURED_REFUSAL_METADATA_KEY: refusal_text,
+            }
+            if text_parts:
+                prompt_metadata["partial_content"] = "\n".join(text_parts)
+            return MessagePiece(
+                role="assistant",
+                original_value=json.dumps({"status_code": 200, "message": refusal_text}),
+                conversation_id=message_piece.conversation_id,
+                original_value_data_type="error",
+                response_error="blocked",
+                prompt_metadata=prompt_metadata,
+            )
+
+        piece_value = "\n".join(text_parts)
+        if not piece_value:
+            raise EmptyResponseException(message="The chat returned an empty response.")
+        return MessagePiece(
+            role="assistant",
+            original_value=piece_value,
+            conversation_id=message_piece.conversation_id,
+            original_value_data_type="text",
+            response_error=error or "none",
+        )
+
     def _parse_response_output_section(
         self, *, section: Any, message_piece: MessagePiece, error: PromptResponseError | None
     ) -> MessagePiece | None:
@@ -643,6 +735,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
         Raises:
             EmptyResponseException: If the section content is empty or invalid.
+            PyritException: If a message section contains an unsupported content model.
             ValueError: If the section type is unsupported.
         """
         section_type = section.type
@@ -650,12 +743,13 @@ class OpenAIResponseTarget(OpenAITarget):
         piece_value = ""
 
         if section_type == MessagePieceType.MESSAGE:
-            section_content = section.content
-            if len(section_content) == 0:
-                raise EmptyResponseException(message="The chat returned an empty message section.")
-            piece_value = section_content[0].text
+            return self._parse_response_message_content(
+                content=section.content,
+                message_piece=message_piece,
+                error=error,
+            )
 
-        elif section_type == MessagePieceType.REASONING:
+        if section_type == MessagePieceType.REASONING:
             # Store reasoning in memory for debugging/logging, but won't be sent back to API
             piece_value = json.dumps(
                 section.model_dump(),
@@ -720,7 +814,6 @@ class OpenAIResponseTarget(OpenAITarget):
             role="assistant",
             original_value=piece_value,
             conversation_id=message_piece.conversation_id,
-            labels=message_piece.labels,  # deprecated
             original_value_data_type=piece_type,
             response_error=error or "none",
         )
@@ -826,5 +919,4 @@ class OpenAIResponseTarget(OpenAITarget):
             ),
             original_value_data_type="function_call_output",
             conversation_id=reference_piece.conversation_id,
-            labels={"call_id": call_id},  # deprecated
         )

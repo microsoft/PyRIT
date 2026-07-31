@@ -29,8 +29,15 @@ _FILENAME_PREFIXES = {
     "binary_path": "file",
 }
 
-# Fallback extension per prefix when the value carries no usable suffix.
-_DEFAULT_EXTENSIONS = {"image": ".png", "audio": ".wav", "video": ".mp4", "file": ".bin"}
+# Default file extension per media data type, used when a value carries no usable
+# suffix and no MIME metadata is available. Centralized here so the backend response
+# models and the attack/converter services share a single source of truth.
+DEFAULT_MEDIA_EXTENSIONS: dict[str, str] = {
+    "image_path": ".png",
+    "audio_path": ".wav",
+    "video_path": ".mp4",
+    "binary_path": ".bin",
+}
 
 
 def infer_mime_type(*, value: str | None, data_type: PromptDataType) -> str | None:
@@ -79,6 +86,6 @@ def build_filename(*, data_type: str, sha256: str | None, value: str | None) -> 
         ext = Path(source).suffix
 
     if not ext:
-        ext = _DEFAULT_EXTENSIONS.get(prefix, ".bin")
+        ext = DEFAULT_MEDIA_EXTENSIONS.get(data_type, ".bin")
 
     return f"{prefix}_{short_hash}{ext}"

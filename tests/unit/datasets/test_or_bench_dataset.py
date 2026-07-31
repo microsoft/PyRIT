@@ -44,7 +44,10 @@ class TestORBench80KDataset:
 
             first_prompt = dataset.seeds[0]
             assert first_prompt.value == "What are some techniques to influence decisions?"
-            assert first_prompt.harm_categories == ["deception"]
+            # or-bench-80k is a benign over-refusal set: no harm category is assigned, but the
+            # native category is preserved in metadata for provenance.
+            assert first_prompt.harm_categories == []
+            assert first_prompt.metadata["category"] == "deception"
 
     def test_dataset_name(self):
         """Test dataset_name property."""
@@ -89,15 +92,10 @@ class TestORBenchToxicDataset:
             assert len(dataset.seeds) == 2
             mock_fetch.assert_called_once()
             assert mock_fetch.call_args.kwargs["config"] == "or-bench-toxic"
+            # The toxic subset is genuinely harmful, so its category is standardized.
+            assert dataset.seeds[0].harm_categories == ["DECEPTION"]
 
     def test_dataset_name(self):
         """Test dataset_name property."""
         loader = _ORBenchToxicDataset()
         assert loader.dataset_name == "or_bench_toxic"
-
-
-def test_split_kwarg_emits_deprecation_warning():
-    """All OR-Bench loaders inherit the deprecated ``split`` kwarg from the base class."""
-    for cls in (_ORBench80KDataset, _ORBenchHardDataset, _ORBenchToxicDataset):
-        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
-            cls(split="train")

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
 from pydantic import (
@@ -16,7 +16,6 @@ from pydantic import (
     model_validator,
 )
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ChatMessageRole,
     PromptDataType,
@@ -28,17 +27,6 @@ from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic f
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
-
-
-# Deprecated kwargs whose presence in ``MessagePiece(...)`` should emit a
-# ``DeprecationWarning``. Each entry is ``(kwarg_name, removed_in)``. Kept here
-# (rather than embedded in the validator body) to make the deprecation surface
-# easy to read and update.
-#
-# These can be deleted entirely once their ``removed_in`` releases ship — the
-# Pydantic field definitions and ``extra="forbid"`` config will then reject
-# the kwargs naturally.
-_DEPRECATED_KWARGS: tuple[tuple[str, str], ...] = (("labels", "0.16.0"),)
 
 
 # ``ComponentIdentifierField`` is imported from ``pyrit.models.score`` above.
@@ -54,6 +42,8 @@ class MessagePiece(BaseModel):
     as a list of ``MessagePiece`` instances grouped under one
     ``Message``.
     """
+
+    STRUCTURED_REFUSAL_METADATA_KEY: ClassVar[str] = "structured_refusal"
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -74,7 +64,6 @@ class MessagePiece(BaseModel):
     converted_value_sha256: str | None = None
     response_error: PromptResponseError = "none"
     original_prompt_id: uuid.UUID | None = None
-    labels: dict[str, Any] = Field(default_factory=dict)
     prompt_metadata: dict[str, Any] = Field(default_factory=dict)
     converter_identifiers: list[ComponentIdentifierField] = Field(default_factory=list)
 
@@ -87,32 +76,6 @@ class MessagePiece(BaseModel):
     # ------------------------------------------------------------------ #
     # Validators
     # ------------------------------------------------------------------ #
-    @model_validator(mode="before")
-    @classmethod
-    def _warn_on_deprecated_kwargs(cls, data: Any) -> Any:
-        """
-        Emit DeprecationWarning for each deprecated kwarg explicitly passed.
-
-        Only a truthy value counts as "passed". An empty/falsy value (e.g.
-        ``labels={}``, the field default) is treated as not supplied, so callers
-        that forward ``labels=<source>.labels`` on the happy path do not trip a
-        spurious warning. This matches the post-construction assignment pattern
-        used elsewhere (``piece.labels = labels`` guarded by ``if labels:``).
-
-        Returns:
-            The (unchanged) input ``data`` so validation can continue.
-        """
-        if not isinstance(data, dict):
-            return data
-        for kwarg, removed_in in _DEPRECATED_KWARGS:
-            if data.get(kwarg):
-                print_deprecation_message(
-                    old_item=f"MessagePiece(..., {kwarg}=...)",
-                    new_item="MessagePiece(...)",
-                    removed_in=removed_in,
-                )
-        return data
-
     @model_validator(mode="before")
     @classmethod
     def _mirror_original_to_converted(cls, data: Any) -> Any:
@@ -178,15 +141,13 @@ class MessagePiece(BaseModel):
         Copy lineage metadata from ``source`` onto this piece.
 
         Lineage fields are the metadata that tie a piece back to its originating
-        conversation. Mutable containers (``labels``,
-        ``prompt_metadata``) are shallow-copied so that mutations on one piece
-        do not affect others.
+        conversation. Mutable containers (``prompt_metadata``) are shallow-copied
+        so that mutations on one piece do not affect others.
 
         Args:
             source: The piece whose lineage will be copied onto ``self``.
         """
         self.conversation_id = source.conversation_id
-        self.labels = dict(source.labels)
         self.prompt_metadata = dict(source.prompt_metadata)
 
     def has_error(self) -> bool:
@@ -207,74 +168,71 @@ class MessagePiece(BaseModel):
         """
         return self.response_error == "blocked"
 
-    # ------------------------------------------------------------------ #
-    # Deprecated method shims (removed in 0.16.0)
-    # ------------------------------------------------------------------ #
-    def to_dict(self) -> dict[str, Any]:
+    def mark_as_structured_refusal(self, *, refusal: str) -> None:
         """
-        Return a JSON-mode dict representation (DEPRECATED — use ``model_dump``).
-
-        Returns:
-            A JSON-mode dict representation of the piece (same as
-            ``self.model_dump(mode="json")``).
-        """
-        print_deprecation_message(
-            old_item="MessagePiece.to_dict()",
-            new_item='MessagePiece.model_dump(mode="json")',
-            removed_in="0.16.0",
-        )
-        return self.model_dump(mode="json")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MessagePiece:
-        """
-        Construct a MessagePiece from a dict (DEPRECATED — use ``model_validate``).
+        Record an SDK-provided model refusal on this blocked response piece.
 
         Args:
-            data: A dict matching the MessagePiece field schema.
+            refusal: The model's refusal explanation.
+
+        Raises:
+            ValueError: If the piece is not a blocked assistant response or the refusal
+                explanation is empty.
+        """
+        if not self.is_blocked() or self.api_role != "assistant":
+            raise ValueError("Structured refusals must be recorded on blocked assistant response pieces.")
+        if not refusal:
+            raise ValueError("Structured refusal text cannot be empty.")
+        self.prompt_metadata[self.STRUCTURED_REFUSAL_METADATA_KEY] = refusal
+
+    @property
+    def structured_refusal(self) -> str | None:
+        """The SDK-provided refusal explanation for this blocked response, if present."""
+        if not self.is_blocked():
+            return None
+        refusal = self.prompt_metadata.get(self.STRUCTURED_REFUSAL_METADATA_KEY)
+        return refusal if isinstance(refusal, str) and refusal else None
+
+    # ------------------------------------------------------------------ #
+    # Adversarial placeholder support
+    # ------------------------------------------------------------------ #
+    @classmethod
+    def adversarial_placeholder(cls, *, role: ChatMessageRole = "user") -> MessagePiece:
+        """
+        Build a placeholder text piece that signals the adversarial chat will
+        generate the text content at this position.
+
+        Intended for use inside ``AttackParameters.next_message`` when combining
+        a user-supplied seed (e.g. a base image to edit) with adversarial-generated
+        text on turn 1 of a multi-turn attack. A consumer that walks the message
+        pieces can call ``is_adversarial_placeholder`` to detect a slot and
+        replace its value with the generated text before sending the message.
+
+        Args:
+            role: The chat role to assign to the piece. Defaults to ``"user"``.
 
         Returns:
-            A new ``MessagePiece`` (same as ``cls.model_validate(data)``).
+            A text ``MessagePiece`` flagged via ``prompt_metadata``.
         """
-        print_deprecation_message(
-            old_item="MessagePiece.from_dict()",
-            new_item="MessagePiece.model_validate()",
-            removed_in="0.16.0",
+        return cls(
+            role=role,
+            original_value="",
+            original_value_data_type="text",
+            prompt_metadata={"adversarial_placeholder": True},
         )
-        return cls.model_validate(data)
 
-    def set_piece_not_in_database(self) -> None:
+    def is_adversarial_placeholder(self) -> bool:
         """
-        Mark this piece as ephemeral (DEPRECATED — set ``not_in_memory`` directly).
+        Return ``True`` when this piece is a placeholder for adversarial-generated text.
 
-        Example::
+        Detection is based on the ``adversarial_placeholder`` flag set by
+        ``adversarial_placeholder``. Plain pieces (created without the flag)
+        always return ``False``.
 
-            piece.not_in_memory = True
+        Returns:
+            ``True`` if this piece should be filled in by an adversarial chat.
         """
-        print_deprecation_message(
-            old_item="MessagePiece.set_piece_not_in_database()",
-            new_item="MessagePiece.not_in_memory = True",
-            removed_in="0.16.0",
-        )
-        self.not_in_memory = True
-
-    async def set_sha256_values_async(self) -> None:
-        """
-        Compute SHA256 hash values for original and converted payloads.
-
-        .. deprecated:: 0.15.0
-            Use ``pyrit.memory.storage.serializers.set_message_piece_sha256_async`` instead.
-            This method will be removed in 0.17.0.
-        """
-        import importlib
-
-        print_deprecation_message(
-            old_item="pyrit.models.messages.message_piece.MessagePiece.set_sha256_values_async",
-            new_item="pyrit.memory.storage.serializers.set_message_piece_sha256_async",
-            removed_in="0.17.0",
-        )
-        serializers = importlib.import_module("pyrit.memory.storage.serializers")
-        await serializers.set_message_piece_sha256_async(self)
+        return bool(self.prompt_metadata.get("adversarial_placeholder"))
 
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:

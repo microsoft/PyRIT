@@ -166,8 +166,8 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     const newConverter = converters.find((c) => c.converter_type === type)
     const defaults: Record<string, string> = {}
     for (const p of newConverter?.parameters ?? []) {
-      if (p.default_value != null) {
-        defaults[p.name] = p.default_value
+      if (p.default != null) {
+        defaults[p.name] = p.default
       }
     }
     setParamValues(defaults)
@@ -320,7 +320,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
         <div className={styles.headerTitle}>
           <Text weight="semibold" size={300}>Converters</Text>
           <Text size={200} className={styles.hintText}>
-            Select and preview prompt converters here in the next step.
+            Select and preview converters here in the next step.
           </Text>
         </div>
         <Button
@@ -328,6 +328,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
           size="small"
           icon={<DismissRegular />}
           onClick={onClose}
+          className={styles.touchTarget}
           data-testid="close-converter-panel-btn"
         />
       </div>

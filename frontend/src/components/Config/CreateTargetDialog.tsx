@@ -19,36 +19,61 @@ import {
   Field,
   MessageBar,
   MessageBarBody,
+  Tooltip,
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TargetInstance } from '@/types'
+import type { TargetInstance, TargetCatalogEntry } from '@/types'
+import {
+  targetIdentifierHash,
+  targetModelName,
+  targetType as getTargetType,
+  targetUnderlyingModelName,
+} from '@/utils/targetIdentity'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
-interface TargetTypeConfig {
-  readonly kind: 'openai' | 'azureml' | 'roundrobin'
-  readonly supportsEntra: boolean
+/**
+ * Form shape for each target type the dialog knows how to render.
+ *
+ * The dialog renders bespoke, type-specific forms (endpoint/model for OpenAI,
+ * extra sampling params for Azure ML, an inner-target picker for RoundRobin),
+ * so this map declares *which* types are renderable and *how*. The list of
+ * available types and their auth flags come from the backend catalog
+ * (`/targets/catalog`); this map only governs the form layout. Types the
+ * backend offers but that aren't in this map are simply not shown, and types in
+ * this map that the backend doesn't offer fall back to being listed anyway
+ * (e.g. when the catalog fetch fails).
+ */
+type TargetFormShape = 'openai' | 'azureml' | 'roundrobin'
+
+const TARGET_FORM_SHAPES: Record<string, TargetFormShape> = {
+  OpenAIChatTarget: 'openai',
+  OpenAICompletionTarget: 'openai',
+  OpenAIImageTarget: 'openai',
+  OpenAIVideoTarget: 'openai',
+  OpenAITTSTarget: 'openai',
+  OpenAIResponseTarget: 'openai',
+  AzureMLChatTarget: 'azureml',
+  RoundRobinTarget: 'roundrobin',
 }
 
-const TARGET_TYPE_CONFIG: Record<string, TargetTypeConfig> = {
-  OpenAIChatTarget: { kind: 'openai', supportsEntra: true },
-  OpenAICompletionTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIImageTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIVideoTarget: { kind: 'openai', supportsEntra: true },
-  OpenAITTSTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIResponseTarget: { kind: 'openai', supportsEntra: true },
-  AzureMLChatTarget: { kind: 'azureml', supportsEntra: true },
-  RoundRobinTarget: { kind: 'roundrobin', supportsEntra: false },
+const RENDERABLE_TARGET_TYPES = Object.keys(TARGET_FORM_SHAPES)
+
+type AuthMode = 'api_key' | 'identity'
+
+/**
+ * Fallback for whether a target type supports identity-based auth when the
+ * backend catalog hasn't loaded (or the fetch failed). Once the catalog is
+ * available it is authoritative; this only keeps the form usable offline / mid-load.
+ */
+function defaultSupportsIdentity(shape: TargetFormShape | undefined): boolean {
+  return shape === 'openai' || shape === 'azureml'
 }
-
-const SUPPORTED_TARGET_TYPES = Object.keys(TARGET_TYPE_CONFIG)
-
-type AuthMode = 'api_key' | 'entra'
 
 // Mirrors backend's hostname-suffix check (list in target_service.py).
-// The backend still does the check and will reject unsupported endpoints, but this allows us to show a warning in the UI if the user selects Microsoft Entra authentication with a non-Azure OpenAI endpoint.
+// The backend still does the check and will reject unsupported endpoints, but this allows us to show a warning in the UI if the user selects identity-based authentication with a non-Azure OpenAI endpoint.
 const AZURE_OPENAI_HOSTNAME_SUFFIXES = [
   '.openai.azure.com',
   '.ai.azure.com',
@@ -115,7 +140,7 @@ interface SelectedInnerTarget {
  * TestFrontendBackendCompatibilitySync test guards against drift.
  */
 function effectiveUnderlyingModel(t: TargetInstance): string | null {
-  return t.underlying_model_name || t.model_name || null
+  return targetUnderlyingModelName(t) || targetModelName(t) || null
 }
 
 /**
@@ -131,10 +156,10 @@ function effectiveUnderlyingModel(t: TargetInstance): string | null {
  */
 function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
   return (
-    a.target_type === b.target_type &&
+    getTargetType(a) === getTargetType(b) &&
     effectiveUnderlyingModel(a) === effectiveUnderlyingModel(b) &&
-    (a.temperature ?? null) === (b.temperature ?? null) &&
-    (a.top_p ?? null) === (b.top_p ?? null)
+    (a.identifier.temperature ?? null) === (b.identifier.temperature ?? null) &&
+    (a.identifier.top_p ?? null) === (b.identifier.top_p ?? null)
   )
 }
 
@@ -161,24 +186,60 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   // Targets the user has picked for the RoundRobinTarget, with their weights.
   const [selectedInnerTargets, setSelectedInnerTargets] = useState<SelectedInnerTarget[]>([])
 
-  const targetConfig = TARGET_TYPE_CONFIG[targetType]
-  const isRoundRobin = targetConfig?.kind === 'roundrobin'
-  const isAzureML = targetConfig?.kind === 'azureml'
-  const isOpenAi = targetConfig?.kind === 'openai'
-  const supportsEntra = targetConfig?.supportsEntra ?? false
-  const showAuthField = targetType !== '' && supportsEntra
-  const isEntra = showAuthField && authMode === 'entra'
-  const entraEndpointError: string | null = (() => {
-    if (!isEntra || endpoint === '') return null
+  // --- Catalog state ---
+  // Available target types + their auth facts, fetched from the backend registry.
+  const [catalogEntries, setCatalogEntries] = useState<TargetCatalogEntry[]>([])
+  const catalogByType = useMemo(
+    () => new Map(catalogEntries.map((entry) => [entry.target_type, entry])),
+    [catalogEntries],
+  )
+
+  // Fetch the target catalog once when the dialog opens. The backend is the
+  // authority on which types exist and which auth modes they support.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    targetsApi.listTargetCatalog()
+      .then((res) => {
+        if (!cancelled) setCatalogEntries(res.items)
+      })
+      .catch(() => {
+        // Ignore fetch errors — fall back to the locally-known renderable types.
+      })
+    return () => { cancelled = true }
+  }, [open])
+
+  // The types offered in the dropdown: catalog types the dialog can render,
+  // preserving catalog order. Fall back to the locally-known types when the
+  // catalog hasn't loaded (or the fetch failed) so the form stays usable.
+  const targetTypeOptions = useMemo(() => {
+    const fromCatalog = catalogEntries
+      .map((entry) => entry.target_type)
+      .filter((type) => type in TARGET_FORM_SHAPES)
+    return fromCatalog.length > 0 ? fromCatalog : RENDERABLE_TARGET_TYPES
+  }, [catalogEntries])
+
+  const formShape = TARGET_FORM_SHAPES[targetType]
+  const isRoundRobin = formShape === 'roundrobin'
+  const isAzureML = formShape === 'azureml'
+  const isOpenAi = formShape === 'openai'
+  const catalogEntry = catalogByType.get(targetType)
+  const supportsIdentity = catalogEntry
+    ? catalogEntry.supported_auth_modes.includes('identity')
+    : defaultSupportsIdentity(formShape)
+  const showAuthField = targetType !== '' && supportsIdentity
+  const isIdentity = showAuthField && authMode === 'identity'
+  const identityEndpointError: string | null = (() => {
+    if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
-      return 'Entra auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
+      return 'Identity-based auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
     }
     if (isAzureML && !isAzureMlEndpoint(endpoint)) {
-      return 'Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
+      return 'Identity-based auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
     }
     return null
   })()
-  const showEntraEndpointError = entraEndpointError !== null
+  const showIdentityEndpointError = identityEndpointError !== null
 
   // Fetch the available targets when the dialog opens with RoundRobin selected.
   // If the parent already passed targets, derive availableTargets from them
@@ -219,14 +280,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     const selectedNames = new Set(selectedInnerTargets.map((t) => t.registryName))
     const selectedHashes = new Set(
       selectedInnerTargets
-        .map((sel) => availableTargets.find((t) => t.target_registry_name === sel.registryName)?.identifier_hash)
+        .map((sel) => {
+          const t = availableTargets.find((t) => t.target_registry_name === sel.registryName)
+          return t ? targetIdentifierHash(t) : null
+        })
         .filter((h): h is string => Boolean(h)),
     )
     const candidates = availableTargets.filter(
       (t) =>
-        t.target_type !== 'RoundRobinTarget' &&
+        getTargetType(t) !== 'RoundRobinTarget' &&
         !selectedNames.has(t.target_registry_name) &&
-        !(t.identifier_hash && selectedHashes.has(t.identifier_hash)),
+        !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
     )
     // If nothing is selected yet, all non-RRT candidates are eligible
     if (selectedInnerTargets.length === 0) return candidates
@@ -301,7 +365,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         await targetsApi.createTarget({
           type: 'RoundRobinTarget',
           params: {
-            target_registry_names: selectedInnerTargets.map((t) => t.registryName),
+            targets: selectedInnerTargets.map((t) => t.registryName),
             weights: parsedWeights,
           },
         })
@@ -334,7 +398,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         endpoint,
       }
       if (modelName) params.model_name = modelName
-      if (!isEntra && apiKey) params.api_key = apiKey
+      if (!isIdentity && apiKey) params.api_key = apiKey
 
       if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
 
@@ -352,7 +416,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       await targetsApi.createTarget({
         type: targetType,
         params,
-        ...(isEntra ? { auth_mode: 'entra' as const } : {}),
+        ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
       })
 
       resetForm()
@@ -368,11 +432,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) handleClose() }}>
-      <DialogSurface>
+      <DialogSurface className={styles.dialogSurface}>
         <DialogBody>
           <DialogTitle>Create New Target</DialogTitle>
-          <DialogContent>
-            <form className={styles.form} onSubmit={(e) => { e.preventDefault(); handleSubmit() }}>
+          <DialogContent className={styles.dialogContent}>
+            <form
+              className={styles.form}
+              data-testid="create-target-form"
+              onSubmit={(e) => { e.preventDefault(); handleSubmit() }}
+            >
               {error && (
                 <MessageBar intent="error">
                   <MessageBarBody>{error}</MessageBarBody>
@@ -380,23 +448,29 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               )}
 
               <Field
+                className={styles.formField}
                 label="Target Type"
                 required
                 validationMessage={fieldErrors.targetType}
                 validationState={fieldErrors.targetType ? 'error' : 'none'}
               >
                 <Select
+                  className={styles.fullWidthSelect}
                   value={targetType}
                   onChange={(_, data) => {
                     const next = data.value
                     setTargetType(next)
-                    if (!(TARGET_TYPE_CONFIG[next]?.supportsEntra ?? false)) {
+                    const nextEntry = catalogByType.get(next)
+                    const nextSupportsIdentity = nextEntry
+                      ? nextEntry.supported_auth_modes.includes('identity')
+                      : defaultSupportsIdentity(TARGET_FORM_SHAPES[next])
+                    if (!nextSupportsIdentity) {
                       setAuthMode('api_key')
                     }
                   }}
                 >
                   <option value="">Select a target type</option>
-                  {SUPPORTED_TARGET_TYPES.map((type) => (
+                  {targetTypeOptions.map((type) => (
                     <option key={type} value={type}>{type}</option>
                   ))}
                 </Select>
@@ -405,8 +479,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               {/* === RoundRobinTarget form: select existing targets === */}
               {isRoundRobin && (
                 <>
-                  <Field label="Add Target">
+                  <Field className={styles.formField} label="Add Target">
                     <Select
+                      className={styles.fullWidthSelect}
                       value=""
                       onChange={(_, data) => {
                         if (data.value) addInnerTarget(data.value)
@@ -420,16 +495,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       </option>
                       {eligibleTargets.map((t) => (
                         <option key={t.target_registry_name} value={t.target_registry_name}>
-                          {t.target_registry_name} — {t.target_type}
-                          {t.model_name ? ` (${t.model_name})` : ''}
+                          {t.target_registry_name} — {getTargetType(t)}
+                          {targetModelName(t) ? ` (${targetModelName(t)})` : ''}
                         </option>
                       ))}
                     </Select>
                   </Field>
 
                   {selectedInnerTargets.length > 0 && (
-                    <div>
-                      <Label size="small" style={{ marginBottom: '4px', display: 'block' }}>
+                    <div className={styles.selectedTargetsSection}>
+                      <Label size="small" className={styles.selectedTargetsLabel}>
                         Selected Targets ({selectedInnerTargets.length})
                         {selectedInnerTargets.length < 2 && (
                           <Text size={200} style={{ color: tokens.colorPaletteRedForeground1, marginLeft: '8px' }}>
@@ -442,49 +517,57 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           const target = availableTargets.find(
                             (t) => t.target_registry_name === sel.registryName,
                           )
+                          const selectedTargetLabel = `${target?.target_registry_name ?? sel.registryName}${
+                            target && targetModelName(target) ? ` (${targetModelName(target)})` : ''
+                          }`
                           const weightParse = parseWeight(sel.weightInput)
                           const weightError = weightParse.ok ? null : weightParse.error
                           return (
                             <div key={sel.registryName} className={styles.selectedTargetRow}>
-                              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <Text size={200} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {target?.target_registry_name ?? sel.registryName}
-                                    {target?.model_name ? ` (${target.model_name})` : ''}
-                                  </Text>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <Label size="small">Weight:</Label>
-                                    <Input
-                                      type="number"
-                                      value={sel.weightInput}
-                                      min="1"
-                                      max={String(MAX_WEIGHT)}
-                                      step="1"
-                                      aria-invalid={weightError !== null}
-                                      aria-label={`Weight for ${sel.registryName}`}
-                                      style={{ width: '70px' }}
-                                      onChange={(_, data) =>
-                                        setInnerTargetWeightInput(sel.registryName, data.value)
-                                      }
-                                    />
-                                    <Button
-                                      appearance="subtle"
-                                      size="small"
-                                      icon={<DeleteRegular />}
-                                      aria-label={`Remove ${sel.registryName}`}
-                                      onClick={() => removeInnerTarget(sel.registryName)}
-                                    />
-                                  </div>
+                              <Tooltip
+                                content={<span className={styles.targetNameTooltip}>{selectedTargetLabel}</span>}
+                                relationship="description"
+                              >
+                                <Text
+                                  as="span"
+                                  size={200}
+                                  className={styles.selectedTargetName}
+                                  tabIndex={0}
+                                  aria-label={`Selected target: ${selectedTargetLabel}`}
+                                >
+                                  {selectedTargetLabel}
+                                </Text>
+                              </Tooltip>
+                              <div className={styles.selectedTargetControlGroup}>
+                                <div className={styles.selectedTargetControls}>
+                                  <Label size="small">Weight:</Label>
+                                  <Input
+                                    className={styles.weightInput}
+                                    type="number"
+                                    value={sel.weightInput}
+                                    min="1"
+                                    max={String(MAX_WEIGHT)}
+                                    step="1"
+                                    aria-invalid={weightError !== null}
+                                    aria-label={`Weight for ${sel.registryName}`}
+                                    onChange={(_, data) =>
+                                      setInnerTargetWeightInput(sel.registryName, data.value)
+                                    }
+                                  />
+                                  <Button
+                                    appearance="subtle"
+                                    size="small"
+                                    icon={<DeleteRegular />}
+                                    aria-label={`Remove ${sel.registryName}`}
+                                    onClick={() => removeInnerTarget(sel.registryName)}
+                                    className={styles.touchTarget}
+                                  />
                                 </div>
                                 {weightError && (
                                   <Text
                                     size={100}
                                     role="alert"
-                                    style={{
-                                      color: tokens.colorPaletteRedForeground1,
-                                      marginTop: '2px',
-                                      alignSelf: 'flex-end',
-                                    }}
+                                    className={styles.weightError}
                                   >
                                     {weightError}
                                   </Text>
@@ -596,24 +679,24 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     onChange={(_, data) => {
                       const next = data.value as AuthMode
                       setAuthMode(next)
-                      if (next === 'entra') setApiKey('')
+                      if (next === 'identity') setApiKey('')
                     }}
                   >
                     <Radio value="api_key" label="API Key" />
-                    <Radio value="entra" label="Microsoft Entra Authentication" />
+                    <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
                   </RadioGroup>
                 </Field>
               )}
 
-              {showEntraEndpointError && (
+              {showIdentityEndpointError && (
                 <MessageBar intent="error" className={styles.warningMessage}>
                   <MessageBarBody className={styles.warningMessageBody}>
-                    {entraEndpointError}
+                    {identityEndpointError}
                   </MessageBarBody>
                 </MessageBar>
               )}
 
-              {!isEntra && (
+              {!isIdentity && (
                 <Field label="API Key">
                   <Input
                     type="password"
@@ -630,10 +713,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
               {!isRoundRobin && (
               <Label size="small" style={{ color: tokens.colorNeutralForeground3 }}>
-                Targets can also be auto-populated by adding an initializer (e.g. <code>airt</code>) to your{' '}
-                <code>~/.pyrit/.pyrit_conf</code> file, which reads endpoints from your <code>.env</code> and{' '}
-                <code>.env.local</code> files. See{' '}
-                <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
+                Targets can also be auto-populated by adding the <code>target</code> initializer to your{' '}
+                <code>~/.pyrit/.pyrit_conf</code> file, which registers available prompt targets from endpoints in{' '}
+                your <code>.env</code> and <code>.env.local</code> files. See{' '}
+                <Link
+                  href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  inline
+                >
                   .pyrit_conf_example
                 </Link>.
               </Label>
@@ -653,7 +741,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 (isRoundRobin
                   ? selectedInnerTargets.length < 2 ||
                     selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
-                  : !endpoint || showEntraEndpointError)
+                  : !endpoint || showIdentityEndpointError)
               }
             >
               {submitting ? 'Creating...' : 'Create Target'}

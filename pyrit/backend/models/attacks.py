@@ -31,6 +31,7 @@ class TargetInfo(BaseModel):
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
+    identifier_hash: str = Field(..., description="Canonical target identifier hash")
 
 
 class ScoreView(Score):
@@ -44,23 +45,11 @@ class ScoreView(Score):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def scorer_type(self) -> str:
-        """Return the scorer class name, or ``"Unknown"`` when unavailable."""
+        """The scorer class name, or ``"Unknown"`` when unavailable."""
         identifier = self.scorer_class_identifier
         if identifier and identifier.class_name:
             return identifier.class_name
         return "Unknown"
-
-    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
-    @property
-    def score_id(self) -> str:
-        """Deprecated alias for ``id``; use ``id`` instead (removed in 0.17.0)."""
-        return str(self.id)
-
-    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
-    @property
-    def scored_at(self) -> datetime | None:
-        """Deprecated alias for ``timestamp``; use ``timestamp`` instead (removed in 0.17.0)."""
-        return self.timestamp
 
     @classmethod
     def from_domain(cls, score: Score) -> "ScoreView":
@@ -120,12 +109,6 @@ class MessagePieceView(MessagePiece):
     response_error_description: str | None = Field(
         default=None, description="Description of the error if response_error is not 'none'"
     )
-
-    @computed_field(json_schema_extra={"deprecated": True})  # type: ignore[prop-decorator]
-    @property
-    def piece_id(self) -> str:
-        """Deprecated alias for ``id``; use ``id`` instead (removed in 0.17.0)."""
-        return str(self.id)
 
     @classmethod
     def from_domain(
@@ -188,19 +171,19 @@ class MessageView(Message):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def turn_number(self) -> int:
-        """Return the sequence of the first piece (the conversation turn)."""
+        """The sequence of the first piece (the conversation turn)."""
         return self.message_pieces[0].sequence if self.message_pieces else 0
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def role(self) -> ChatMessageRole:
-        """Return the role of the first piece."""
+        """The role of the first piece."""
         return self.message_pieces[0].role if self.message_pieces else "user"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def created_at(self) -> datetime:
-        """Return the timestamp of the first piece."""
+        """The timestamp of the first piece."""
         return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(timezone.utc)
 
 
@@ -229,34 +212,37 @@ class AttackSummary(AttackResult):
     )
 
     @field_serializer("related_conversations")
-    def _serialize_related_conversations(self, conversations: set[ConversationReference]) -> list[Any]:
+    def _serialize_related_conversations(
+        self,
+        related_conversations: set[ConversationReference],
+    ) -> list[dict[str, Any]]:
         """
         Serialize related conversations in a stable (sorted) order for deterministic output.
 
         Returns:
             A list of serialized conversation references ordered by ``conversation_id``.
         """
-        ordered = sorted(conversations, key=lambda ref: ref.conversation_id)
+        ordered = sorted(related_conversations, key=lambda ref: ref.conversation_id)
         return [ref.model_dump() for ref in ordered]
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def attack_type(self) -> str:
-        """Return the attack strategy class name, or ``"Unknown"``."""
+        """The attack strategy class name, or ``"Unknown"``."""
         identifier = self.get_attack_strategy_identifier()
         return identifier.class_name if identifier else "Unknown"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def attack_specific_params(self) -> dict[str, Any] | None:
-        """Return the attack strategy params, or ``None``."""
+        """The attack strategy params, or ``None``."""
         identifier = self.get_attack_strategy_identifier()
         return (identifier.params or None) if identifier else None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def target(self) -> TargetInfo | None:
-        """Return the objective target info extracted from the identifier."""
+        """The objective target info extracted from the identifier."""
         identifier = self.get_attack_strategy_identifier()
         target_id = identifier.get_child("objective_target") if identifier else None
         if not target_id:
@@ -265,12 +251,13 @@ class AttackSummary(AttackResult):
             target_type=target_id.class_name,
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
+            identifier_hash=target_id.hash,
         )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def converters(self) -> list[str]:
-        """Return the request-converter class names applied in this attack."""
+        """The request-converter class names applied in this attack."""
         identifier = self.get_attack_strategy_identifier()
         converter_ids = identifier.get_child_list("request_converters") if identifier else []
         return [c.class_name for c in converter_ids]
@@ -278,7 +265,7 @@ class AttackSummary(AttackResult):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def related_conversation_ids(self) -> list[str]:
-        """Return the IDs of related conversations, sorted for stable output."""
+        """The IDs of related conversations, sorted for stable output."""
         return sorted(ref.conversation_id for ref in self.related_conversations)
 
 
@@ -372,6 +359,11 @@ class CreateAttackRequest(BaseModel):
         None, description="Conversation to branch from (clone messages into the new attack)"
     )
     cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
+    system_prompt: str | None = Field(
+        None,
+        description="System prompt lowered to a single system-role message at the front of the conversation. "
+        "Composes with prepended_conversation (the system message is inserted first).",
+    )
     prepended_conversation: list[PrependedMessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
@@ -489,8 +481,8 @@ class AddMessageRequest(BaseModel):
     )
     labels: dict[str, str] | None = Field(
         None,
-        description="Labels to attach to every message piece. "
-        "Falls back to labels from existing pieces in the conversation.",
+        description="Request labels used for attack-level consistency checks. "
+        "When present, the operator must match the attack result's operator.",
     )
 
 

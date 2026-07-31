@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import NoReturn, cast
 
 from pyrit.models.literals import PromptDataType
-from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.models.target.target_capabilities import CapabilityName, TargetCapabilities
 
 __all__ = [
     "CapabilityHandlingPolicy",

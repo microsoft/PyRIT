@@ -10,6 +10,7 @@ import traceback
 import uuid
 from abc import ABC
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
 from pyrit.common.logger import logger
@@ -52,6 +53,12 @@ AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
 
 
+class _NextMessageOverrideState(Enum):
+    """State marker distinguishing an unset override from an explicit ``None``."""
+
+    UNSET = "unset"
+
+
 @dataclass
 class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     """
@@ -61,9 +68,10 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     execution state. The params field contains caller-provided inputs,
     while other fields track execution progress.
 
-    Attacks that generate certain values internally (e.g., RolePlayAttack generates
-    next_message and prepended_conversation) can set the mutable override fields
-    (_next_message_override, _prepended_conversation_override) during _setup_async.
+    Attacks that generate certain values internally (e.g., a simulated-conversation
+    technique generates next_message and prepended_conversation) can set the mutable
+    override fields (_next_message_override, _prepended_conversation_override) during
+    _setup_async.
     """
 
     # Immutable parameters from the caller
@@ -76,7 +84,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     related_conversations: set[ConversationReference] = field(default_factory=set)
 
     # Mutable overrides for attacks that generate these values internally
-    _next_message_override: Message | None = None
+    _next_message_override: Message | None | _NextMessageOverrideState = _NextMessageOverrideState.UNSET
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
 
@@ -126,7 +134,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     def next_message(self) -> Message | None:
         """Optional message to send to the objective target."""
         # Check override first (for attacks that generate internally)
-        if self._next_message_override is not None:
+        if not isinstance(self._next_message_override, _NextMessageOverrideState):
             return self._next_message_override
         # Then check params
         if hasattr(self.params, "next_message"):
@@ -488,7 +496,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         if adversarial_config is not None and getattr(adversarial_config, "target", None) is not None:
             adversarial_chat = TargetIdentifier.from_component_identifier(adversarial_config.target.get_identifier())
             adversarial_system_prompt = self._extract_adversarial_prompt_text(adversarial_config.system_prompt)
-            adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.seed_prompt)
+            adversarial_seed_prompt = self._extract_adversarial_prompt_text(adversarial_config.first_message)
 
         # Add request converter identifiers if present
         request_converters: list[ConverterIdentifier] | None = None
@@ -553,7 +561,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     @property
     def params_type(self) -> type[AttackParameters]:
         """
-        Get the parameters type for this attack strategy.
+        The parameters type for this attack strategy.
 
         Returns:
             type[AttackParameters]: The parameters type this strategy accepts.
@@ -602,7 +610,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Get request converter configurations used by this strategy.
 
         Returns:
-            list[Any]: The list of request PromptConverterConfiguration objects.
+            list[Any]: The list of request ConverterConfiguration objects.
         """
         return self._request_converters
 
@@ -640,7 +648,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             next_message (Message | None): Message to send to the target.
             prepended_conversation (list[Message] | None): Conversation to prepend.
             memory_labels (dict[str, str] | None): Memory labels for the attack context.
-            **kwargs: Additional context-specific parameters (conversation_id, system_prompt, etc.).
+            **kwargs: Additional context-specific parameters (conversation_id, metadata, etc.).
 
         Returns:
             AttackStrategyResultT: The result of the attack execution.

@@ -10,7 +10,6 @@ import pytest
 from pyrit.setup.configuration_loader import (
     ConfigurationLoader,
     InitializerConfig,
-    ScenarioConfig,
     ServerConfig,
     initialize_from_config_async,
 )
@@ -360,11 +359,9 @@ class TestConfigurationLoaderInitialization:
         mock_registry = mock.MagicMock()
         mock_registry_cls.return_value = mock_registry
 
-        # Mock an initializer class
-        mock_initializer_class = mock.MagicMock()
+        # Mock the configured initializer instance produced by the registry
         mock_initializer_instance = mock.MagicMock()
-        mock_initializer_class.return_value = mock_initializer_instance
-        mock_registry.get_class.return_value = mock_initializer_class
+        mock_registry.create_and_configure.return_value = mock_initializer_instance
 
         config = ConfigurationLoader(
             memory_db_type="in_memory",
@@ -372,9 +369,8 @@ class TestConfigurationLoaderInitialization:
         )
         await config.initialize_pyrit_async()
 
-        # Verify registry was used to resolve initializer
-        mock_registry.get_class.assert_called_once_with("simple")
-        mock_initializer_class.assert_called_once_with()
+        # Verify registry was used to resolve and configure the initializer
+        mock_registry.create_and_configure.assert_called_once_with("simple", initializer_params=None)
 
         # Verify initialize was called with resolved initializers
         mock_init.assert_called_once()
@@ -386,8 +382,8 @@ class TestConfigurationLoaderInitialization:
         """Test that unknown initializer name raises ValueError."""
         mock_registry = mock.MagicMock()
         mock_registry_cls.return_value = mock_registry
-        mock_registry.get_class.return_value = None
-        mock_registry.get_names.return_value = ["simple", "airt"]
+        mock_registry.create_and_configure.side_effect = KeyError("unknown_initializer")
+        mock_registry.get_class_names.return_value = ["simple", "airt"]
 
         config = ConfigurationLoader(
             memory_db_type="in_memory",
@@ -631,64 +627,31 @@ silent: true
             config_path.unlink()
 
 
-class TestScenarioConfig:
-    """Tests for the scenario YAML block normalization."""
+@pytest.mark.parametrize("scenario_config", [None, {"name": "scam"}])
+def test_scenario_config_block_is_rejected(scenario_config):
+    with pytest.raises(ValueError, match="'scenario' configuration block is no longer supported"):
+        ConfigurationLoader.from_dict({"scenario": scenario_config})
 
-    def test_no_scenario_block(self):
-        loader = ConfigurationLoader()
-        assert loader._scenario_config is None
 
-    def test_string_form_normalized_to_snake_case(self):
-        loader = ConfigurationLoader.from_dict({"scenario": "ScamScenario"})
-        assert loader._scenario_config == ScenarioConfig(name="scam")
+def test_load_with_overrides_rejects_scenario_config_block():
+    yaml_content = "scenario:\n  name: scam\n  args:\n    max_turns: 10\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        config_path = pathlib.Path(f.name)
+    try:
+        with pytest.raises(ValueError, match="'scenario' configuration block is no longer supported"):
+            ConfigurationLoader.load_with_overrides(config_file=config_path)
+    finally:
+        config_path.unlink()
 
-    def test_string_form_already_snake_case(self):
-        loader = ConfigurationLoader.from_dict({"scenario": "scam"})
-        assert loader._scenario_config == ScenarioConfig(name="scam")
 
-    def test_dict_form_with_args(self):
-        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": {"max_turns": 10}}})
-        assert loader._scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
+def test_load_with_overrides_rejects_scenario_block_in_default_config(tmp_path):
+    config_path = tmp_path / ".pyrit_conf"
+    config_path.write_text("scenario:\n  name: scam\n", encoding="utf-8")
 
-    def test_dict_form_without_args(self):
-        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam"}})
-        assert loader._scenario_config == ScenarioConfig(name="scam", args=None)
-
-    def test_dict_form_missing_name_raises(self):
-        with pytest.raises(ValueError, match="must have a 'name' field"):
-            ConfigurationLoader.from_dict({"scenario": {"args": {"max_turns": 10}}})
-
-    def test_dict_form_non_string_name_raises(self):
-        with pytest.raises(ValueError, match="'name' must be a string"):
-            ConfigurationLoader.from_dict({"scenario": {"name": 123}})
-
-    def test_dict_form_non_dict_args_raises(self):
-        with pytest.raises(ValueError, match="'args' must be a dict"):
-            ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": [1, 2]}})
-
-    def test_invalid_top_level_type_raises(self):
-        with pytest.raises(ValueError, match="must be a string or dict"):
-            ConfigurationLoader.from_dict({"scenario": 123})
-
-    def test_scenario_config_property_returns_normalized_block(self):
-        """The public ``scenario_config`` property mirrors the private attribute."""
-        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": {"max_turns": 10}}})
-        assert loader.scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
-
-    def test_scenario_config_property_none_when_unset(self):
-        loader = ConfigurationLoader()
-        assert loader.scenario_config is None
-
-    def test_load_with_overrides_passes_scenario_through_explicit_config(self):
-        yaml_content = "scenario:\n  name: scam\n  args:\n    max_turns: 10\n"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(yaml_content)
-            config_path = pathlib.Path(f.name)
-        try:
-            config = ConfigurationLoader.load_with_overrides(config_file=config_path)
-            assert config._scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
-        finally:
-            config_path.unlink()
+    with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", config_path):
+        with pytest.raises(ValueError, match="'scenario' configuration block is no longer supported"):
+            ConfigurationLoader.load_with_overrides()
 
 
 class TestNormalizeServer:

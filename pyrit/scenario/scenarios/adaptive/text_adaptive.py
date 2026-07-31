@@ -17,16 +17,13 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.common.parameter import Parameter
-from pyrit.registry.object_registries.attack_technique_registry import (
-    AttackTechniqueRegistry,
-)
-from pyrit.registry.tag_query import TagQuery
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.models.parameter import Parameter
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
 if TYPE_CHECKING:
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.scenario.scenarios.adaptive.selectors import TechniqueSelector
     from pyrit.score import TrueFalseScorer
 
@@ -37,13 +34,13 @@ logger = logging.getLogger(__name__)
 _EXCLUDED_TECHNIQUES = frozenset({"prompt_sending"})
 
 
-def _build_text_adaptive_strategy() -> type[ScenarioStrategy]:
+def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
     """
-    Build the strategy enum from the core scenario-techniques catalog,
+    Build the technique enum from the core scenario-techniques catalog,
     excluding techniques that run as baseline.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically-built strategy enum class.
+        type[ScenarioTechnique]: The dynamically-built technique enum class.
 
     Logs a warning if any name in ``_EXCLUDED_TECHNIQUES`` is not present
     in the current catalog. The exclusion is defensive — when the catalog
@@ -51,14 +48,12 @@ def _build_text_adaptive_strategy() -> type[ScenarioStrategy]:
     surface that so a stale entry in the exclusion list (or a renamed
     catalog entry) doesn't silently break the intended exclusion.
     """
-    # Local import: ``scenario_techniques`` imports ``pyrit.scenario.core``,
+    # Local import: ``techniques`` imports ``pyrit.scenario.core``,
     # which transitively re-imports this module, so a top-level import would
     # form a cycle during ``pyrit.scenario`` package initialization.
-    from pyrit.setup.initializers.components.scenario_techniques import (
-        build_scenario_technique_factories,
-    )
+    from pyrit.setup.initializers.techniques import build_technique_factories
 
-    all_factories = list(build_scenario_technique_factories())
+    all_factories = list(build_technique_factories())
     catalog_names = {factory.name for factory in all_factories}
     unmatched = _EXCLUDED_TECHNIQUES - catalog_names
     if unmatched:
@@ -72,14 +67,10 @@ def _build_text_adaptive_strategy() -> type[ScenarioStrategy]:
 
     factories = [factory for factory in all_factories if factory.name not in _EXCLUDED_TECHNIQUES]
 
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
-        class_name="TextAdaptiveStrategy",
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+        class_name="TextAdaptiveTechnique",
         factories=factories,
-        aggregate_tags={
-            "default": TagQuery.any_of("default"),
-            "single_turn": TagQuery.any_of("single_turn"),
-            "multi_turn": TagQuery.any_of("multi_turn"),
-        },
+        default_names={"role_play_movie_script", "many_shot"},
     )
 
 
@@ -88,11 +79,11 @@ class TextAdaptive(AdaptiveScenario):
     Adaptive text-attack scenario.
 
     Selects techniques per-objective via an epsilon-greedy selector over the
-    set of selected strategies. ``prompt_sending`` runs as the baseline
+    set of selected techniques. ``prompt_sending`` runs as the baseline
     comparison and is excluded from the adaptive technique pool.
     """
 
-    _cached_strategy_class: ClassVar[type[ScenarioStrategy] | None] = None
+    _cached_technique_class: ClassVar[type[ScenarioTechnique] | None] = None
 
     VERSION: ClassVar[int] = 1
 
@@ -102,17 +93,11 @@ class TextAdaptive(AdaptiveScenario):
         return "adaptive_text"
 
     @classmethod
-    def get_strategy_class(cls) -> type[ScenarioStrategy]:
-        """Return the strategy enum for this scenario, building it once on first access."""
-        if cls._cached_strategy_class is None:
-            cls._cached_strategy_class = _build_text_adaptive_strategy()
-        return cls._cached_strategy_class
-
-    @classmethod
-    def get_default_strategy(cls) -> ScenarioStrategy:
-        """Return the default strategy aggregate (resolves to every ``default``-tagged technique)."""
-        strategy_class = cls.get_strategy_class()
-        return strategy_class("default")
+    def get_technique_class(cls) -> type[ScenarioTechnique]:
+        """Return the technique enum for this scenario, building it once on first access."""
+        if cls._cached_technique_class is None:
+            cls._cached_technique_class = _build_text_adaptive_technique()
+        return cls._cached_technique_class
 
     @classmethod
     def required_datasets(cls) -> list[str]:
@@ -128,12 +113,12 @@ class TextAdaptive(AdaptiveScenario):
         ]
 
     @classmethod
-    def default_dataset_config(cls) -> DatasetConfiguration:
-        """Return the default ``DatasetConfiguration`` (required datasets, capped at 4 per dataset)."""
-        return DatasetConfiguration(dataset_names=cls.required_datasets(), max_dataset_size=4)
+    def default_dataset_config(cls) -> DatasetAttackConfiguration:
+        """Return the default dataset config (required datasets, capped at 4 per dataset)."""
+        return CompoundDatasetAttackConfiguration.per_dataset(dataset_names=cls.required_datasets(), max_dataset_size=4)
 
     @classmethod
-    def supported_parameters(cls) -> list[Parameter]:
+    def additional_parameters(cls) -> list[Parameter]:
         """
         Declare custom parameters this scenario accepts from the CLI / config file.
 
