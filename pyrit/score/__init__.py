@@ -107,6 +107,8 @@ from pyrit.score.true_false.true_false_composite_scorer import TrueFalseComposit
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildguard_response
+from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 if TYPE_CHECKING:
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
@@ -203,6 +205,7 @@ __all__ = [
     "ObjectiveScorerMetrics",
     "OpenRedirectOutputScorer",
     "parse_llamaguard_response",
+    "parse_wildguard_response",
     "PathTraversalOutputScorer",
     "PlagiarismMetric",
     "PlagiarismScorer",
@@ -216,6 +219,7 @@ __all__ = [
     "render_likert_system_prompt",
     "render_scale_system_prompt",
     "render_true_false_system_prompt",
+    "render_wildguard_prompt",
     "ResponseHandler",
     "Scorer",
     "ScorerEvalDatasetFiles",
@@ -252,6 +256,8 @@ __all__ = [
     "TrueFalseScorer",
     "VideoFloatScaleScorer",
     "VideoTrueFalseScorer",
+    "WildGuardLabel",
+    "WildGuardScorer",
     "XSSOutputScorer",
     "XXEOutputScorer",
 ]

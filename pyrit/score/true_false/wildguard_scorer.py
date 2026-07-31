@@ -1,0 +1,234 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+from __future__ import annotations
+
+from functools import partial
+from typing import Any, ClassVar
+
+from pyrit.common.path import SCORER_SEED_PROMPT_PATH
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
+from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.response_handler import CallableResponseHandler
+from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score.system_prompt import _render_system_prompt_template
+from pyrit.score.true_false.true_false_score_aggregator import (
+    TrueFalseAggregatorFunc,
+    TrueFalseScoreAggregator,
+)
+from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildguard_response
+
+_DEFAULT_WILDGUARD_PROMPT_PATH = SCORER_SEED_PROMPT_PATH / "wildguard" / "wildguard_prompt.yaml"
+_PROMPT_PARAMETERS = ("user_prompt", "response")
+
+_MISSING_USER_PROMPT_MESSAGE = (
+    "WildGuard classifies a user prompt and a model response together, so it needs the prompt "
+    "that produced the response being scored. Score a piece that follows a user turn in a "
+    "stored conversation, or pass user_prompt= to the scorer."
+)
+
+_EMPTY_RESPONSE_MESSAGE = (
+    "WildGuard was asked to judge an empty response. It answers 'N/A' for the response-side "
+    "labels when no response is present, which has no true/false reading. Score a response "
+    "with content, or select WildGuardLabel.HARMFUL_REQUEST to judge the prompt instead."
+)
+
+
+def render_wildguard_prompt(
+    *,
+    response: str,
+    user_prompt: str,
+    prompt_template: SeedPrompt | str | None = None,
+) -> SeedPrompt:
+    """
+    Render a WildGuard classification request for one prompt and response pair.
+
+    Args:
+        response (str): The model response being classified.
+        user_prompt (str): The user prompt that produced ``response``.
+        prompt_template (SeedPrompt | str | None): Custom request template. Defaults to the
+            bundled WildGuard template.
+
+    Returns:
+        SeedPrompt: The rendered request prompt.
+    """
+    return _render_system_prompt_template(
+        system_prompt_template=prompt_template,
+        default_template_path=_DEFAULT_WILDGUARD_PROMPT_PATH,
+        render_params={"user_prompt": user_prompt, "response": response},
+        required_parameters=_PROMPT_PARAMETERS,
+    )
+
+
+class WildGuardScorer(TrueFalseScorer):
+    """
+    Classify a prompt and response pair with the Allen Institute WildGuard classifier.
+
+    WildGuard returns three judgements from a single call: whether the request is harmful,
+    whether the response is a refusal, and whether the response is harmful. ``label`` selects
+    which one becomes the boolean score; the other two are kept in the score metadata so
+    reading them costs no extra request.
+
+    The scored message is the model response. The prompt it is judged against is read from the
+    preceding turn of the scored conversation, or supplied with ``user_prompt``.
+    """
+
+    SCORE_CATEGORY: ClassVar[str] = "wildguard"
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
+
+    _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+
+    def __init__(
+        self,
+        *,
+        chat_target: PromptTarget,
+        label: WildGuardLabel = WildGuardLabel.HARMFUL_RESPONSE,
+        user_prompt: str | None = None,
+        prompt_template: SeedPrompt | str | None = None,
+        validator: ScorerPromptValidator | None = None,
+        score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
+    ) -> None:
+        """
+        Initialize the WildGuard scorer.
+
+        Args:
+            chat_target (PromptTarget): A target serving WildGuard.
+            label (WildGuardLabel): Which of the three judgements becomes the score value.
+                Defaults to ``WildGuardLabel.HARMFUL_RESPONSE``.
+            user_prompt (str | None): Fixed prompt to classify responses against, which takes
+                precedence over the preceding turn of the scored conversation. Defaults to None.
+            prompt_template (SeedPrompt | str | None): Custom WildGuard request template.
+                Defaults to the bundled template.
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to text only.
+            score_aggregator (TrueFalseAggregatorFunc): Aggregator for multi-piece scores.
+                Defaults to TrueFalseScoreAggregator.OR.
+        """
+        self._prompt_target = chat_target
+        self._label = label
+        self._user_prompt = user_prompt
+        self._prompt_template = _resolve_prompt_template(prompt_template=prompt_template)
+        self._response_handler = CallableResponseHandler(parser=partial(parse_wildguard_response, label=label))
+
+        super().__init__(
+            validator=validator or self._DEFAULT_VALIDATOR,
+            score_aggregator=score_aggregator,
+            chat_target=chat_target,
+        )
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the scorer identifier.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        params: dict[str, Any] = {
+            "label": self._label.value,
+            "prompt_template": self._prompt_template.value,
+            # A fixed prompt changes the request that gets sent, so it belongs in the identity.
+            "user_prompt": self._user_prompt,
+        }
+        return self._create_identifier(
+            params=params,
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+            prompt_target=self._prompt_target.get_identifier(),
+        )
+
+    def _resolve_user_prompt(self, message_piece: MessagePiece) -> str | None:
+        """
+        Find the user prompt that a scored response is judged against.
+
+        Args:
+            message_piece (MessagePiece): The response being scored.
+
+        Returns:
+            str | None: The configured prompt, otherwise the preceding user turn of the
+                scored conversation, otherwise None.
+        """
+        if self._user_prompt:
+            return self._user_prompt
+        if not message_piece.conversation_id or message_piece.sequence < 1:
+            return None
+
+        conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
+        # The converted value is what the target actually received. After a converter runs, the
+        # original value can be the seed prompt, which the target never saw.
+        preceding_turn = [
+            piece.converted_value
+            for piece in conversation
+            if piece.sequence == message_piece.sequence - 1
+            and piece.converted_value_data_type == "text"
+            and piece.api_role == "user"
+        ]
+        return "\n".join(preceding_turn) or None
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        """
+        Score one response against the configured WildGuard label.
+
+        Args:
+            message_piece (MessagePiece): The model response to classify.
+            objective (str | None): Objective retained on the resulting score. It is not
+                included in the WildGuard request. Defaults to None.
+
+        Returns:
+            list[Score]: A single true/false WildGuard score.
+
+        Raises:
+            ValueError: If no user prompt can be found, or if a response-side label was
+                selected for an empty response.
+        """
+        response = message_piece.converted_value
+        if not response.strip() and self._label is not WildGuardLabel.HARMFUL_REQUEST:
+            # Checked before the request rather than in the parser, because the parser's
+            # exceptions drive a retry and resending an empty response cannot change the answer.
+            raise ValueError(_EMPTY_RESPONSE_MESSAGE)
+
+        user_prompt = self._resolve_user_prompt(message_piece)
+        if not user_prompt:
+            raise ValueError(_MISSING_USER_PROMPT_MESSAGE)
+
+        request_prompt = render_wildguard_prompt(
+            response=response,
+            user_prompt=user_prompt,
+            prompt_template=self._prompt_template,
+        )
+        unvalidated_score = await _run_llm_scoring_async(
+            chat_target=self._prompt_target,
+            system_prompt=None,
+            response_handler=self._response_handler,
+            value=request_prompt.value,
+            data_type="text",
+            scored_prompt_id=message_piece.id,
+            scorer_identifier=self.get_identifier(),
+            category=self.SCORE_CATEGORY,
+            objective=objective,
+        )
+        return [
+            unvalidated_score.to_score(
+                score_value=unvalidated_score.raw_score_value,
+                score_type="true_false",
+            )
+        ]
+
+
+def _resolve_prompt_template(*, prompt_template: SeedPrompt | str | None) -> SeedPrompt:
+    if prompt_template is None:
+        resolved = SeedPrompt.from_yaml_file(_DEFAULT_WILDGUARD_PROMPT_PATH)
+    elif isinstance(prompt_template, SeedPrompt):
+        resolved = prompt_template
+    elif isinstance(prompt_template, str):
+        resolved = SeedPrompt(value=prompt_template, data_type="text", is_jinja_template=True)
+    else:
+        raise TypeError("prompt_template must be a SeedPrompt, str, or None.")
+
+    # Render once here so a template missing a parameter fails at construction rather than on
+    # the first scored message.
+    render_wildguard_prompt(
+        response="validation response",
+        user_prompt="validation prompt",
+        prompt_template=resolved,
+    )
+    return resolved
