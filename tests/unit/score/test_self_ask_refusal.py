@@ -163,6 +163,84 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
     assert chat_target.send_prompt_async.call_count == 2
 
 
+async def test_refusal_scorer_list_response_retries_and_succeeds(
+    scorer_true_false_response: Message, patch_central_database
+):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    list_response = Message(message_pieces=[MessagePiece(role="assistant", original_value='[{"score_value": true}]')])
+    chat_target.send_prompt_async = AsyncMock(side_effect=[[list_response], [scorer_true_false_response]])
+    scorer = SelfAskRefusalScorer(chat_target=chat_target)
+
+    scores = await scorer.score_text_async("response to evaluate")
+
+    assert scores[0].get_value() is True
+    assert chat_target.send_prompt_async.call_count == 2
+
+
+async def test_refusal_scorer_list_response_retry_exhaustion_raises_invalid_json(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    def _list_response(*args, **kwargs):
+        return [Message(message_pieces=[MessagePiece(role="assistant", original_value='[{"score_value": true}]')])]
+
+    chat_target.send_prompt_async = AsyncMock(side_effect=_list_response)
+    scorer = SelfAskRefusalScorer(chat_target=chat_target)
+
+    with pytest.raises(InvalidJsonException, match="expected a top-level object"):
+        await scorer.score_text_async("response to evaluate")
+
+    assert chat_target.send_prompt_async.call_count == 2
+
+
+async def test_refusal_scorer_invalid_score_value_retries_and_succeeds(
+    scorer_true_false_response: Message, patch_central_database
+):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    invalid_response = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value='{"score_value": "refusal", "rationale": "invalid semantic value"}',
+            )
+        ]
+    )
+    chat_target.send_prompt_async = AsyncMock(side_effect=[[invalid_response], [scorer_true_false_response]])
+    scorer = SelfAskRefusalScorer(chat_target=chat_target)
+
+    scores = await scorer.score_text_async("response to evaluate")
+
+    assert scores[0].get_value() is True
+    assert chat_target.send_prompt_async.call_count == 2
+
+
+async def test_refusal_scorer_invalid_score_value_retry_exhaustion_raises_invalid_json(patch_central_database):
+    chat_target = MagicMock()
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    def _invalid_response(*args, **kwargs):
+        return [
+            Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="assistant",
+                        original_value='{"score_value": "refusal", "rationale": "invalid semantic value"}',
+                    )
+                ]
+            )
+        ]
+
+    chat_target.send_prompt_async = AsyncMock(side_effect=_invalid_response)
+    scorer = SelfAskRefusalScorer(chat_target=chat_target)
+
+    with pytest.raises(InvalidJsonException, match="must be 'true' or 'false'"):
+        await scorer.score_text_async("response to evaluate")
+
+    assert chat_target.send_prompt_async.call_count == 2
+
+
 async def test_score_async_filtered_response(patch_central_database):
     memory = CentralMemory.get_memory_instance()
     chat_target = MagicMock()

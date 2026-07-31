@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
 export const useConversationPanelStyles = makeStyles({
   root: {
@@ -24,6 +25,9 @@ export const useConversationPanelStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
     fontWeight: tokens.fontWeightSemibold,
+  },
+  headerButton: {
+    ...mobileTouchTarget,
   },
   conversationList: {
     flex: 1,
@@ -63,6 +67,11 @@ export const useConversationPanelStyles = makeStyles({
     gap: tokens.spacingHorizontalXS,
     overflow: 'hidden',
   },
+  starButton: {
+    minWidth: 'auto',
+    padding: '2px',
+    ...mobileTouchTarget,
+  },
   preview: {
     color: tokens.colorNeutralForeground3,
     overflow: 'hidden',
@@ -83,5 +92,8 @@ export const useConversationPanelStyles = makeStyles({
     display: 'flex',
     justifyContent: 'center',
     padding: tokens.spacingVerticalL,
+  },
+  retryButton: {
+    ...mobileTouchTargetHeight,
   },
 })

@@ -32,6 +32,19 @@ describe("Navigation", () => {
     expect(screen.getByRole("button", { name: "Home" })).toBeInTheDocument();
   });
 
+  it("exposes one primary navigation landmark and marks the current view", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+
+    expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute(
+      "aria-current"
+    );
+  });
+
   it("calls onNavigate with 'home' when home button is clicked", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
@@ -94,6 +107,15 @@ describe("Navigation", () => {
     expect(feedbackButton).toBeInTheDocument();
     fireEvent.click(feedbackButton);
     expect(onOpenFeedback).toHaveBeenCalledTimes(1);
+  });
+
+  it("links to the public security policy", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+
+    expect(screen.getByRole("link", { name: "Security" })).toHaveAttribute(
+      "href",
+      "https://github.com/microsoft/PyRIT/security/policy"
+    );
   });
 
   it("calls onNavigate with 'history' when history button is clicked", async () => {

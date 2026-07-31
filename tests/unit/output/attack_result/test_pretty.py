@@ -320,8 +320,9 @@ async def test_write_async_adversarial_with_no_messages(printer, attack_result, 
 # --- reasoning trace path ---
 
 
-async def test_write_async_renders_reasoning_summary_when_requested(printer, attack_result, sqlite_instance, capsys):
-    reasoning_value = '{"summary": [{"text": "step one"}, {"text": "step two"}]}'
+async def test_write_async_renders_reasoning_summary_when_requested(
+    printer, attack_result, sqlite_instance, reasoning_value
+):
     piece = MessagePiece(
         role="assistant",
         original_value=reasoning_value,
@@ -331,8 +332,9 @@ async def test_write_async_renders_reasoning_summary_when_requested(printer, att
     )
     _seed_messages(sqlite_instance, "conv-main", [piece])
 
-    content = await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
-    assert "Reasoning Summary" in content
+    content = await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
+    assert "💭 Reasoning" in content
+    assert "Provider-generated reasoning summary (not raw chain-of-thought)" in content
     assert "step one" in content
     assert "step two" in content
 
@@ -364,32 +366,67 @@ async def test_write_async_with_colors_enabled_emits_ansi_codes(
     assert "\x1b[" in capsys.readouterr().out
 
 
-async def test_write_async_invalid_reasoning_summary_is_silently_skipped(
-    printer, attack_result, sqlite_instance, capsys
-):
-    # Reasoning piece with non-JSON value should not blow up, just produce no summary section.
-    piece = MessagePiece(
-        role="assistant",
-        original_value="not-json",
-        converted_value="not-json",
-        original_value_data_type="reasoning",
-        converted_value_data_type="reasoning",
-    )
-    _seed_messages(sqlite_instance, "conv-main", [piece])
-    content = await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
-    assert "Reasoning Summary" not in content
+async def test_write_async_invalid_reasoning_summary_warns(printer, attack_result, sqlite_instance):
+    pieces = [
+        MessagePiece(
+            role="assistant",
+            original_value="not-json",
+            original_value_data_type="reasoning",
+        ),
+        MessagePiece(role="assistant", original_value="Final answer."),
+    ]
+    _seed_messages(sqlite_instance, "conv-main", pieces)
+
+    rendered = await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
+
+    assert "⚠ WARNING: Reasoning summary failed to render; conversation is intact." in rendered
+    assert "Final answer." in rendered
 
 
-async def test_write_async_reasoning_summary_without_summary_key_is_silently_skipped(
-    printer, attack_result, sqlite_instance
+async def test_write_async_reasoning_summary_without_summary_key_warns(printer, attack_result, sqlite_instance):
+    pieces = [
+        MessagePiece(
+            role="assistant",
+            original_value='{"id": "r1", "type": "reasoning"}',
+            original_value_data_type="reasoning",
+        ),
+        MessagePiece(role="assistant", original_value="Final answer."),
+    ]
+    _seed_messages(sqlite_instance, "conv-main", pieces)
+
+    rendered = await printer._render_conversation_async(attack_result, include_reasoning_summaries=True)
+
+    assert "⚠ WARNING: Reasoning summary failed to render; conversation is intact." in rendered
+    assert "Final answer." in rendered
+
+
+async def test_write_async_pruned_reasoning_uses_pretty_heading(
+    printer,
+    attack_result,
+    sqlite_instance,
+    reasoning_value,
 ):
     piece = MessagePiece(
         role="assistant",
-        original_value='{"other": "data"}',
-        converted_value='{"other": "data"}',
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
         original_value_data_type="reasoning",
         converted_value_data_type="reasoning",
+        conversation_id="pruned-reasoning",
     )
-    _seed_messages(sqlite_instance, "conv-main", [piece])
-    content = await printer._render_conversation_async(attack_result, include_reasoning_trace=True)
-    assert "Reasoning Summary" not in content
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="pruned-reasoning",
+            conversation_type=ConversationType.PRUNED,
+        )
+    )
+
+    rendered = await printer.render_async(
+        attack_result,
+        include_pruned_conversations=True,
+        include_reasoning_summaries=True,
+    )
+
+    assert "💭 Reasoning" in rendered
+    assert "step one" in rendered

@@ -35,6 +35,11 @@ export const useMainLayoutStyles = makeStyles({
   spacer: {
     flex: 1,
   },
+  tourButton: {
+    '@media (max-width: 600px)': {
+      minHeight: '44px',
+    },
+  },
   contentArea: {
     display: 'flex',
     flex: 1,

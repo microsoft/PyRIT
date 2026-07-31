@@ -2,13 +2,19 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   Button,
   Drawer,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   mergeClasses,
+  Switch,
   Text,
   Tooltip,
   useRestoreFocusSource,
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
-import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowDownloadRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import SystemPromptBanner from './SystemPromptBanner'
 import ChatInputArea from './ChatInputArea'
@@ -22,6 +28,8 @@ import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
+import { exportConversation } from '../../utils/conversationExport'
+import type { ExportFormat } from '../../utils/conversationExport'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
 import { targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
@@ -86,6 +94,8 @@ export default function ChatWindow({
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
+  // Conversation-wide default for rendering message text as Markdown.
+  const [globalMarkdown, setGlobalMarkdown] = useState(false)
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
@@ -614,8 +624,24 @@ export default function ChatWindow({
 
   const systemMessage = messages.find(message => message.role === 'system')
 
+  // Export is available whenever there is a stable, viewable conversation:
+  // not while empty, loading, or mid-send. A lone system prompt (rendered only
+  // in the banner, not the chat body) does not count as an exportable message.
+  // Read-only / operator-lock / cross-target states do not block export.
+  const canExportConversation =
+    messages.some((message) => !message.isLoading && message.role !== 'system') &&
+    !isSending &&
+    !isLoadingAttack &&
+    !isLoadingMessages &&
+    !awaitingConversationLoad
+
+  const handleExport = (format: ExportFormat) => {
+    exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+  }
+
   return (
     <div className={styles.root}>
+      <h1 className={styles.pageHeading}>Chat</h1>
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
@@ -642,10 +668,43 @@ export default function ChatWindow({
             )}
           </div>
           <div className={styles.ribbonActions}>
+            <Tooltip content="Render all messages as Markdown by default" relationship="label">
+              <Switch
+                checked={globalMarkdown}
+                onChange={(_ev, data) => setGlobalMarkdown(data.checked)}
+                label="Markdown"
+                data-testid="global-markdown-toggle"
+              />
+            </Tooltip>
+            <Menu>
+              <MenuTrigger disableButtonEnhancement>
+                <Tooltip content="Export conversation" relationship="label">
+                  <Button
+                    appearance="subtle"
+                    className={styles.ribbonAction}
+                    icon={<ArrowDownloadRegular />}
+                    disabled={!canExportConversation}
+                    aria-label="Export conversation"
+                    data-testid="export-conversation-btn"
+                  />
+                </Tooltip>
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  <MenuItem onClick={() => handleExport('markdown')} data-testid="export-markdown-item">
+                    Export as Markdown (.md)
+                  </MenuItem>
+                  <MenuItem onClick={() => handleExport('json')} data-testid="export-json-item">
+                    Export as JSON (.json)
+                  </MenuItem>
+                </MenuList>
+              </MenuPopover>
+            </Menu>
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
                 {...restoreFocusTargetAttributes}
                 appearance="subtle"
+                className={styles.ribbonAction}
                 icon={<PanelRightRegular />}
                 onClick={() => setIsPanelOpen((open) => !open)}
                 disabled={!attackResultId}
@@ -682,6 +741,7 @@ export default function ChatWindow({
           isOperatorLocked={isOperatorLocked}
           isCrossTarget={isCrossTargetLocked}
           noTargetSelected={!activeTarget}
+          globalMarkdown={globalMarkdown}
         />
         <ChatInputArea
           ref={inputBoxRef}

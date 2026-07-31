@@ -57,6 +57,7 @@ export default function MainLayout({
             icon={<QuestionCircleRegular />}
             onClick={onStartTour}
             data-testid="start-tour"
+            className={styles.tourButton}
           >
             Take a tour
           </Button>

@@ -374,3 +374,232 @@ async def test_write_async_adversarial_with_no_messages(printer, attack_result, 
 async def test_write_async_include_adversarial_with_no_refs(printer, attack_result, capsys):
     await printer.write_async(attack_result, include_adversarial_conversation=True)
     assert "## Adversarial Conversation" not in capsys.readouterr().out
+
+
+async def test_write_async_main_reasoning_uses_heading(
+    printer,
+    attack_result,
+    sqlite_instance,
+    reasoning_value,
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+    )
+    _seed_messages(sqlite_instance, "conv-main", [piece])
+
+    rendered = await printer.render_async(attack_result, include_reasoning_summaries=True)
+
+    assert "> **💭 Reasoning**" in rendered
+    assert "step one" in rendered
+
+
+async def test_write_async_pruned_reasoning_uses_heading(
+    printer,
+    attack_result,
+    sqlite_instance,
+    reasoning_value,
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+        conversation_id="pruned-reasoning",
+    )
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="pruned-reasoning",
+            conversation_type=ConversationType.PRUNED,
+        )
+    )
+
+    rendered = await printer.render_async(
+        attack_result,
+        include_pruned_conversations=True,
+        include_reasoning_summaries=True,
+    )
+
+    assert "> **💭 Reasoning**" in rendered
+    assert "step one" in rendered
+
+
+async def test_write_async_adversarial_reasoning_uses_heading(
+    printer,
+    attack_result,
+    sqlite_instance,
+    reasoning_value,
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+        conversation_id="adversarial-reasoning",
+    )
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    attack_result.related_conversations.add(
+        ConversationReference(
+            conversation_id="adversarial-reasoning",
+            conversation_type=ConversationType.ADVERSARIAL,
+        )
+    )
+
+    rendered = await printer.render_async(
+        attack_result,
+        include_adversarial_conversation=True,
+        include_reasoning_summaries=True,
+    )
+
+    assert "> **💭 Reasoning**" in rendered
+    assert "step one" in rendered
+
+
+# --- pruned conversations: internal rendering branches ---
+
+
+async def test_write_async_pruned_renders_only_last_message_with_role_label(
+    printer, attack_result, sqlite_instance, capsys
+):
+    earlier = MessagePiece(role="user", original_value="older pruned msg", converted_value="older pruned msg")
+    latest = MessagePiece(role="assistant", original_value="newest pruned msg", converted_value="newest pruned msg")
+    _seed_messages(sqlite_instance, "pruned-multi", [earlier, latest])
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="pruned-multi", conversation_type=ConversationType.PRUNED)
+    )
+
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    out = capsys.readouterr().out
+    assert "**Last Message (ASSISTANT):**" in out
+    assert "newest pruned msg" in out
+    assert "older pruned msg" not in out
+
+
+async def test_write_async_pruned_single_line_uses_blockquote_without_score(
+    printer, attack_result, sqlite_instance, capsys
+):
+    piece = MessagePiece(role="assistant", original_value="solo pruned line", converted_value="solo pruned line")
+    _seed_messages(sqlite_instance, "pruned-solo", [piece])
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="pruned-solo", conversation_type=ConversationType.PRUNED)
+    )
+
+    await printer.write_async(attack_result, include_pruned_conversations=True)
+    out = capsys.readouterr().out
+    assert "> solo pruned line" in out
+    assert "**Score:**" not in out
+
+
+async def test_write_async_pruned_skips_last_message_with_no_renderable_pieces(
+    printer, attack_result, sqlite_instance, reasoning_value
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+        conversation_id="pruned-reasoning-only",
+    )
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="pruned-reasoning-only", conversation_type=ConversationType.PRUNED)
+    )
+
+    rendered = await printer.render_async(
+        attack_result,
+        include_pruned_conversations=True,
+        include_reasoning_summaries=False,
+    )
+
+    assert "## Pruned Conversations" in rendered
+    assert "**Last Message" not in rendered
+    assert "step one" not in rendered
+
+
+# --- adversarial conversation: internal rendering branches ---
+
+
+async def test_write_async_adversarial_renders_system_header(printer, attack_result, sqlite_instance, capsys):
+    piece = MessagePiece(role="system", original_value="adv system directive", converted_value="adv system directive")
+    _seed_messages(sqlite_instance, "adv-system", [piece])
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="adv-system", conversation_type=ConversationType.ADVERSARIAL)
+    )
+
+    await printer.write_async(attack_result, include_adversarial_conversation=True)
+    out = capsys.readouterr().out
+    assert "#### SYSTEM" in out
+    assert "adv system directive" in out
+
+
+async def test_write_async_adversarial_turn_numbering_and_role_headers(printer, attack_result, sqlite_instance, capsys):
+    first_user = MessagePiece(role="user", original_value="first adv prompt", converted_value="first adv prompt")
+    assistant = MessagePiece(role="assistant", original_value="adv answer", converted_value="adv answer")
+    second_user = MessagePiece(role="user", original_value="second adv prompt", converted_value="second adv prompt")
+    _seed_messages(sqlite_instance, "adv-turns", [first_user, assistant, second_user])
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="adv-turns", conversation_type=ConversationType.ADVERSARIAL)
+    )
+
+    await printer.write_async(attack_result, include_adversarial_conversation=True)
+    out = capsys.readouterr().out
+    assert "#### Turn 1 - USER" in out
+    assert "#### ASSISTANT" in out
+    assert "#### Turn 2 - USER" in out
+
+
+async def test_write_async_adversarial_skips_message_with_no_renderable_pieces(
+    printer, attack_result, sqlite_instance, reasoning_value
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=reasoning_value,
+        converted_value=reasoning_value,
+        original_value_data_type="reasoning",
+        converted_value_data_type="reasoning",
+        conversation_id="adv-reasoning-only",
+    )
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[piece]))
+    attack_result.related_conversations.add(
+        ConversationReference(conversation_id="adv-reasoning-only", conversation_type=ConversationType.ADVERSARIAL)
+    )
+
+    rendered = await printer.render_async(
+        attack_result,
+        include_adversarial_conversation=True,
+        include_reasoning_summaries=False,
+    )
+
+    assert "## Adversarial Conversation" in rendered
+    assert "#### " not in rendered
+    assert "step one" not in rendered
+
+
+async def test_write_async_adversarial_best_id_with_no_matching_ref(patch_central_database, sqlite_instance, capsys):
+    piece = MessagePiece(role="user", original_value="unmatched adv content", converted_value="unmatched adv content")
+    _seed_messages(sqlite_instance, "adv-present", [piece])
+
+    result = AttackResult(
+        objective="o",
+        conversation_id="conv-main",
+        outcome=AttackOutcome.SUCCESS,
+        metadata={"best_adversarial_conversation_id": "adv-missing"},
+        related_conversations={
+            ConversationReference(conversation_id="adv-present", conversation_type=ConversationType.ADVERSARIAL),
+        },
+    )
+
+    await MarkdownAttackResultMemoryPrinter(display_inline=False).write_async(
+        result, include_adversarial_conversation=True
+    )
+    out = capsys.readouterr().out
+    assert "## Adversarial Conversation" in out
+    assert "best-scoring branch" not in out
+    assert "unmatched adv content" not in out

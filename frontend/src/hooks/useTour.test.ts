@@ -50,6 +50,13 @@ describe('useTour', () => {
 
     expect(result.current.tourProps.run).toBe(true)
     expect(result.current.tourProps.stepIndex).toBe(0)
+    expect(result.current.tourProps.floatingOptions).toEqual({
+      hideArrow: true,
+      shiftOptions: {
+        crossAxis: true,
+        padding: 12,
+      },
+    })
   })
 
   it('startTour navigates to home and defers step when on a different view', () => {
