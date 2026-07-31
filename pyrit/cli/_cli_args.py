@@ -621,7 +621,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
     augmented_specs: list[_ArgSpec] = list(_RUN_ARG_SPECS)
     if declared_params:
         scenario_specs = [_arg_spec_from_parameter(param=p) for p in declared_params]
-        _validate_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
+        scenario_specs = _resolve_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
         augmented_specs.extend(scenario_specs)
 
     result = _parse_shell_arguments(parts=parts[1:], arg_specs=augmented_specs)
@@ -707,29 +707,44 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
     )
 
 
-def _validate_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> None:
+def _resolve_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> list[_ArgSpec]:
     """
-    Reject scenario-vs-built-in and scenario-vs-scenario flag collisions.
+    Drop scenario specs that collide with a built-in flag; reject scenario-vs-scenario collisions.
+
+    A scenario's ``supported_parameters`` (fetched from the API) include the framework's common
+    parameters — e.g. ``memory_labels``, ``max_concurrency``, ``max_retries`` — which normalize to
+    flags already provided as built-ins. Those built-ins own the flag, so the scenario copy is
+    silently dropped, mirroring ``pyrit_scan._add_scenario_params_from_api``. A genuine
+    scenario-vs-scenario collision (two declared params normalizing to the same flag) is still a
+    scenario bug, so it raises.
+
+    Args:
+        scenario_specs: Specs built from scenario-declared parameters.
+        base_specs: Built-in run argument specs.
+
+    Returns:
+        list[_ArgSpec]: The scenario specs whose flags do not collide with a built-in flag.
 
     Raises:
-        ValueError: If a scenario flag duplicates a built-in flag, or two
-            scenario parameters normalize to the same CLI flag.
+        ValueError: If two scenario parameters normalize to the same CLI flag.
     """
     base_flags = {flag for spec in base_specs for flag in spec.flags}
+    resolved: list[_ArgSpec] = []
     seen: set[str] = set()
     for spec in scenario_specs:
+        # Scenario specs carry a single flag, but guard defensively in case that changes.
+        if any(flag in base_flags for flag in spec.flags):
+            # Common framework parameter already handled by the matching built-in flag.
+            continue
         for flag in spec.flags:
-            if flag in base_flags:
-                raise ValueError(
-                    f"Scenario parameter flag {flag!r} collides with a built-in flag. "
-                    f"Rename the parameter to avoid the collision."
-                )
             if flag in seen:
                 raise ValueError(
                     f"Scenario declares two parameters that normalize to the same CLI flag {flag!r}. "
                     f"Rename one of them."
                 )
             seen.add(flag)
+        resolved.append(spec)
+    return resolved
 
 
 def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
