@@ -83,6 +83,16 @@ OPENAI_CHAT_MODEL="anthropic/claude-3.7-sonnet"
 Get your API key from [openrouter.ai](https://openrouter.ai/).
 :::
 
+:::{tab-item} Abliteration.ai
+```bash
+OPENAI_CHAT_ENDPOINT="https://api.abliteration.ai/v1"
+OPENAI_CHAT_KEY="ak_your-key-here"
+OPENAI_CHAT_MODEL="abliterated-model"
+```
+
+Get your API key from [abliteration.ai](https://abliteration.ai/). See [docs.abliteration.ai](https://docs.abliteration.ai) for available models.
+:::
+
 ::::
 
 ```{note}

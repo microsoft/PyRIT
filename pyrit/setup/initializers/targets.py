@@ -279,6 +279,13 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="GOOGLE_GEMINI_API_KEY",
         model_var="GOOGLE_GEMINI_MODEL",
     ),
+    TargetConfig(
+        registry_name="abliteration",
+        target_class=OpenAIChatTarget,
+        endpoint_var="ABLIT_ENDPOINT",
+        key_var="ABLIT_KEY",
+        model_var="ABLIT_MODEL",
+    ),
     # ============================================
     # OpenAI Responses Targets (OpenAIResponseTarget)
     # ============================================
@@ -499,6 +506,7 @@ class TargetInitializer(PyRITInitializer):
     - OPEN_ROUTER_* - OpenRouter API
     - OLLAMA_* - Ollama local
     - GOOGLE_GEMINI_* - Google Gemini (OpenAI-compatible)
+    - ABLIT_* - Abliteration.ai (OpenAI-compatible)
 
     **OpenAI Responses Targets (OpenAIResponseTarget):**
     - AZURE_OPENAI_GPT5_RESPONSES_* - Azure OpenAI GPT-5 Responses

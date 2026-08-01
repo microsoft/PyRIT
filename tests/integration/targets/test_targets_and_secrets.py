@@ -1072,6 +1072,7 @@ async def test_openai_chat_target_with_sync_token_provider(sqlite_instance: SQLi
         ("GROQ_ENDPOINT", "GROQ_KEY", "GROQ_LLAMA_MODEL"),
         ("OPEN_ROUTER_ENDPOINT", "OPEN_ROUTER_KEY", "OPEN_ROUTER_CLAUDE_MODEL"),
         ("OLLAMA_CHAT_ENDPOINT", "", "OLLAMA_MODEL"),
+        ("ABLIT_ENDPOINT", "ABLIT_KEY", "ABLIT_MODEL"),
     ],
 )
 @pytest.mark.run_only_if_all_tests
