@@ -72,6 +72,11 @@ class WildGuardScorer(TrueFalseScorer):
     which one becomes the boolean score; the other two are kept in the score metadata so
     reading them costs no extra request.
 
+    That also means composing several of these under ``TrueFalseCompositeScorer`` is not the
+    intended way to read more than one judgement. One scorer already reports all three, so a
+    second only repeats the same request, and the two scores would carry the same metadata
+    keys.
+
     The scored message is the model response. The prompt it is judged against is read from the
     preceding turn of the scored conversation, or supplied with ``user_prompt``.
     """
