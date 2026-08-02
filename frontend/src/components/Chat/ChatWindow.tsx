@@ -3,6 +3,11 @@ import type { ChangeEvent } from 'react'
 import {
   Button,
   Drawer,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   mergeClasses,
   Switch,
   Text,
@@ -11,7 +16,7 @@ import {
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import type { SwitchOnChangeData } from '@fluentui/react-components'
-import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowDownloadRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import SystemPromptBanner from './SystemPromptBanner'
 import ChatInputArea from './ChatInputArea'
@@ -25,6 +30,8 @@ import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
+import { exportConversation } from '../../utils/conversationExport'
+import type { ExportFormat } from '../../utils/conversationExport'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
 import { targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
@@ -653,6 +660,21 @@ export default function ChatWindow({
 
   const systemMessage = messages.find(message => message.role === 'system')
 
+  // Export is available whenever there is a stable, viewable conversation:
+  // not while empty, loading, or mid-send. A lone system prompt (rendered only
+  // in the banner, not the chat body) does not count as an exportable message.
+  // Read-only / operator-lock / cross-target states do not block export.
+  const canExportConversation =
+    messages.some((message) => !message.isLoading && message.role !== 'system') &&
+    !isSending &&
+    !isLoadingAttack &&
+    !isLoadingMessages &&
+    !awaitingConversationLoad
+
+  const handleExport = (format: ExportFormat) => {
+    exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+  }
+
   return (
     <div className={styles.root}>
       <h1 className={styles.pageHeading}>Chat</h1>
@@ -690,6 +712,30 @@ export default function ChatWindow({
                 data-testid="global-markdown-toggle"
               />
             </Tooltip>
+            <Menu>
+              <MenuTrigger disableButtonEnhancement>
+                <Tooltip content="Export conversation" relationship="label">
+                  <Button
+                    appearance="subtle"
+                    className={styles.ribbonAction}
+                    icon={<ArrowDownloadRegular />}
+                    disabled={!canExportConversation}
+                    aria-label="Export conversation"
+                    data-testid="export-conversation-btn"
+                  />
+                </Tooltip>
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  <MenuItem onClick={() => handleExport('markdown')} data-testid="export-markdown-item">
+                    Export as Markdown (.md)
+                  </MenuItem>
+                  <MenuItem onClick={() => handleExport('json')} data-testid="export-json-item">
+                    Export as JSON (.json)
+                  </MenuItem>
+                </MenuList>
+              </MenuPopover>
+            </Menu>
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
                 {...restoreFocusTargetAttributes}

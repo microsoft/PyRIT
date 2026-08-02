@@ -413,6 +413,7 @@ test.describe("Mobile touch targets", () => {
       page.locator(
         [
           '[data-testid="labels-icon-btn"]',
+          '[data-testid="export-conversation-btn"]',
           '[data-testid="toggle-panel-btn"]',
           '[data-testid="new-attack-btn"]',
           '[aria-label="Attach files"]',

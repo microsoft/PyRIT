@@ -88,45 +88,18 @@ Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
-def _attack_result_recency_key(metadata: dict[str, Any]) -> str:
-    """
-    Compute the recency sort key for an attack result exactly as the SQL layer does.
-
-    Mirrors the ``COALESCE(<updated_at>, <created_at>, '')`` expression built by
-    ``MemoryInterface._attack_results_recency_expr``. Recency is always an ISO-8601 timestamp
-    *string*; only string values are honored (via ``isinstance``) so a non-string
-    ``updated_at``/``created_at`` (e.g. a JSON bool or number) falls through exactly like the
-    SQLite expression, which keeps only JSON ``text`` values. This matters because SQLite's
-    ``json_extract`` returns a typed scalar for non-string JSON (``0`` for a bool) and sorts
-    numbers before text: a stringified anchor would then never advance past such a row and
-    repeat it. Keeping this in lockstep with the SQL expression is what makes the keyset anchor
-    land on the same row the database ordered by, so pagination never skips or repeats a result.
-
-    Returns:
-        str: The coalesced recency key (``""`` when neither timestamp is a string).
-    """
-    value = metadata.get("updated_at")
-    if not isinstance(value, str):
-        value = metadata.get("created_at")
-    if not isinstance(value, str):
-        value = ""
-    return value
-
-
 class AttackResultsKeysetCursor(NamedTuple):
     """
     Keyset (seek) anchor identifying the last attack result on a page.
 
-    Captures the full recency ordering tuple — the coalesced ``updated_at``/``created_at``
-    recency string, the row ``timestamp``, and the unique ``attack_result_id`` — so the next
-    page can seek to rows strictly after this one under the
-    ``recency DESC, timestamp DESC, id DESC`` ordering. Unlike a numeric offset — which shifts
-    every later row when a row is inserted or deleted between page loads — a keyset anchor
-    stays pinned to its row, so inserts and deletions elsewhere no longer skip or duplicate
-    results at the page boundary.
+    Captures the recency ordering tuple — the row ``timestamp`` (the attack's last-updated
+    time; see ``AttackResultEntry.timestamp``) and the unique ``attack_result_id`` — so the
+    next page can seek to rows strictly after this one under the ``timestamp DESC, id DESC``
+    ordering. Unlike a numeric offset — which shifts every later row when a row is inserted or
+    deleted between page loads — a keyset anchor stays pinned to its row, so inserts and
+    deletions elsewhere no longer skip or duplicate results at the page boundary.
     """
 
-    recency: str
     timestamp: datetime
     attack_result_id: str
 
@@ -139,7 +112,6 @@ class AttackResultsKeysetCursor(NamedTuple):
             AttackResultsKeysetCursor: Anchor capturing the result's recency sort key.
         """
         return cls(
-            recency=_attack_result_recency_key(result.metadata),
             timestamp=result.timestamp,
             attack_result_id=result.attack_result_id,
         )
@@ -371,62 +343,42 @@ class MemoryInterface(abc.ABC):
             Any: A database-specific SQLAlchemy condition.
         """
 
-    @abc.abstractmethod
-    def _attack_results_recency_expr(self) -> Any:
-        """
-        Return the SQL expression for an attack result's recency sort key.
-
-        Concrete subclasses translate this into their SQL dialect's JSON accessor
-        (SQLite ``json_extract`` / Azure SQL ``JSON_VALUE``) so the sort key matches the
-        per-backend JSON abstraction the attack-result filters already use. It reproduces the
-        previous service-side Python sort: ``COALESCE(<attack_metadata.updated_at>,
-        <attack_metadata.created_at>, '')``. This single expression backs both the recency
-        ORDER BY and the keyset seek predicate, guaranteeing they stay in lockstep (a keyset
-        seek that used a different expression than the ORDER BY would skip or repeat rows).
-
-        Returns:
-            Any: A SQLAlchemy expression yielding the coalesced recency string.
-        """
-
     def _attack_results_recency_order_by(self) -> list[Any]:
         """
         Return the ORDER BY clauses that reproduce the History-view recency sort.
 
-        Orders by the recency expression (``updated_at`` falling back to ``created_at`` then
-        an empty string), all descending, with the real ``timestamp`` column and ``id`` as
-        deterministic descending tie-breaks (required for stable keyset pagination).
+        Orders by the indexed ``timestamp`` column (an attack result's last-updated time —
+        bumped whenever the conversation is edited) descending, with ``id`` as a deterministic
+        descending tie-break (required for stable keyset pagination). Both columns are covered
+        by the composite ``(timestamp, id)`` index, so this ordering is index-served rather
+        than requiring a full sort.
 
         Returns:
             list[Any]: SQLAlchemy ORDER BY clauses (all descending) for the recency sort,
             suitable for splatting into ``_query_entries(order_by=...)``.
         """
-        recency = self._attack_results_recency_expr()
-        return [recency.desc(), AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
+        return [AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
 
     def _attack_results_keyset_seek_condition(self, *, after: AttackResultsKeysetCursor) -> Any:
         """
         Build the keyset seek predicate selecting rows strictly after ``after``.
 
-        Under the ``recency DESC, timestamp DESC, id DESC`` ordering, a row comes after the
-        anchor when its ordering tuple is lexicographically smaller. The predicate is
-        OR-expanded (rather than a row-value ``(a, b, c) < (x, y, z)`` comparison) because
-        Azure SQL does not support row-value tuple comparisons. It uses the same recency
-        expression as the ORDER BY so the seek lands exactly on the ordering boundary. The
-        ``id`` bound is a ``uuid.UUID`` so it is compared through the column's own type
-        (``CHAR(36)`` on SQLite, native ``uniqueidentifier`` on Azure), matching how the
-        ORDER BY sorts it on each backend.
+        Under the ``timestamp DESC, id DESC`` ordering, a row comes after the anchor when its
+        ordering tuple is lexicographically smaller. The predicate is OR-expanded (rather than
+        a row-value ``(a, b) < (x, y)`` comparison) because Azure SQL does not support
+        row-value tuple comparisons. The ``id`` bound is a ``uuid.UUID`` so it is compared
+        through the column's own type (``CHAR(36)`` on SQLite, native ``uniqueidentifier`` on
+        Azure), matching how the ORDER BY sorts it on each backend.
 
         Returns:
             Any: A SQLAlchemy boolean condition for the rows following the anchor.
         """
-        recency = self._attack_results_recency_expr()
         timestamp = AttackResultEntry.timestamp
         entry_id = AttackResultEntry.id
         anchor_id = uuid.UUID(after.attack_result_id)
         return or_(
-            recency < after.recency,
-            and_(recency == after.recency, timestamp < after.timestamp),
-            and_(recency == after.recency, timestamp == after.timestamp, entry_id < anchor_id),
+            timestamp < after.timestamp,
+            and_(timestamp == after.timestamp, entry_id < anchor_id),
         )
 
     def get_all_embeddings(self) -> Sequence[EmbeddingDataEntry]:
