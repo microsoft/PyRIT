@@ -26,7 +26,7 @@ jest.mock('../auth/AuthConfigContext', () => ({
 }))
 
 jest.mock('../auth/msalConfig', () => ({
-  buildLoginRequest: (clientId: string) => ({ scopes: [`${clientId}/.default`] }),
+  buildLoginRequest: () => ({ scopes: ['User.Read'] }),
 }))
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -78,7 +78,7 @@ describe('UserAccountButton', () => {
 
     await user.click(screen.getByRole('button', { name: /log in/i }))
 
-    expect(mockLoginRedirect).toHaveBeenCalledWith({ scopes: ['test-client-id/.default'] })
+    expect(mockLoginRedirect).toHaveBeenCalledWith({ scopes: ['User.Read'] })
   })
 
   it('renders user display name and Sign Out when account exists', () => {
