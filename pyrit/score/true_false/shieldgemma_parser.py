@@ -114,5 +114,8 @@ def _metadata_slug(guideline_name: str | None) -> str:
     """
     if not guideline_name:
         return "shieldgemma"
-    slug = re.sub(r"[^a-z0-9]+", "_", guideline_name.casefold()).strip("_")
+    # Only whitespace is collapsed. Folding every non-alphanumeric would map names the policy
+    # treats as distinct, such as "Hate Speech" and "Hate-Speech", onto one key and bring back
+    # the collision this namespacing exists to prevent.
+    slug = re.sub(r"\s+", "_", guideline_name.casefold().strip())
     return f"shieldgemma_{slug}" if slug else "shieldgemma"

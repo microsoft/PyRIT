@@ -71,6 +71,18 @@ def test_metadata_keys_do_not_collide_across_guidelines() -> None:
     assert merged["shieldgemma_no_hate_speech_verdict"] == "No"
 
 
+def test_metadata_keys_keep_names_the_policy_treats_as_distinct_apart() -> None:
+    """
+    A policy may hold both "Hate Speech" and "Hate-Speech", since uniqueness is checked
+    case-insensitively on the name. Folding punctuation into the key would merge them and
+    reintroduce the collision this namespacing exists to prevent.
+    """
+    spaced = parse_shieldgemma_response("Yes", guideline_name="Hate Speech")
+    hyphenated = parse_shieldgemma_response("No", guideline_name="Hate-Speech")
+
+    assert not (spaced["metadata"].keys() & hyphenated["metadata"].keys())
+
+
 def test_rationale_mentions_the_guideline_when_supplied() -> None:
     rationale = parse_shieldgemma_response("Yes", guideline_name="No Hate Speech")["rationale"]
 
