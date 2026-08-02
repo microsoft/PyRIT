@@ -79,18 +79,18 @@ class TestBijectionTeachingMessages:
             objective_target=mock_objective_target,
             num_teaching_shots=3,
         )
-        messages = await attack._build_teaching_messages()
+        messages = await attack._build_teaching_messages_async()
         assert len(messages) == 7
 
     async def test_teaching_messages_first_message_is_system(self, mock_objective_target):
         attack = BijectionAttack(objective_target=mock_objective_target)
-        messages = await attack._build_teaching_messages()
+        messages = await attack._build_teaching_messages_async()
         assert messages[0].message_pieces[0].role == "system"
-        assert "write every assistant response only in this secret code" in messages[0].message_pieces[0].original_value
+        assert "write only the final answer in the same notation" in messages[0].message_pieces[0].original_value
 
     async def test_teaching_messages_alternate_roles(self, mock_objective_target):
         attack = BijectionAttack(objective_target=mock_objective_target)
-        messages = await attack._build_teaching_messages()
+        messages = await attack._build_teaching_messages_async()
         for i, message in enumerate(messages[1:], start=1):
             expected_role = "user" if i % 2 == 1 else "assistant"
             assert message.message_pieces[0].role == expected_role
@@ -102,12 +102,12 @@ class TestBijectionTeachingMessages:
             num_teaching_shots=3,
         )
 
-        messages = await attack._build_teaching_messages()
+        messages = await attack._build_teaching_messages_async()
 
         assert len(messages) == 6
         assert messages[0].message_pieces[0].role == "user"
-        assert "write every assistant response only in this secret code" in messages[0].message_pieces[0].original_value
-        assert "the quick brown fox" in messages[0].message_pieces[0].original_value
+        assert "write only the final answer in the same notation" in messages[0].message_pieces[0].original_value
+        assert "Here is the first encoded practice instruction:" in messages[0].message_pieces[0].original_value
         assert messages[1].message_pieces[0].role == "assistant"
         assert messages[2].message_pieces[0].role == "user"
 
@@ -118,44 +118,33 @@ class TestBijectionTeachingMessages:
             num_teaching_shots=0,
         )
 
-        messages = await attack._build_teaching_messages()
+        messages = await attack._build_teaching_messages_async()
 
         assert len(messages) == 1
         assert messages[0].message_pieces[0].role == "user"
-        assert "write every assistant response only in this secret code" in messages[0].message_pieces[0].original_value
+        assert "write only the final answer in the same notation" in messages[0].message_pieces[0].original_value
 
-    async def test_teaching_messages_use_encoded_assistant_responses(self, mock_objective_target):
+    async def test_teaching_messages_shots_are_encoded_instruction_answer_pairs(self, mock_objective_target):
+        # Per @romanlutz's review: teaching shots must be executable instructions with
+        # their encoded answer (decode -> execute -> encode-the-answer), not a plaintext
+        # phrase paired with its encoded copy (translation only).
         mapping = {
             letter: chr(((ord(letter) - ord("a") + 1) % 26) + ord("a")) for letter in "abcdefghijklmnopqrstuvwxyz"
         }
         converter = LetterBijectionConverter(mapping=mapping)
         attack = BijectionAttack(objective_target=mock_objective_target, bijection_converter=converter)
 
-        messages = await attack._build_teaching_messages()
+        messages = await attack._build_teaching_messages_async()
 
-        assert messages[1].message_pieces[0].original_value == "the quick brown fox"
-        assert messages[2].message_pieces[0].original_value == "uif rvjdl cspxo gpy"
+        answer = attack.PRACTICE_PHRASES[0]
+        instruction = f"Return exactly this lowercase phrase and nothing else: {answer}"
+        expected_encoded_instruction = (await converter.convert_async(prompt=instruction)).output_text
+        expected_encoded_answer = (await converter.convert_async(prompt=answer)).output_text
 
-    async def test_teaching_messages_cycle_examples(self, mock_objective_target):
-        # The example pool covers all 26 letters (per romanlutz's review on #1942) and is
-        # large enough (13 sentences) that shot counts within its size introduce new
-        # coverage instead of repeating; cycling back to the first example only happens
-        # once num_teaching_shots exceeds the pool size.
-        attack = BijectionAttack(
-            objective_target=mock_objective_target,
-            bijection_converter=LetterBijectionConverter(
-                mapping={letter: letter for letter in "abcdefghijklmnopqrstuvwxyz"}
-            ),
-            num_teaching_shots=14,
-        )
+        assert messages[1].message_pieces[0].original_value == expected_encoded_instruction
+        assert messages[2].message_pieces[0].original_value == expected_encoded_answer
 
-        messages = await attack._build_teaching_messages()
-
-        # shot index 13 (14th shot, 0-indexed) cycles back to example index 13 % 13 == 0
-        assert messages[27].message_pieces[0].original_value == "the quick brown fox"
-        assert messages[28].message_pieces[0].original_value == "the quick brown fox"
-
-    async def test_teaching_messages_do_not_repeat_within_pool_size(self, mock_objective_target):
+    async def test_teaching_messages_cycle_practice_phrases(self, mock_objective_target):
         attack = BijectionAttack(
             objective_target=mock_objective_target,
             bijection_converter=LetterBijectionConverter(
@@ -164,10 +153,11 @@ class TestBijectionTeachingMessages:
             num_teaching_shots=6,
         )
 
-        messages = await attack._build_teaching_messages()
+        messages = await attack._build_teaching_messages_async()
 
-        shot_texts = [messages[1 + 2 * i].message_pieces[0].original_value for i in range(6)]
-        assert len(set(shot_texts)) == 6
+        # shot index 5 (6th shot, 0-indexed) cycles back to PRACTICE_PHRASES[5 % 5] == PRACTICE_PHRASES[0]
+        assert messages[1].message_pieces[0].original_value == messages[11].message_pieces[0].original_value
+        assert messages[2].message_pieces[0].original_value == messages[12].message_pieces[0].original_value
 
 
 @pytest.mark.usefixtures("patch_central_database")
