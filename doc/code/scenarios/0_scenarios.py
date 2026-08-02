@@ -217,9 +217,6 @@ print_scenario_list(items=response.items)
 
 # %% [markdown] class="col-page-right"
 #
-# :::{div}
-# :class: col-page-right
-#
 # ```{mermaid}
 # %%{init: {"flowchart": {"subGraphTitleMargin": {"bottom": 40}, "wrappingWidth": 260}}}%%
 # flowchart TB
@@ -278,7 +275,6 @@ print_scenario_list(items=response.items)
 #     class SUCCESS,FAILURE,UNDETERMINED,COMPLETE,SCENARIO_COMPLETE complete;
 #     class RUNTIME_ERROR,EXEC_ERROR,ERROR_ROW,INCOMPLETE,PARTIAL,SCENARIO_FAILED incomplete;
 # ```
-# :::
 
 # %% [markdown]
 #

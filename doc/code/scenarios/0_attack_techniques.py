@@ -190,9 +190,6 @@ for result in results.completed_results:
 
 # %% [markdown] class="col-page-right"
 #
-# :::{div}
-# :class: col-page-right
-#
 # ```mermaid
 # flowchart LR
 #     I["TechniqueInitializer"] -->|registers factories| R["AttackTechniqueRegistry"]
@@ -201,7 +198,6 @@ for result in results.completed_results:
 #     R -->|create with target + scorer| T["AttackTechnique<br/>(attack + seeds)"]
 #     Sc --> T
 # ```
-# :::
 
 # %% [markdown]
 # ## Relationship to single-turn attacks

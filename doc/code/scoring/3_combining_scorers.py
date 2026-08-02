@@ -28,9 +28,6 @@
 
 # %% [markdown] class="col-page-right"
 #
-# :::{div}
-# :class: col-page-right
-#
 # ```mermaid
 # flowchart LR
 #     subgraph inputs["Supported inputs"]
@@ -73,7 +70,6 @@
 #     class COMP,INV,THRESH,CONV wrapper;
 #     class TFOUT,FSOUT output;
 # ```
-# :::
 
 # %% [markdown]
 #

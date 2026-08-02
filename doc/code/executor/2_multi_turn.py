@@ -28,9 +28,6 @@
 
 # %% [markdown] class="col-page-right"
 #
-# :::{div}
-# :class: col-page-right
-#
 # ```{mermaid}
 # flowchart LR
 #     start("Start") --> getPrompt["Adversarial model<br>generates a prompt"]
@@ -40,7 +37,6 @@
 #     decision -- Yes --> done("Done")
 #     decision -- No --> getPrompt
 # ```
-# :::
 
 # %% [markdown]
 #
