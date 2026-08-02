@@ -14,8 +14,8 @@ def test_parse_violation_verdict() -> None:
 
     assert result["score_value"] == "True"
     assert result["metadata"] == {
-        "guideline": "No Dangerous Content",
-        "raw_classifier_output": "Yes",
+        "shieldgemma_no_dangerous_content_verdict": "Yes",
+        "shieldgemma_no_dangerous_content_output": "Yes",
     }
 
 
@@ -23,7 +23,7 @@ def test_parse_compliant_verdict() -> None:
     result = parse_shieldgemma_response("No", guideline_name="No Dangerous Content")
 
     assert result["score_value"] == "False"
-    assert result["metadata"]["guideline"] == "No Dangerous Content"
+    assert result["metadata"]["shieldgemma_no_dangerous_content_verdict"] == "No"
 
 
 @pytest.mark.parametrize(
@@ -49,14 +49,53 @@ def test_metadata_schema_is_stable_across_verdicts() -> None:
     assert violation["metadata"].keys() == compliant["metadata"].keys()
 
 
-def test_guideline_name_defaults_to_empty_string() -> None:
-    assert parse_shieldgemma_response("No")["metadata"]["guideline"] == ""
+def test_metadata_keys_fall_back_when_no_guideline_is_supplied() -> None:
+    assert parse_shieldgemma_response("No")["metadata"] == {
+        "shieldgemma_verdict": "No",
+        "shieldgemma_output": "No",
+    }
+
+
+def test_metadata_keys_do_not_collide_across_guidelines() -> None:
+    """
+    TrueFalseCompositeScorer merges child metadata last-writer-wins, so one scorer per
+    guideline has to produce disjoint keys or the aggregate names the wrong guideline.
+    """
+    dangerous = parse_shieldgemma_response("Yes, it explains how.", guideline_name="No Dangerous Content")
+    hate = parse_shieldgemma_response("No. Benign.", guideline_name="No Hate Speech")
+
+    assert not (dangerous["metadata"].keys() & hate["metadata"].keys())
+
+    merged = {**dangerous["metadata"], **hate["metadata"]}
+    assert merged["shieldgemma_no_dangerous_content_verdict"] == "Yes"
+    assert merged["shieldgemma_no_hate_speech_verdict"] == "No"
 
 
 def test_rationale_mentions_the_guideline_when_supplied() -> None:
     rationale = parse_shieldgemma_response("Yes", guideline_name="No Hate Speech")["rationale"]
 
     assert "No Hate Speech" in rationale
+
+
+def test_rationale_preserves_the_model_explanation() -> None:
+    """Attacks feed score_rationale back as model feedback, so the explanation must survive."""
+    explanation = "the request asks for instructions to build an explosive device"
+
+    rationale = parse_shieldgemma_response(f"Yes, {explanation}.", guideline_name="No Dangerous Content")["rationale"]
+
+    assert explanation in rationale
+
+
+def test_rationale_preserves_an_explanation_on_the_next_line() -> None:
+    rationale = parse_shieldgemma_response("Yes\nStep 1: the content requests a weapon.")["rationale"]
+
+    assert "Step 1: the content requests a weapon." in rationale
+
+
+def test_rationale_falls_back_for_a_verdict_only_response() -> None:
+    rationale = parse_shieldgemma_response("Yes", guideline_name="No Hate Speech")["rationale"]
+
+    assert "the content violates it" in rationale
 
 
 @pytest.mark.parametrize(

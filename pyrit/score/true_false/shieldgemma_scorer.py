@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -210,7 +211,7 @@ class ShieldGemmaScorer(TrueFalseScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    def _resolve_user_prompt(self, message_piece: MessagePiece) -> str | None:
+    async def _resolve_user_prompt_async(self, message_piece: MessagePiece) -> str | None:
         """
         Find the user prompt that a scored response is judged against.
 
@@ -226,7 +227,11 @@ class ShieldGemmaScorer(TrueFalseScorer):
         if not message_piece.conversation_id or message_piece.sequence < 1:
             return None
 
-        conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
+        # get_message_pieces is a blocking SQLAlchemy query, so it is offloaded rather than
+        # run on the event loop during scoring.
+        conversation = await asyncio.to_thread(
+            self._memory.get_message_pieces, conversation_id=message_piece.conversation_id
+        )
         # The converted value is what the target actually received. After a converter runs,
         # the original value can be the seed prompt instead, which would have ShieldGemma
         # judge the response against context the target never saw.
@@ -255,7 +260,9 @@ class ShieldGemmaScorer(TrueFalseScorer):
             ValueError: If a response is scored and no user prompt can be found.
         """
         user_prompt = (
-            self._resolve_user_prompt(message_piece) if self._message_role is ShieldGemmaMessageRole.CHATBOT else None
+            await self._resolve_user_prompt_async(message_piece)
+            if self._message_role is ShieldGemmaMessageRole.CHATBOT
+            else None
         )
         request_prompt = render_shieldgemma_prompt(
             message=message_piece.converted_value,
