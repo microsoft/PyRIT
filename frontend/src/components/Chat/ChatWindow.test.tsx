@@ -3185,4 +3185,206 @@ describe("ChatWindow Integration", () => {
       expect(screen.queryByTestId("converted-value-input")).not.toBeInTheDocument();
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Conversation export
+  // -----------------------------------------------------------------------
+
+  describe("conversation export", () => {
+    function spyOnDownloadAnchor(): { clickSpy: jest.Mock; getDownloadAnchor: () => HTMLAnchorElement } {
+      const anchors: HTMLAnchorElement[] = [];
+      const clickSpy = jest.fn();
+      const origCreateElement = document.createElement.bind(document);
+      jest.spyOn(document, "createElement").mockImplementation((tag: string) => {
+        const el = origCreateElement(tag);
+        if (tag === "a") {
+          anchors.push(el as HTMLAnchorElement);
+          jest.spyOn(el as HTMLAnchorElement, "click").mockImplementation(clickSpy);
+        }
+        return el;
+      });
+      return { clickSpy, getDownloadAnchor: () => anchors.find((a) => a.download) as HTMLAnchorElement };
+    }
+
+    async function renderWithLoadedConversation(
+      props: Record<string, unknown> = {}
+    ): Promise<void> {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            attackResultId="ar-1"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+            {...props}
+          />
+        </TestWrapper>
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /export conversation/i })).toBeEnabled()
+      );
+    }
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it("shows an export button in the ribbon", () => {
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} />
+        </TestWrapper>
+      );
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeInTheDocument();
+    });
+
+    it("disables export when the conversation is empty", () => {
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} />
+        </TestWrapper>
+      );
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled();
+    });
+
+    it("enables export once a conversation with messages loads", async () => {
+      await renderWithLoadedConversation();
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeEnabled();
+    });
+
+    it("keeps export disabled when every loaded message is a loading placeholder", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "assistant", content: "", timestamp: "2026-07-22T02:30:07.000Z", isLoading: true },
+      ]);
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            attackResultId="ar-1"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+          />
+        </TestWrapper>
+      );
+      await waitFor(() => {
+        expect(mockedMapper.backendMessagesToFrontend).toHaveBeenCalled();
+      });
+      // length > 0 but no non-loading message => export must stay disabled.
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled();
+    });
+
+    it("keeps export disabled when the only loaded message is a system prompt", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "system", content: "You are a pirate.", timestamp: "2026-07-22T02:30:07.000Z" },
+      ]);
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            attackResultId="ar-1"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+          />
+        </TestWrapper>
+      );
+      await waitFor(() => {
+        expect(mockedMapper.backendMessagesToFrontend).toHaveBeenCalled();
+      });
+      // A lone system prompt renders only in the banner, so export stays disabled.
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled();
+    });
+
+    it("opens a menu with Markdown and JSON options", async () => {
+      const user = userEvent.setup();
+      await renderWithLoadedConversation();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+
+      expect(screen.getByRole("menuitem", { name: /export as markdown/i })).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: /export as json/i })).toBeInTheDocument();
+    });
+
+    it("downloads Markdown when the Markdown option is clicked", async () => {
+      const user = userEvent.setup();
+      await renderWithLoadedConversation();
+      const { clickSpy, getDownloadAnchor } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByRole("menuitem", { name: /export as markdown/i }));
+
+      const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
+      expect(blob.type).toBe("text/markdown;charset=utf-8");
+      expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.md$/);
+      expect(clickSpy).toHaveBeenCalled();
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    });
+
+    it("downloads JSON without re-fetching the conversation", async () => {
+      const user = userEvent.setup();
+      await renderWithLoadedConversation();
+      const callsBefore = mockedAttacksApi.getMessages.mock.calls.length;
+      const { getDownloadAnchor } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByRole("menuitem", { name: /export as json/i }));
+
+      const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
+      expect(blob.type).toBe("application/json;charset=utf-8");
+      expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.json$/);
+      // WYSIWYG: export serializes in-state messages and makes no extra API call.
+      expect(mockedAttacksApi.getMessages.mock.calls.length).toBe(callsBefore);
+    });
+
+    it("exports the displayed conversation id when it differs from the attack's main conversation", async () => {
+      const user = userEvent.setup();
+      // Viewing a branch: activeConversationId (displayed) differs from the
+      // attack's main conversationId. handleExport uses activeConversationId.
+      await renderWithLoadedConversation({
+        conversationId: "conv-main",
+        activeConversationId: "conv-branch",
+      });
+      const { getDownloadAnchor } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByRole("menuitem", { name: /export as markdown/i }));
+
+      expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-branch-.*\.md$/);
+    });
+
+    it("allows exporting a read-only historical conversation", async () => {
+      const user = userEvent.setup();
+      // Operator lock: the loaded attack belongs to a different operator.
+      await renderWithLoadedConversation({ attackLabels: { operator: "someone-else" } });
+      const { clickSpy } = spyOnDownloadAnchor();
+
+      const exportButton = screen.getByRole("button", { name: /export conversation/i });
+      expect(exportButton).toBeEnabled();
+
+      await user.click(exportButton);
+      await user.click(screen.getByRole("menuitem", { name: /export as markdown/i }));
+
+      expect(clickSpy).toHaveBeenCalled();
+    });
+
+    it("disables export while a message is being sent", async () => {
+      const user = userEvent.setup();
+      mockedMapper.buildMessagePieces.mockResolvedValue([
+        { data_type: "text", original_value: "hi" },
+      ]);
+      // addMessage never resolves, so the conversation stays in the sending state.
+      mockedAttacksApi.addMessage.mockImplementation(() => new Promise(() => {}));
+      await renderWithLoadedConversation();
+
+      await user.type(screen.getByRole("textbox"), "hi");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled()
+      );
+    });
+  });
 });
