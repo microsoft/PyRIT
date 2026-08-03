@@ -43,6 +43,32 @@ class MyTarget(PromptTarget):
 ``send_prompt_async`` (the public entry point) is ``@final`` and MUST NOT
 be overridden. Override ``_send_prompt_to_target_async`` instead.
 
+## Releasing per-conversation state
+
+Attacks call ``reset_conversation_async(*, conversation_id)`` from
+``_teardown_async`` when they are done with a conversation id. The base
+implementation is a no-op, so a target that keeps no state between calls
+does not need to do anything.
+
+Targets that hold external state keyed by conversation (a websocket
+connection, a browser page, an upstream session) SHOULD override it to
+release that state:
+
+```python
+async def reset_conversation_async(self, *, conversation_id: str) -> None:
+    connection = self._connections.pop(conversation_id, None)
+    if connection:
+        await connection.close()
+```
+
+It is best-effort cleanup, so an implementation SHOULD NOT raise for an
+unknown conversation id and SHOULD be safe to call more than once for the
+same id. The attack logs and swallows anything that does raise, so a
+failure here never replaces the error the attack was reporting.
+
+Closing the whole target rather than one conversation is a different
+concern and stays in ``cleanup_target_async``.
+
 ## Keyword-only ``__init__`` is enforced
 
 Every ``PromptTarget`` subclass MUST make all ``__init__`` parameters

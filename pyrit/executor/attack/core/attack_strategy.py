@@ -37,6 +37,7 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     ConversationReference,
+    ConversationType,
     ConverterIdentifier,
     Identifiable,
     Message,
@@ -684,6 +685,66 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             list[Any]: The list of request ConverterConfiguration objects.
         """
         return self._request_converters
+
+    def _get_objective_conversation_ids(self, *, context: AttackStrategyContextT) -> list[str]:
+        """
+        Collect every objective-target conversation id this run used.
+
+        The live conversation sits directly on single-turn contexts and on
+        ``session`` for multi-turn ones. A run can also leave earlier
+        conversations behind: a retry in ``PromptSendingAttack``, a Crescendo
+        backtrack, or the rotation multi-turn attacks do for single-turn
+        targets all mint a fresh id and record the old one as ``PRUNED``.
+        Those still hold target-side state, so they are collected too.
+
+        Attacks that key conversations somewhere else should override this.
+
+        Args:
+            context (AttackStrategyContextT): The context for the attack.
+
+        Returns:
+            list[str]: Conversation ids to release, in no particular order and
+                without duplicates.
+        """
+        ids: list[str] = []
+
+        live = getattr(context, "conversation_id", None) or getattr(
+            getattr(context, "session", None), "conversation_id", None
+        )
+        if live:
+            ids.append(live)
+
+        ids.extend(
+            ref.conversation_id
+            for ref in context.related_conversations
+            if ref.conversation_type == ConversationType.PRUNED
+        )
+        return list(dict.fromkeys(ids))
+
+    async def _teardown_async(self, *, context: AttackStrategyContextT) -> None:
+        """
+        Release the objective target's state for the run's conversations.
+
+        Hands each conversation id to ``PromptTarget.reset_conversation_async``
+        so targets holding external state keyed by conversation (a websocket
+        connection, a browser page) can close it. The base target
+        implementation is a no-op, so this is inert for stateless targets.
+
+        This runs in the ``finally`` of the execution lifecycle, so a target
+        that raises here is logged rather than allowed to replace whatever
+        error the attack was already reporting.
+
+        Subclasses that need their own teardown should override this and call
+        ``await super()._teardown_async(context=context)``.
+
+        Args:
+            context (AttackStrategyContextT): The context for the attack.
+        """
+        for conversation_id in self._get_objective_conversation_ids(context=context):
+            try:
+                await self._objective_target.reset_conversation_async(conversation_id=conversation_id)
+            except Exception as e:  # noqa: BLE001 - teardown runs in a finally; never mask the attack's own error
+                self._logger.warning(f"Error resetting conversation {conversation_id} on the objective target: {e}")
 
     async def execute_with_context_async(self, *, context: AttackStrategyContextT) -> AttackStrategyResultT:
         """

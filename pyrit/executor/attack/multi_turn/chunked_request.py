@@ -387,11 +387,3 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         ):
             scores = await self._objective_scorer.score_text_async(text=combined_value, objective=objective)
         return scores[0] if scores else None
-
-    async def _teardown_async(self, *, context: ChunkedRequestAttackContext) -> None:
-        """
-        Teardown the attack by cleaning up conversation context.
-
-        Args:
-            context (ChunkedRequestAttackContext): The attack context containing conversation session.
-        """

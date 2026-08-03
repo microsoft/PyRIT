@@ -377,10 +377,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             labels=context.memory_labels,
         )
 
-    async def _teardown_async(self, *, context: MultiTurnAttackContext[Any]) -> None:
-        """Clean up after attack execution."""
-        # Nothing to be done here, no-op
-
     def _build_adversarial_manager(self, *, context: MultiTurnAttackContext[Any]) -> _AdversarialConversationManager:
         """
         Build the adversarial conversation manager for this execution.

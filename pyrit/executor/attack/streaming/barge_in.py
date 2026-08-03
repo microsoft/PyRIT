@@ -154,10 +154,6 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         ]
         context.prepended_history_send_context = None
 
-    async def _teardown_async(self, *, context: BargeInAttackContext[Any]) -> None:
-        """No-op teardown — connection / dispatcher are closed inside the session's ``run_async``."""
-        return
-
     async def _perform_async(self, *, context: BargeInAttackContext[Any]) -> AttackResult:
         """
         Drive the realtime streaming session and collect per-turn assistant messages.

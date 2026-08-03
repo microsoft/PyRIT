@@ -3278,3 +3278,53 @@ class TestTAPAdversarialIdentity:
         )
         assert attack._adversarial_chat_system_seed_prompt.value == "tap persona {{ desired_prefix }}"
         assert attack.get_identifier().params["adversarial_system_prompt"] == "tap persona {{ desired_prefix }}"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTAPConversationReset:
+    """TAP keeps one objective conversation per node, not a single one on session."""
+
+    def _context_with_nodes(self, *node_ids: str) -> TAPAttackContext:
+        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
+        for node_id in node_ids:
+            node = MagicMock(spec=_TreeOfAttacksNode)
+            node.objective_target_conversation_id = node_id
+            context.nodes.append(node)
+        return context
+
+    def test_collects_surviving_node_conversations(self, basic_attack):
+        context = self._context_with_nodes("node-a", "node-b")
+
+        ids = basic_attack._get_objective_conversation_ids(context=context)
+
+        assert set(ids) == {"node-a", "node-b"}
+
+    def test_collects_best_and_pruned_conversations(self, basic_attack):
+        context = self._context_with_nodes("node-a")
+        context.best_conversation_id = "best-1"
+        context.related_conversations.add(
+            ConversationReference(conversation_id="pruned-1", conversation_type=ConversationType.PRUNED)
+        )
+
+        ids = basic_attack._get_objective_conversation_ids(context=context)
+
+        assert set(ids) == {"node-a", "best-1", "pruned-1"}
+
+    def test_does_not_use_the_unused_session_conversation_id(self, basic_attack):
+        context = self._context_with_nodes("node-a")
+
+        ids = basic_attack._get_objective_conversation_ids(context=context)
+
+        # TAP never sends anything on session.conversation_id.
+        assert context.session.conversation_id not in ids
+
+    def test_returns_no_duplicates(self, basic_attack):
+        context = self._context_with_nodes("node-a")
+        context.best_conversation_id = "node-a"
+        context.related_conversations.add(
+            ConversationReference(conversation_id="node-a", conversation_type=ConversationType.PRUNED)
+        )
+
+        ids = basic_attack._get_objective_conversation_ids(context=context)
+
+        assert ids == ["node-a"]

@@ -57,6 +57,20 @@ Target-side rate limiting remains independent and continues to use `limit_reques
 `_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
 overriding `send_prompt_async`.
 
+## Releasing per-conversation state
+
+Some targets hold state for a conversation outside of PyRIT's memory: an open websocket, a browser page, a session on the far side of an HTTP API. When an attack is finished with a conversation, it calls
+
+```
+async def reset_conversation_async(self, *, conversation_id: str) -> None:
+```
+
+on the objective target for every conversation the run used. That includes conversations the attack abandoned partway through, such as a `PromptSendingAttack` retry or a `CrescendoAttack` backtrack.
+
+The base implementation does nothing, so a target that keeps no state between calls does not need to override it. `RealtimeTarget` overrides it to close the websocket it caches per conversation. If you write a target that holds something similar, override it and release that state there. Do not raise for a conversation id you do not recognize, since the attack calls this while it is tearing down and treats it as best effort.
+
+Closing the target as a whole, rather than one conversation, is separate and is not part of this hook.
+
 ## Chat-style targets vs general targets
 
 A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.

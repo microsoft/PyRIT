@@ -23,12 +23,15 @@ from pyrit.executor.attack.core.attack_strategy import (
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackContext
+from pyrit.executor.attack.single_turn.single_turn_attack_strategy import SingleTurnAttackContext
 from pyrit.executor.core import StrategyEvent, StrategyEventData
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    ConversationReference,
+    ConversationType,
     Message,
     SeedPrompt,
 )
@@ -327,6 +330,89 @@ class TestAttackStrategyExecution:
         )
 
         assert result is not None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAttackStrategyTeardown:
+    """Tests for the objective target conversation reset in _teardown_async"""
+
+    def _strategy(self, target):
+        class TeardownStrategy(AttackStrategy):
+            def __init__(self, **kwargs):
+                super().__init__(context_type=AttackContext, logger=logging.getLogger(), **kwargs)
+
+            def _validate_context(self, *, context):
+                pass
+
+            async def _setup_async(self, *, context):
+                pass
+
+            async def _perform_async(self, *, context):
+                raise NotImplementedError
+
+        return TeardownStrategy(objective_target=target)
+
+    def _target(self):
+        target = MagicMock(spec=PromptTarget)
+        target.get_identifier.return_value = _mock_target_id()
+        return target
+
+    async def test_teardown_resets_single_turn_conversation(self):
+        target = self._target()
+        context = SingleTurnAttackContext(params=AttackParameters(objective="o"))
+
+        await self._strategy(target)._teardown_async(context=context)
+
+        target.reset_conversation_async.assert_awaited_once_with(conversation_id=context.conversation_id)
+
+    async def test_teardown_resets_multi_turn_session_conversation(self):
+        target = self._target()
+        context = MultiTurnAttackContext(params=AttackParameters(objective="o"))
+
+        await self._strategy(target)._teardown_async(context=context)
+
+        target.reset_conversation_async.assert_awaited_once_with(conversation_id=context.session.conversation_id)
+
+    async def test_teardown_also_resets_pruned_conversations(self):
+        target = self._target()
+        context = SingleTurnAttackContext(params=AttackParameters(objective="o"))
+        context.related_conversations.add(
+            ConversationReference(conversation_id="pruned-1", conversation_type=ConversationType.PRUNED)
+        )
+
+        await self._strategy(target)._teardown_async(context=context)
+
+        reset_ids = {call.kwargs["conversation_id"] for call in target.reset_conversation_async.await_args_list}
+        assert reset_ids == {context.conversation_id, "pruned-1"}
+
+    async def test_teardown_ignores_non_pruned_related_conversations(self):
+        target = self._target()
+        context = SingleTurnAttackContext(params=AttackParameters(objective="o"))
+        context.related_conversations.add(
+            ConversationReference(conversation_id="adv-1", conversation_type=ConversationType.ADVERSARIAL)
+        )
+
+        await self._strategy(target)._teardown_async(context=context)
+
+        target.reset_conversation_async.assert_awaited_once_with(conversation_id=context.conversation_id)
+
+    async def test_teardown_skips_reset_without_conversation_id(self, sample_attack_context):
+        target = self._target()
+
+        # The base AttackContext carries neither a conversation_id nor a session.
+        await self._strategy(target)._teardown_async(context=sample_attack_context)
+
+        target.reset_conversation_async.assert_not_awaited()
+
+    async def test_teardown_swallows_target_errors(self):
+        target = self._target()
+        target.reset_conversation_async.side_effect = RuntimeError("connection already closed")
+        context = SingleTurnAttackContext(params=AttackParameters(objective="o"))
+
+        # Teardown runs in a finally block, so it must not replace the attack's own error.
+        await self._strategy(target)._teardown_async(context=context)
+
+        target.reset_conversation_async.assert_awaited_once()
 
 
 @pytest.mark.usefixtures("patch_central_database")

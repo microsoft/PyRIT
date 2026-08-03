@@ -1105,12 +1105,12 @@ class TestAttackLifecycle:
         attack._perform_async.assert_called_once_with(context=basic_context)
         attack._teardown_async.assert_called_once_with(context=basic_context)
 
-    async def test_teardown_async_is_noop(self, mock_target, basic_context):
+    async def test_teardown_async_resets_target_conversation(self, mock_target, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target)
 
-        # Should complete without error
         await attack._teardown_async(context=basic_context)
-        # No assertions needed - we just want to ensure it runs without raising
+
+        mock_target.reset_conversation_async.assert_awaited_once_with(conversation_id=basic_context.conversation_id)
 
     async def test_execute_async_with_parameters(self, mock_target, sample_response):
         """Test execute_async creates context using factory method and executes attack"""

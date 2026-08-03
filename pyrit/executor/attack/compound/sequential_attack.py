@@ -242,9 +242,6 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     async def _setup_async(self, *, context: AttackContext[AttackParameters]) -> None:
         """No-op: per-child-attack setup is owned by each inner strategy's executor."""
 
-    async def _teardown_async(self, *, context: AttackContext[AttackParameters]) -> None:
-        """No-op: per-child-attack teardown is owned by each inner strategy's executor."""
-
     async def _perform_async(self, *, context: AttackContext[AttackParameters]) -> SequentialAttackResult:
         results: list[AttackResult] = []
 

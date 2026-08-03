@@ -1509,14 +1509,14 @@ class TestAttackLifecycle:
         assert result.outcome == AttackOutcome.SUCCESS
         assert result.objective == basic_context.objective
 
-    async def test_teardown_async_is_noop(
+    async def test_teardown_async_resets_target_conversation(
         self,
         mock_objective_target: MagicMock,
         mock_objective_scorer: MagicMock,
         mock_adversarial_chat: MagicMock,
         basic_context: MultiTurnAttackContext,
     ):
-        """Test that teardown completes without errors."""
+        """Test that teardown releases the objective target's conversation."""
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
 
@@ -1526,9 +1526,11 @@ class TestAttackLifecycle:
             attack_scoring_config=scoring_config,
         )
 
-        # Should complete without error
         await attack._teardown_async(context=basic_context)
-        # No assertions needed - we just want to ensure it runs without exceptions
+
+        mock_objective_target.reset_conversation_async.assert_awaited_once_with(
+            conversation_id=basic_context.session.conversation_id
+        )
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -1874,22 +1874,30 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         return self._create_failure_result(context)
 
-    async def _teardown_async(self, *, context: TAPAttackContext) -> None:
+    def _get_objective_conversation_ids(self, *, context: TAPAttackContext) -> list[str]:
         """
-        Clean up after attack execution.
+        Collect the objective-target conversations across the whole tree.
 
-        This method is called automatically after attack execution completes,
-        regardless of success or failure. It provides an opportunity to clean
-        up resources, close connections, or perform other finalization tasks.
-
-        Currently, the TAP attack does not require any specific cleanup operations
-        as all resources are managed by the parent components.
+        TAP keeps one objective conversation per node rather than a single one
+        on ``session``, so the surviving nodes and the best conversation are
+        collected alongside the pruned ones the base class already finds.
 
         Args:
-            context (TAPAttackContext): The attack context containing the final
-                state after execution.
+            context (TAPAttackContext): The attack context.
+
+        Returns:
+            list[str]: Conversation ids to release, without duplicates.
         """
-        # No specific teardown needed for TAP attack
+        ids = [node.objective_target_conversation_id for node in context.nodes]
+        if context.best_conversation_id:
+            ids.append(context.best_conversation_id)
+
+        ids.extend(
+            ref.conversation_id
+            for ref in context.related_conversations
+            if ref.conversation_type == ConversationType.PRUNED
+        )
+        return list(dict.fromkeys(ids))
 
     async def _prepare_nodes_for_iteration_async(self, context: TAPAttackContext) -> None:
         """
