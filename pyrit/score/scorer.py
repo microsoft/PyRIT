@@ -22,6 +22,7 @@ from pyrit.models import (
     Identifiable,
     Message,
     MessagePiece,
+    PromptResponseError,
     Score,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
@@ -222,8 +223,9 @@ class Scorer(Identifiable, abc.ABC):
                 Use "assistant" to score only real assistant responses, or "simulated_assistant"
                 to score only simulated responses. Defaults to None (no filtering).
             skip_on_error_result (bool): If True, skip scoring if the message contains an error.
-                When self.score_blocked_content is also True, blocked responses with partial content
-                will still be scored instead of skipping. Defaults to False.
+                SDK-provided structured refusals remain scoreable. When self.score_blocked_content
+                is also True, blocked responses with partial content will still be scored instead
+                of skipping. Defaults to False.
             infer_objective_from_request (bool): If True, infer the objective from the message's previous request
                 when objective is not provided. Defaults to False.
 
@@ -236,28 +238,40 @@ class Scorer(Identifiable, abc.ABC):
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        self._validator.validate(message, objective=objective)
+        # Structured refusals are persisted as blocked error pieces, but scorers should
+        # receive the refusal explanation as text. Keep response_error="blocked" so
+        # refusal scorers can still use their deterministic blocked-response path.
+        scoring_message = self._apply_structured_refusal_substitution(message)
+
+        # When score_blocked_content is enabled, blocked pieces with partial content
+        # take precedence and are replaced with text substitutes (response_error="none").
+        if self.score_blocked_content:
+            scoring_message = self._apply_blocked_content_substitution(scoring_message)
+
+        self._validator.validate(scoring_message, objective=objective)
 
         if role_filter is not None and message.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
 
         if skip_on_error_result and message.is_error():
+            error_pieces = [
+                piece
+                for piece in message.message_pieces
+                if piece.has_error() or piece.converted_value_data_type == "error"
+            ]
+            only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
             # When score_blocked_content is enabled and the message has partial content,
             # don't skip — let _score_async handle the substitution.
-            has_partial = any(
-                p.prompt_metadata.get("partial_content") for p in message.message_pieces if p.is_blocked()
+            all_errors_have_partial_content = all(
+                piece.is_blocked() and piece.prompt_metadata.get("partial_content") for piece in error_pieces
             )
-            if not (self.score_blocked_content and has_partial):
+            if not only_structured_refusals and not (self.score_blocked_content and all_errors_have_partial_content):
                 logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
                 return []
 
         if infer_objective_from_request and (not objective):
             objective = self._extract_objective_from_response(message)
-
-        # When score_blocked_content is enabled, create a modified message where blocked pieces
-        # with partial content are replaced with text-type substitutes (response_error="none").
-        scoring_message = self._apply_blocked_content_substitution(message) if self.score_blocked_content else message
 
         try:
             scores = await self._score_async(
@@ -348,7 +362,37 @@ class Scorer(Identifiable, abc.ABC):
         raise NotImplementedError
 
     @staticmethod
-    def _create_text_piece_from_blocked(piece: MessagePiece) -> MessagePiece | None:
+    def _create_scoring_text_piece(
+        *,
+        piece: MessagePiece,
+        content: str,
+        response_error: PromptResponseError,
+    ) -> MessagePiece:
+        """
+        Create a text-typed scoring view that retains the persisted piece identity.
+
+        Returns:
+            A text piece for scorer consumption.
+        """
+        return MessagePiece(
+            id=piece.id,
+            role=piece.api_role,
+            original_value=piece.original_value,
+            converted_value=content,
+            original_value_data_type=piece.original_value_data_type,
+            converted_value_data_type="text",
+            conversation_id=piece.conversation_id,
+            sequence=piece.sequence,
+            prompt_metadata=dict(piece.prompt_metadata),
+            converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
+            response_error=response_error,
+            timestamp=piece.timestamp,
+            original_prompt_id=piece.original_prompt_id,
+            not_in_memory=piece.not_in_memory,
+        )
+
+    @classmethod
+    def _create_text_piece_from_blocked(cls, piece: MessagePiece) -> MessagePiece | None:
         """
         Create a text-typed copy of a blocked MessagePiece using its partial content.
 
@@ -367,20 +411,47 @@ class Scorer(Identifiable, abc.ABC):
         if not partial_content:
             return None
 
-        return MessagePiece(
-            id=piece.id,
-            role=piece.api_role,
-            original_value=piece.original_value,
-            converted_value=partial_content,
-            original_value_data_type=piece.original_value_data_type,
-            converted_value_data_type="text",
-            conversation_id=piece.conversation_id,
-            sequence=piece.sequence,
-            prompt_metadata=piece.prompt_metadata,
-            converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
+        return cls._create_scoring_text_piece(
+            piece=piece,
+            content=partial_content,
             response_error="none",
-            timestamp=piece.timestamp,
         )
+
+    @classmethod
+    def _create_text_piece_from_structured_refusal(cls, piece: MessagePiece) -> MessagePiece | None:
+        """
+        Create a blocked text scoring view for an SDK-provided structured refusal.
+
+        Returns:
+            A text scoring view, or ``None`` when the piece is not a structured refusal.
+        """
+        refusal = piece.structured_refusal
+        if not refusal:
+            return None
+        return cls._create_scoring_text_piece(
+            piece=piece,
+            content=refusal,
+            response_error="blocked",
+        )
+
+    def _apply_structured_refusal_substitution(self, message: Message) -> Message:
+        """
+        Expose structured refusal explanations as text while preserving blocked semantics.
+
+        Returns:
+            A scoring message with structured refusals substituted, or the original message.
+        """
+        substituted = False
+        new_pieces: list[MessagePiece] = []
+        for piece in message.message_pieces:
+            substitute = self._create_text_piece_from_structured_refusal(piece)
+            if substitute:
+                new_pieces.append(substitute)
+                substituted = True
+                continue
+            new_pieces.append(piece)
+
+        return Message(message_pieces=new_pieces) if substituted else message
 
     def _apply_blocked_content_substitution(self, message: Message) -> Message:
         """

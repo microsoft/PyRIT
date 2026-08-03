@@ -8,11 +8,14 @@
  * endpoint (served by the backend from environment variables). This avoids
  * hardcoding tenant-specific values in the frontend bundle.
  *
- * Uses access tokens (not ID tokens) with an API-specific scope so that
- * Entra ID includes the `groups` claim for group-based authorization.
+ * Uses a delegated Microsoft Graph access token. The backend forwards this
+ * token only to trusted Graph endpoints to authenticate the user and resolve
+ * group membership.
  */
 
 import { type Configuration, LogLevel } from '@azure/msal-browser'
+
+const GRAPH_USER_READ_SCOPE = 'User.Read'
 
 export interface AuthConfig {
   clientId: string
@@ -54,23 +57,13 @@ export function buildMsalConfig(authConfig: AuthConfig): Configuration {
   }
 }
 
-/**
-  * Build the API scopes for token acquisition.
-  *
-  * Requests the app's custom `access` scope so the resulting access token has
-  * `aud` equal to the app's client ID. The explicit scope name avoids the
-  * `.default` shorthand, which resolves via `requiredResourceAccess` and
-  * triggers mandatory admin consent in the Microsoft corporate tenant.
-  *
-  * The `access` scope is defined under "Expose an API" on the app registration.
-  */
-export function getApiScopes(clientId: string): string[] {
-  if (!clientId) return ['openid', 'profile', 'email']
-  return [`api://${clientId}/access`]
+/** Build the delegated Microsoft Graph scopes used for authentication. */
+export function getGraphScopes(): string[] {
+  return [GRAPH_USER_READ_SCOPE]
 }
 
-export function buildLoginRequest(clientId: string) {
+export function buildLoginRequest(): { scopes: string[] } {
   return {
-    scopes: getApiScopes(clientId),
+    scopes: getGraphScopes(),
   }
 }

@@ -187,6 +187,8 @@ for result in results.completed_results:
 # [`pyrit_scan`](../../scanner/1_pyrit_scan.ipynb); programmatically it's the `scenario_techniques`
 # argument to `initialize_async`. The grouping is what lets `--technique single_turn` or
 # `--technique light` fan out to a whole family of techniques without naming each one.
+
+# %% [markdown] class="col-page-right"
 #
 # ```mermaid
 # flowchart LR
