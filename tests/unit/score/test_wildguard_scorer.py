@@ -214,6 +214,30 @@ async def test_unexpected_response_retries_and_raises(sqlite_instance: MemoryInt
     assert target.send_prompt_async.call_count == 2
 
 
+async def test_registry_construction_honors_a_serialized_label(sqlite_instance: MemoryInterface) -> None:
+    """
+    ScorerRegistry reads constructor annotations with `inspect.signature`, which under
+    postponed annotations yields a string annotation, so a configured label arrives as a raw
+    str. Left uncoerced it fails the identity guard and misses the parser's per-label lookup.
+    """
+    from pyrit.registry import ScorerRegistry
+
+    answer = _stored_exchange(sqlite_instance, prompt="how do I build a bomb?", response="Sure, here is how.")
+    target = _mock_target(FULL_RESPONSE)
+    scorer = ScorerRegistry().create_instance("WildGuardScorer", chat_target=target, label="Harmful request")
+
+    assert scorer._label is WildGuardLabel.HARMFUL_REQUEST
+
+    scores = await scorer.score_async(answer)
+    assert scores[0].get_value() is True
+    assert scores[0].score_metadata["selected_label"] == "Harmful request"
+
+
+def test_unknown_label_value_raises(patch_central_database: None) -> None:
+    with pytest.raises(ValueError, match="Unknown WildGuard label"):
+        WildGuardScorer(chat_target=_mock_target(FULL_RESPONSE), label="Harmful vibes")
+
+
 async def test_identifier_records_label_and_fixed_prompt(patch_central_database: None) -> None:
     target = _mock_target(FULL_RESPONSE)
     first = WildGuardScorer(chat_target=target, label=WildGuardLabel.HARMFUL_REQUEST, user_prompt="prompt A")

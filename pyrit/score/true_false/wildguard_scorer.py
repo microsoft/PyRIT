@@ -37,6 +37,34 @@ _EMPTY_RESPONSE_MESSAGE = (
 )
 
 
+def _coerce_label(label: WildGuardLabel | str) -> WildGuardLabel:
+    """
+    Accept the enum or its serialized value.
+
+    ``ScorerRegistry`` inspects constructor signatures with ``inspect.signature``, which under
+    postponed annotations reports the annotation as the string ``"WildGuardLabel"`` rather than
+    the enum. It therefore cannot coerce a configured ``"Harmful request"``, and the raw string
+    would fail the identity guard and miss the parser's per-label lookup.
+
+    Args:
+        label (WildGuardLabel | str): The label, or its value such as ``"Harmful request"``.
+
+    Returns:
+        WildGuardLabel: The corresponding enum member.
+
+    Raises:
+        ValueError: If the value does not name a label.
+    """
+    if isinstance(label, WildGuardLabel):
+        return label
+    normalized = label.strip().casefold()
+    for member in WildGuardLabel:
+        if normalized in (member.value.casefold(), member.name.casefold()):
+            return member
+    valid = ", ".join(member.value for member in WildGuardLabel)
+    raise ValueError(f"Unknown WildGuard label {label!r}. Expected one of: {valid}.")
+
+
 def render_wildguard_prompt(
     *,
     response: str,
@@ -90,7 +118,7 @@ class WildGuardScorer(TrueFalseScorer):
         self,
         *,
         chat_target: PromptTarget,
-        label: WildGuardLabel = WildGuardLabel.HARMFUL_RESPONSE,
+        label: WildGuardLabel | str = WildGuardLabel.HARMFUL_RESPONSE,
         user_prompt: str | None = None,
         prompt_template: SeedPrompt | str | None = None,
         validator: ScorerPromptValidator | None = None,
@@ -101,8 +129,10 @@ class WildGuardScorer(TrueFalseScorer):
 
         Args:
             chat_target (PromptTarget): A target serving WildGuard.
-            label (WildGuardLabel): Which of the three judgements becomes the score value.
-                Defaults to ``WildGuardLabel.HARMFUL_RESPONSE``.
+            label (WildGuardLabel | str): Which of the three judgements becomes the score
+                value, as the enum or its value such as ``"Harmful request"``, which is what a
+                serialized configuration supplies. Defaults to
+                ``WildGuardLabel.HARMFUL_RESPONSE``.
             user_prompt (str | None): Fixed prompt to classify responses against, which takes
                 precedence over the preceding turn of the scored conversation. Defaults to None.
             prompt_template (SeedPrompt | str | None): Custom WildGuard request template.
@@ -110,7 +140,12 @@ class WildGuardScorer(TrueFalseScorer):
             validator (ScorerPromptValidator | None): Custom validator. Defaults to text only.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for multi-piece scores.
                 Defaults to TrueFalseScoreAggregator.OR.
+
+        Raises:
+            ValueError: If ``label`` does not name one of WildGuard's three judgements.
         """
+        label = _coerce_label(label)
+
         self._prompt_target = chat_target
         self._label = label
         self._user_prompt = user_prompt
