@@ -7,13 +7,14 @@ from typing import Any
 from colorama import Back, Fore, Style
 
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
+from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.attack_result.base import AttackResultPrinterBase
 from pyrit.output.conversation.pretty import PrettyConversationPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.sink import Sink
 
 
-class PrettyAttackResultPrinter(AttackResultPrinterBase):
+class PrettyAttackResultPrinter(_PrettyPrinterMixin, AttackResultPrinterBase):
     """
     Pretty printer for attack results with ANSI-colored formatting.
 
@@ -67,22 +68,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             blur_images=blur_images,
             blur_radius=blur_radius,
         )
-
-    def _format_colored(self, text: str, *colors: str) -> str:
-        """
-        Format text with color codes if colors are enabled.
-
-        Args:
-            text (str): The text to format.
-            *colors: Variable number of colorama color constants to apply.
-
-        Returns:
-            str: The formatted line with trailing newline.
-        """
-        if self._enable_colors and colors:
-            color_prefix = "".join(colors)
-            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
-        return f"{text}\n"
 
     async def render_async(
         self,
