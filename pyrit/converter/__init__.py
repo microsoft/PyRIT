@@ -14,6 +14,7 @@ transformation pipelines for testing AI system robustness.
 import importlib
 from typing import TYPE_CHECKING
 
+from pyrit.converter.acrostic_converter import AcrosticConverter
 from pyrit.converter.add_image_text_converter import AddImageTextConverter
 from pyrit.converter.add_image_to_video_converter import AddImageVideoConverter
 from pyrit.converter.add_text_image_converter import AddTextImageConverter
@@ -146,6 +147,7 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
+    "AcrosticConverter",
     "AddImageTextConverter",
     "AddImageVideoConverter",
     "AddTextImageConverter",

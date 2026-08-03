@@ -99,8 +99,8 @@ app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 # Attach X-Request-ID to every request/response for log correlation
 app.add_middleware(RequestIdMiddleware)
 
-# Entra ID JWT validation (PKCE — no client secrets needed)
-# Disabled automatically if ENTRA_TENANT_ID / ENTRA_CLIENT_ID are not set
+# Microsoft Graph-backed authentication (PKCE — no client secrets needed)
+# Disabled if tenant/client configuration is absent; enabled deployments require allowed groups.
 app.add_middleware(EntraAuthMiddleware)
 
 

@@ -36,7 +36,14 @@ pyrit_root = doc_dir.parent
 file_type = ".py"
 included_dirs = {"code"}
 cache_dir = os.path.join(pyrit_root, "dbdata")
-kernel_name = "pyrit-dev"
+# "python3" is the kernel that `uv sync` installs into .venv. It is resolved through the
+# invoking environment's sys.prefix and its argv[0] is the relocatable string "python", which
+# Jupyter rewrites to the running interpreter -- so running this script via `uv run` from any
+# checkout or worktree executes against that checkout's .venv. A fixed machine-wide name like
+# "pyrit-dev" is installed with --user and points at whichever environment registered it last,
+# which silently executes notebooks against unrelated code. Pass --kernel_name to override
+# (e.g. "pyrit-dev" in the devcontainer).
+kernel_name = "python3"
 
 
 def main():

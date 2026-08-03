@@ -8,7 +8,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from sqlalchemy import and_, column, create_engine, event, exists, func, select, text
+from sqlalchemy import and_, create_engine, event, exists, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
@@ -440,35 +440,6 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         joiner = " OR " if match_mode == "any" else " AND "
         combined = joiner.join(conditions)
         return text(f"""ISJSON("{table_name}".{column_name}) = 1 AND ({combined})""").bindparams(**bindparams_dict)
-
-    def _attack_results_recency_expr(self) -> Any:
-        """
-        Return the Azure SQL recency sort expression reproducing the History-view sort.
-
-        Coalesces the ``attack_metadata`` ``updated_at`` key, falling back to ``created_at``
-        then an empty string. Only JSON *string* values are honored: each accessor is an
-        ``OPENJSON`` subquery filtered to ``type = 1`` (JSON string), so a non-string value
-        (e.g. a JSON bool or number) yields no row and coalesces to ``""`` instead. A raw
-        ``JSON_VALUE`` would instead stringify such a scalar (``false`` -> ``"false"``, ``2`` ->
-        ``"2"``), diverging from ``_attack_result_recency_key``'s Python anchor -- which collapses
-        non-strings to ``""`` -- so the keyset seek would anchor on a value the database never
-        sorted by and skip rows at a page boundary. Mirroring SQLite's ``json_type`` guard keeps
-        recency a pure text sort key that agrees with the Python key on both backends. Uses ORM
-        ``func``/``select`` expressions (not raw ``text``) so they adapt to the aliased subquery
-        SQLAlchemy emits when a collection ``joinedload`` is combined with ``limit``. Backs both
-        the recency ORDER BY and the keyset seek predicate so they stay in lockstep.
-
-        Returns:
-            Any: A SQLAlchemy expression yielding the coalesced recency string.
-        """
-        metadata = AttackResultEntry.attack_metadata
-
-        def _string_valued(json_key: str) -> Any:
-            table = func.openjson(metadata).table_valued(column("key"), column("value"), column("type"))
-            rows = table.alias(f"oj_{json_key}")
-            return select(rows.c["value"]).where(rows.c["key"] == json_key, rows.c["type"] == 1).scalar_subquery()
-
-        return func.coalesce(_string_valued("updated_at"), _string_valued("created_at"), "")
 
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
         """
