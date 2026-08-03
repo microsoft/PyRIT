@@ -502,6 +502,30 @@ class TestInitializerServiceSettings:
 
             service._registry.create_and_configure.assert_not_called()
 
+    async def test_run_additional_initializers_isolates_failures(self) -> None:
+        failing = MagicMock()
+        failing.supported_parameters = []
+        failing.validate = MagicMock(side_effect=ValueError("missing required environment variable"))
+        healthy = MagicMock()
+        healthy.supported_parameters = []
+        healthy.validate = MagicMock()
+        healthy.initialize_async = AsyncMock(return_value=None)
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.create_and_configure.side_effect = [failing, healthy]
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = [
+                AdditionalInitializer(id="bad", initializer_name="target", order_index=0),
+                AdditionalInitializer(id="good", initializer_name="widget", order_index=1),
+            ]
+
+            await service.run_additional_initializers_async()
+
+            failing.initialize_async.assert_not_called()
+            healthy.initialize_async.assert_awaited_once()
+
 
 # ============================================================================
 # Route Tests

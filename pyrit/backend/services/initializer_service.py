@@ -257,6 +257,11 @@ class InitializerService:
 
         Intended for the backend startup lifespan: the ``.pyrit_conf`` baseline runs first via
         the configuration loader, then this appends the user's additional initializers.
+
+        Failures are isolated per initializer: a persisted row that fails to build, validate, or
+        initialize (e.g. a missing required environment variable) is logged and skipped so one bad
+        row cannot abort backend startup or block the remaining initializers. The bad row stays in
+        Central Memory so it can be fixed or removed from the GUI once the backend is up.
         """
         initializers = self._memory.get_additional_initializers()
         if not initializers:
@@ -264,11 +269,18 @@ class InitializerService:
 
         logger.info("Running %d additional initializer(s)...", len(initializers))
         for initializer in initializers:
-            await asyncio.to_thread(
-                self._build_and_run_initializer,
-                initializer_name=initializer.initializer_name,
-                parameters=initializer.parameters,
-            )
+            try:
+                await asyncio.to_thread(
+                    self._build_and_run_initializer,
+                    initializer_name=initializer.initializer_name,
+                    parameters=initializer.parameters,
+                )
+            except Exception:
+                logger.exception(
+                    "Skipping additional initializer '%s' (id=%s): it failed to run.",
+                    initializer.initializer_name,
+                    initializer.id,
+                )
 
     async def register_initializer_async(
         self,
