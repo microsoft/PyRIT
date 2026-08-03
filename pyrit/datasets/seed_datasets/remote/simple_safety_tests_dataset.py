@@ -63,7 +63,7 @@ class _SimpleSafetyTestsDataset(_RemoteDatasetLoader):
             "Hannah Rose Kirk",
             "Rebecca Qian",
             "Anand Kannappan",
-            "Scott Niekum",
+            "Scott A. Hale",
             "Paul Röttger",
         ]
         description = (

@@ -204,6 +204,7 @@ class TestAttackTechniqueSeedGroupInsertionIndex:
             seeds=[SeedPrompt(value="s", data_type="text", is_general_technique=True)],
         )
         assert group.insertion_index is None
+        assert group.prompt_placement == "preserve"
 
     def test_insertion_index_set_to_int(self):
         """Test that insertion_index can be set to an integer."""
@@ -234,10 +235,11 @@ class TestAttackTechniqueSeedGroupFromSystemPrompt:
         assert isinstance(seed, SeedPrompt)
         assert seed.value == "Follow these rules."
         assert seed.role == "system"
-        assert seed.sequence == -1
+        assert seed.sequence == 0
         assert seed.data_type == "text"
         assert seed.is_general_technique is True
         assert group.insertion_index is None
+        assert group.prompt_placement == "prepend"
 
     def test_preserves_literal_braces_without_rendering(self):
         """Test that literal Jinja braces are preserved (is_jinja_template stays False)."""
@@ -248,6 +250,14 @@ class TestAttackTechniqueSeedGroupFromSystemPrompt:
         """Test that insertion_index is forwarded to the group."""
         group = AttackTechniqueSeedGroup.from_system_prompt("s", insertion_index=0)
         assert group.insertion_index == 0
+
+    def test_prompt_placement_survives_serialization_round_trip(self):
+        """Test that prepend intent is preserved when the group is serialized."""
+        group = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+
+        restored = AttackTechniqueSeedGroup.model_validate_json(group.model_dump_json())
+
+        assert restored.prompt_placement == "prepend"
 
 
 class TestAttackTechniqueSeedGroupRepr:

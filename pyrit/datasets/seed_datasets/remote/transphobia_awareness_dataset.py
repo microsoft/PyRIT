@@ -34,7 +34,7 @@ class _TransphobiaAwarenessDataset(_RemoteDatasetLoader):
     Dylan Doyle, Dipto Das, Michael Ann DeVito, Jed Brubaker.
     "Transphobia is in the Eye of the Prompter:
     Trans-Centered Perspectives on Large Language Models."
-    ACM Transactions on Computer-Human Interaction (2018).
+    ACM Transactions on Computer-Human Interaction (2025).
     """
 
     # Metadata

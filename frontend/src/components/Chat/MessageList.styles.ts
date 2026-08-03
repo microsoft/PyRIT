@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { NARROW_VIEWPORT_QUERY, mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useMessageListStyles = makeStyles({
   root: {
@@ -169,6 +170,7 @@ export const useMessageListStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold as unknown as string,
     textDecoration: 'none',
     flexShrink: 0,
+    ...mobileTouchTarget,
     ':hover': {
       backgroundColor: tokens.colorBrandBackgroundHover,
       color: tokens.colorNeutralForegroundOnBrand,
@@ -195,6 +197,14 @@ export const useMessageListStyles = makeStyles({
     justifyContent: 'flex-end',
     gap: tokens.spacingHorizontalXXS,
     marginTop: tokens.spacingVerticalS,
+    [NARROW_VIEWPORT_QUERY]: {
+      flexWrap: 'wrap',
+    },
+  },
+  messageActionButton: {
+    minWidth: 'auto',
+    padding: '2px',
+    ...mobileTouchTarget,
   },
   reasoningContainer: {
     backgroundColor: tokens.colorNeutralBackground1,

@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.3
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -86,6 +86,7 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 
 # %%
 from pyrit.converter import (
+    AcrosticConverter,
     AnsiAttackConverter,
     ArabicPresentationFormConverter,
     ArabiziConverter,
@@ -123,6 +124,8 @@ print("Unicode Substitution:", await UnicodeSubstitutionConverter().convert_asyn
 print("Unicode Replacement:", await UnicodeReplacementConverter().convert_async(prompt=prompt))  # type: ignore
 print("Emoji:", await EmojiConverter().convert_async(prompt=prompt))  # type: ignore
 print("First Letter:", await FirstLetterConverter().convert_async(prompt=prompt))  # type: ignore
+# Acrostic hides the prompt in the first letter of each line; a short prompt keeps the output readable
+print("Acrostic:", await AcrosticConverter().convert_async(prompt="cut a tree"))  # type: ignore
 print("String Join:", await StringJoinConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zero Width:", await ZeroWidthConverter().convert_async(prompt=prompt))  # type: ignore
 print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: ignore
@@ -267,6 +270,7 @@ from pyrit.converter import (
     DecompositionConverter,
     DenylistConverter,
     ImagePromptStyleConverter,
+    IPAConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
     NoiseConverter,
@@ -304,6 +308,10 @@ print("Tone (angry):", await tone_converter.convert_async(prompt=prompt))  # typ
 # Translation to specific language
 translation_converter = TranslationConverter(converter_target=attack_llm, language="French")
 print("Translation (French):", await translation_converter.convert_async(prompt=prompt))  # type: ignore
+
+# IPA transcription detects the source language and pronunciation variety
+ipa_converter = IPAConverter(converter_target=attack_llm)
+print("IPA:", await ipa_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Random translation translates each word to a random language
 random_translation_converter = RandomTranslationConverter(

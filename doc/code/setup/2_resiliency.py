@@ -71,7 +71,9 @@
 #
 # JSON-level retry automatically retries when:
 #
-# - **Invalid JSON** (`InvalidJsonException`): Target returns non-parseable JSON
+# - **Invalid JSON** (`InvalidJsonException`): Target returns non-parseable JSON, a JSON
+#   value other than a top-level object, or (for true/false scorers) a `score_value`
+#   outside the `"true"`/`"false"` domain (for example, `"refusal"`)
 #
 # ### Configuration
 #

@@ -48,7 +48,7 @@ class SuperscriptConverter(WordLevelConverter):
         "y": "\u02b8",
         "z": "\u1dbb",
         "A": "\u1d2c",
-        "B": "\u1d2d",
+        "B": "\u1d2e",
         "D": "\u1d30",
         "E": "\u1d31",
         "G": "\u1d33",

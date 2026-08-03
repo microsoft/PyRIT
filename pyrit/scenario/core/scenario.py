@@ -28,7 +28,8 @@ from tqdm.auto import tqdm
 
 from pyrit.common import get_global_default_values
 from pyrit.common.utils import to_sha256
-from pyrit.executor.attack import AttackExecutor
+from pyrit.exceptions import ScenarioPartialFailureException
+from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
@@ -1019,7 +1020,7 @@ class Scenario(ABC):
         Raises:
             ValueError: If the scenario has no atomic attacks configured. If your scenario
                 requires initialization, call await scenario.initialize() first.
-            ValueError: If the scenario raises an exception after exhausting all retry attempts.
+            ScenarioPartialFailureException: If an atomic attack only partially completes.
             RuntimeError: If the scenario fails for any other reason while executing.
 
         Example:
@@ -1028,10 +1029,13 @@ class Scenario(ABC):
             >>> print(f"Total results: {len(result.attack_results)}")
         """
         if not self._atomic_attacks:
-            raise ValueError(
+            error = ValueError(
                 "Cannot run scenario with no atomic attacks. Either supply them in initialization or "
                 "call await scenario.initialize_async() first."
             )
+            if self._scenario_result_id:
+                self._mark_scenario_failed(scenario_result_id=self._scenario_result_id, error=error)
+            raise error
 
         if not self._scenario_result_id:
             raise ValueError("Scenario not properly initialized. Call await scenario.initialize_async() first.")
@@ -1068,6 +1072,7 @@ class Scenario(ABC):
                     f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
                     exc_info=True,
                 )
+                self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=e)
                 raise
 
         # This should never be reached, but just in case
@@ -1089,7 +1094,7 @@ class Scenario(ABC):
         Raises:
             Exception: Any exception that occurs during scenario execution.
             ValueError: If a lookup for a scenario for a given ID fails.
-            ValueError: If atomic attack execution fails.
+            ScenarioPartialFailureException: If an atomic attack only partially completes.
         """
         logger.info(f"Starting scenario '{self._name}' execution with {len(self._atomic_attacks)} atomic attacks")
 
@@ -1110,6 +1115,12 @@ class Scenario(ABC):
         else:
             raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
 
+        # Mark scenario as in progress
+        self._memory.update_scenario_run_state(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        )
+
         # Get remaining atomic attacks (filters out completed ones and updates objectives)
         remaining_attacks = await self._get_remaining_atomic_attacks_async()
 
@@ -1117,7 +1128,8 @@ class Scenario(ABC):
             logger.info(f"Scenario '{self._name}' has no remaining objectives to execute")
             # Mark scenario as completed
             self._memory.update_scenario_run_state(
-                scenario_result_id=scenario_result_id, scenario_run_state="COMPLETED"
+                scenario_result_id=scenario_result_id,
+                scenario_run_state=ScenarioRunState.COMPLETED,
             )
             # Retrieve and return the current scenario result
             scenario_results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
@@ -1129,9 +1141,6 @@ class Scenario(ABC):
             f"Scenario '{self._name}' has {len(remaining_attacks)} atomic attacks "
             f"with remaining objectives (out of {len(self._atomic_attacks)} total)"
         )
-
-        # Mark scenario as in progress
-        self._memory.update_scenario_run_state(scenario_result_id=scenario_result_id, scenario_run_state="IN_PROGRESS")
 
         # Calculate starting index based on completed attacks
         completed_count = len(self._atomic_attacks) - len(remaining_attacks)
@@ -1153,7 +1162,8 @@ class Scenario(ABC):
 
             # Mark scenario as completed
             self._memory.update_scenario_run_state(
-                scenario_result_id=scenario_result_id, scenario_run_state="COMPLETED"
+                scenario_result_id=scenario_result_id,
+                scenario_run_state=ScenarioRunState.COMPLETED,
             )
 
             # Retrieve and return final scenario result
@@ -1171,15 +1181,15 @@ class Scenario(ABC):
         self,
         *,
         atomic_attack: AtomicAttack,
-        atomic_results: Any,
-    ) -> ValueError | None:
+        atomic_results: AttackExecutorResult[AttackResult],
+    ) -> ScenarioPartialFailureException | None:
         """
         Log the outcome of an atomic attack and return an exception if it didn't
         fully complete.
 
         Returns:
-            ValueError | None: An error to raise when the atomic attack has incomplete
-            objectives, otherwise ``None`` when all objectives finished successfully.
+            ScenarioPartialFailureException | None: An error to raise when the atomic attack
+                has incomplete objectives, otherwise ``None``.
         """
         if not atomic_results.has_incomplete:
             logger.info(
@@ -1197,24 +1207,22 @@ class Scenario(ABC):
         for obj, exc in atomic_results.incomplete_objectives:
             logger.error(f"  Incomplete objective '{obj[:50]}...': {str(exc)}")
 
-        inner = atomic_results.incomplete_objectives[0][1]
-        error = ValueError(
-            f"Atomic attack '{atomic_attack.atomic_attack_name}' partially failed: "
-            f"{incomplete_count} of {incomplete_count + completed_in_run} objectives incomplete. "
-            f"See attack results for details."
+        return ScenarioPartialFailureException(
+            atomic_attack_name=atomic_attack.atomic_attack_name,
+            completed_count=completed_in_run,
+            incomplete_objectives=atomic_results.incomplete_objectives,
         )
-        if isinstance(inner, BaseException):
-            error.__cause__ = inner
-        return error
 
     def _mark_scenario_failed(self, *, scenario_result_id: str, error: BaseException) -> None:
         """Mark the scenario run as FAILED, deriving message/type from ``error``."""
-        cause = error.__cause__ if error.__cause__ is not None else error
+        error_message = str(error)
+        if error.__cause__ is not None:
+            error_message = f"{error_message} Caused by {type(error.__cause__).__name__}: {str(error.__cause__)}"
         self._memory.update_scenario_run_state(
             scenario_result_id=scenario_result_id,
-            scenario_run_state="FAILED",
-            error_message=str(error),
-            error_type=type(cause).__name__,
+            scenario_run_state=ScenarioRunState.FAILED,
+            error_message=error_message,
+            error_type=type(error).__name__,
         )
 
     async def _execute_atomic_attacks_parallel_async(
@@ -1266,7 +1274,7 @@ class Scenario(ABC):
             queue.put_nowait(atomic_attack)
 
         stop_event = asyncio.Event()
-        outcomes: list[tuple[AtomicAttack, Any] | BaseException] = []
+        outcomes: list[tuple[AtomicAttack, AttackExecutorResult[AttackResult]] | BaseException] = []
 
         async def worker_async() -> None:
             while not stop_event.is_set():
@@ -1308,13 +1316,12 @@ class Scenario(ABC):
                 if len(errors) == 1
                 else ExceptionGroup(f"Multiple atomic attacks failed in scenario '{self._name}'", errors)
             )
-            self._mark_scenario_failed(scenario_result_id=scenario_result_id, error=final_error)
             raise final_error
 
     def _collect_errors_from_outcomes(
         self,
         *,
-        outcomes: list[tuple[AtomicAttack, Any] | BaseException],
+        outcomes: list[tuple[AtomicAttack, AttackExecutorResult[AttackResult]] | BaseException],
     ) -> list[BaseException]:
         """
         Convert worker outcomes into a flat list of errors for the caller to raise.
@@ -1323,8 +1330,7 @@ class Scenario(ABC):
             - ``BaseException``: the atomic attack raised; log and surface as-is.
             - ``(AtomicAttack, result)``: ran to completion. If the result reports
               incomplete objectives, ``_partial_result_to_exception`` produces a
-              synthetic ``ValueError`` so partial failures are surfaced the same
-              way as raised exceptions.
+              ``ScenarioPartialFailureException``.
 
         Returns:
             list[BaseException]: One exception per failed atomic attack, preserving

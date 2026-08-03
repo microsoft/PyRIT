@@ -19,7 +19,7 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
     HarmBench is a standardized evaluation framework for automated red teaming.
     It consists of a dataset of harmful behaviors across multiple categories.
 
-    Reference: https://github.com/centerforaisafety/HarmBench
+    Reference: [@mazeika2024harmbench]
     """
 
     # Metadata
@@ -119,7 +119,20 @@ class _HarmBenchDataset(_RemoteDatasetLoader):
                     "biological, illegal activities, etc."
                 ),
                 source="https://github.com/centerforaisafety/HarmBench",
-                authors=["Mantas Mazeika", "Long Phan", "Xuwang Yin", "Andy Zou", "Zifan Wang", "Norman Mu"],
+                authors=[
+                    "Mantas Mazeika",
+                    "Long Phan",
+                    "Xuwang Yin",
+                    "Andy Zou",
+                    "Zifan Wang",
+                    "Norman Mu",
+                    "Elham Sakhaee",
+                    "Nathaniel Li",
+                    "Steven Basart",
+                    "Bo Li",
+                    "David Forsyth",
+                    "Dan Hendrycks",
+                ],
                 metadata=metadata,
                 groups=[
                     "University of Illinois Urbana-Champaign",

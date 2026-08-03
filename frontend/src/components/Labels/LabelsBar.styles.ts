@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useLabelsBarStyles = makeStyles({
   root: {
@@ -16,6 +17,7 @@ export const useLabelsBarStyles = makeStyles({
   },
   iconButton: {
     flexShrink: 0,
+    ...mobileTouchTarget,
   },
   iconTooltipBody: {
     whiteSpace: 'nowrap',
