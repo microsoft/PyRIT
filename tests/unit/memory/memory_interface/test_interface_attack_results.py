@@ -11,7 +11,8 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultQuery, AttackResultsKeysetCursor, MemoryInterface
+from pyrit.memory import AttackResultsKeysetCursor, MemoryInterface
+from pyrit.memory.memory_interface import _AttackResultQuery
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -103,10 +104,10 @@ def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list
 
 
 def test_attack_result_query_snapshots_mutable_inputs():
-    """AttackResultQuery remains stable when caller-owned containers change."""
+    """The internal query remains stable when caller-owned containers change."""
     attack_classes = ["CrescendoAttack"]
     labels = {"operator": ["alice"]}
-    query = AttackResultQuery(attack_classes=attack_classes, labels=labels)
+    query = _AttackResultQuery(attack_classes=attack_classes, labels=labels)
 
     attack_classes.append("ManualAttack")
     labels["operator"].append("bob")
@@ -119,13 +120,13 @@ def test_attack_result_query_snapshots_mutable_inputs():
 
 
 def test_attack_result_query_requires_keyword_arguments():
-    """AttackResultQuery does not expose field ordering as a positional API."""
+    """The internal query does not expose field ordering as a positional API."""
     with pytest.raises(TypeError):
-        AttackResultQuery(["id"])  # type: ignore[misc]
+        _AttackResultQuery(["id"])  # type: ignore[misc]
 
 
 def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: MemoryInterface):
-    """The compatibility API maps every parameter onto AttackResultQuery."""
+    """The compatibility API maps every parameter onto the internal query."""
     cursor = AttackResultsKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     identifier_filter = IdentifierFilter(
         identifier_type=IdentifierType.ATTACK,
@@ -133,7 +134,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
         value="hash",
     )
 
-    with patch.object(sqlite_instance, "query_attack_results", return_value=[]) as query_mock:
+    with patch.object(sqlite_instance, "_query_attack_results", return_value=[]) as query_mock:
         sqlite_instance.get_attack_results(
             attack_result_ids=["id"],
             conversation_id="conversation",
@@ -156,7 +157,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
         )
 
     query = query_mock.call_args.kwargs["query"]
-    assert isinstance(query, AttackResultQuery)
+    assert isinstance(query, _AttackResultQuery)
     assert query.attack_result_ids == ("id",)
     assert query.conversation_id == "conversation"
     assert query.objective == "objective"
@@ -178,7 +179,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
 
 
 def test_query_attack_results_matches_compatibility_api(sqlite_instance: MemoryInterface):
-    """Direct query objects and the compatibility API return the same page."""
+    """The internal query executor and compatibility API return the same page."""
     sqlite_instance.add_attack_results_to_memory(
         attack_results=[
             _make_attack_result("conv-1", executed_turns=2, outcome=AttackOutcome.SUCCESS, ts_offset=1),
@@ -187,8 +188,8 @@ def test_query_attack_results_matches_compatibility_api(sqlite_instance: MemoryI
         ]
     )
 
-    query = AttackResultQuery(outcome=AttackOutcome.SUCCESS.value, min_turns=3, limit=1)
-    direct = sqlite_instance.query_attack_results(query=query)
+    query = _AttackResultQuery(outcome=AttackOutcome.SUCCESS.value, min_turns=3, limit=1)
+    direct = sqlite_instance._query_attack_results(query=query)
     compatibility = sqlite_instance.get_attack_results(
         outcome=AttackOutcome.SUCCESS.value,
         min_turns=3,

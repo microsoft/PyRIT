@@ -122,7 +122,7 @@ class AttackResultsKeysetCursor(NamedTuple):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class AttackResultQuery:
+class _AttackResultQuery:
     """
     Immutable filters and pagination settings for an attack-result query.
 
@@ -2858,7 +2858,7 @@ class MemoryInterface(abc.ABC):
             ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
                 ``objective_sha256`` (id-batched lookups do not support SQL pagination).
         """
-        query = AttackResultQuery(
+        query = _AttackResultQuery(
             attack_result_ids=attack_result_ids,
             conversation_id=conversation_id,
             objective=objective,
@@ -2878,14 +2878,14 @@ class MemoryInterface(abc.ABC):
             limit=limit,
             after=after,
         )
-        return self.query_attack_results(query=query)
+        return self._query_attack_results(query=query)
 
-    def query_attack_results(self, *, query: AttackResultQuery) -> Sequence[AttackResult]:
+    def _query_attack_results(self, *, query: _AttackResultQuery) -> Sequence[AttackResult]:
         """
         Retrieve attack results matching an immutable query.
 
         Args:
-            query (AttackResultQuery): Filters and pagination settings to apply.
+            query (_AttackResultQuery): Filters and pagination settings to apply.
 
         Returns:
             Sequence[AttackResult]: Attack results matching the query.
@@ -2924,7 +2924,7 @@ class MemoryInterface(abc.ABC):
             raise
 
     @staticmethod
-    def _attack_result_query_has_empty_lookup(*, query: AttackResultQuery) -> bool:
+    def _attack_result_query_has_empty_lookup(*, query: _AttackResultQuery) -> bool:
         """Return whether an explicitly empty ID lookup must produce no results."""
         return (
             query.attack_result_ids is not None
@@ -2933,7 +2933,7 @@ class MemoryInterface(abc.ABC):
             and len(query.objective_sha256) == 0
         )
 
-    def _build_attack_result_conditions(self, *, query: AttackResultQuery) -> list[Any]:
+    def _build_attack_result_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
         Build backend-neutral and backend-specific SQL conditions for a query.
 
@@ -2949,7 +2949,7 @@ class MemoryInterface(abc.ABC):
         return conditions
 
     @staticmethod
-    def _build_attack_result_scalar_conditions(*, query: AttackResultQuery) -> list[Any]:
+    def _build_attack_result_scalar_conditions(*, query: _AttackResultQuery) -> list[Any]:
         """
         Build conditions for scalar attack-result columns.
 
@@ -2967,7 +2967,7 @@ class MemoryInterface(abc.ABC):
             conditions.append(AttackResultEntry.attribution_parent_id == uuid.UUID(query.scenario_result_id))
         return conditions
 
-    def _build_attack_result_identifier_conditions(self, *, query: AttackResultQuery) -> list[Any]:
+    def _build_attack_result_identifier_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
         Build conditions for attack identifier JSON properties.
 
@@ -3004,7 +3004,7 @@ class MemoryInterface(abc.ABC):
             )
         return conditions
 
-    def _build_attack_result_converter_conditions(self, *, query: AttackResultQuery) -> list[Any]:
+    def _build_attack_result_converter_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
         Build conditions for converter class names and converter presence.
 
@@ -3032,7 +3032,7 @@ class MemoryInterface(abc.ABC):
             conditions.append(not_(empty_condition) if query.has_converters else empty_condition)
         return conditions
 
-    def _build_attack_result_label_conditions(self, *, query: AttackResultQuery) -> list[Any]:
+    def _build_attack_result_label_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
         Build a validated backend-specific attack-label condition.
 
@@ -3058,7 +3058,7 @@ class MemoryInterface(abc.ABC):
             return []
         return [self._get_attack_result_label_condition(labels=effective_labels)]
 
-    def _build_attack_result_category_conditions(self, *, query: AttackResultQuery) -> list[Any]:
+    def _build_attack_result_category_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
         Build the targeted-harm-category condition.
 
@@ -3076,7 +3076,7 @@ class MemoryInterface(abc.ABC):
             )
         ]
 
-    def _build_attack_result_generic_identifier_conditions(self, *, query: AttackResultQuery) -> list[Any]:
+    def _build_attack_result_generic_identifier_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
         Build generic attack identifier conditions.
 
@@ -3092,7 +3092,7 @@ class MemoryInterface(abc.ABC):
         )
 
     @staticmethod
-    def _validate_attack_result_query_pagination(*, query: AttackResultQuery, paginating: bool) -> None:
+    def _validate_attack_result_query_pagination(*, query: _AttackResultQuery, paginating: bool) -> None:
         """
         Reject pagination combined with unsupported ID-batched lookups.
 
@@ -3106,7 +3106,7 @@ class MemoryInterface(abc.ABC):
 
     @staticmethod
     def _build_attack_result_list_params(
-        *, query: AttackResultQuery
+        *, query: _AttackResultQuery
     ) -> list[tuple[InstrumentedAttribute[Any], Sequence[Any], str]]:
         """
         Build batched list lookup descriptors for the unpaginated query path.
