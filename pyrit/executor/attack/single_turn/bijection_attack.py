@@ -184,6 +184,12 @@ class BijectionAttack(PromptSendingAttack):
         __init__), which encodes it the same way as the practice shots -- no plaintext
         wrapper, keeping the protocol consistent between practice and final turns.
 
+        For non-chat targets, _setup_async's initialize_context_async already folds
+        context.prepended_conversation (the teaching protocol) into context.next_message
+        as a single text request. Only set next_message here if it is still unset, so
+        that setup-normalized message isn't overwritten and those targets still see the
+        notation instructions and practice shots instead of just the bare objective.
+
         The decoded response is stored in result metadata without mutating the original.
 
         Args:
@@ -192,7 +198,8 @@ class BijectionAttack(PromptSendingAttack):
         Returns:
             AttackResult: The result of the attack.
         """
-        context.next_message = Message.from_prompt(prompt=context.objective, role="user")
+        if context.next_message is None:
+            context.next_message = Message.from_prompt(prompt=context.objective, role="user")
 
         result = await super()._perform_async(context=context)
 

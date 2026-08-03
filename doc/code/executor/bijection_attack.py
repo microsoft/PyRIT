@@ -25,8 +25,8 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     BijectionAttack,
 )
+from pyrit.converter import LetterBijectionConverter
 from pyrit.output import output_attack_async
-from pyrit.prompt_converter import LetterBijectionConverter
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
