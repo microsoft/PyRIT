@@ -205,6 +205,7 @@ export default function AdditionalInitializers({
 
       {addDialogOpen && (
         <InitializerParametersDialog
+          key={selectedInitializer?.initializer_name ?? 'none'}
           open
           mode="add"
           initializer={selectedInitializer}

@@ -5,6 +5,7 @@
 Tests for backend initializer service and routes.
 """
 
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -505,6 +506,67 @@ class TestInitializerServiceSettings:
 # ============================================================================
 # Route Tests
 # ============================================================================
+
+
+class TestInitializerServiceValueValidation:
+    """Raw parameter values are coerced against declared types and rejected when invalid."""
+
+    @staticmethod
+    def _service_with_parameters(parameters: list[Parameter]) -> InitializerService:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = []
+            configured = MagicMock()
+            configured.supported_parameters = parameters
+            service._registry.create_and_configure.return_value = configured
+            return service
+
+    async def test_create_rejects_value_that_violates_declared_type(self) -> None:
+        service = self._service_with_parameters([Parameter(name="days", description="d", default=30, param_type=int)])
+
+        with pytest.raises(ValueError, match="days"):
+            await service.create_additional_initializer_async(
+                initializer_name="refresh_datasets",
+                parameters={"days": "abc"},
+                order_index=None,
+            )
+
+        service._memory.add_additional_initializer.assert_not_called()
+
+    async def test_create_accepts_value_that_matches_declared_type(self) -> None:
+        service = self._service_with_parameters([Parameter(name="days", description="d", default=30, param_type=int)])
+
+        result = await service.create_additional_initializer_async(
+            initializer_name="refresh_datasets",
+            parameters={"days": 7},
+            order_index=0,
+        )
+
+        assert result.parameters == {"days": 7}
+        service._memory.add_additional_initializer.assert_called_once()
+
+    async def test_create_rejects_out_of_set_list_value(self) -> None:
+        service = self._service_with_parameters(
+            [Parameter(name="tags", description="d", default=["a"], param_type=list[Literal["a", "b"]])]
+        )
+
+        with pytest.raises(ValueError, match="tags"):
+            await service.create_additional_initializer_async(
+                initializer_name="target",
+                parameters={"tags": ["bogus"]},
+                order_index=None,
+            )
+
+    async def test_apply_rejects_value_that_violates_declared_type(self) -> None:
+        service = self._service_with_parameters([Parameter(name="days", description="d", default=30, param_type=int)])
+
+        with pytest.raises(ValueError, match="days"):
+            await service.apply_initializer_async(
+                initializer_name="refresh_datasets",
+                parameters={"days": "abc"},
+            )
 
 
 class TestInitializerRoutes:

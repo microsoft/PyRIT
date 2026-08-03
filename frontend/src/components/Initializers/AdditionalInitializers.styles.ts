@@ -71,4 +71,18 @@ export const useAdditionalInitializersStyles = makeStyles({
     display: 'block',
     marginTop: tokens.spacingVerticalXXS,
   },
+  parameterFields: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+  },
+  fieldHint: {
+    color: tokens.colorNeutralForeground3,
+    marginTop: tokens.spacingVerticalXXS,
+  },
+  checkboxGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+  },
 })

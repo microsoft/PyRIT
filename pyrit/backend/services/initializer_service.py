@@ -28,6 +28,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import AdditionalInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
 from pyrit.registry import InitializerMetadata, InitializerRegistry
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +320,7 @@ class InitializerService:
             initializer_name,
             initializer_params=parameters or None,
         )
+        self._validate_parameter_values(instance=initializer, parameters=parameters)
         initializer.validate()
         asyncio.run(initializer.initialize_async())
 
@@ -353,7 +355,33 @@ class InitializerService:
             initializer_name: The initializer registry name.
             parameters: Optional initializer parameters to validate.
         """
-        self._registry.create_and_configure(initializer_name, initializer_params=parameters or None)
+        instance = self._registry.create_and_configure(initializer_name, initializer_params=parameters or None)
+        self._validate_parameter_values(instance=instance, parameters=parameters)
+
+    @staticmethod
+    def _validate_parameter_values(*, instance: PyRITInitializer, parameters: dict[str, Any] | None) -> None:
+        """
+        Validate raw parameter values against each declared parameter's type.
+
+        ``create_and_configure`` only checks parameter *names*; this coerces each provided
+        value with ``Parameter.coerce_value`` so a value that cannot satisfy its declared
+        type (e.g. a non-integer ``days`` or an out-of-set tag) is rejected up front with a
+        clear error instead of failing later when the initializer runs.
+
+        Args:
+            instance: The configured initializer whose ``supported_parameters`` declare the types.
+            parameters: The raw parameter values to validate.
+
+        Raises:
+            ValueError: If a value cannot be coerced to its parameter's declared type.
+        """
+        if not parameters:
+            return
+        parameter_by_name = {parameter.name: parameter for parameter in instance.supported_parameters}
+        for name, value in parameters.items():
+            parameter = parameter_by_name.get(name)
+            if parameter is not None:
+                parameter.coerce_value(value)
 
     def _get_metadata_by_name(self) -> dict[str, InitializerMetadata]:
         return {metadata.registry_name: metadata for metadata in self._registry.get_all_registered_class_metadata()}

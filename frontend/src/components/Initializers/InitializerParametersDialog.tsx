@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -8,14 +9,21 @@ import {
   DialogSurface,
   DialogTitle,
   Field,
+  Input,
+  Select,
+  Switch,
   Text,
-  Textarea,
 } from '@fluentui/react-components'
 
-import type { RegisteredInitializer } from '@/types'
+import type { Parameter, RegisteredInitializer } from '@/types'
 
 import { useAdditionalInitializersStyles } from './AdditionalInitializers.styles'
-import { formatSupportedParameterSummary } from './initializerFormatting'
+import {
+  buildParametersFromForm,
+  getInitialFormValues,
+  getParameterControlKind,
+  type ParameterFormValue,
+} from './initializerParameterForm'
 
 interface InitializerParametersDialogProps {
   open: boolean
@@ -25,26 +33,6 @@ interface InitializerParametersDialogProps {
   submitting?: boolean
   onSubmit: (parameters: Record<string, unknown> | null) => void | Promise<void>
   onOpenChange: (open: boolean) => void
-}
-
-function serializeParameters(parameters?: Record<string, unknown> | null): string {
-  return JSON.stringify(parameters ?? {}, null, 2)
-}
-
-function parseParametersText(text: string): Record<string, unknown> | null {
-  const trimmed = text.trim()
-  if (!trimmed) {
-    return null
-  }
-
-  const parsed: unknown = JSON.parse(trimmed)
-  if (parsed === null) {
-    return null
-  }
-  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Parameters must be a JSON object.')
-  }
-  return parsed as Record<string, unknown>
 }
 
 export default function InitializerParametersDialog({
@@ -57,10 +45,18 @@ export default function InitializerParametersDialog({
   onOpenChange,
 }: InitializerParametersDialogProps) {
   const styles = useAdditionalInitializersStyles()
-  const [parametersText, setParametersText] = useState(() => serializeParameters(initialParameters))
+  const parameters = initializer?.supported_parameters ?? []
+  const [values, setValues] = useState<Record<string, ParameterFormValue>>(() =>
+    getInitialFormValues(parameters, initialParameters),
+  )
   const [error, setError] = useState<string | null>(null)
 
-  const acceptsParameters = (initializer?.supported_parameters.length ?? 0) > 0
+  const acceptsParameters = parameters.length > 0
+
+  const updateValue = (name: string, value: ParameterFormValue): void => {
+    setValues((prev) => ({ ...prev, [name]: value }))
+    setError(null)
+  }
 
   const handleSubmit = async (): Promise<void> => {
     if (!acceptsParameters) {
@@ -69,16 +65,14 @@ export default function InitializerParametersDialog({
       return
     }
 
-    let parameters: Record<string, unknown> | null
-    try {
-      parameters = parseParametersText(parametersText)
-    } catch (parseError) {
-      setError(parseError instanceof Error ? parseError.message : 'Invalid initializer settings.')
+    const result = buildParametersFromForm(parameters, values)
+    if (!result.ok) {
+      setError(result.error)
       return
     }
 
     setError(null)
-    await onSubmit(parameters)
+    await onSubmit(result.parameters)
   }
 
   const initializerName = initializer?.initializer_name ?? ''
@@ -99,27 +93,20 @@ export default function InitializerParametersDialog({
                     Required env vars: {initializer.required_env_vars.join(', ')}
                   </Text>
                 )}
-                <div className={styles.parameterList}>
-                  {formatSupportedParameterSummary(initializer).map((summary: string) => (
-                    <Text key={summary} className={styles.parameterHint} size={200}>
-                      {summary}
-                    </Text>
-                  ))}
-                </div>
               </>
             )}
             {acceptsParameters ? (
-              <Field label="Parameters JSON">
-                <Textarea
-                  className={styles.parametersEditor}
-                  value={parametersText}
-                  onChange={(_, data) => {
-                    setParametersText(data.value)
-                    setError(null)
-                  }}
-                  disabled={submitting}
-                />
-              </Field>
+              <div className={styles.parameterFields}>
+                {parameters.map((parameter) => (
+                  <ParameterField
+                    key={parameter.name}
+                    parameter={parameter}
+                    value={values[parameter.name]}
+                    disabled={submitting}
+                    onChange={updateValue}
+                  />
+                ))}
+              </div>
             ) : (
               <Text size={300} className={styles.parameterHint}>
                 This initializer takes no parameters.
@@ -146,5 +133,96 @@ export default function InitializerParametersDialog({
         </DialogBody>
       </DialogSurface>
     </Dialog>
+  )
+}
+
+interface ParameterFieldProps {
+  parameter: Parameter
+  value: ParameterFormValue
+  disabled: boolean
+  onChange: (name: string, value: ParameterFormValue) => void
+}
+
+function ParameterField({ parameter, value, disabled, onChange }: ParameterFieldProps) {
+  const styles = useAdditionalInitializersStyles()
+  const kind = getParameterControlKind(parameter)
+  const label = parameter.required ? `${parameter.name} *` : parameter.name
+
+  if (kind === 'boolean') {
+    const checked = value === 'true'
+    return (
+      <Field label={label} hint={parameter.description ?? undefined}>
+        <Switch
+          checked={checked}
+          label={checked ? 'True' : 'False'}
+          disabled={disabled}
+          onChange={(_, data) => onChange(parameter.name, data.checked ? 'true' : 'false')}
+          data-testid={`param-${parameter.name}`}
+        />
+      </Field>
+    )
+  }
+
+  if (kind === 'multiselect') {
+    const selected = Array.isArray(value) ? value : []
+    return (
+      <Field label={label} hint={parameter.description ?? undefined}>
+        <div className={styles.checkboxGroup} role="group" aria-label={parameter.name}>
+          {(parameter.choices ?? []).map((choice) => (
+            <Checkbox
+              key={choice}
+              label={choice}
+              checked={selected.includes(choice)}
+              disabled={disabled}
+              onChange={(_, data) => {
+                const next = data.checked
+                  ? [...selected, choice]
+                  : selected.filter((entry) => entry !== choice)
+                onChange(parameter.name, next)
+              }}
+              data-testid={`param-${parameter.name}-${choice}`}
+            />
+          ))}
+        </div>
+      </Field>
+    )
+  }
+
+  const stringValue = typeof value === 'string' ? value : ''
+
+  if (kind === 'select') {
+    return (
+      <Field label={label} hint={parameter.description ?? undefined}>
+        <Select
+          value={stringValue}
+          disabled={disabled}
+          onChange={(_, data) => onChange(parameter.name, data.value)}
+          data-testid={`param-${parameter.name}`}
+        >
+          <option value="">Select a value</option>
+          {(parameter.choices ?? []).map((choice) => (
+            <option key={choice} value={choice}>
+              {choice}
+            </option>
+          ))}
+        </Select>
+      </Field>
+    )
+  }
+
+  const hint =
+    parameter.description ?? (kind === 'list' ? 'Comma-separated list of values.' : parameter.type_name)
+
+  return (
+    <Field label={label} hint={hint}>
+      <Input
+        value={stringValue}
+        type={kind === 'number' ? 'number' : 'text'}
+        placeholder={parameter.default ?? undefined}
+        disabled={disabled}
+        onChange={(_, data) => onChange(parameter.name, data.value)}
+        data-testid={`param-${parameter.name}`}
+      />
+    </Field>
   )
 }

@@ -54,6 +54,69 @@ const noParamInitializer: RegisteredInitializer = {
   supported_parameters: [],
 }
 
+const taggedTargetInitializer: RegisteredInitializer = {
+  initializer_name: 'tagged_target',
+  initializer_type: 'TargetInitializer',
+  description: 'Registers targets with tags.',
+  required_env_vars: [],
+  supported_parameters: [
+    {
+      name: 'tags',
+      type_name: 'list[str]',
+      required: false,
+      default: null,
+      choices: ['default', 'scorer', 'all'],
+      is_list: true,
+      description: 'Target tags.',
+    },
+  ],
+}
+
+const requiredParamInitializer: RegisteredInitializer = {
+  initializer_name: 'required_param',
+  initializer_type: 'DatasetInitializer',
+  description: 'Requires a label.',
+  required_env_vars: [],
+  supported_parameters: [
+    {
+      name: 'label',
+      type_name: 'str',
+      required: true,
+      default: null,
+      choices: null,
+      is_list: false,
+      description: 'A required label.',
+    },
+  ],
+}
+
+const refreshInitializer: RegisteredInitializer = {
+  initializer_name: 'refresh_datasets',
+  initializer_type: 'DatasetInitializer',
+  description: 'Refreshes datasets.',
+  required_env_vars: [],
+  supported_parameters: [
+    {
+      name: 'days',
+      type_name: 'int',
+      required: false,
+      default: null,
+      choices: null,
+      is_list: false,
+      description: 'Number of days.',
+    },
+    {
+      name: 'dataset_names',
+      type_name: 'list[str]',
+      required: false,
+      default: null,
+      choices: null,
+      is_list: true,
+      description: 'Dataset names.',
+    },
+  ],
+}
+
 const sampleItems: AdditionalInitializerSetting[] = [
   {
     id: 'additional-1',
@@ -139,8 +202,8 @@ describe('AdditionalInitializers', () => {
 
     const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
     await within(dialog).findByText('Edit target initializer')
-    const editor = within(dialog).getByRole('textbox', { name: 'Parameters JSON', hidden: true })
-    fireEvent.change(editor, { target: { value: '{"tags":["extra"]}' } })
+    const editor = within(dialog).getByTestId('param-tags')
+    fireEvent.change(editor, { target: { value: 'extra' } })
     await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
 
     expect(defaultProps.onSave).toHaveBeenCalledWith('additional-1', {
@@ -178,28 +241,77 @@ describe('AdditionalInitializers', () => {
     expect(defaultProps.onRemove).toHaveBeenCalledWith('additional-1')
   })
 
-  it('should show a validation error for invalid JSON in the edit dialog', async () => {
+  it('should show a validation error when a required parameter is missing', async () => {
     const user = userEvent.setup()
 
     render(
       <TestWrapper>
-        <AdditionalInitializers {...defaultProps} />
+        <AdditionalInitializers {...defaultProps} registeredInitializers={[requiredParamInitializer]} />
       </TestWrapper>,
     )
 
-    const row = screen.getByTestId('initializer-row-additional-1')
-    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Initializer to add' }), {
+      target: { value: 'required_param' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
 
     const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
-    await within(dialog).findByText('Edit target initializer')
-    const editor = within(dialog).getByRole('textbox', { name: 'Parameters JSON', hidden: true })
-    fireEvent.change(editor, { target: { value: '{"tags":' } })
-    await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
+    await within(dialog).findByText('Add required_param initializer')
+    await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
 
     expect(await within(dialog).findByRole('alert', { hidden: true })).toHaveTextContent(
-      'Unexpected end of JSON input',
+      'label is required.',
     )
-    expect(defaultProps.onSave).not.toHaveBeenCalled()
+    expect(defaultProps.onAdd).not.toHaveBeenCalled()
+  })
+
+  it('should submit typed number and list parameters from the add dialog', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TestWrapper>
+        <AdditionalInitializers {...defaultProps} registeredInitializers={[refreshInitializer]} />
+      </TestWrapper>,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Initializer to add' }), {
+      target: { value: 'refresh_datasets' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Add refresh_datasets initializer')
+    fireEvent.change(within(dialog).getByTestId('param-days'), { target: { value: '7' } })
+    fireEvent.change(within(dialog).getByTestId('param-dataset_names'), { target: { value: 'harmbench, xstest' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
+
+    expect(defaultProps.onAdd).toHaveBeenCalledWith('refresh_datasets', {
+      days: 7,
+      dataset_names: ['harmbench', 'xstest'],
+    })
+  })
+
+  it('should submit selected choices from a multiselect parameter', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TestWrapper>
+        <AdditionalInitializers {...defaultProps} registeredInitializers={[taggedTargetInitializer]} />
+      </TestWrapper>,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Initializer to add' }), {
+      target: { value: 'tagged_target' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Add tagged_target initializer')
+    await user.click(within(dialog).getByTestId('param-tags-default'))
+    await user.click(within(dialog).getByTestId('param-tags-scorer'))
+    await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
+
+    expect(defaultProps.onAdd).toHaveBeenCalledWith('tagged_target', { tags: ['default', 'scorer'] })
   })
 
   it('should hide the parameters editor and submit null for a no-parameter initializer', async () => {

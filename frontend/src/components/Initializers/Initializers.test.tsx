@@ -192,7 +192,7 @@ describe('Initializers', () => {
     await waitFor(() => {
       expect(mockedInitializersApi.createAdditional).toHaveBeenCalledWith({
         initializer_name: 'target',
-        parameters: {},
+        parameters: null,
       })
       expect(screen.getByText('Added target initializer.')).toBeInTheDocument()
     })
@@ -213,7 +213,7 @@ describe('Initializers', () => {
     await waitFor(() => {
       expect(mockedInitializersApi.createAdditional).toHaveBeenCalledWith({
         initializer_name: 'scorer',
-        parameters: {},
+        parameters: null,
       })
       expect(screen.getByText('Added scorer initializer.')).toBeInTheDocument()
     })
@@ -225,13 +225,12 @@ describe('Initializers', () => {
 
     await screen.findByTestId('initializer-row-additional-1')
     const dialog = await openDialogByButton(user, 'Edit', 'Edit scorer initializer')
-    const parametersEditor = within(dialog).getByRole('textbox', { name: 'Parameters JSON', hidden: true })
-    fireEvent.change(parametersEditor, { target: { value: '{"mode":"relaxed"}' } })
+    fireEvent.change(within(dialog).getByTestId('param-tags'), { target: { value: 'relaxed' } })
     await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
 
     await waitFor(() => {
       expect(mockedInitializersApi.updateAdditional).toHaveBeenCalledWith('additional-1', {
-        parameters: { mode: 'relaxed' },
+        parameters: { tags: ['relaxed'] },
         order_index: 10,
       })
       expect(screen.getByText('Saved additional initializer.')).toBeInTheDocument()
