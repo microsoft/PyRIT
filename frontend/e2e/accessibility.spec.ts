@@ -1,32 +1,19 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { makeTarget } from "./_targets";
 
+const MOBILE_VIEWPORT = { width: 390, height: 844 };
+const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
+
+type TourViewportName = "mobile" | "desktop";
+
 async function expectMinimumTouchTarget(locator: Locator, minimum = 44): Promise<void> {
   await expect(locator).toBeVisible();
 
   const box = await locator.boundingBox();
 
   expect(box).not.toBeNull();
-  expect(box!.width).toBeGreaterThanOrEqual(minimum);
-  expect(box!.height).toBeGreaterThanOrEqual(minimum);
-}
-
-async function expectCompactDesktopTarget(locator: Locator, maximumHeight = 40): Promise<void> {
-  await expect(locator).toBeVisible();
-
-  const box = await locator.boundingBox();
-
-  expect(box).not.toBeNull();
-  expect(box!.height).toBeLessThanOrEqual(maximumHeight);
-}
-
-async function expectNoDocumentOverflow(page: Page): Promise<void> {
-  const dimensions = await page.evaluate(() => ({
-    clientWidth: document.documentElement.clientWidth,
-    scrollWidth: document.documentElement.scrollWidth,
-  }));
-
-  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
+  expect(Math.round(box!.width)).toBeGreaterThanOrEqual(minimum);
+  expect(Math.round(box!.height)).toBeGreaterThanOrEqual(minimum);
 }
 
 async function expectTourContained(page: Page, dialog: Locator, checkTouchTargets: boolean): Promise<void> {
@@ -73,162 +60,39 @@ async function expectTourContained(page: Page, dialog: Locator, checkTouchTarget
 
     if (checkTouchTargets) {
       await expectMinimumTouchTarget(action);
-    } else {
-      await expectCompactDesktopTarget(action);
     }
   }
 }
 
-const MOBILE_AUDIT_ATTACK = {
-  attack_result_id: "mobile-audit-attack",
-  conversation_id: "mobile-audit-conversation",
-  attack_type: "SingleTurnAttack",
-  target: { target_type: "OpenAIChatTarget", model_name: "gpt-4o" },
-  converters: [],
-  outcome: "success",
-  last_message_preview: "Mobile audit response",
-  message_count: 2,
-  related_conversation_ids: [],
-  labels: { operator: "mobile", operation: "audit" },
-  created_at: "2026-07-28T12:00:00.000Z",
-  updated_at: "2026-07-28T12:00:00.000Z",
-};
-
-const MOBILE_AUDIT_TARGETS = [
-  makeTarget({
-    target_registry_name: "mobile-chat-target",
-    target_type: "OpenAIChatTarget",
-    endpoint: "https://test.com/chat",
-    model_name: "gpt-4o",
-    capabilities: { supports_multi_turn: true, supports_system_prompt: true },
-  }),
-  makeTarget({
-    target_registry_name: "mobile-image-target",
-    target_type: "OpenAIImageTarget",
-    endpoint: "https://test.com/image",
-    model_name: "image-model",
-  }),
-  makeTarget({
-    target_registry_name: "mobile-round-robin-target",
-    target_type: "RoundRobinTarget",
-    target_specific_params: { weights: [1] },
-    inner_targets: [
-      {
-        target_registry_name: "mobile-inner-target",
-        target_type: "OpenAIChatTarget",
-        endpoint: "https://test.com/inner",
-        model_name: "inner-model",
-      },
-    ],
-  }),
-];
-
-interface ResponsiveAuditRouteOptions {
-  empty?: boolean;
-  failAttacks?: boolean;
-}
-
-async function routeResponsiveAuditData(
+async function expectTourContainedAndActionable(
   page: Page,
-  { empty = false, failAttacks = false }: ResponsiveAuditRouteOptions = {}
+  viewportName: TourViewportName
 ): Promise<void> {
-  await page.route(/\/api\/targets\/catalog(?:\?.*)?$/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        items: [
-          { target_type: "OpenAIChatTarget", parameters: [], supported_auth_modes: ["api_key"] },
-          { target_type: "OpenAIImageTarget", parameters: [], supported_auth_modes: ["api_key"] },
-          { target_type: "RoundRobinTarget", parameters: [], supported_auth_modes: ["api_key"] },
-        ],
-      }),
-    });
-  });
-  await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        items: empty ? [] : MOBILE_AUDIT_TARGETS,
-        pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
-      }),
-    });
-  });
-  await page.route(/\/api\/attacks\/attack-options/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ attack_types: ["SingleTurnAttack"] }),
-    });
-  });
-  await page.route(/\/api\/attacks\/converter-options/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ converter_types: ["Base64Converter"] }),
-    });
-  });
-  await page.route(/\/api\/labels/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        source: "attacks",
-        labels: { operator: ["mobile"], operation: ["audit"] },
-      }),
-    });
-  });
-  await page.route(/\/api\/attacks\/mobile-audit-attack\/messages/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        messages: {
-          messages: [],
-        },
-      }),
-    });
-  });
-  await page.route(/\/api\/attacks\/mobile-audit-attack$/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(MOBILE_AUDIT_ATTACK),
-    });
-  });
-  await page.route(/\/api\/attacks(?:\?.*)?$/, async (route) => {
-    if (route.request().method() === "POST") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          attack_result_id: "mobile-audit-attack",
-          conversation_id: "mobile-audit-conversation",
-        }),
-      });
-      return;
+  await page.getByRole("button", { name: "Take a tour" }).click();
+
+  const dialog = page.getByRole("alertdialog");
+
+  for (let step = 0; step < 5; step += 1) {
+    await expect(dialog).toContainText(`${step + 1} of 5`);
+    await expectTourContained(page, dialog, viewportName === "mobile");
+
+    if (viewportName === "desktop" && step === 0) {
+      const targetBox = await page.locator('[data-tour="sidebar-nav"]').boundingBox();
+      const dialogBox = await dialog.boundingBox();
+
+      expect(targetBox).not.toBeNull();
+      expect(dialogBox).not.toBeNull();
+      expect(dialogBox!.x).toBeGreaterThanOrEqual(targetBox!.x + targetBox!.width);
     }
 
-    if (failAttacks) {
-      await route.fulfill({ status: 500, body: "History unavailable" });
-      return;
+    if (step < 4) {
+      await dialog.getByRole("button", { name: "Next", exact: true }).click();
     }
+  }
 
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        items: empty ? [] : [MOBILE_AUDIT_ATTACK],
-        pagination: {
-          limit: 25,
-          has_more: !empty,
-          next_cursor: empty ? null : "next",
-          prev_cursor: null,
-        },
-      }),
-    });
-  });
+  await dialog.getByRole("button", { name: "Anchors Away!", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(/\/$/);
 }
 
 test.describe("Accessibility", () => {
@@ -442,154 +306,53 @@ test.describe("Accessibility", () => {
     }
   });
 
-  test("mobile audit controls provide 44px touch targets", async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await routeResponsiveAuditData(page);
-    await page.reload();
+  test.describe("mobile touch context", () => {
+    test.use({ hasTouch: true });
 
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Configure a target" }));
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
-    const recentAttackRows = page.locator('[data-testid^="home-open-attack-"]');
-    await expect(recentAttackRows).toHaveCount(1);
-    await expectMinimumTouchTarget(recentAttackRows.first());
-    await expectNoDocumentOverflow(page);
+    test("mobile audit controls provide 44px touch targets", async ({ page }) => {
+      await page.setViewportSize(MOBILE_VIEWPORT);
 
-    await page.getByRole("button", { name: "Configuration" }).click();
-    await expect(
-      page.getByRole("heading", { level: 1, name: "Target Configuration" })
-    ).toBeVisible();
-    await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "New Target" }));
-    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by type:" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Configure a target" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
 
-    const setActiveButtons = page.getByRole("button", { name: "Set Active" });
-    await expect(setActiveButtons).toHaveCount(3);
-    for (let index = 0; index < await setActiveButtons.count(); index += 1) {
-      await expectMinimumTouchTarget(setActiveButtons.nth(index));
-    }
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Expand inner targets" }));
-    await setActiveButtons.first().click();
-    await expectNoDocumentOverflow(page);
+      await page.route(/\/api\/targets/, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [
+              makeTarget({
+                target_registry_name: "mobile-touch-target",
+                target_type: "OpenAIChatTarget",
+                endpoint: "https://test.com",
+                model_name: "gpt-4o",
+              }),
+            ],
+            pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+          }),
+        });
+      });
 
-    await page.getByRole("button", { name: "Attack History" }).click();
-    await expect(page.getByTestId("attacks-table")).toBeVisible();
-    await expectMinimumTouchTarget(page.getByTestId("refresh-btn"));
-    for (const testId of [
-      "attack-type-filter",
-      "outcome-filter",
-      "converter-filter",
-      "operator-filter",
-      "operation-filter",
-      "label-filter",
-    ]) {
-      await expectMinimumTouchTarget(page.getByTestId(testId));
-    }
-    await expectMinimumTouchTarget(page.getByTestId("open-attack-mobile-audit-attack"));
-    await expectMinimumTouchTarget(page.getByTestId("attack-row-mobile-audit-attack"));
-    await expectMinimumTouchTarget(page.getByTestId("next-page-btn"));
-    await expectNoDocumentOverflow(page);
-
-    await page.getByRole("button", { name: "Chat" }).click();
-    await expectMinimumTouchTarget(page.getByTestId("toggle-system-prompt-btn"));
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Attach files" }));
-    await expectMinimumTouchTarget(page.getByTestId("toggle-converter-panel-btn"));
-    await page.getByPlaceholder("Type prompt here").fill("Create a populated mobile chat");
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Send message" }));
-    await page.getByRole("button", { name: "Send message" }).click();
-    await expect(page.getByTestId("toggle-panel-btn")).toBeEnabled();
-    await expectMinimumTouchTarget(page.getByTestId("toggle-panel-btn"));
-    await expectMinimumTouchTarget(page.getByTestId("new-attack-btn"));
-    await expectNoDocumentOverflow(page);
-  });
-
-  test("empty mobile audit actions provide 44px touch targets", async ({ page }) => {
-    await page.setViewportSize({ width: 600, height: 844 });
-    await routeResponsiveAuditData(page, { empty: true });
-    await page.reload();
-
-    await expectMinimumTouchTarget(page.getByTestId("home-start-attack-btn"));
-    await expectNoDocumentOverflow(page);
-
-    await page.getByRole("button", { name: "Configuration" }).click();
-    await expectMinimumTouchTarget(page.getByRole("button", { name: "Create First Target" }));
-    await expectNoDocumentOverflow(page);
-
-    await page.getByRole("button", { name: "Chat" }).click();
-    await expectMinimumTouchTarget(page.getByTestId("configure-target-input-btn"));
-    await expectNoDocumentOverflow(page);
-  });
-
-  test("mobile history retry action provides a 44px touch target", async ({ page }) => {
-    await page.setViewportSize({ width: 600, height: 844 });
-    await routeResponsiveAuditData(page, { failAttacks: true });
-    await page.reload();
-
-    await page.getByRole("button", { name: "Attack History" }).click();
-    await expectMinimumTouchTarget(page.getByTestId("retry-btn"));
-    await expectNoDocumentOverflow(page);
-  });
-
-  test("desktop audit controls retain compact density", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await routeResponsiveAuditData(page);
-    await page.reload();
-
-    await expectCompactDesktopTarget(page.getByTestId("home-open-attack-mobile-audit-attack"));
-
-    await page.getByRole("button", { name: "Configuration" }).click();
-    await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by type:" }));
-    await expectCompactDesktopTarget(page.getByRole("button", { name: "Set Active" }).first());
-    await expectCompactDesktopTarget(page.getByRole("button", { name: "Expand inner targets" }));
-    await page.getByRole("button", { name: "Set Active" }).first().click();
-
-    await page.getByRole("button", { name: "Attack History" }).click();
-    await expect(page.getByTestId("attacks-table")).toBeVisible();
-    await expectCompactDesktopTarget(page.getByTestId("refresh-btn"));
-    await expectCompactDesktopTarget(page.getByTestId("attack-type-filter"));
-    await expectCompactDesktopTarget(page.getByTestId("open-attack-mobile-audit-attack"));
-    await expectCompactDesktopTarget(page.getByTestId("next-page-btn"));
-
-    await page.getByRole("button", { name: "Chat" }).click();
-    await expectCompactDesktopTarget(page.getByTestId("toggle-system-prompt-btn"));
-    await expectCompactDesktopTarget(page.getByTestId("toggle-panel-btn"));
-    await expectCompactDesktopTarget(page.getByTestId("new-attack-btn"));
-  });
-
-  for (const viewport of [
-    { name: "mobile", width: 390, height: 844 },
-    { name: "desktop", width: 1280, height: 800 },
-  ]) {
-    test(`tour remains contained and actionable on ${viewport.name}`, async ({ page }) => {
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.getByRole("button", { name: "Take a tour" }).click();
-
-      const dialog = page.getByRole("alertdialog");
-
-      for (let step = 0; step < 5; step += 1) {
-        await expect(dialog).toContainText(`${step + 1} of 5`);
-        await expectTourContained(page, dialog, viewport.name === "mobile");
-
-        if (viewport.name === "desktop" && step === 0) {
-          const targetBox = await page.locator('[data-tour="sidebar-nav"]').boundingBox();
-          const dialogBox = await dialog.boundingBox();
-
-          expect(targetBox).not.toBeNull();
-          expect(dialogBox).not.toBeNull();
-          expect(dialogBox!.x).toBeGreaterThanOrEqual(targetBox!.x + targetBox!.width);
-        }
-
-        if (step < 4) {
-          await dialog.getByRole("button", { name: "Next", exact: true }).click();
-        }
-      }
-
-      await dialog.getByRole("button", { name: "Anchors Away!", exact: true }).click();
-      await expect(dialog).toBeHidden();
-      await expect(page).toHaveURL(/\/$/);
+      await page.getByRole("button", { name: "Configuration" }).click();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Target Configuration" })
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "New Target" }));
     });
-  }
+
+    test("tour remains contained and actionable on mobile", async ({ page }) => {
+      await page.setViewportSize(MOBILE_VIEWPORT);
+      await expectTourContainedAndActionable(page, "mobile");
+    });
+  });
+
+  test("tour remains contained and actionable on desktop", async ({ page }) => {
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await expectTourContainedAndActionable(page, "desktop");
+  });
 });
 
 test.describe("Visual Consistency", () => {

@@ -4,13 +4,9 @@ import {
   Text,
   Button,
   Link,
-  mergeClasses,
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
-
-import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
-
 import { targetsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { TargetInstance } from '../../types'
@@ -25,7 +21,6 @@ interface TargetConfigProps {
 
 export default function TargetConfig({ activeTarget, onSetActiveTarget }: TargetConfigProps) {
   const styles = useTargetConfigStyles()
-  const mobileTouchTargets = useMobileTouchTargetStyles()
   const [targets, setTargets] = useState<TargetInstance[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -88,7 +83,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
         </div>
         <div className={styles.headerActions}>
           <Button
-            className={mergeClasses(styles.headerAction, mobileTouchTargets.control)}
+            className={styles.headerAction}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={fetchTargets}
@@ -97,7 +92,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             Refresh
           </Button>
           <Button
-            className={mergeClasses(styles.headerAction, mobileTouchTargets.control)}
+            className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
@@ -138,10 +133,10 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             for details.
           </Text>
           <Button
+            className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
-            className={mobileTouchTargets.control}
           >
             Create First Target
           </Button>

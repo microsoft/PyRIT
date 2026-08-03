@@ -4,13 +4,14 @@
 """Additional tests for Scenario retry with AttackExecutorResult functionality."""
 
 from typing import ClassVar
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioRunState
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 
@@ -186,11 +187,25 @@ class TestScenarioPartialAttackCompletion:
         )
         await scenario.initialize_async()
 
-        result = await scenario.run_async()
+        with patch.object(
+            scenario._memory,
+            "update_scenario_run_state",
+            wraps=scenario._memory.update_scenario_run_state,
+        ) as update_state:
+            result = await scenario.run_async()
 
         # Verify scenario succeeded after retry
         assert isinstance(result, ScenarioResult)
         assert call_count[0] == 2  # Called twice
+        assert result.scenario_run_state == ScenarioRunState.COMPLETED
+        assert result.error_message is None
+        assert result.error_type is None
+        observed_states = [call.kwargs["scenario_run_state"] for call in update_state.call_args_list]
+        assert observed_states == [
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.COMPLETED,
+        ]
 
         # All 3 results should be saved
         assert len(result.attack_results["partial_attack"]) == 3
@@ -202,6 +217,8 @@ class TestScenarioPartialAttackCompletion:
     async def test_scenario_saves_partial_results_before_failure(self, mock_objective_target):
         """Test that scenario saves partial results even when attack fails."""
         atomic_attack = create_mock_atomic_attack("partial_save_attack", ["obj1", "obj2", "obj3", "obj4"])
+        first_error = RuntimeError("Failed obj3")
+        second_error = RuntimeError("Failed obj4")
 
         async def mock_run(*args, **kwargs):
             # Return partial results with incomplete objectives
@@ -214,7 +231,7 @@ class TestScenarioPartialAttackCompletion:
                 )
                 for i in [1, 2]
             ]
-            incomplete = [("obj3", RuntimeError("Failed obj3")), ("obj4", RuntimeError("Failed obj4"))]
+            incomplete = [("obj3", first_error), ("obj4", second_error)]
 
             # Save completed results to memory
             save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
@@ -237,18 +254,77 @@ class TestScenarioPartialAttackCompletion:
         await scenario.initialize_async()
 
         # Should raise error because of incomplete objectives
-        with pytest.raises(ValueError, match="incomplete"):
+        with pytest.raises(ScenarioPartialFailureException, match="incomplete") as exc_info:
             await scenario.run_async()
+
+        error = exc_info.value
+        assert error.atomic_attack_name == "partial_save_attack"
+        assert error.completed_count == 2
+        assert error.incomplete_count == 2
+        assert error.total_count == 4
+        assert error.incomplete_objectives == (("obj3", first_error), ("obj4", second_error))
+        assert error.__cause__ is first_error
+        assert type(error) is ScenarioPartialFailureException
+        assert isinstance(error, ValueError)
 
         # But the 2 completed results should still be saved
         scenario_results = CentralMemory.get_memory_instance().get_scenario_results(
             scenario_result_ids=[scenario._scenario_result_id]
         )
         assert len(scenario_results) == 1
+        assert scenario_results[0].scenario_run_state == ScenarioRunState.FAILED
+        assert scenario_results[0].error_type == "ScenarioPartialFailureException"
+        assert scenario_results[0].error_message.endswith("Caused by RuntimeError: Failed obj3")
         saved_results = scenario_results[0].attack_results["partial_save_attack"]
         assert len(saved_results) == 2
         assert saved_results[0].objective == "obj1"
         assert saved_results[1].objective == "obj2"
+
+    async def test_failure_before_worker_retries_before_marking_failed(self, mock_objective_target):
+        atomic_attack = create_mock_atomic_attack("never_started", ["obj1"])
+        failure = RuntimeError("Failed before worker execution")
+        scenario = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack],
+        )
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_retries": 1,
+            }
+        )
+        await scenario.initialize_async()
+
+        with (
+            patch.object(
+                scenario,
+                "_get_remaining_atomic_attacks_async",
+                new=AsyncMock(side_effect=failure),
+            ),
+            patch.object(
+                scenario._memory,
+                "update_scenario_run_state",
+                wraps=scenario._memory.update_scenario_run_state,
+            ) as update_state,
+        ):
+            with pytest.raises(RuntimeError, match="before worker execution"):
+                await scenario.run_async()
+
+        observed_states = [call.kwargs["scenario_run_state"] for call in update_state.call_args_list]
+        assert observed_states == [
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.FAILED,
+        ]
+        atomic_attack.run_async.assert_not_called()
+
+        scenario_results = CentralMemory.get_memory_instance().get_scenario_results(
+            scenario_result_ids=[scenario._scenario_result_id]
+        )
+        assert scenario_results[0].scenario_run_state == ScenarioRunState.FAILED
+        assert scenario_results[0].error_message == str(failure)
+        assert scenario_results[0].error_type == "RuntimeError"
 
     async def test_scenario_resumes_with_only_incomplete_objectives(self, mock_objective_target):
         """Test that on retry, scenario only passes incomplete objectives to atomic attack."""

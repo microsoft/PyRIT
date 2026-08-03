@@ -98,6 +98,7 @@ class TechniqueInitializer(PyRITInitializer):
                 name="tags",
                 description="Technique groups to register (e.g., ['core'], ['core', 'extra'], or ['all'])",
                 default=[TechniqueInitializerTags.CORE.value],
+                param_type=list[TechniqueInitializerTags],
             ),
         ]
 

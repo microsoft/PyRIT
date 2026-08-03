@@ -231,22 +231,22 @@ def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
     """
     Resolve ``created_at`` / ``updated_at`` for a summary.
 
-    Resolution order for ``created_at``: explicit metadata override, then the
-    persisted ``AttackResult.timestamp``, and finally ``datetime.now`` as a
-    last-resort fallback for never-persisted results.
+    ``updated_at`` is the persisted ``AttackResult.timestamp`` — the single indexed recency
+    key that manual edits (add message, branch, promote conversation) bump. ``created_at``
+    comes from the display-only ``metadata.created_at`` override, falling back to
+    ``AttackResult.timestamp`` and finally ``datetime.now`` for never-persisted results.
 
     Returns:
         A ``(created_at, updated_at)`` tuple.
     """
     created_str = ar.metadata.get("created_at")
-    updated_str = ar.metadata.get("updated_at")
     if created_str:
         created_at = datetime.fromisoformat(created_str)
     elif ar.timestamp is not None:
         created_at = ar.timestamp
     else:
         created_at = datetime.now(timezone.utc)
-    updated_at = datetime.fromisoformat(updated_str) if updated_str else created_at
+    updated_at = ar.timestamp if ar.timestamp is not None else created_at
     return created_at, updated_at
 
 

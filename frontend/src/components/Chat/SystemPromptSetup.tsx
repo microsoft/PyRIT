@@ -1,9 +1,6 @@
 import { useState } from 'react'
 import { Button, Caption1, Textarea, mergeClasses } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, WarningRegular } from '@fluentui/react-icons'
-
-import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
-
 import { useSystemPromptSetupStyles } from './SystemPromptSetup.styles'
 
 const SYSTEM_PROMPT_SOFT_LIMIT = 2000
@@ -16,7 +13,6 @@ interface SystemPromptSetupProps {
 
 export default function SystemPromptSetup({ value, onChange, disabled = false }: SystemPromptSetupProps) {
   const styles = useSystemPromptSetupStyles()
-  const mobileTouchTargets = useMobileTouchTargetStyles()
   const [expanded, setExpanded] = useState(false)
   const overLimit = value.length > SYSTEM_PROMPT_SOFT_LIMIT
 
@@ -28,7 +24,7 @@ export default function SystemPromptSetup({ value, onChange, disabled = false }:
           size="small"
           icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
           onClick={() => setExpanded(prev => !prev)}
-          className={mergeClasses(styles.header, mobileTouchTargets.control)}
+          className={styles.header}
           data-testid="toggle-system-prompt-btn"
           aria-expanded={expanded}
           disabled={disabled}

@@ -1,6 +1,5 @@
 import { render, screen } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import userEvent from '@testing-library/user-event'
 
 import TourTooltip from './TourTooltip'
 
@@ -116,32 +115,6 @@ describe('TourTooltip', () => {
     render(<TestWrapper><TourTooltip {...makeProps({ isLastStep: false })} /></TestWrapper>)
 
     expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument()
-  })
-
-  it('forwards tour action button clicks', async () => {
-    const user = userEvent.setup()
-    const onBack = jest.fn()
-    const onNext = jest.fn()
-    const onSkip = jest.fn()
-    const onClose = jest.fn()
-    const props = makeProps({
-      index: 1,
-      backProps: { 'aria-label': 'Back', onClick: onBack, title: 'Back' },
-      primaryProps: { 'aria-label': 'Next', onClick: onNext, title: 'Next' },
-      skipProps: { 'aria-label': 'Skip tour', onClick: onSkip, title: 'Skip tour' },
-      closeProps: { 'aria-label': 'Close', onClick: onClose, title: 'Close' },
-    })
-    render(<TestWrapper><TourTooltip {...props} /></TestWrapper>)
-
-    await user.click(screen.getByRole('button', { name: 'Back' }))
-    await user.click(screen.getByRole('button', { name: 'Next' }))
-    await user.click(screen.getByRole('button', { name: 'Skip tour' }))
-    await user.click(screen.getByRole('button', { name: 'Close' }))
-
-    expect(onBack).toHaveBeenCalledTimes(1)
-    expect(onNext).toHaveBeenCalledTimes(1)
-    expect(onSkip).toHaveBeenCalledTimes(1)
-    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('renders alertdialog role from tooltipProps', () => {

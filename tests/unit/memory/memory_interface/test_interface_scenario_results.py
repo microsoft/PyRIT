@@ -19,6 +19,7 @@ from pyrit.models import (
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
+    ScenarioRunState,
     ScorerIdentifier,
     TargetIdentifier,
 )
@@ -857,16 +858,26 @@ def test_update_scenario_run_state_updates_state_and_error_fields(
 
     sqlite_instance.update_scenario_run_state(
         scenario_result_id=sid,
-        scenario_run_state="FAILED",
+        scenario_run_state=ScenarioRunState.FAILED,
         error_message="boom",
         error_type="RuntimeError",
     )
 
     # State and error fields updated.
     [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
-    assert hydrated.scenario_run_state == "FAILED"
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
     assert hydrated.error_message == "boom"
     assert hydrated.error_type == "RuntimeError"
+
+    sqlite_instance.update_scenario_run_state(
+        scenario_result_id=sid,
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+
+    [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.COMPLETED
+    assert hydrated.error_message is None
+    assert hydrated.error_type is None
 
 
 def test_get_scenario_results_by_target_identifier_filter_hash(

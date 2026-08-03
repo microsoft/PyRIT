@@ -10,7 +10,6 @@ import {
   TableHeader,
   TableHeaderCell,
   TableRow,
-  mergeClasses,
 } from '@fluentui/react-components'
 import {
   OpenRegular,
@@ -19,11 +18,7 @@ import {
   QuestionCircleRegular,
   ErrorCircleRegular,
 } from '@fluentui/react-icons'
-
-import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
-
 import type { AttackSummary } from '../../types'
-
 import { useAttackHistoryStyles } from './AttackHistory.styles'
 
 const OUTCOME_ICONS: Record<string, React.ReactElement> = {
@@ -48,7 +43,6 @@ interface AttackTableProps {
 
 export default function AttackTable({ attacks, onOpenAttack, formatDate }: AttackTableProps) {
   const styles = useAttackHistoryStyles()
-  const mobileTouchTargets = useMobileTouchTargetStyles()
 
   return (
     <Table className={styles.table} data-testid="attacks-table">
@@ -73,7 +67,7 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
         {attacks.map(attack => (
           <TableRow
             key={attack.attack_result_id}
-            className={mergeClasses(styles.clickableRow, mobileTouchTargets.row)}
+            className={styles.clickableRow}
             onClick={() => onOpenAttack(attack.attack_result_id)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -175,6 +169,7 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
             <TableCell>
               <Tooltip content="Open attack" relationship="label">
                 <Button
+                  className={styles.touchTarget}
                   appearance="subtle"
                   size="small"
                   icon={<OpenRegular />}
@@ -183,7 +178,6 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
                     onOpenAttack(attack.attack_result_id)
                   }}
                   data-testid={`open-attack-${attack.attack_result_id}`}
-                  className={mobileTouchTargets.control}
                 />
               </Tooltip>
             </TableCell>

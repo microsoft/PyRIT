@@ -6,8 +6,6 @@ import {
   ChevronLeftRegular,
   ChevronRightRegular,
 } from '@fluentui/react-icons'
-import { useMobileTouchTargetStyles } from '@/styles/mobileTouchTargetStyles'
-
 import { useAttackHistoryStyles } from './AttackHistory.styles'
 
 interface HistoryPaginationProps {
@@ -19,29 +17,28 @@ interface HistoryPaginationProps {
 
 export default function HistoryPagination({ page, isLastPage, onPrevPage, onNextPage }: HistoryPaginationProps) {
   const styles = useAttackHistoryStyles()
-  const mobileTouchTargets = useMobileTouchTargetStyles()
 
   return (
     <div className={styles.pagination}>
       <Button
+        className={styles.touchTargetHeight}
         appearance="subtle"
         icon={<ChevronLeftRegular />}
         disabled={page === 0}
         onClick={onPrevPage}
         data-testid="prev-page-btn"
-        className={mobileTouchTargets.control}
       >
         First
       </Button>
       <Text size={200}>Page {page + 1}</Text>
       <Button
+        className={styles.touchTargetHeight}
         appearance="subtle"
         icon={<ChevronRightRegular />}
         iconPosition="after"
         disabled={isLastPage}
         onClick={onNextPage}
         data-testid="next-page-btn"
-        className={mobileTouchTargets.control}
       >
         Next
       </Button>

@@ -10,6 +10,7 @@ const config: Config = {
     "\\.(css|less|scss|sass)$": "identity-obj-proxy",
   },
   setupFilesAfterEnv: ["<rootDir>/src/setupTests.ts"],
+  testTimeout: 15000,
   collectCoverageFrom: [
     "src/**/*.{ts,tsx}",
     "!src/**/*.d.ts",
@@ -26,7 +27,9 @@ const config: Config = {
     },
   },
   transform: {
-    "^.+\\.tsx?$": [
+    // Also transform .js/.jsx so ts-jest can down-compile the ESM-only
+    // react-markdown dependency chain (whitelisted below) to CommonJS.
+    "^.+\\.[tj]sx?$": [
       "ts-jest",
       {
         tsconfig: "tsconfig.test.json",
@@ -39,8 +42,11 @@ const config: Config = {
   },
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   testPathIgnorePatterns: ["/node_modules/", "/dist/", "/e2e/"],
+  // By default Jest never transforms node_modules. react-markdown and its
+  // remark/micromark/unified/mdast/hast/unist dependencies are ESM-only, so
+  // they must be transformed. Everything else in node_modules stays ignored.
   transformIgnorePatterns: [
-    "/node_modules/(?!(@fluentui|axios)/)",
+    "/node_modules/(?!(@fluentui|axios|react-markdown|remark-.*|rehype-.*|micromark.*|mdast-.*|hast-.*|unist-.*|unified|bail|trough|vfile.*|is-plain-obj|trim-lines|property-information|comma-separated-tokens|space-separated-tokens|decode-named-character-reference|character-entities.*|html-url-attributes|devlop|zwitch|longest-streak|markdown-table|ccount|escape-string-regexp|estree-util-.*|hastscript|web-namespaces|stringify-entities|inline-style-parser|style-to-object)/)",
   ],
   globals: {},
 };

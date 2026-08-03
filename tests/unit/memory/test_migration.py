@@ -2241,6 +2241,144 @@ def test_attack_identifier_migration_backfills_graph_and_result_link():
             engine.dispose()
 
 
+# =============================================================================
+# Attack recency index + timestamp backfill migration (d7e9f1a3b5c6)
+# =============================================================================
+
+
+_ATTACK_RECENCY_REV = "d7e9f1a3b5c6"
+_ATTACK_RECENCY_PREV_REV = "3f6e8a0c2d4b"
+
+
+def _seed_attack_result_with_metadata(connection, *, attack_id, conversation_id, timestamp, attack_metadata):
+    """Insert an AttackResultEntry row carrying legacy JSON recency metadata."""
+    connection.execute(
+        text(
+            'INSERT INTO "AttackResultEntries" '
+            "(id, conversation_id, objective, executed_turns, execution_time_ms, outcome, "
+            "timestamp, attack_metadata) "
+            "VALUES (:id, :conv, 'obj', 1, 0, 'success', :timestamp, :metadata)"
+        ),
+        {
+            "id": attack_id,
+            "conv": conversation_id,
+            "timestamp": timestamp,
+            "metadata": json.dumps(attack_metadata) if attack_metadata is not None else None,
+        },
+    )
+
+
+def test_attack_recency_migration_script_metadata():
+    """The attack-recency migration declares the expected revision chain."""
+    from pyrit.memory.alembic.versions import d7e9f1a3b5c6_index_attack_result_recency as mig
+
+    assert mig.revision == _ATTACK_RECENCY_REV
+    assert mig.down_revision == _ATTACK_RECENCY_PREV_REV
+    assert mig.branch_labels is None
+    assert mig.depends_on is None
+
+
+def test_attack_recency_upgrade_creates_indexes_and_backfills_timestamp():
+    """Upgrading adds both indexes, backfills timestamp from the legacy JSON keys, and
+    strips the redundant ``updated_at`` key while preserving ``created_at``."""
+    edited_id = str(uuid.uuid4())
+    prog_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'attack-recency.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _ATTACK_RECENCY_PREV_REV)
+
+                # A manually-edited GUI conversation: timestamp column is stale (creation time),
+                # recency lives in metadata.updated_at.
+                _seed_attack_result_with_metadata(
+                    connection,
+                    attack_id=edited_id,
+                    conversation_id="conv-edited",
+                    timestamp="2020-01-01 00:00:00",
+                    attack_metadata={
+                        "created_at": "2020-01-01T00:00:00+00:00",
+                        "updated_at": "2026-06-01T12:00:00+00:00",
+                    },
+                )
+                # A programmatic attack: no JSON recency keys, timestamp column is authoritative.
+                _seed_attack_result_with_metadata(
+                    connection,
+                    attack_id=prog_id,
+                    conversation_id="conv-prog",
+                    timestamp="2023-03-03 08:00:00",
+                    attack_metadata=None,
+                )
+
+                command.upgrade(config, _ATTACK_RECENCY_REV)
+
+                index_names = {ix["name"] for ix in inspect(connection).get_indexes("AttackResultEntries")}
+                rows = dict(
+                    connection.execute(text('SELECT id, attack_metadata FROM "AttackResultEntries"')).fetchall()
+                )
+                timestamps = dict(
+                    connection.execute(text('SELECT id, timestamp FROM "AttackResultEntries"')).fetchall()
+                )
+
+            assert "ix_AttackResultEntries_conversation_id" in index_names
+            assert "ix_AttackResultEntries_timestamp_id" in index_names
+
+            edited_metadata = json.loads(rows[edited_id])
+            assert "updated_at" not in edited_metadata
+            assert edited_metadata["created_at"] == "2020-01-01T00:00:00+00:00"
+            # Timestamp advanced to the former updated_at so the edited row keeps its recency.
+            assert str(timestamps[edited_id]).startswith("2026-06-01 12:00:00")
+
+            # Programmatic row is untouched: no metadata, original timestamp preserved.
+            assert rows[prog_id] is None
+            assert str(timestamps[prog_id]).startswith("2023-03-03 08:00:00")
+        finally:
+            engine.dispose()
+
+
+def test_attack_recency_downgrade_restores_updated_at_and_drops_indexes():
+    """Downgrading drops both indexes and rewrites ``metadata.updated_at`` from the
+    timestamp column so the legacy JSON recency sort works again."""
+    edited_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'attack-recency-down.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _ATTACK_RECENCY_REV)
+
+                _seed_attack_result_with_metadata(
+                    connection,
+                    attack_id=edited_id,
+                    conversation_id="conv-edited",
+                    timestamp="2026-06-01 12:00:00",
+                    attack_metadata={"created_at": "2026-06-01T00:00:00+00:00"},
+                )
+
+                index_names_up = {ix["name"] for ix in inspect(connection).get_indexes("AttackResultEntries")}
+                assert "ix_AttackResultEntries_timestamp_id" in index_names_up
+
+                command.downgrade(config, _ATTACK_RECENCY_PREV_REV)
+
+                index_names_down = {ix["name"] for ix in inspect(connection).get_indexes("AttackResultEntries")}
+                restored = json.loads(
+                    connection.execute(
+                        text('SELECT attack_metadata FROM "AttackResultEntries" WHERE id = :id'),
+                        {"id": edited_id},
+                    ).scalar_one()
+                )
+
+            assert "ix_AttackResultEntries_conversation_id" not in index_names_down
+            assert "ix_AttackResultEntries_timestamp_id" not in index_names_down
+            assert restored["created_at"] == "2026-06-01T00:00:00+00:00"
+            assert restored["updated_at"].startswith("2026-06-01T12:00:00")
+        finally:
+            engine.dispose()
+
+
 _STRING_TYPES_REQUIRING_LENGTH = {"String", "VARCHAR", "NVARCHAR", "Unicode"}
 
 

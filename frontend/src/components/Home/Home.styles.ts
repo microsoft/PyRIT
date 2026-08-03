@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
 export const useHomeStyles = makeStyles({
   root: {
@@ -71,6 +72,9 @@ export const useHomeStyles = makeStyles({
     justifyContent: 'flex-end',
     gap: tokens.spacingHorizontalS,
   },
+  touchTarget: {
+    ...mobileTouchTarget,
+  },
   targetSummary: {
     display: 'flex',
     flexDirection: 'column',
@@ -142,6 +146,7 @@ export const useHomeStyles = makeStyles({
     width: '100%',
     textAlign: 'left',
     color: 'inherit',
+    ...mobileTouchTargetHeight,
     ':hover': {
       backgroundColor: tokens.colorNeutralBackground1Hover,
     },
