@@ -1276,4 +1276,42 @@ describe("MessageList", () => {
       jest.restoreAllMocks();
     });
   });
+
+  describe("markdown rendering", () => {
+    const markdownMessages: Message[] = [
+      {
+        role: "user",
+        content: "Say **alpha**",
+        timestamp: new Date().toISOString(),
+      },
+      {
+        role: "assistant",
+        content: "Reply **bravo**",
+        timestamp: new Date().toISOString(),
+      },
+    ];
+
+    it("renders text literally when markdown is off (default)", () => {
+      render(
+        <TestWrapper>
+          <MessageList messages={markdownMessages} />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText("Say **alpha**")).toBeInTheDocument();
+      expect(document.querySelector("strong")).toBeNull();
+    });
+
+    it("renders every message as markdown when globalMarkdown is true", () => {
+      render(
+        <TestWrapper>
+          <MessageList messages={markdownMessages} globalMarkdown />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText("alpha").tagName).toBe("STRONG");
+      expect(screen.getByText("bravo").tagName).toBe("STRONG");
+      expect(screen.queryByText("Say **alpha**")).not.toBeInTheDocument();
+    });
+  });
 });

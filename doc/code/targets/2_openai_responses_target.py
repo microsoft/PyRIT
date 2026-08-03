@@ -135,7 +135,10 @@ target = OpenAIResponseTarget(
 response = await target.send_prompt_async(message=message)  # type: ignore
 
 # Validate and print the response
-response_json = json.loads(response[0].message_pieces[1].converted_value)
+# Reasoning models return an extra "reasoning" piece, so select the text piece explicitly
+# instead of relying on the position of the pieces.
+text_piece = response[0].get_piece_by_type(data_type="text")
+response_json = json.loads(text_piece.converted_value)
 print(json.dumps(response_json, indent=2))
 jsonschema.validate(instance=response_json, schema=person_schema)
 

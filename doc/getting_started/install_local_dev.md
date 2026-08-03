@@ -77,17 +77,29 @@ VS Code should automatically detect the `.venv` virtual environment. If not:
 3. Choose `.venv\Scripts\python.exe`
 
 #### Running Jupyter Notebooks
-You can create a Jupyter kernel using:
-```bash
-uv run ipython kernel install --user --env VIRTUAL_ENV $(pwd)/.venv --name=pyrit-dev
-```
+
+`uv sync` already installs a `python3` kernel inside `.venv`, and Jupyter binds it to whichever
+interpreter is running it, so notebooks work out of the box with no kernel registration step.
+
 Start the server using
 ```bash
 uv run jupyter lab
 ```
-or using VS Code, open a Jupyter Notebook (.ipynb file) window, in the top search bar of VS Code, type `>Notebook: Select Notebook Kernel` > `Python Environments...` to choose the `pyrit-dev` kernel when executing code in the notebooks, like those in `examples`. You can also choose a kernel with the "Select Kernel" button on the top-right corner of a Notebook.
+or using VS Code, open a Jupyter Notebook (.ipynb file) window, in the top search bar of VS Code, type `>Notebook: Select Notebook Kernel` > `Python Environments...` to choose the `.venv` interpreter for this checkout. You can also choose a kernel with the "Select Kernel" button on the top-right corner of a Notebook.
 
 This will be the kernel that runs all code examples in Python Notebooks.
+
+If you do want a separately named kernel, scope it to the virtual environment:
+
+```bash
+uv run python -m ipykernel install --sys-prefix --name=pyrit-dev
+```
+
+Avoid `--user` with a fixed name if you work in more than one clone or git worktree. A `--user`
+kernel is installed machine-wide, so every checkout that registers the same name overwrites the
+others, and the survivor points at a single interpreter. Notebooks then execute against an
+unrelated checkout, or fail with `FileNotFoundError: [WinError 2]` once that checkout is deleted.
+See [Jupyter setup](troubleshooting/jupyter_setup.md) if you hit this.
 
 
 #### Running Python Scripts
