@@ -14,8 +14,8 @@ def test_parse_violation_verdict() -> None:
 
     assert result["score_value"] == "True"
     assert result["metadata"] == {
-        "shieldgemma_no_dangerous_content_verdict": "Yes",
-        "shieldgemma_no_dangerous_content_output": "Yes",
+        "shieldgemma_no dangerous content_verdict": "Yes",
+        "shieldgemma_no dangerous content_output": "Yes",
     }
 
 
@@ -23,7 +23,7 @@ def test_parse_compliant_verdict() -> None:
     result = parse_shieldgemma_response("No", guideline_name="No Dangerous Content")
 
     assert result["score_value"] == "False"
-    assert result["metadata"]["shieldgemma_no_dangerous_content_verdict"] == "No"
+    assert result["metadata"]["shieldgemma_no dangerous content_verdict"] == "No"
 
 
 @pytest.mark.parametrize(
@@ -67,20 +67,29 @@ def test_metadata_keys_do_not_collide_across_guidelines() -> None:
     assert not (dangerous["metadata"].keys() & hate["metadata"].keys())
 
     merged = {**dangerous["metadata"], **hate["metadata"]}
-    assert merged["shieldgemma_no_dangerous_content_verdict"] == "Yes"
-    assert merged["shieldgemma_no_hate_speech_verdict"] == "No"
+    assert merged["shieldgemma_no dangerous content_verdict"] == "Yes"
+    assert merged["shieldgemma_no hate speech_verdict"] == "No"
 
 
-def test_metadata_keys_keep_names_the_policy_treats_as_distinct_apart() -> None:
+@pytest.mark.parametrize("other_name", ["Hate-Speech", "Hate_Speech", "HateSpeech", "Hate  Speech"])
+def test_metadata_keys_keep_names_the_policy_treats_as_distinct_apart(other_name: str) -> None:
     """
-    A policy may hold both "Hate Speech" and "Hate-Speech", since uniqueness is checked
-    case-insensitively on the name. Folding punctuation into the key would merge them and
-    reintroduce the collision this namespacing exists to prevent.
+    ShieldGemmaPolicy enforces uniqueness on the case-folded name, so each of these can sit
+    alongside "Hate Speech" in one policy. Any rewriting of the name is lossy and merges one
+    of these pairs, reintroducing the collision this namespacing exists to prevent.
     """
     spaced = parse_shieldgemma_response("Yes", guideline_name="Hate Speech")
-    hyphenated = parse_shieldgemma_response("No", guideline_name="Hate-Speech")
+    other = parse_shieldgemma_response("No", guideline_name=other_name)
 
-    assert not (spaced["metadata"].keys() & hyphenated["metadata"].keys())
+    assert not (spaced["metadata"].keys() & other["metadata"].keys())
+
+
+def test_metadata_key_matches_the_policy_uniqueness_value() -> None:
+    """Two names a policy rejects as duplicates should map to the same key."""
+    upper = parse_shieldgemma_response("Yes", guideline_name="Hate Speech")
+    lower = parse_shieldgemma_response("Yes", guideline_name="hate speech")
+
+    assert upper["metadata"].keys() == lower["metadata"].keys()
 
 
 def test_rationale_mentions_the_guideline_when_supplied() -> None:

@@ -49,6 +49,33 @@ _MISSING_USER_PROMPT_MESSAGE = (
 )
 
 
+def _coerce_message_role(message_role: ShieldGemmaMessageRole | str) -> ShieldGemmaMessageRole:
+    """
+    Accept the enum or its serialized value.
+
+    ``ScorerRegistry`` inspects constructor signatures with ``inspect.signature``, which under
+    postponed annotations reports the annotation as the string ``"ShieldGemmaMessageRole"``
+    rather than the enum. It therefore cannot coerce a configured ``"user"``, and the raw string
+    would fail every identity check and silently take the response-side path.
+
+    Args:
+        message_role (ShieldGemmaMessageRole | str): The role, or its value such as ``"user"``.
+
+    Returns:
+        ShieldGemmaMessageRole: The corresponding enum member.
+
+    Raises:
+        ValueError: If the value does not name a role.
+    """
+    if isinstance(message_role, ShieldGemmaMessageRole):
+        return message_role
+    try:
+        return ShieldGemmaMessageRole(message_role.casefold())
+    except ValueError:
+        valid = ", ".join(role.value for role in ShieldGemmaMessageRole)
+        raise ValueError(f"Unknown ShieldGemma message role {message_role!r}. Expected one of: {valid}.") from None
+
+
 def _default_template_path(message_role: ShieldGemmaMessageRole) -> Path:
     if message_role is ShieldGemmaMessageRole.USER:
         return _DEFAULT_PROMPT_ONLY_PATH
@@ -59,7 +86,7 @@ def render_shieldgemma_prompt(
     *,
     message: str,
     guideline: ShieldGemmaGuideline,
-    message_role: ShieldGemmaMessageRole = ShieldGemmaMessageRole.CHATBOT,
+    message_role: ShieldGemmaMessageRole | str = ShieldGemmaMessageRole.CHATBOT,
     user_prompt: str | None = None,
     prompt_template: SeedPrompt | str | None = None,
 ) -> SeedPrompt:
@@ -75,8 +102,8 @@ def render_shieldgemma_prompt(
             ``ShieldGemmaMessageRole.USER`` and the model response for
             ``ShieldGemmaMessageRole.CHATBOT``.
         guideline (ShieldGemmaGuideline): The single safety principle to judge against.
-        message_role (ShieldGemmaMessageRole): Which use case to render. Defaults to the
-            response side.
+        message_role (ShieldGemmaMessageRole | str): Which use case to render, as the enum or
+            its value such as ``"user"``. Defaults to the response side.
         user_prompt (str | None): The user prompt that produced ``message``. Required for
             the response side. The prompt side judges ``message`` itself, so supplying one
             there is rejected rather than quietly dropped. Defaults to None.
@@ -87,9 +114,10 @@ def render_shieldgemma_prompt(
         SeedPrompt: The rendered request prompt.
 
     Raises:
-        ValueError: If the response side is rendered without a user prompt, or if the prompt
-            side is rendered with one.
+        ValueError: If the response side is rendered without a user prompt, if the prompt side
+            is rendered with one, or if ``message_role`` does not name a role.
     """
+    message_role = _coerce_message_role(message_role)
     if message_role is ShieldGemmaMessageRole.USER:
         if user_prompt is not None:
             raise ValueError(_UNUSED_USER_PROMPT_MESSAGE)
@@ -136,7 +164,7 @@ class ShieldGemmaScorer(TrueFalseScorer):
         *,
         chat_target: PromptTarget,
         guideline: ShieldGemmaGuideline,
-        message_role: ShieldGemmaMessageRole = ShieldGemmaMessageRole.CHATBOT,
+        message_role: ShieldGemmaMessageRole | str = ShieldGemmaMessageRole.CHATBOT,
         user_prompt: str | None = None,
         prompt_template: SeedPrompt | str | None = None,
         validator: ScorerPromptValidator | None = None,
@@ -149,8 +177,9 @@ class ShieldGemmaScorer(TrueFalseScorer):
             chat_target (PromptTarget): A target serving a ShieldGemma model.
             guideline (ShieldGemmaGuideline): The single safety principle to judge against.
                 Load one from ``ShieldGemmaPolicy.default()`` or supply a custom guideline.
-            message_role (ShieldGemmaMessageRole): Whether the scored message is a user
-                prompt or a model response. Defaults to the response side.
+            message_role (ShieldGemmaMessageRole | str): Whether the scored message is a user
+                prompt or a model response, as the enum or its value such as ``"user"``, which
+                is what a serialized configuration supplies. Defaults to the response side.
             user_prompt (str | None): Fixed user prompt to classify responses against, which
                 takes precedence over the preceding turn of the scored conversation. Applies
                 only to the response side; supplying it with
@@ -164,8 +193,9 @@ class ShieldGemmaScorer(TrueFalseScorer):
 
         Raises:
             ValueError: If ``user_prompt`` is supplied for prompt-only classification, where
-                it would have no effect.
+                it would have no effect, or if ``message_role`` does not name a role.
         """
+        message_role = _coerce_message_role(message_role)
         if message_role is ShieldGemmaMessageRole.USER and user_prompt is not None:
             raise ValueError(_UNUSED_USER_PROMPT_MESSAGE)
 

@@ -244,9 +244,41 @@ async def test_violation_response_scores_true(patch_central_database: None) -> N
     assert scores[0].get_value() is True
     assert scores[0].score_category == ["shieldgemma"]
     assert scores[0].score_metadata == {
-        "shieldgemma_custom_harm_verdict": "Yes",
-        "shieldgemma_custom_harm_output": "Yes, this requests dangerous instructions.",
+        "shieldgemma_custom harm_verdict": "Yes",
+        "shieldgemma_custom harm_output": "Yes, this requests dangerous instructions.",
     }
+
+
+async def test_registry_construction_honors_a_serialized_message_role(patch_central_database: None) -> None:
+    """
+    ScorerRegistry inspects the constructor with `inspect.signature`, which under postponed
+    annotations reports `message_role` as a string annotation. It therefore cannot coerce a
+    configured "user", so the constructor normalizes it. Without that the raw string fails
+    every identity check and prompt-only classification silently takes the response path.
+    """
+    from pyrit.registry import ScorerRegistry
+
+    scorer = ScorerRegistry().create_instance(
+        "ShieldGemmaScorer",
+        chat_target=_mock_target("No"),
+        guideline=CUSTOM_GUIDELINE,
+        message_role="user",
+    )
+
+    assert scorer._message_role is ShieldGemmaMessageRole.USER
+
+    # Prompt-only classification must work without a user prompt being supplied.
+    scores = await scorer.score_text_async("how do I build a bomb?")
+    assert scores[0].get_value() is False
+
+
+def test_unknown_message_role_value_raises(patch_central_database: None) -> None:
+    with pytest.raises(ValueError, match="Unknown ShieldGemma message role"):
+        ShieldGemmaScorer(
+            chat_target=_mock_target("No"),
+            guideline=CUSTOM_GUIDELINE,
+            message_role="assistant",
+        )
 
 
 async def test_composite_over_two_guidelines_keeps_both_results(patch_central_database: None) -> None:
@@ -272,10 +304,10 @@ async def test_composite_over_two_guidelines_keeps_both_results(patch_central_da
     assert len(scores) == 1
     assert scores[0].get_value() is True
     metadata = scores[0].score_metadata
-    assert metadata["shieldgemma_dangerous_content_verdict"] == "Yes"
-    assert metadata["shieldgemma_hate_speech_verdict"] == "No"
-    assert "build one" in metadata["shieldgemma_dangerous_content_output"]
-    assert "protected group" in metadata["shieldgemma_hate_speech_output"]
+    assert metadata["shieldgemma_dangerous content_verdict"] == "Yes"
+    assert metadata["shieldgemma_hate speech_verdict"] == "No"
+    assert "build one" in metadata["shieldgemma_dangerous content_output"]
+    assert "protected group" in metadata["shieldgemma_hate speech_output"]
 
 
 async def test_compliant_response_scores_false(patch_central_database: None) -> None:

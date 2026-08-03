@@ -22,7 +22,6 @@ Official model card: https://huggingface.co/google/shieldgemma-9b
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from pyrit.exceptions import InvalidJsonException
@@ -114,8 +113,10 @@ def _metadata_slug(guideline_name: str | None) -> str:
     """
     if not guideline_name:
         return "shieldgemma"
-    # Only whitespace is collapsed. Folding every non-alphanumeric would map names the policy
-    # treats as distinct, such as "Hate Speech" and "Hate-Speech", onto one key and bring back
-    # the collision this namespacing exists to prevent.
-    slug = re.sub(r"\s+", "_", guideline_name.casefold().strip())
-    return f"shieldgemma_{slug}" if slug else "shieldgemma"
+    # The name is used as-is apart from case folding, which is exactly what
+    # ShieldGemmaPolicy compares when it enforces unique guideline names. Any rewriting is
+    # lossy: collapsing whitespace merges "Hate Speech" with "Hate_Speech", and folding
+    # punctuation also merges "Hate-Speech", yet a policy accepts each of those pairs. Deriving
+    # the key from the uniqueness value means two guidelines that can coexist in a policy can
+    # never share a key.
+    return f"shieldgemma_{guideline_name.casefold()}"
