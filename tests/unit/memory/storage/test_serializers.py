@@ -29,7 +29,14 @@ from pyrit.models import MessagePiece, SeedPrompt
 
 
 class LegacyStorageIO(StorageIO):
-    """Custom storage implementation using the original two-argument write signature."""
+    """
+    Test double representing an existing third-party ``StorageIO`` implementation.
+
+    Its ``write_file_async(path, data)`` method intentionally retains the original
+    two-argument contract. Tests using this class ensure serializers do not pass a
+    new content-type keyword argument that would break pre-existing custom storage
+    backends when Azure Blob Storage adds MIME metadata internally.
+    """
 
     def __init__(self) -> None:
         self.writes: list[tuple[Path | str, bytes]] = []
