@@ -707,6 +707,47 @@ extensions: {}
 
         assert config.extensions == {"alpha": 3, "beta": 2}
 
+    def test_load_with_overrides_merges_server_fields(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text(
+            "server:\n  url: http://localhost:9000\n  startup_timeout: 180\n",
+            encoding="utf-8",
+        )
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text("server:\n  startup_timeout: 45\n", encoding="utf-8")
+
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
+
+        assert config.server == {"url": "http://localhost:9000", "startup_timeout": 45}
+        assert config.server_config == ServerConfig(url="http://localhost:9000", startup_timeout=45.0)
+
+    def test_load_with_overrides_null_server_resets_inherited_block(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text(
+            "server:\n  url: http://localhost:9000\n  startup_timeout: 180\n",
+            encoding="utf-8",
+        )
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text("server: null\n", encoding="utf-8")
+
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
+
+        assert config.server is None
+        assert config.server_config is None
+
+    def test_load_with_overrides_removes_null_top_level_extension(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text("alpha: 1\nbeta: 2\n", encoding="utf-8")
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text("alpha: null\n", encoding="utf-8")
+
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
+
+        assert config.extensions == {"beta": 2}
+
     def test_load_with_overrides_preserves_extension_provenance(self, tmp_path):
         default_path = tmp_path / ".pyrit_conf"
         default_path.write_text("alpha: 1\nbeta: 2\n", encoding="utf-8")
@@ -724,6 +765,24 @@ extensions: {}
     def test_extensions_reject_non_string_keys(self):
         with pytest.raises(ValueError, match="extensions keys must be strings"):
             ConfigurationLoader.from_dict({"extensions": {1: "value"}})
+
+    @pytest.mark.parametrize(
+        ("yaml_content", "error"),
+        [
+            ("", "is empty"),
+            ("invalid: [", "Invalid YAML"),
+        ],
+    )
+    def test_load_with_overrides_rejects_invalid_explicit_yaml(self, tmp_path, yaml_content, error):
+        default_path = tmp_path / "missing-default.yaml"
+        config_path = tmp_path / "explicit.yaml"
+        config_path.write_text(yaml_content, encoding="utf-8")
+
+        with (
+            mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path),
+            pytest.raises(ValueError, match=error),
+        ):
+            ConfigurationLoader.load_with_overrides(config_file=config_path)
 
 
 @pytest.mark.parametrize("scenario_config", [None, {"name": "scam"}])

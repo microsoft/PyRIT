@@ -11,6 +11,7 @@ import json
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -23,6 +24,87 @@ from pyrit.cli._server_launcher import ServerLauncher
 @pytest.fixture(autouse=True)
 def isolate_pid_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_server_launcher, "_PID_DIRECTORY", tmp_path / "run")
+
+
+# ---------------------------------------------------------------------------
+# address and PID helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("base_url", ["http://localhost:not-a-port", "http://localhost:99999"])
+def test_parse_local_server_address_rejects_invalid_port(base_url):
+    assert _server_launcher.parse_local_server_address(base_url=base_url) is None
+
+
+def test_write_pid_record_logs_persist_and_cleanup_failures(caplog):
+    with (
+        patch.object(Path, "replace", side_effect=OSError("replace failed")),
+        patch.object(Path, "unlink", side_effect=OSError("unlink failed")),
+    ):
+        _server_launcher._write_pid_record(host="localhost", port=8000, pid=1234)
+
+    assert "Could not persist backend process state" in caplog.text
+    assert "Could not remove temporary backend process state" in caplog.text
+
+
+def test_remove_pid_record_logs_failure(caplog):
+    with patch.object(Path, "unlink", side_effect=OSError("unlink failed")):
+        _server_launcher._remove_pid_record(port=8000)
+
+    assert "Could not remove backend process state" in caplog.text
+
+
+def test_read_recorded_pid_discards_invalid_json():
+    path = _server_launcher._pid_file_path(port=8000)
+    path.parent.mkdir(parents=True)
+    path.write_text("{invalid", encoding="utf-8")
+
+    assert _server_launcher._read_recorded_pid(port=8000) is None
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"host": "localhost", "port": 8000, "pid": True},
+        {"host": "localhost", "port": 9000, "pid": 1234},
+    ],
+)
+def test_read_recorded_pid_discards_invalid_fields(record):
+    path = _server_launcher._pid_file_path(port=8000)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    assert _server_launcher._read_recorded_pid(port=8000) is None
+    assert not path.exists()
+
+
+def test_parse_netstat_listener_pids_ignores_malformed_rows():
+    output = "not a listener row\nTCP invalid-address 0.0.0.0:0 LISTENING not-a-pid"
+
+    assert _server_launcher._parse_netstat_listener_pids(output=output, port=8000) == set()
+
+
+def test_windows_pid_lookup_rejects_ambiguous_listener():
+    result = MagicMock(stdout="1234\n5678\n")
+    with patch("subprocess.run", return_value=result) as run_mock:
+        assert _server_launcher._find_pid_on_port_windows(port=8000) is None
+
+    run_mock.assert_called_once()
+
+
+def test_unix_pid_lookup_falls_back_to_ss_when_lsof_fails():
+    ss_result = MagicMock(stdout='users:(("python",pid=5678,fd=3))')
+    with patch("subprocess.run", side_effect=[OSError("lsof missing"), ss_result]):
+        assert _server_launcher._find_pid_on_port_unix(port=8000) == 5678
+
+
+def test_unix_pid_lookup_rejects_ambiguous_lsof_listener():
+    result = MagicMock(stdout="1234\n5678\n")
+    with patch("subprocess.run", return_value=result) as run_mock:
+        assert _server_launcher._find_pid_on_port_unix(port=8000) is None
+
+    run_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +140,38 @@ async def test_probe_health_returns_false_when_client_unhealthy():
 # ---------------------------------------------------------------------------
 
 
+async def test_spawn_backend_process_async_cancellation_terminates_spawned_process():
+    started = threading.Event()
+    release = threading.Event()
+    fake_proc = MagicMock()
+    fake_proc.pid = 4321
+
+    def delayed_spawn(**_kwargs: object) -> MagicMock:
+        started.set()
+        release.wait(timeout=5)
+        return fake_proc
+
+    with (
+        patch.object(_server_launcher, "_spawn_backend_process", side_effect=delayed_spawn),
+        patch.object(_server_launcher, "_terminate_process_tree", return_value=True) as stop_tree_mock,
+    ):
+        spawn_task = asyncio.create_task(
+            _server_launcher._spawn_backend_process_async(
+                command=["python"],
+                log_path="backend.log",
+                creation_flags=0,
+                start_new_session=True,
+            )
+        )
+        assert await asyncio.to_thread(started.wait, 5)
+        spawn_task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await spawn_task
+
+    stop_tree_mock.assert_called_once_with(process=fake_proc)
+
+
 async def test_start_async_returns_url_when_already_healthy():
     launcher = ServerLauncher()
     with patch.object(ServerLauncher, "probe_health_async", new=AsyncMock(return_value=True)):
@@ -89,7 +203,7 @@ async def test_start_async_spawns_subprocess_and_waits_for_health():
             startup_timeout=5,
         )
     assert url == "http://localhost:8001"
-    assert launcher.pid == 4321
+    assert launcher.pid == 9876
     # Verify command construction
     cmd = popen_mock.call_args.args[0]
     assert "pyrit.backend.pyrit_backend" in cmd
@@ -324,7 +438,7 @@ def test_stop_terminates_process():
     fake_proc.pid = 12345
     fake_proc.poll.return_value = None
     launcher._process = fake_proc
-    launcher._pid = 12345
+    launcher._listener_pid = 12345
     launcher._port = 8000
 
     with patch.object(_server_launcher, "_terminate_process_tree", return_value=True) as stop_tree_mock:
@@ -341,13 +455,28 @@ def test_stop_reports_termination_errors_and_retains_process():
     fake_proc.pid = 12345
     fake_proc.poll.return_value = None
     launcher._process = fake_proc
-    launcher._pid = 12345
+    launcher._listener_pid = 12345
     launcher._port = 8000
 
     with patch.object(_server_launcher, "_terminate_process_tree", return_value=False):
         assert launcher.stop() is False
     assert launcher._process is fake_proc
     assert launcher.pid == 12345
+
+
+def test_stop_clears_state_when_process_already_exited():
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = 0
+    launcher._process = fake_proc
+    launcher._listener_pid = 12345
+    launcher._port = 8000
+    _server_launcher._write_pid_record(host="localhost", port=8000, pid=12345)
+
+    assert launcher.stop() is True
+    assert launcher._process is None
+    assert launcher.pid is None
+    assert not _server_launcher._pid_file_path(port=8000).exists()
 
 
 def test_terminate_process_tree_kills_unresponsive_unix_group():
@@ -378,6 +507,64 @@ def test_terminate_process_tree_uses_windows_pid_tree():
         assert _server_launcher._terminate_process_tree(process=fake_proc) is True
 
     assert run_mock.call_args.args[0] == ["taskkill", "/PID", "12345", "/T", "/F"]
+
+
+def test_terminate_process_tree_reports_windows_taskkill_error():
+    fake_proc = MagicMock()
+    fake_proc.pid = 12345
+
+    with patch("os.name", "nt"), patch("subprocess.run", side_effect=OSError("taskkill failed")):
+        assert _server_launcher._terminate_process_tree(process=fake_proc) is False
+
+
+def test_terminate_process_tree_rejects_unsuccessful_windows_taskkill():
+    fake_proc = MagicMock()
+    fake_proc.pid = 12345
+    fake_proc.poll.return_value = None
+
+    with patch("os.name", "nt"), patch("subprocess.run", return_value=MagicMock(returncode=1)):
+        assert _server_launcher._terminate_process_tree(process=fake_proc) is False
+
+
+def test_terminate_process_tree_handles_missing_unix_process():
+    fake_proc = MagicMock()
+    fake_proc.pid = 12345
+    fake_proc.wait.return_value = 0
+
+    with patch("os.name", "posix"), patch("os.killpg", side_effect=ProcessLookupError, create=True):
+        assert _server_launcher._terminate_process_tree(process=fake_proc) is True
+
+
+def test_terminate_process_tree_reports_unix_signal_error():
+    fake_proc = MagicMock()
+    fake_proc.pid = 12345
+
+    with patch("os.name", "posix"), patch("os.killpg", side_effect=OSError("signal failed"), create=True):
+        assert _server_launcher._terminate_process_tree(process=fake_proc) is False
+
+
+def test_terminate_process_tree_reports_windows_wait_timeout():
+    fake_proc = MagicMock()
+    fake_proc.pid = 12345
+    fake_proc.wait.side_effect = subprocess.TimeoutExpired(cmd="backend", timeout=10)
+
+    with patch("os.name", "nt"), patch("subprocess.run", return_value=MagicMock(returncode=0)):
+        assert _server_launcher._terminate_process_tree(process=fake_proc) is False
+
+
+def test_terminate_process_tree_reports_unix_kill_timeout():
+    fake_proc = MagicMock()
+    fake_proc.pid = 12345
+    fake_proc.wait.side_effect = subprocess.TimeoutExpired(cmd="backend", timeout=10)
+
+    with (
+        patch("os.name", "posix"),
+        patch("os.killpg", create=True) as kill_group_mock,
+        patch("signal.SIGKILL", 9, create=True),
+    ):
+        assert _server_launcher._terminate_process_tree(process=fake_proc) is False
+
+    assert kill_group_mock.call_count == 2
 
 
 def test_stop_is_noop_when_no_process():
@@ -419,6 +606,23 @@ def test_stop_server_discards_stale_record_and_uses_listener_pid():
     assert not _server_launcher._pid_file_path(port=8000).exists()
 
 
+def test_stop_server_reports_signal_error():
+    with (
+        patch.object(_server_launcher, "_resolve_server_pid", return_value=1234),
+        patch("os.kill", side_effect=OSError("signal failed")),
+    ):
+        assert _server_launcher.stop_server_on_port(port=8000) is False
+
+
+def test_stop_server_reports_shutdown_timeout():
+    with (
+        patch.object(_server_launcher, "_resolve_server_pid", return_value=1234),
+        patch.object(_server_launcher, "_wait_for_process_exit", return_value=False),
+        patch("os.kill"),
+    ):
+        assert _server_launcher.stop_server_on_port(port=8000) is False
+
+
 def test_windows_pid_lookup_prefers_get_net_tcp_connection():
     result = MagicMock(stdout="116284\n")
     with patch("sys.platform", "win32"), patch("subprocess.run", return_value=result) as run_mock:
@@ -438,6 +642,45 @@ def test_windows_process_exists_uses_non_destructive_lookup():
 
     kill_mock.assert_not_called()
     assert "Get-Process" in run_mock.call_args.args[0][-1]
+
+
+def test_windows_process_exists_assumes_present_when_lookup_fails():
+    with patch("sys.platform", "win32"), patch("subprocess.run", side_effect=OSError("lookup failed")):
+        assert _server_launcher._process_exists(pid=1234) is True
+
+
+@pytest.mark.parametrize(
+    ("side_effect", "expected"),
+    [
+        (ProcessLookupError(), False),
+        (PermissionError(), True),
+        (OSError(), False),
+        (None, True),
+    ],
+)
+def test_unix_process_exists_handles_signal_results(side_effect, expected):
+    with patch("sys.platform", "linux"), patch("os.kill", side_effect=side_effect):
+        assert _server_launcher._process_exists(pid=1234) is expected
+
+
+def test_wait_for_process_exit_reports_timeout():
+    with (
+        patch.object(_server_launcher, "_process_exists", return_value=True),
+        patch("time.monotonic", side_effect=[0.0, 1.0]),
+    ):
+        assert _server_launcher._wait_for_process_exit(pid=1234, port=8000, timeout=0.5) is False
+
+
+def test_wait_for_process_exit_confirms_port_release():
+    with (
+        patch.object(_server_launcher, "_process_exists", side_effect=[True, False]),
+        patch.object(_server_launcher, "_find_pid_on_port", return_value=None),
+        patch("time.monotonic", side_effect=[0.0, 0.1]),
+        patch("time.sleep") as sleep_mock,
+    ):
+        assert _server_launcher._wait_for_process_exit(pid=1234, port=8000, timeout=0.5) is True
+
+    sleep_mock.assert_called_once_with(0.1)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-specific process existence behavior")

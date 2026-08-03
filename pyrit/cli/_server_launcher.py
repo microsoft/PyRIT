@@ -331,6 +331,75 @@ def stop_server_on_port(*, port: int, shutdown_timeout: float = _PROCESS_STOP_TI
     return True
 
 
+def _spawn_backend_process(
+    *,
+    command: list[str],
+    log_path: str,
+    creation_flags: int,
+    start_new_session: bool,
+) -> subprocess.Popen[bytes]:
+    """
+    Spawn the detached backend while redirecting its output to a log file.
+
+    Args:
+        command: Backend command and arguments.
+        log_path: File path for backend output.
+        creation_flags: Platform-specific subprocess creation flags.
+        start_new_session: Whether to detach into a new process session.
+
+    Returns:
+        subprocess.Popen[bytes]: The spawned launcher process.
+    """
+    with open(log_path, "w", encoding="utf-8") as log_handle:
+        return subprocess.Popen(
+            command,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            creationflags=creation_flags,
+            start_new_session=start_new_session,
+        )
+
+
+async def _spawn_backend_process_async(
+    *,
+    command: list[str],
+    log_path: str,
+    creation_flags: int,
+    start_new_session: bool,
+) -> subprocess.Popen[bytes]:
+    """
+    Spawn the detached backend without leaking it if startup is cancelled.
+
+    Args:
+        command: Backend command and arguments.
+        log_path: File path for backend output.
+        creation_flags: Platform-specific subprocess creation flags.
+        start_new_session: Whether to detach into a new process session.
+
+    Returns:
+        subprocess.Popen[bytes]: The spawned launcher process.
+
+    Raises:
+        asyncio.CancelledError: If startup is cancelled after the process is spawned.
+    """
+    spawn_task = asyncio.create_task(
+        asyncio.to_thread(
+            _spawn_backend_process,
+            command=command,
+            log_path=log_path,
+            creation_flags=creation_flags,
+            start_new_session=start_new_session,
+        )
+    )
+    try:
+        return await asyncio.shield(spawn_task)
+    except asyncio.CancelledError:
+        process = await spawn_task
+        if not await asyncio.to_thread(_terminate_process_tree, process=process):
+            _logger.warning("Failed to stop cancelled backend launcher process %d", process.pid)
+        raise
+
+
 class ServerLauncher:
     """
     Launch and manage a local ``pyrit_backend`` server.
@@ -342,7 +411,7 @@ class ServerLauncher:
 
     def __init__(self) -> None:
         self._process: subprocess.Popen[bytes] | None = None
-        self._pid: int | None = None
+        self._listener_pid: int | None = None
         self._port: int | None = None
         self._log_path: str | None = None
 
@@ -448,32 +517,28 @@ class ServerLauncher:
         # inherited handle to close. Send the child's output to a log file so
         # startup diagnostics are still available.
         self._log_path = os.path.join(tempfile.gettempdir(), "pyrit_backend.log")
-        with open(self._log_path, "w", encoding="utf-8") as log_handle:
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                creationflags=creation_flags,
-                start_new_session=start_new_session,
-            )
-        pid = self._process.pid
-        self._pid = pid
+        self._process = await _spawn_backend_process_async(
+            command=cmd,
+            log_path=self._log_path,
+            creation_flags=creation_flags,
+            start_new_session=start_new_session,
+        )
+        launcher_pid = self._process.pid
+        self._listener_pid = launcher_pid
         self._port = port
-        _write_pid_record(host=host, port=port, pid=pid)
-        _logger.info("Backend PID: %d (logs: %s)", pid, self._log_path)
 
         startup_succeeded = False
         cleanup_attempted = False
-        deadline = time.monotonic() + startup_timeout
         try:
+            await asyncio.to_thread(_write_pid_record, host=host, port=port, pid=launcher_pid)
+            _logger.info("Backend launcher PID: %d (logs: %s)", launcher_pid, self._log_path)
+            deadline = time.monotonic() + startup_timeout
             while True:
                 exit_code = self._process.poll()
                 if exit_code is not None:
-                    self._print_log_tail()
-                    _remove_pid_record(port=port)
-                    self._process = None
-                    self._pid = None
-                    self._port = None
+                    await asyncio.to_thread(self._print_log_tail)
+                    await asyncio.to_thread(_remove_pid_record, port=port)
+                    self._clear_process_state()
                     raise RuntimeError(
                         f"Server process exited with code {exit_code} during startup. See logs: {self._log_path}"
                     )
@@ -489,10 +554,11 @@ class ServerLauncher:
                 except asyncio.TimeoutError:
                     healthy = False
                 if healthy:
-                    listener_pid = _find_pid_on_port(port=port)
+                    listener_pid = await asyncio.to_thread(_find_pid_on_port, port=port)
                     if listener_pid is not None:
-                        _write_pid_record(host=host, port=port, pid=listener_pid)
-                    print(f"Server ready (PID {self._pid}). Logs: {self._log_path}")
+                        self._listener_pid = listener_pid
+                        await asyncio.to_thread(_write_pid_record, host=host, port=port, pid=listener_pid)
+                    print(f"Server ready (PID {self._listener_pid}). Logs: {self._log_path}")
                     startup_succeeded = True
                     return base_url
 
@@ -501,8 +567,8 @@ class ServerLauncher:
                     break
                 await asyncio.sleep(min(_STARTUP_POLL_INTERVAL, remaining))
 
-            self._print_log_tail()
-            process_stopped = self.stop()
+            await asyncio.to_thread(self._print_log_tail)
+            process_stopped = await asyncio.to_thread(self.stop)
             cleanup_attempted = True
             cleanup_message = "" if process_stopped else " The spawned backend process could not be stopped."
             raise RuntimeError(
@@ -511,7 +577,13 @@ class ServerLauncher:
             )
         finally:
             if not startup_succeeded and not cleanup_attempted and self._process is not None:
-                self.stop()
+                await asyncio.to_thread(self.stop)
+
+    def _clear_process_state(self) -> None:
+        """Clear process state after the owned backend exits."""
+        self._process = None
+        self._listener_pid = None
+        self._port = None
 
     def _read_log_tail(self, *, max_lines: int = 20) -> str:
         """
@@ -556,24 +628,28 @@ class ServerLauncher:
         if process.poll() is not None:
             if self._port is not None:
                 _remove_pid_record(port=self._port)
-            self._process = None
-            self._pid = None
-            self._port = None
+            self._clear_process_state()
             return True
 
         if not _terminate_process_tree(process=process):
-            _logger.warning("Failed to stop server (PID %s)", self._pid)
+            _logger.warning(
+                "Failed to stop server (listener PID %s, launcher PID %d)",
+                self._listener_pid,
+                process.pid,
+            )
             return False
 
-        _logger.info("Stopped server (PID %d)", self._pid)
+        _logger.info(
+            "Stopped server (listener PID %s, launcher PID %d)",
+            self._listener_pid,
+            process.pid,
+        )
         if self._port is not None:
             _remove_pid_record(port=self._port)
-        self._process = None
-        self._pid = None
-        self._port = None
+        self._clear_process_state()
         return True
 
     @property
     def pid(self) -> int | None:
-        """PID of the owned backend process, or ``None``."""
-        return self._pid
+        """Resolved listener PID, falling back to the launcher PID during startup."""
+        return self._listener_pid

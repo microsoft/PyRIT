@@ -99,8 +99,8 @@ def read_server_settings(*, config_file: Path | None = None) -> ServerSettings:
     """
     Read client-side server settings from the default config and an optional overlay.
 
-    A later ``server`` block replaces the earlier block. Config files that omit
-    ``server`` leave the prior settings unchanged.
+    Fields in a later ``server`` block override matching earlier fields. Omitted
+    fields retain their prior values, while ``server: null`` resets all settings.
 
     Args:
         config_file: Optional explicit config path.
@@ -124,7 +124,7 @@ def read_server_settings(*, config_file: Path | None = None) -> ServerSettings:
         data = _load_config_mapping(path=p, yaml_module=yaml)
         if data is None or "server" not in data:
             continue
-        settings = _extract_server_settings(data=data, path=p)
+        settings = _merge_server_settings(settings=settings, data=data, path=p)
     return settings
 
 
@@ -158,16 +158,17 @@ def validate_client_config(*, config_file: Path | None = None) -> None:
             )
 
 
-def _extract_server_settings(*, data: dict[str, Any], path: Path) -> ServerSettings:
+def _merge_server_settings(*, settings: ServerSettings, data: dict[str, Any], path: Path) -> ServerSettings:
     """
-    Extract client settings from one parsed ``server`` block.
+    Merge one parsed ``server`` block into resolved client settings.
 
     Args:
+        settings: Settings resolved from earlier configuration layers.
         data: Parsed top-level config mapping.
         path: YAML config file path used in error messages.
 
     Returns:
-        ServerSettings: Settings represented by this config layer.
+        ServerSettings: Settings after applying this config layer.
 
     Raises:
         ConfigError: If ``server`` or one of its supported fields has the wrong type.
@@ -178,20 +179,23 @@ def _extract_server_settings(*, data: dict[str, Any], path: Path) -> ServerSetti
     if not isinstance(server_block, dict):
         raise ConfigError(f"Config file {path}: 'server' must be a mapping, got {type(server_block).__name__}.")
 
-    raw_url = server_block.get("url")
-    if raw_url is not None and not isinstance(raw_url, str):
-        raise ConfigError(f"Config file {path}: 'server.url' must be a string, got {type(raw_url).__name__}.")
-    url: str | None = None
-    if isinstance(raw_url, str):
-        url = raw_url.strip() or None
+    url = settings.url
+    if "url" in server_block:
+        raw_url = server_block["url"]
+        if raw_url is not None and not isinstance(raw_url, str):
+            raise ConfigError(f"Config file {path}: 'server.url' must be a string, got {type(raw_url).__name__}.")
+        url = raw_url.strip() or None if isinstance(raw_url, str) else None
 
-    startup_timeout = server_block.get("startup_timeout", DEFAULT_SERVER_STARTUP_TIMEOUT)
-    if (
-        isinstance(startup_timeout, bool)
-        or not isinstance(startup_timeout, int | float)
-        or not math.isfinite(startup_timeout)
-        or startup_timeout <= 0
-    ):
-        raise ConfigError(f"Config file {path}: 'server.startup_timeout' must be a finite number greater than 0.")
+    startup_timeout = settings.startup_timeout
+    if "startup_timeout" in server_block:
+        raw_timeout = server_block["startup_timeout"]
+        if (
+            isinstance(raw_timeout, bool)
+            or not isinstance(raw_timeout, int | float)
+            or not math.isfinite(raw_timeout)
+            or raw_timeout <= 0
+        ):
+            raise ConfigError(f"Config file {path}: 'server.startup_timeout' must be a finite number greater than 0.")
+        startup_timeout = float(raw_timeout)
 
-    return ServerSettings(url=url, startup_timeout=float(startup_timeout))
+    return ServerSettings(url=url, startup_timeout=startup_timeout)

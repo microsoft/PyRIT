@@ -1130,6 +1130,22 @@ class TestMainExtraPaths:
         assert result == 0
         assert "stopped" in capsys.readouterr().out
 
+    async def test_handle_stop_server_offloads_blocking_shutdown(self):
+        parsed_args = pyrit_scan.parse_args(["--stop-server"])
+        to_thread_mock = AsyncMock(return_value=True)
+        probe_mock = AsyncMock(side_effect=[True, False])
+
+        with (
+            patch("asyncio.to_thread", new=to_thread_mock),
+            patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new=probe_mock),
+            patch("pyrit.cli._server_launcher.stop_server_on_port") as stop_mock,
+        ):
+            result = await pyrit_scan._handle_stop_server_async(parsed_args=parsed_args)
+
+        assert result == 0
+        to_thread_mock.assert_awaited_once_with(stop_mock, port=8000)
+        stop_mock.assert_not_called()
+
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
         new_callable=AsyncMock,

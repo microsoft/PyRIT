@@ -15,7 +15,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import yaml
+
 from pyrit.common.path import DEFAULT_CONFIG_PATH
+from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
 from pyrit.setup.initialization import (
@@ -65,6 +68,17 @@ class ServerConfig:
 
     url: str = "http://localhost:8000"
     startup_timeout: float = 120.0
+
+
+@dataclass(frozen=True)
+class _ConfigurationLayer:
+    """A parsed configuration value and the YAML key provenance needed for merging."""
+
+    configuration: "ConfigurationLoader"
+    present_fields: frozenset[str]
+    top_level_extension_fields: frozenset[str]
+    nested_extension_fields: frozenset[str]
+    reset_extensions: bool
 
 
 @dataclass
@@ -128,20 +142,6 @@ class ConfigurationLoader(YamlLoadable):
     allow_custom_initializers: bool = False
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
-    _configured_fields: frozenset[str] = field(default_factory=frozenset, init=False, repr=False, compare=False)
-    _configured_extension_fields: frozenset[str] = field(
-        default_factory=frozenset,
-        init=False,
-        repr=False,
-        compare=False,
-    )
-    _configured_nested_extension_fields: frozenset[str] = field(
-        default_factory=frozenset,
-        init=False,
-        repr=False,
-        compare=False,
-    )
-    _reset_extensions: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
@@ -261,19 +261,36 @@ class ConfigurationLoader(YamlLoadable):
             _RemovedConfigurationOptionError: If the removed ``scenario`` block is present.
             ValueError: If ``extensions`` is present but not a dict.
         """
+        return cls._parse_layer(data=data).configuration
+
+    @classmethod
+    def _parse_layer(cls, *, data: dict[str, Any]) -> _ConfigurationLayer:
+        """
+        Parse a configuration layer while retaining its YAML key provenance.
+
+        Args:
+            data: Dictionary containing one configuration layer.
+
+        Returns:
+            _ConfigurationLayer: The validated value and its merge provenance.
+
+        Raises:
+            _RemovedConfigurationOptionError: If the removed ``scenario`` block is present.
+            ValueError: If ``extensions`` is present but invalid.
+        """
         if "scenario" in data:
             raise _RemovedConfigurationOptionError(
                 "The 'scenario' configuration block is no longer supported. "
                 "Pass the scenario name positionally and its parameters as CLI flags."
             )
-        configured_fields = frozenset(data)
+        present_fields = frozenset(data)
         # Filter out None values only - empty lists are meaningful ("load nothing")
         filtered_data = {k: v for k, v in data.items() if v is not None}
         known_fields = {config_field.name for config_field in fields(cls) if config_field.init}
-        configured_extension_fields = frozenset(data.keys() - known_fields)
+        top_level_extension_fields = frozenset(data.keys() - known_fields)
         known_data = {k: v for k, v in filtered_data.items() if k in known_fields and k != "extensions"}
         extra_data = {k: v for k, v in filtered_data.items() if k not in known_fields}
-        configured_nested_extension_fields: frozenset[str] = frozenset()
+        nested_extension_fields: frozenset[str] = frozenset()
         reset_extensions = False
         if "extensions" in data:
             raw_extensions = data["extensions"]
@@ -281,18 +298,93 @@ class ConfigurationLoader(YamlLoadable):
             if isinstance(raw_extensions, dict):
                 if not all(isinstance(key, str) for key in raw_extensions):
                     raise ValueError("ConfigurationLoader.extensions keys must be strings.")
-                configured_nested_extension_fields = frozenset(key for key in raw_extensions if isinstance(key, str))
+                nested_extension_fields = frozenset(key for key in raw_extensions if isinstance(key, str))
         if "extensions" in filtered_data:
             extensions = filtered_data["extensions"]
             if not isinstance(extensions, dict):
                 raise ValueError(f"ConfigurationLoader.extensions must be a dict. Got: {type(extensions).__name__}")
             extra_data = {**extra_data, **extensions}
         config = cls(**known_data, extensions=extra_data)
-        config._configured_fields = configured_fields
-        config._configured_extension_fields = configured_extension_fields
-        config._configured_nested_extension_fields = configured_nested_extension_fields
-        config._reset_extensions = reset_extensions
-        return config
+        return _ConfigurationLayer(
+            configuration=config,
+            present_fields=present_fields,
+            top_level_extension_fields=top_level_extension_fields,
+            nested_extension_fields=nested_extension_fields,
+            reset_extensions=reset_extensions,
+        )
+
+    @classmethod
+    def _load_layer_from_yaml_file(cls, *, file: pathlib.Path | str) -> _ConfigurationLayer:
+        """
+        Load a configuration layer from YAML without attaching merge state to its value.
+
+        Args:
+            file: YAML configuration file path.
+
+        Returns:
+            _ConfigurationLayer: The validated value and its merge provenance.
+
+        Raises:
+            ValueError: If the YAML is invalid or empty.
+        """
+        file_path = verify_and_resolve_path(file)
+        try:
+            yaml_data = yaml.safe_load(file_path.read_text("utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML file '{file_path}': {exc}") from exc
+        if yaml_data is None:
+            raise ValueError(f"YAML file '{file_path}' is empty.")
+        return cls._parse_layer(data=yaml_data)
+
+    @staticmethod
+    def _merge_server_blocks(
+        *,
+        inherited: dict[str, Any] | None,
+        overlay: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """
+        Merge server fields while preserving an explicit null reset.
+
+        Args:
+            inherited: Server fields inherited from earlier layers.
+            overlay: Server fields from the current layer.
+
+        Returns:
+            dict[str, Any] | None: The merged server block, or ``None`` for an explicit reset.
+        """
+        if overlay is None:
+            return None
+        inherited_fields = inherited if isinstance(inherited, dict) else {}
+        return {**copy.deepcopy(inherited_fields), **copy.deepcopy(overlay)}
+
+    @classmethod
+    def _apply_layer(
+        cls,
+        *,
+        config_data: dict[str, Any],
+        layer: _ConfigurationLayer,
+        init_fields: set[str],
+    ) -> None:
+        """Apply a parsed layer to mutable merged configuration data."""
+        explicit_data = {name: copy.deepcopy(getattr(layer.configuration, name)) for name in init_fields}
+        for field_name in layer.present_fields & (init_fields - {"extensions"}):
+            if field_name == "server":
+                config_data["server"] = cls._merge_server_blocks(
+                    inherited=config_data["server"],
+                    overlay=layer.configuration.server,
+                )
+            else:
+                config_data[field_name] = explicit_data[field_name]
+
+        if layer.reset_extensions:
+            config_data["extensions"] = {}
+        for field_name in layer.top_level_extension_fields:
+            if field_name in layer.configuration.extensions:
+                config_data["extensions"][field_name] = layer.configuration.extensions[field_name]
+            else:
+                config_data["extensions"].pop(field_name, None)
+        for field_name in layer.nested_extension_fields:
+            config_data["extensions"][field_name] = layer.configuration.extensions[field_name]
 
     @classmethod
     def load_with_overrides(
@@ -357,19 +449,8 @@ class ConfigurationLoader(YamlLoadable):
                 raise FileNotFoundError(f"Configuration file not found: {config_file}")
             logger.info(f"Loading configuration file: {config_file}")
             print(f"Loading configuration file: {config_file}")
-            explicit_config = cls.from_yaml_file(config_file)
-            explicit_data = to_init_data(explicit_config)
-            for field_name in explicit_config._configured_fields & (init_fields - {"extensions"}):
-                config_data[field_name] = explicit_data[field_name]
-            if explicit_config._reset_extensions:
-                config_data["extensions"] = {}
-            for field_name in explicit_config._configured_extension_fields:
-                if field_name in explicit_config.extensions:
-                    config_data["extensions"][field_name] = explicit_config.extensions[field_name]
-                else:
-                    config_data["extensions"].pop(field_name, None)
-            for field_name in explicit_config._configured_nested_extension_fields:
-                config_data["extensions"][field_name] = explicit_config.extensions[field_name]
+            explicit_layer = cls._load_layer_from_yaml_file(file=config_file)
+            cls._apply_layer(config_data=config_data, layer=explicit_layer, init_fields=init_fields)
         # 3. Apply overrides (non-None values take precedence)
         # Convert Sequence to list to match dataclass field types
         if memory_db_type is not None:

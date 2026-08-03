@@ -537,7 +537,7 @@ async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
         return 0
 
     _, port = local_address
-    if not stop_server_on_port(port=port):
+    if not await asyncio.to_thread(stop_server_on_port, port=port):
         print(f"Server at {base_url} is running but could not be stopped.")
         print(f"Find and kill it manually: look for a process listening on port {port}.")
         return 1

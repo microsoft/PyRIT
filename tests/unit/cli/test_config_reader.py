@@ -133,6 +133,55 @@ def test_read_server_settings_overlay_overrides_startup_timeout(tmp_path):
         )
 
 
+def test_read_server_settings_overlay_timeout_preserves_default_url(tmp_path):
+    default = tmp_path / "default.yaml"
+    default.write_text("server:\n  url: http://default:8000\n  startup_timeout: 180\n", encoding="utf-8")
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text("server:\n  startup_timeout: 45\n", encoding="utf-8")
+
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", default):
+        assert read_server_settings(config_file=overlay) == ServerSettings(
+            url="http://default:8000",
+            startup_timeout=45.0,
+        )
+
+
+def test_read_server_settings_overlay_url_preserves_default_timeout(tmp_path):
+    default = tmp_path / "default.yaml"
+    default.write_text("server:\n  url: http://default:8000\n  startup_timeout: 180\n", encoding="utf-8")
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text("server:\n  url: http://overlay:9000\n", encoding="utf-8")
+
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", default):
+        assert read_server_settings(config_file=overlay) == ServerSettings(
+            url="http://overlay:9000",
+            startup_timeout=180.0,
+        )
+
+
+def test_read_server_settings_empty_overlay_block_preserves_defaults(tmp_path):
+    default = tmp_path / "default.yaml"
+    default.write_text("server:\n  url: http://default:8000\n  startup_timeout: 180\n", encoding="utf-8")
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text("server: {}\n", encoding="utf-8")
+
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", default):
+        assert read_server_settings(config_file=overlay) == ServerSettings(
+            url="http://default:8000",
+            startup_timeout=180.0,
+        )
+
+
+def test_read_server_settings_null_overlay_block_resets_defaults(tmp_path):
+    default = tmp_path / "default.yaml"
+    default.write_text("server:\n  url: http://default:8000\n  startup_timeout: 180\n", encoding="utf-8")
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text("server: null\n", encoding="utf-8")
+
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", default):
+        assert read_server_settings(config_file=overlay) == ServerSettings()
+
+
 @pytest.mark.parametrize("startup_timeout", ["slow", True, 0, -1, float("inf")])
 def test_read_server_settings_rejects_invalid_startup_timeout(tmp_path, startup_timeout):
     bad = tmp_path / "bad.yaml"
