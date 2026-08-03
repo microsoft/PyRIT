@@ -20,6 +20,10 @@ from pyrit.prompt_target.common.realtime_audio import (
 from pyrit.prompt_target.openai._openai_realtime_dispatcher import (
     _OpenAIRealtimeDispatcher,
 )
+from pyrit.prompt_target.openai._openai_realtime_event_router import (
+    _OpenAIRealtimeEventKind,
+    _OpenAIRealtimeEventRouter,
+)
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -417,6 +421,26 @@ async def test_receive_events_with_audio_and_transcript(target):
     assert result.transcripts[1] == "this is a test transcript."
 
 
+async def test_receive_events_soft_finishes_after_audio_done(target):
+    """Atomic receiving returns accumulated deltas when audio.done is followed by its grace-period timeout."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_soft_finish"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _events():
+        yield _scripted_event("response.output_audio.delta", delta=base64.b64encode(b"audio").decode("ascii"))
+        yield _scripted_event("response.output_audio_transcript.delta", delta="partial")
+        yield _scripted_event("response.output_audio.done")
+        raise asyncio.TimeoutError
+
+    mock_connection.__aiter__.side_effect = _events
+
+    result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b"audio"
+    assert result.transcripts == ["partial"]
+
+
 async def test_multi_turn_reuses_connection(target):
     """Test that multiple turns in the same conversation reuse the same connection.
 
@@ -582,6 +606,42 @@ def _make_dispatcher(connection):
     return _OpenAIRealtimeDispatcher(connection=connection)
 
 
+@pytest.mark.parametrize(
+    ("event_type", "expected_kind"),
+    [
+        ("response.audio.delta", _OpenAIRealtimeEventKind.AUDIO_DELTA),
+        ("response.output_audio.delta", _OpenAIRealtimeEventKind.AUDIO_DELTA),
+        ("response.audio.done", _OpenAIRealtimeEventKind.AUDIO_DONE),
+        ("response.output_audio.done", _OpenAIRealtimeEventKind.AUDIO_DONE),
+        ("response.audio_transcript.delta", _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA),
+        ("response.output_audio_transcript.delta", _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA),
+    ],
+)
+def test_realtime_event_router_normalizes_response_aliases(event_type, expected_kind):
+    assert _OpenAIRealtimeEventRouter.classify_event(event_type) is expected_kind
+
+
+def test_realtime_event_router_collects_audio_and_transcript_deltas():
+    audio_buffer = bytearray()
+    transcripts: list[str] = []
+
+    _OpenAIRealtimeEventRouter.collect_response_delta(
+        event=_scripted_event("response.output_audio.delta", delta=base64.b64encode(b"audio").decode("ascii")),
+        event_kind=_OpenAIRealtimeEventKind.AUDIO_DELTA,
+        audio_buffer=audio_buffer,
+        transcripts=transcripts,
+    )
+    _OpenAIRealtimeEventRouter.collect_response_delta(
+        event=_scripted_event("response.output_audio_transcript.delta", delta="hello"),
+        event_kind=_OpenAIRealtimeEventKind.TRANSCRIPT_DELTA,
+        audio_buffer=audio_buffer,
+        transcripts=transcripts,
+    )
+
+    assert bytes(audio_buffer) == b"audio"
+    assert transcripts == ["hello"]
+
+
 async def test_cancel_does_not_send_response_cancel():
     """_cancel_async must NOT send response.cancel (server auto-cancels on speech detection)."""
     connection = AsyncMock()
@@ -683,6 +743,16 @@ async def test_route_event_happy_path_resolves_completion_with_assembled_result(
     assert result.audio_bytes == b"\xaa" * 4800
     assert result.transcripts == ["hello ", "world"]
     assert state.interrupted is False
+
+
+async def test_route_event_audio_done_does_not_complete_streaming_turn():
+    """Streaming waits for response.done or barge-in instead of using the atomic soft-finish policy."""
+    dispatcher = _make_dispatcher(AsyncMock())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event_async(event=_scripted_event("response.output_audio.done"), state=state)
+
+    assert not state.completion.done()
 
 
 async def test_route_event_speech_started_while_responding_cancels_and_resolves_interrupted():
