@@ -64,12 +64,18 @@ def test_parse_run_arguments_skips_scenario_params_colliding_with_builtins():
     assert "scenario__max_concurrency" not in result
 
 
-def test_parse_run_arguments_raises_on_scenario_vs_scenario_collision():
-    """Two scenario params normalizing to the same CLI flag remain a scenario bug and raise."""
+def test_parse_run_arguments_first_wins_on_scenario_vs_scenario_collision():
+    """Two scenario params normalizing to the same CLI flag: first wins, second is dropped (parity with pyrit_scan)."""
     declared_params = [
         _sp(name="max_turns", description="First."),
         _sp(name="max-turns", description="Normalizes to the same flag."),
     ]
 
-    with pytest.raises(ValueError, match="normalize to the same CLI flag"):
-        parse_run_arguments(args_string="airt.scam", declared_params=declared_params)
+    result = parse_run_arguments(
+        args_string="airt.scam --max-turns 4",
+        declared_params=declared_params,
+    )
+
+    # The first declaration owns the flag; only one scenario__ key is produced.
+    assert result["scenario__max_turns"] == "4"
+    assert "scenario__max-turns" not in result
