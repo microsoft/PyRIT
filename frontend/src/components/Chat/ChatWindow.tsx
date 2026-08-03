@@ -40,17 +40,11 @@ import { useChatWindowStyles } from './ChatWindow.styles'
 const NARROW_SCREEN_QUERY = '(max-width: 600px)'
 const MARKDOWN_PREFERENCE_STORAGE_KEY = 'pyrit.chatMarkdownMode'
 
-type MarkdownPreference = 'raw' | 'markdown'
-
-function isMarkdownPreference(value: unknown): value is MarkdownPreference {
-  return value === 'raw' || value === 'markdown'
-}
-
 function readStoredMarkdownPreference(): boolean {
   if (typeof window === 'undefined') return false
   try {
     const storedPreference = window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)
-    return isMarkdownPreference(storedPreference) && storedPreference === 'markdown'
+    return storedPreference === 'markdown'
   } catch {
     return false
   }
