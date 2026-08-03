@@ -60,7 +60,15 @@ export default function InitializerParametersDialog({
   const [parametersText, setParametersText] = useState(() => serializeParameters(initialParameters))
   const [error, setError] = useState<string | null>(null)
 
+  const acceptsParameters = (initializer?.supported_parameters.length ?? 0) > 0
+
   const handleSubmit = async (): Promise<void> => {
+    if (!acceptsParameters) {
+      setError(null)
+      await onSubmit(null)
+      return
+    }
+
     let parameters: Record<string, unknown> | null
     try {
       parameters = parseParametersText(parametersText)
@@ -100,17 +108,23 @@ export default function InitializerParametersDialog({
                 </div>
               </>
             )}
-            <Field label="Parameters JSON">
-              <Textarea
-                className={styles.parametersEditor}
-                value={parametersText}
-                onChange={(_, data) => {
-                  setParametersText(data.value)
-                  setError(null)
-                }}
-                disabled={submitting}
-              />
-            </Field>
+            {acceptsParameters ? (
+              <Field label="Parameters JSON">
+                <Textarea
+                  className={styles.parametersEditor}
+                  value={parametersText}
+                  onChange={(_, data) => {
+                    setParametersText(data.value)
+                    setError(null)
+                  }}
+                  disabled={submitting}
+                />
+              </Field>
+            ) : (
+              <Text size={300} className={styles.parameterHint}>
+                This initializer takes no parameters.
+              </Text>
+            )}
             {error && (
               <Text role="alert" className={styles.errorText}>
                 {error}

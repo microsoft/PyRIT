@@ -46,6 +46,14 @@ const scorerInitializer: RegisteredInitializer = {
   ],
 }
 
+const noParamInitializer: RegisteredInitializer = {
+  initializer_name: 'load_default_datasets',
+  initializer_type: 'DatasetInitializer',
+  description: 'Loads default datasets.',
+  required_env_vars: [],
+  supported_parameters: [],
+}
+
 const sampleItems: AdditionalInitializerSetting[] = [
   {
     id: 'additional-1',
@@ -192,5 +200,34 @@ describe('AdditionalInitializers', () => {
       'Unexpected end of JSON input',
     )
     expect(defaultProps.onSave).not.toHaveBeenCalled()
+  })
+
+  it('should hide the parameters editor and submit null for a no-parameter initializer', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TestWrapper>
+        <AdditionalInitializers
+          {...defaultProps}
+          registeredInitializers={[targetInitializer, scorerInitializer, noParamInitializer]}
+        />
+      </TestWrapper>,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Initializer to add' }), {
+      target: { value: 'load_default_datasets' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Add load_default_datasets initializer')
+    expect(within(dialog).getByText('This initializer takes no parameters.')).toBeInTheDocument()
+    expect(
+      within(dialog).queryByRole('textbox', { name: 'Parameters JSON', hidden: true }),
+    ).not.toBeInTheDocument()
+
+    await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
+
+    expect(defaultProps.onAdd).toHaveBeenCalledWith('load_default_datasets', null)
   })
 })
