@@ -14,6 +14,7 @@ import {
   SettingsRegular,
   HistoryRegular,
   PersonFeedbackRegular,
+  WrenchRegular,
   OpenRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
@@ -22,7 +23,7 @@ import { useTheme } from '../../hooks/useTheme'
 import type { ThemeMode } from '../../hooks/useTheme'
 import { useNavigationStyles } from './Navigation.styles'
 
-export type ViewName = 'home' | 'chat' | 'history' | 'config'
+export type ViewName = 'home' | 'chat' | 'history' | 'config' | 'initializers'
 
 interface NavigationProps {
   currentView: ViewName
@@ -102,6 +103,17 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
           aria-label="Configuration"
           aria-current={currentView === 'config' ? 'page' : undefined}
           onClick={() => onNavigate('config')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'initializers'}
+          appearance="subtle"
+          icon={<WrenchRegular />}
+          title="Initializers"
+          aria-label="Initializers"
+          aria-current={currentView === 'initializers' ? 'page' : undefined}
+          onClick={() => onNavigate('initializers')}
         />
       </nav>
 

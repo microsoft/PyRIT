@@ -1,14 +1,22 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import type { ChangeEvent } from 'react'
 import {
   Button,
   Drawer,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   mergeClasses,
+  Switch,
   Text,
   Tooltip,
   useRestoreFocusSource,
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
-import { AddRegular, PanelRightRegular } from '@fluentui/react-icons'
+import type { SwitchOnChangeData } from '@fluentui/react-components'
+import { AddRegular, ArrowDownloadRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import SystemPromptBanner from './SystemPromptBanner'
 import ChatInputArea from './ChatInputArea'
@@ -22,12 +30,34 @@ import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
+import { exportConversation } from '../../utils/conversationExport'
+import type { ExportFormat } from '../../utils/conversationExport'
 import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
 import { targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
 const NARROW_SCREEN_QUERY = '(max-width: 600px)'
+const MARKDOWN_PREFERENCE_STORAGE_KEY = 'pyrit.chatMarkdownMode'
+
+function readStoredMarkdownPreference(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    const storedPreference = window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)
+    return storedPreference === 'markdown'
+  } catch {
+    return false
+  }
+}
+
+function persistMarkdownPreference(enabled: boolean): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(MARKDOWN_PREFERENCE_STORAGE_KEY, enabled ? 'markdown' : 'raw')
+  } catch {
+    /* localStorage may be unavailable (private mode, quota, sandboxed iframe). */
+  }
+}
 
 function matchesNarrowScreen(): boolean {
   return typeof window !== 'undefined'
@@ -86,6 +116,8 @@ export default function ChatWindow({
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
+  // Conversation-wide preference for rendering message text as Markdown.
+  const [globalMarkdown, setGlobalMarkdown] = useState(() => readStoredMarkdownPreference())
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
@@ -93,6 +125,14 @@ export default function ChatWindow({
   const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
+
+  const handleMarkdownChange = useCallback((
+    _event: ChangeEvent<HTMLInputElement>,
+    data: SwitchOnChangeData,
+  ): void => {
+    setGlobalMarkdown(data.checked)
+    persistMarkdownPreference(data.checked)
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -614,6 +654,21 @@ export default function ChatWindow({
 
   const systemMessage = messages.find(message => message.role === 'system')
 
+  // Export is available whenever there is a stable, viewable conversation:
+  // not while empty, loading, or mid-send. A lone system prompt (rendered only
+  // in the banner, not the chat body) does not count as an exportable message.
+  // Read-only / operator-lock / cross-target states do not block export.
+  const canExportConversation =
+    messages.some((message) => !message.isLoading && message.role !== 'system') &&
+    !isSending &&
+    !isLoadingAttack &&
+    !isLoadingMessages &&
+    !awaitingConversationLoad
+
+  const handleExport = (format: ExportFormat) => {
+    exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+  }
+
   return (
     <div className={styles.root}>
       <h1 className={styles.pageHeading}>Chat</h1>
@@ -643,6 +698,38 @@ export default function ChatWindow({
             )}
           </div>
           <div className={styles.ribbonActions}>
+            <Tooltip content="Render all messages as Markdown by default" relationship="label">
+              <Switch
+                checked={globalMarkdown}
+                onChange={handleMarkdownChange}
+                label="Markdown"
+                data-testid="global-markdown-toggle"
+              />
+            </Tooltip>
+            <Menu>
+              <MenuTrigger disableButtonEnhancement>
+                <Tooltip content="Export conversation" relationship="label">
+                  <Button
+                    appearance="subtle"
+                    className={styles.ribbonAction}
+                    icon={<ArrowDownloadRegular />}
+                    disabled={!canExportConversation}
+                    aria-label="Export conversation"
+                    data-testid="export-conversation-btn"
+                  />
+                </Tooltip>
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  <MenuItem onClick={() => handleExport('markdown')} data-testid="export-markdown-item">
+                    Export as Markdown (.md)
+                  </MenuItem>
+                  <MenuItem onClick={() => handleExport('json')} data-testid="export-json-item">
+                    Export as JSON (.json)
+                  </MenuItem>
+                </MenuList>
+              </MenuPopover>
+            </Menu>
             <Tooltip content="Toggle conversations panel" relationship="label">
               <Button
                 {...restoreFocusTargetAttributes}
@@ -684,6 +771,7 @@ export default function ChatWindow({
           isOperatorLocked={isOperatorLocked}
           isCrossTarget={isCrossTargetLocked}
           noTargetSelected={!activeTarget}
+          globalMarkdown={globalMarkdown}
         />
         <ChatInputArea
           ref={inputBoxRef}
