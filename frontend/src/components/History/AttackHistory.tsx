@@ -184,6 +184,19 @@ export default function AttackHistory({
     filters.attackTypes.length > 0 || filters.outcome || filters.converter.length > 0 ||
     filters.hasConverters !== undefined ||
     filters.operator.length > 0 || filters.operation.length > 0 || filters.otherLabels.length > 0
+  const emptyStateGuidance = activeTarget
+    ? {
+        text: 'Start an attack to see it here.',
+        label: 'Start attack',
+        icon: <ChatRegular />,
+        view: 'chat' as const,
+      }
+    : {
+        text: 'Configure a target before starting an attack.',
+        label: 'Configure target',
+        icon: <SettingsRegular />,
+        view: 'config' as const,
+      }
 
   return (
     <div className={styles.root}>
@@ -237,20 +250,16 @@ export default function AttackHistory({
           <div className={styles.emptyState} data-testid="empty-state">
             <Text size={400}>No attacks found</Text>
             <Text size={200}>
-              {hasActiveFilters
-                ? 'Try adjusting your filters.'
-                : activeTarget
-                  ? 'Start an attack to see it here.'
-                  : 'Configure a target before starting an attack.'}
+              {hasActiveFilters ? 'Try adjusting your filters.' : emptyStateGuidance.text}
             </Text>
             {!hasActiveFilters && (
               <Button
                 className={styles.touchTargetHeight}
                 appearance="primary"
-                icon={activeTarget ? <ChatRegular /> : <SettingsRegular />}
-                onClick={() => onNavigate(activeTarget ? 'chat' : 'config')}
+                icon={emptyStateGuidance.icon}
+                onClick={() => onNavigate(emptyStateGuidance.view)}
               >
-                {activeTarget ? 'Start attack' : 'Configure target'}
+                {emptyStateGuidance.label}
               </Button>
             )}
           </div>
