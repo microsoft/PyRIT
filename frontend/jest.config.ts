@@ -35,11 +35,17 @@ const config: Config = {
     },
   },
   transform: {
+    // Two entries on purpose — do NOT collapse them back into a single
+    // `^.+\.[tj]sx?$` pattern. ts-jest runs `astTransformers` over TypeScript
+    // sources only, so `jest-import-meta-transformer.ts` never sees the .js in
+    // node_modules and any `import.meta` there survives into the CommonJS
+    // output, where it is a syntax error. Every ESM-only dependency added to
+    // the allowlist below depends on the wrapper to neutralize it first
+    // (react-router's `import.meta.hot` guard is the current example).
     "^.+\\.tsx?$": ["ts-jest", tsJestOptions],
     // Also transform JavaScript so ts-jest can down-compile the ESM-only
-    // react-markdown and react-router dependency chains (whitelisted below)
-    // to CommonJS. Those go through a wrapper because ts-jest applies
-    // `astTransformers` to TypeScript sources only.
+    // react-markdown and react-router dependency chains to CommonJS. The
+    // `[cm]?` covers .mjs/.cjs dist files such as cookie-es/dist/index.mjs.
     "^.+\\.[cm]?jsx?$": ["<rootDir>/jest-esm-js-transformer.cjs", tsJestOptions],
   },
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
