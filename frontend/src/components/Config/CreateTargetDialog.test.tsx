@@ -265,6 +265,28 @@ describe("CreateTargetDialog", () => {
     expect(selectedDetails).toHaveTextContent("Supported authentication: API key");
   });
 
+  it("should keep the selected target displayed after focus moves to another field", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+
+    await user.click(
+      screen.getByPlaceholderText("https://your-resource.openai.azure.com/"),
+    );
+    await user.keyboard("https://api.openai.com");
+    restoreDialogAccessibility();
+
+    const picker = screen.getByRole("combobox", { name: /target type/i });
+    expect(picker).toHaveTextContent("OpenAI chat");
+    expect(picker).not.toHaveTextContent("Select a target type");
+  });
+
   it("should disable target selection while catalog details are loading", () => {
     mockedTargetsApi.listTargetCatalog.mockReturnValue(
       new Promise<TargetCatalogResponse>(() => {}),

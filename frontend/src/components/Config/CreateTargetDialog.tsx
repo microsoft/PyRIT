@@ -536,7 +536,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   placeholder={catalogStatus === 'loading' ? 'Loading target types...' : 'Select a target type'}
                   positioning={{ matchTargetSize: 'width' }}
                   selectedOptions={targetType ? [targetType] : []}
-                  value={targetType ? selectedTargetDisplayName : undefined}
+                  value={targetType ? selectedTargetDisplayName : ''}
                   onOptionSelect={(_, data) => {
                     const next = data.optionValue
                     if (!next) return

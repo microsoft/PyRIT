@@ -371,6 +371,11 @@ test.describe("Create Target Dialog", () => {
     // Fill endpoint
     await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://my-endpoint.openai.azure.com/");
 
+    // The picker must keep showing the selection once focus moves to another field
+    await expect(dialog.getByRole("combobox", { name: "Target Type" })).toContainText(
+      "OpenAI chat"
+    );
+
     // Fill model name
     await dialog.getByPlaceholder("e.g. gpt-4o, my-deployment").fill("gpt-4o-test");
 
