@@ -8,7 +8,7 @@ from functools import partial
 from typing import Any, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.response_handler import CallableResponseHandler
@@ -23,6 +23,13 @@ from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildgu
 
 _DEFAULT_WILDGUARD_PROMPT_PATH = SCORER_SEED_PROMPT_PATH / "wildguard" / "wildguard_prompt.yaml"
 _PROMPT_PARAMETERS = ("user_prompt", "response")
+
+# Message pieces are scored concurrently with asyncio.gather, and TrueFalseCompositeScorer
+# gathers its child scorers too, so several coroutines can reach the memory read at once. The
+# read runs in a worker thread, which puts the shared SQLAlchemy session on several threads and
+# makes the lookup intermittently return nothing. Shared at module level rather than per
+# instance so composed scorers serialize against each other as well.
+_MEMORY_READ_LOCK = asyncio.Lock()
 
 _MISSING_USER_PROMPT_MESSAGE = (
     "WildGuard classifies a user prompt and a model response together, so it needs the prompt "
@@ -150,7 +157,6 @@ class WildGuardScorer(TrueFalseScorer):
         self._label = label
         self._user_prompt = user_prompt
         self._prompt_template = _resolve_prompt_template(prompt_template=prompt_template)
-        self._response_handler = CallableResponseHandler(parser=partial(parse_wildguard_response, label=label))
 
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
@@ -195,9 +201,10 @@ class WildGuardScorer(TrueFalseScorer):
 
         # get_message_pieces is a blocking SQLAlchemy query, so it is offloaded rather than
         # run on the event loop during scoring.
-        conversation = await asyncio.to_thread(
-            self._memory.get_message_pieces, conversation_id=message_piece.conversation_id
-        )
+        async with _MEMORY_READ_LOCK:
+            conversation = await asyncio.to_thread(
+                self._memory.get_message_pieces, conversation_id=message_piece.conversation_id
+            )
         # The converted value is what the target actually received. After a converter runs, the
         # original value can be the seed prompt, which the target never saw.
         preceding_turn = [
@@ -243,7 +250,9 @@ class WildGuardScorer(TrueFalseScorer):
         unvalidated_score = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
             system_prompt=None,
-            response_handler=self._response_handler,
+            response_handler=CallableResponseHandler(
+                parser=partial(parse_wildguard_response, label=self._label, scope=str(message_piece.id))
+            ),
             value=request_prompt.value,
             data_type="text",
             scored_prompt_id=message_piece.id,
@@ -257,6 +266,34 @@ class WildGuardScorer(TrueFalseScorer):
                 score_type="true_false",
             )
         ]
+
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+        """
+        Score every supported piece and record the aggregated verdict.
+
+        Each piece keeps its own labels and raw output under its own keys, so none is lost to
+        the last-writer-wins metadata merge. This adds the label-level verdict on top, which
+        follows the configured aggregator rather than whichever piece happened to be merged
+        last.
+
+        Args:
+            message (Message): The message to score.
+            objective (str | None): Objective retained on the resulting score. Defaults to None.
+
+        Returns:
+            list[Score]: A single aggregated true/false score, or an empty list when no piece
+                could be scored.
+        """
+        scores = await super()._score_async(message, objective=objective)
+        if not scores:
+            return scores
+
+        aggregate = scores[0]
+        aggregate.score_metadata = {
+            **(aggregate.score_metadata or {}),
+            f"wildguard_{self._label.metadata_key}_verdict": ("yes" if aggregate.get_value() else "no"),
+        }
+        return scores
 
 
 def _resolve_prompt_template(*, prompt_template: SeedPrompt | str | None) -> SeedPrompt:

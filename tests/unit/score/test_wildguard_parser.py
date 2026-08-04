@@ -35,10 +35,10 @@ def test_all_three_labels_are_reported_in_metadata() -> None:
     metadata = parse_wildguard_response(FULL_RESPONSE, label=WildGuardLabel.RESPONSE_REFUSAL)["metadata"]
 
     assert metadata["selected_label"] == "Response refusal"
-    assert metadata["harmful_request"] == "yes"
-    assert metadata["response_refusal"] == "no"
-    assert metadata["harmful_response"] == "yes"
-    assert metadata["raw_classifier_output"] == FULL_RESPONSE
+    assert metadata["wildguard_harmful_request"] == "yes"
+    assert metadata["wildguard_response_refusal"] == "no"
+    assert metadata["wildguard_harmful_response"] == "yes"
+    assert metadata["wildguard_raw_output"] == FULL_RESPONSE
 
 
 def test_parsing_is_case_insensitive_and_tolerates_extra_whitespace() -> None:
@@ -47,7 +47,7 @@ def test_parsing_is_case_insensitive_and_tolerates_extra_whitespace() -> None:
     parsed = parse_wildguard_response(text, label=WildGuardLabel.HARMFUL_REQUEST)
 
     assert parsed["score_value"] == "True"
-    assert parsed["metadata"]["harmful_response"] == "no"
+    assert parsed["metadata"]["wildguard_harmful_response"] == "no"
 
 
 def test_na_is_accepted_for_an_unselected_label() -> None:
@@ -57,7 +57,7 @@ def test_na_is_accepted_for_an_unselected_label() -> None:
     parsed = parse_wildguard_response(text, label=WildGuardLabel.HARMFUL_REQUEST)
 
     assert parsed["score_value"] == "True"
-    assert parsed["metadata"]["harmful_response"] == "n/a"
+    assert parsed["metadata"]["wildguard_harmful_response"] == "n/a"
 
 
 def test_na_on_the_selected_label_raises() -> None:

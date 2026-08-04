@@ -32,6 +32,13 @@ def _sent_request(target: MagicMock) -> str:
     return send_kwargs["message"].message_pieces[-1].converted_value
 
 
+def _label_value(metadata: dict, suffix: str) -> str:
+    """Read a per-piece label value, whose key carries the scored piece's id."""
+    matches = [value for key, value in metadata.items() if key.endswith(f"_{suffix}")]
+    assert len(matches) == 1, f"expected one {suffix} entry, got {matches}"
+    return matches[0]
+
+
 def _turn(*, role: str, text: str, conversation_id: str, converted: str | None = None) -> Message:
     return Message(
         message_pieces=[
@@ -166,7 +173,7 @@ async def test_harmful_request_label_works_with_an_empty_response(sqlite_instanc
     scores = await scorer.score_async(answer)
 
     assert scores[0].get_value() is True
-    assert scores[0].score_metadata["harmful_response"] == "n/a"
+    assert _label_value(scores[0].score_metadata, "harmful_response") == "n/a"
 
 
 async def test_selected_label_drives_the_value_and_others_land_in_metadata(
@@ -180,10 +187,65 @@ async def test_selected_label_drives_the_value_and_others_land_in_metadata(
 
     assert scores[0].get_value() is False
     assert scores[0].score_metadata["selected_label"] == "Response refusal"
-    assert scores[0].score_metadata["harmful_request"] == "yes"
-    assert scores[0].score_metadata["harmful_response"] == "yes"
+    assert _label_value(scores[0].score_metadata, "harmful_request") == "yes"
+    assert _label_value(scores[0].score_metadata, "harmful_response") == "yes"
     # A single request answers all three labels.
     assert target.send_prompt_async.call_count == 1
+
+
+async def test_multiple_pieces_keep_every_label_and_report_the_aggregate(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """
+    A message can hold several text pieces. Each is scored separately and OR-aggregated, and
+    the aggregate merges child metadata last-writer-wins, so without a per-piece namespace the
+    first piece's labels and output are overwritten by the second.
+    """
+    conversation_id = str(uuid.uuid4())
+    sqlite_instance.add_message_to_memory(
+        request=_turn(role="user", text="a question", conversation_id=conversation_id)
+    )
+    answer = Message(
+        message_pieces=[
+            MessagePiece(role="assistant", original_value="one", conversation_id=conversation_id),
+            MessagePiece(role="assistant", original_value="two", conversation_id=conversation_id),
+        ]
+    )
+    sqlite_instance.add_message_to_memory(request=answer)
+
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier("MockWildGuardTarget")
+    target.send_prompt_async = AsyncMock(
+        side_effect=[
+            [Message(message_pieces=[MessagePiece(role="assistant", original_value=reply)])]
+            for reply in (
+                "Harmful request: yes\nResponse refusal: no\nHarmful response: yes",
+                "Harmful request: no\nResponse refusal: yes\nHarmful response: no",
+            )
+        ]
+    )
+    scorer = WildGuardScorer(chat_target=target)
+
+    scores = await scorer.score_async(answer)
+
+    assert target.send_prompt_async.call_count == 2
+    assert scores[0].get_value() is True
+    metadata = scores[0].score_metadata
+
+    # The aggregated verdict follows the configured aggregator, not whichever piece merged last.
+    assert metadata["wildguard_harmful_response_verdict"] == "yes"
+
+    # Both pieces survive under their own keys. Pieces are scored with asyncio.gather, so which
+    # piece receives which reply is not ordered; what matters is that neither overwrote the other.
+    first, second = answer.message_pieces
+    assert {
+        metadata[f"wildguard_{first.id}_harmful_response"],
+        metadata[f"wildguard_{second.id}_harmful_response"],
+    } == {"yes", "no"}
+    assert {
+        metadata[f"wildguard_{first.id}_response_refusal"],
+        metadata[f"wildguard_{second.id}_response_refusal"],
+    } == {"yes", "no"}
 
 
 async def test_scorer_sends_request_without_system_prompt_or_json_format(sqlite_instance: MemoryInterface) -> None:

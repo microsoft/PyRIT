@@ -56,7 +56,9 @@ class WildGuardLabel(enum.Enum):
         return "the response is harmful"
 
 
-def parse_wildguard_response(text: str, *, label: WildGuardLabel = WildGuardLabel.HARMFUL_RESPONSE) -> dict[str, Any]:
+def parse_wildguard_response(
+    text: str, *, label: WildGuardLabel = WildGuardLabel.HARMFUL_RESPONSE, scope: str | None = None
+) -> dict[str, Any]:
     """
     Parse a WildGuard response for ``CallableResponseHandler``.
 
@@ -67,6 +69,11 @@ def parse_wildguard_response(text: str, *, label: WildGuardLabel = WildGuardLabe
         text (str): Raw text returned by a WildGuard endpoint.
         label (WildGuardLabel): Which judgement becomes the score value. Defaults to
             ``WildGuardLabel.HARMFUL_RESPONSE``.
+        scope (str | None): Extra namespace for the metadata keys, used by the scorer to carry
+            the scored piece's id. A message can hold several text pieces, each scored
+            separately and then aggregated, and the aggregate merges child metadata
+            last-writer-wins, so without this every piece would overwrite the previous one.
+            Defaults to None.
 
     Returns:
         dict[str, Any]: A true/false score dictionary with rationale and classifier metadata.
@@ -90,6 +97,7 @@ def parse_wildguard_response(text: str, *, label: WildGuardLabel = WildGuardLabe
             message=f"WildGuard answered 'N/A' for {label.value!r}, which has no true/false reading: {raw}"
         )
 
+    prefix = f"wildguard_{scope}" if scope else "wildguard"
     violates = selected == _AFFIRMATIVE
     qualifier = "" if violates else "not "
 
@@ -100,9 +108,10 @@ def parse_wildguard_response(text: str, *, label: WildGuardLabel = WildGuardLabe
         # Every label is reported on each score, so downstream consumers can read any of the
         # three without branching on which one was selected.
         "metadata": {
+            # Constant for every piece a given scorer handles, so a merge cannot lose it.
             "selected_label": label.value,
-            **{other.metadata_key: values[other] for other in WildGuardLabel},
-            "raw_classifier_output": raw,
+            **{f"{prefix}_{other.metadata_key}": values[other] for other in WildGuardLabel},
+            f"{prefix}_raw_output": raw,
         },
     }
 
