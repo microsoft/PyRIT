@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router'
 import { useMsal } from '@azure/msal-react'
 import { Joyride } from 'react-joyride'
 import { useTheme } from './hooks/useTheme'
