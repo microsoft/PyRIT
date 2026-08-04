@@ -9,6 +9,7 @@ from build_scripts.gen_api_md import (
     _build_example_index,
     _build_symbol_index,
     _class_anchor,
+    _example_link_path,
     _format_bases,
     _format_reexport_alias,
     _format_reexport_target,
@@ -754,3 +755,27 @@ def test_render_module_adds_examples_to_functions_and_classes() -> None:
     assert "- [Class guide](../guide/class.ipynb)" in out
     class_section = out.split("## `ExampleTarget`", 1)[1]
     assert class_section.index("- [Class guide]") < class_section.index("**Methods:**")
+
+
+def test_example_link_path_uses_configured_api_directory_depth() -> None:
+    assert (
+        _example_link_path(
+            "guide/example.md",
+            api_md_dir=Path("doc/reference/generated/api"),
+            doc_root=Path("doc"),
+        )
+        == "../../../guide/example.md"
+    )
+
+
+def test_render_module_does_not_attach_examples_to_methods() -> None:
+    module = _fake_module("pyrit.examples", [_fake_class("ExampleTarget", methods=["run"])])
+    examples_by_anchor = {
+        _method_anchor("pyrit.examples", "ExampleTarget", "run"): [
+            ExampleReference(title="Method guide", path="guide/method.md")
+        ]
+    }
+
+    out = render_module(module, symbol_index={}, examples_by_anchor=examples_by_anchor)
+
+    assert "Method guide" not in out
