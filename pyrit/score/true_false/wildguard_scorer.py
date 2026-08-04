@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from functools import partial
 from typing import Any, ClassVar
 
@@ -24,12 +25,14 @@ from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildgu
 _DEFAULT_WILDGUARD_PROMPT_PATH = SCORER_SEED_PROMPT_PATH / "wildguard" / "wildguard_prompt.yaml"
 _PROMPT_PARAMETERS = ("user_prompt", "response")
 
-# Message pieces are scored concurrently with asyncio.gather, and TrueFalseCompositeScorer
-# gathers its child scorers too, so several coroutines can reach the memory read at once. The
-# read runs in a worker thread, which puts the shared SQLAlchemy session on several threads and
-# makes the lookup intermittently return nothing. Shared at module level rather than per
-# instance so composed scorers serialize against each other as well.
-_MEMORY_READ_LOCK = asyncio.Lock()
+# The user prompt belongs to the conversation, not to an individual piece, so it is resolved
+# once per scored message and handed to the pieces through this. Resolving inside
+# _score_piece_async instead would issue one memory read per piece from tasks running
+# concurrently under asyncio.gather, which puts the shared SQLAlchemy session on several
+# threads and makes the lookup intermittently return nothing. A ContextVar is used rather than
+# an attribute or a lock because gather copies the context into each child task, and because
+# it carries no event-loop affinity.
+_RESOLVED_USER_PROMPT: ContextVar[str | None] = ContextVar("wildguard_resolved_user_prompt", default=None)
 
 _MISSING_USER_PROMPT_MESSAGE = (
     "WildGuard classifies a user prompt and a model response together, so it needs the prompt "
@@ -201,10 +204,9 @@ class WildGuardScorer(TrueFalseScorer):
 
         # get_message_pieces is a blocking SQLAlchemy query, so it is offloaded rather than
         # run on the event loop during scoring.
-        async with _MEMORY_READ_LOCK:
-            conversation = await asyncio.to_thread(
-                self._memory.get_message_pieces, conversation_id=message_piece.conversation_id
-            )
+        conversation = await asyncio.to_thread(
+            self._memory.get_message_pieces, conversation_id=message_piece.conversation_id
+        )
         # The converted value is what the target actually received. After a converter runs, the
         # original value can be the seed prompt, which the target never saw.
         preceding_turn = [
@@ -238,7 +240,7 @@ class WildGuardScorer(TrueFalseScorer):
             # exceptions drive a retry and resending an empty response cannot change the answer.
             raise ValueError(_EMPTY_RESPONSE_MESSAGE)
 
-        user_prompt = await self._resolve_user_prompt_async(message_piece)
+        user_prompt = _RESOLVED_USER_PROMPT.get()
         if not user_prompt:
             raise ValueError(_MISSING_USER_PROMPT_MESSAGE)
 
@@ -284,7 +286,12 @@ class WildGuardScorer(TrueFalseScorer):
             list[Score]: A single aggregated true/false score, or an empty list when no piece
                 could be scored.
         """
-        scores = await super()._score_async(message, objective=objective)
+        token = _RESOLVED_USER_PROMPT.set(await self._resolve_user_prompt_async(message.get_piece()))
+        try:
+            scores = await super()._score_async(message, objective=objective)
+        finally:
+            _RESOLVED_USER_PROMPT.reset(token)
+
         if not scores:
             return scores
 
