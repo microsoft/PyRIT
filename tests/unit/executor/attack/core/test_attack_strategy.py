@@ -15,6 +15,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategy,
     _DefaultAttackStrategyEventHandler,
 )
+from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
 from pyrit.executor.core import StrategyEvent, StrategyEventData
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
@@ -630,6 +631,27 @@ class TestDefaultAttackStrategyEventHandler:
             assert stored_result.error_message == "something broke"
             assert stored_result.error_type == "ValueError"
             assert stored_result.execution_time_ms == 500
+
+    async def test_on_error_uses_multi_turn_session_conversation_id(self, mock_memory):
+        """Test that multi-turn failures remain correlated with their active conversation."""
+        context = MultiTurnAttackContext(
+            params=AttackParameters(objective="Test harmful objective"),
+            session=ConversationSession(conversation_id="active-conversation-id"),
+        )
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            event_data = StrategyEventData(
+                event=StrategyEvent.ON_ERROR,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=context,
+                error=TimeoutError("target timed out"),
+            )
+            await handler.on_event_async(event_data)
+
+        stored_result = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
+        assert stored_result.conversation_id == "active-conversation-id"
 
     async def test_on_error_skips_when_no_error_or_context(self, mock_memory):
         """Test that error handler returns early when error or context is None"""
