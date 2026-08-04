@@ -161,12 +161,24 @@ class BijectionAttack(PromptSendingAttack):
 
     async def _setup_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
         """
-        Set up the bijection attack by preparing teaching messages.
+        Set up the bijection attack by preparing the objective message and teaching messages.
+
+        The objective is wrapped in convert_tokens_async delimiters (`⟪...⟫`) *before*
+        initialize_context_async runs. For non-chat targets, initialize_context_async
+        folds the plaintext teaching instructions and pre-encoded practice shots ahead of
+        this delimited objective into context.next_message as a single text request; for
+        chat-capable targets context.next_message is left as just the delimited objective.
+        Either way, when _perform_async applies self._request_converters (set up in
+        __init__), the bijection converter's convert_tokens_async finds the delimiters and
+        encodes only the objective substring -- leaving the plaintext setup instructions
+        and already-encoded practice shots untouched instead of encoding the entire folded
+        prompt.
 
         Args:
             context (SingleTurnAttackContext): The attack context containing attack parameters.
         """
         context.conversation_id = str(uuid.uuid4())
+        context.next_message = Message.from_prompt(prompt=f"⟪{context.objective}⟫", role="user")
         context.prepended_conversation = await self._build_teaching_messages_async()
 
         await self._conversation_manager.initialize_context_async(
@@ -178,19 +190,18 @@ class BijectionAttack(PromptSendingAttack):
 
     async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:
         """
-        Perform the bijection attack by encoding the objective and sending it.
+        Perform the bijection attack by sending the prepared message and decoding the response.
 
-        The objective is sent through the already-prepended converter stack (set up in
-        __init__), which encodes it the same way as the practice shots -- no plaintext
-        wrapper, keeping the protocol consistent between practice and final turns.
-
-        For non-chat targets, _setup_async's initialize_context_async already folds
-        context.prepended_conversation (the teaching protocol) into context.next_message
-        as a single text request. Only set next_message here if it is still unset, so
-        that setup-normalized message isn't overwritten and those targets still see the
-        notation instructions and practice shots instead of just the bare objective.
+        _setup_async has already populated context.next_message with the delimited
+        objective (plus, for non-chat targets, the folded plaintext teaching protocol
+        ahead of it), so this only sends it and interprets the response --
+        super()._perform_async() handles applying self._request_converters.
 
         The decoded response is stored in result metadata without mutating the original.
+        A low-confidence marker is added alongside the decoded text (never in place of it)
+        when the decoded text doesn't look more English-like than the raw response, so
+        short or domain-specific answers -- the common case for this attack's practice
+        protocol -- are never silently hidden.
 
         Args:
             context (SingleTurnAttackContext): The attack context containing attack parameters.
@@ -198,18 +209,16 @@ class BijectionAttack(PromptSendingAttack):
         Returns:
             AttackResult: The result of the attack.
         """
-        if context.next_message is None:
-            context.next_message = Message.from_prompt(prompt=context.objective, role="user")
-
         result = await super()._perform_async(context=context)
 
         # decode the response and store in metadata (don't mutate original)
         if result.last_response and result.last_response.original_value:
             raw_response = result.last_response.original_value
             decoded = self._bijection_converter.decode(raw_response)
-            if _common_english_word_count(text=decoded) > _common_english_word_count(text=raw_response):
-                result.metadata["decoded_response"] = decoded
-            else:
-                result.metadata["decoded_response_status"] = "skipped: target response was not valid bijection text"
+            result.metadata["decoded_response"] = decoded
+            if _common_english_word_count(text=decoded) <= _common_english_word_count(text=raw_response):
+                result.metadata["decoded_response_confidence"] = (
+                    "low: decoded text was not more English-like than the raw response"
+                )
 
         return result
