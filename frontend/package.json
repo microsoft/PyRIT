@@ -67,8 +67,8 @@
     "rollup": "4.59.0",
     "@tootallnate/once": "3.0.1",
     "follow-redirects": "1.16.0",
-    "js-yaml": "4.2.0",
-    "postcss": "8.5.13",
+    "js-yaml": "4.3.0",
+    "postcss": "8.5.23",
     "ws": "8.21.0"
   }
 }
