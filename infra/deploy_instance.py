@@ -6,7 +6,7 @@ CoPyRIT GUI — Deploy a new isolated instance.
 
 Automates the full deployment of an isolated CoPyRIT GUI instance:
   1. Resource group
-  2. Entra app registration + API scope + group claims
+  2. Entra app registration + delegated Microsoft Graph permission
   3. Entra security group (optional — can use existing)
   4. Azure SQL server + database
   5. Storage account + blob container (auto-injects container URL into .env)
@@ -38,7 +38,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -46,6 +45,8 @@ logger = logging.getLogger(__name__)
 
 INFRA_DIR = Path(__file__).resolve().parent
 BICEP_TEMPLATE = INFRA_DIR / "main.bicep"
+_MICROSOFT_GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
+_GRAPH_USER_READ_SCOPE_ID = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"
 
 # On Windows, az CLI is a .cmd script that requires shell=True for subprocess to find it.
 _SHELL = platform.system() == "Windows"
@@ -125,7 +126,7 @@ def create_resource_group(*, name: str, location: str, tags: list[str] | None = 
 
 def create_entra_app(*, display_name: str, service_management_reference: str = "") -> dict:
     """
-    Create an Entra app registration with API scope and group claims.
+    Create an Entra app registration with delegated Microsoft Graph access.
 
     Args:
         display_name (str): The display name for the app registration.
@@ -174,38 +175,19 @@ def create_entra_app(*, display_name: str, service_management_reference: str = "
     )
     sp_id = sp_info["id"]
 
-    # Set Application ID URI
-    logger.info("Setting Application ID URI: api://%s", app_id)
-    run_az(
-        args=[
-            "rest",
-            "--method",
-            "PATCH",
-            "--url",
-            f"https://graph.microsoft.com/v1.0/applications/{app_object_id}",
-            "--body",
-            json.dumps({"identifierUris": [f"api://{app_id}"]}),
+    logger.info("Configuring delegated Microsoft Graph User.Read permission")
+    graph_access_body = {
+        "requiredResourceAccess": [
+            {
+                "resourceAppId": _MICROSOFT_GRAPH_APP_ID,
+                "resourceAccess": [
+                    {
+                        "id": _GRAPH_USER_READ_SCOPE_ID,
+                        "type": "Scope",
+                    }
+                ],
+            }
         ]
-    )
-
-    # Add 'access' scope
-    scope_id = str(uuid.uuid4())
-    logger.info("Adding 'access' scope (id: %s)", scope_id)
-    scope_body = {
-        "api": {
-            "oauth2PermissionScopes": [
-                {
-                    "id": scope_id,
-                    "isEnabled": True,
-                    "type": "User",
-                    "value": "access",
-                    "adminConsentDisplayName": "Access PyRIT GUI",
-                    "adminConsentDescription": "Allow access to the PyRIT GUI API",
-                    "userConsentDisplayName": "Access PyRIT GUI",
-                    "userConsentDescription": "Allow access to the PyRIT GUI API",
-                }
-            ]
-        }
     }
     run_az(
         args=[
@@ -215,41 +197,7 @@ def create_entra_app(*, display_name: str, service_management_reference: str = "
             "--url",
             f"https://graph.microsoft.com/v1.0/applications/{app_object_id}",
             "--body",
-            json.dumps(scope_body),
-        ]
-    )
-
-    # Configure group claims (ApplicationGroup)
-    logger.info("Configuring group claims: ApplicationGroup")
-    run_az(
-        args=[
-            "rest",
-            "--method",
-            "PATCH",
-            "--url",
-            f"https://graph.microsoft.com/v1.0/applications/{app_object_id}",
-            "--body",
-            json.dumps({"groupMembershipClaims": "ApplicationGroup"}),
-        ]
-    )
-
-    # Configure optional claims (groups in ID and access tokens)
-    logger.info("Adding 'groups' optional claim to ID and access tokens")
-    optional_claims_body = {
-        "optionalClaims": {
-            "idToken": [{"name": "groups", "essential": False}],
-            "accessToken": [{"name": "groups", "essential": False}],
-        }
-    }
-    run_az(
-        args=[
-            "rest",
-            "--method",
-            "PATCH",
-            "--url",
-            f"https://graph.microsoft.com/v1.0/applications/{app_object_id}",
-            "--body",
-            json.dumps(optional_claims_body),
+            json.dumps(graph_access_body),
         ]
     )
 
@@ -1213,6 +1161,10 @@ def main(args: list[str] | None = None) -> int:
     entra_app_name = f"CoPyRIT GUI ({instance})"
     group_ids = [g.strip() for g in parsed.allowed_groups.split(",") if g.strip()]
 
+    if not group_ids:
+        logger.error("--allowed-groups must contain at least one Entra group object ID")
+        return 1
+
     # Validate Azure resource name length constraints
     if len(kv_name) > 24:
         logger.error(
@@ -1344,7 +1296,7 @@ def main(args: list[str] | None = None) -> int:
             container_image=parsed.container_image,
             tenant_id=entra["tenant_id"],
             client_id=entra["app_id"],
-            group_ids=parsed.allowed_groups,
+            group_ids=",".join(group_ids),
             sql_server_fqdn=sql["server_fqdn"],
             sql_database_name=sql["database_name"],
             kv_resource_id=kv_id,

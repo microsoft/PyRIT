@@ -16,6 +16,7 @@ directly from ``pyrit.models`` (e.g. ``from pyrit.models import
 ComponentIdentifier``).
 """
 
+from pyrit.models.additional_initializer import AdditionalInitializer
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
@@ -122,6 +123,7 @@ from pyrit.models.target import (
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
+    "AdditionalInitializer",
     "AtomicAttackEvaluationIdentifier",
     "AtomicAttackIdentifier",
     "AttackIdentifier",

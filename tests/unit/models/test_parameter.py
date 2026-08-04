@@ -115,6 +115,13 @@ class TestParameterSerialization:
         assert dumped["is_list"] is True
         assert dumped["default"] == ["x"]
 
+    def test_constrained_list_surfaces_element_choices(self) -> None:
+        dumped = Parameter(name="tags", description="d", default=["fast"], param_type=list[_Speed]).model_dump()
+
+        assert dumped["type_name"] == "list[str]"
+        assert dumped["is_list"] is True
+        assert dumped["choices"] == ["fast", "slow"]
+
     def test_list_default_serializes_elementwise(self) -> None:
         """A list default is preserved as a list of display strings, not flattened to ``"['1', '2']"``."""
         dumped = Parameter(name="nums", description="d", default=[1, 2], param_type=list[int]).model_dump()
@@ -155,6 +162,10 @@ class TestDisplayChoices:
     @pytest.mark.parametrize("annotation", [None, str, int, list[str]])
     def test_unconstrained_returns_none(self, annotation: object) -> None:
         assert display_choices(annotation) is None
+
+    def test_constrained_list_unwraps_to_element_choices(self) -> None:
+        assert display_choices(list[Literal["a", "b"]]) == ("a", "b")
+        assert display_choices(list[_Speed]) == ("fast", "slow")
 
 
 class TestIsStringCoercible:

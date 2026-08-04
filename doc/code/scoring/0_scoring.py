@@ -64,6 +64,8 @@ print(df.to_string(index=False))
 #
 # Every scorer derives from the abstract `Scorer` class through one of three intermediate
 # bases: `TrueFalseScorer`, `FloatScaleScorer`, or `ConversationScorer`.
+
+# %% [markdown] class="col-page-right"
 #
 # ```mermaid
 # classDiagram
@@ -88,6 +90,8 @@ print(df.to_string(index=False))
 #     TrueFalseScorer <|-- TrueFalseCompositeScorer
 #     TrueFalseScorer <|-- FloatScaleThresholdScorer
 # ```
+
+# %% [markdown]
 #
 # `ConversationScorer` is never instantiated directly. `create_conversation_scorer()`
 # builds a subclass that mixes it with a `TrueFalseScorer` or `FloatScaleScorer` so the
