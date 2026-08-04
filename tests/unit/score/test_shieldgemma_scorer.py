@@ -321,12 +321,18 @@ async def test_multiple_pieces_keep_every_verdict_and_report_the_aggregate(
     # The aggregated verdict follows the configured aggregator, not whichever piece merged last.
     assert metadata["shieldgemma_dangerous content_verdict"] == "Yes"
 
-    # Each piece keeps its own verdict and raw output under a key scoped to that piece.
+    # Each piece keeps its own verdict and raw output under a key scoped to that piece. Pieces
+    # are scored with asyncio.gather, so which piece receives which reply is not ordered; what
+    # matters is that neither overwrote the other.
     first, second = message.message_pieces
-    assert metadata[f"shieldgemma_dangerous content_{first.id}_verdict"] == "Yes"
-    assert metadata[f"shieldgemma_dangerous content_{second.id}_verdict"] == "No"
-    assert metadata[f"shieldgemma_dangerous content_{first.id}_output"] == "Yes, this one is dangerous."
-    assert metadata[f"shieldgemma_dangerous content_{second.id}_output"] == "No. This one is fine."
+    assert {
+        metadata[f"shieldgemma_dangerous content_{first.id}_verdict"],
+        metadata[f"shieldgemma_dangerous content_{second.id}_verdict"],
+    } == {"Yes", "No"}
+    assert {
+        metadata[f"shieldgemma_dangerous content_{first.id}_output"],
+        metadata[f"shieldgemma_dangerous content_{second.id}_output"],
+    } == {"Yes, this one is dangerous.", "No. This one is fine."}
 
 
 async def test_composite_over_two_guidelines_keeps_both_results(patch_central_database: None) -> None:

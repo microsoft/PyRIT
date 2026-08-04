@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -45,6 +46,15 @@ _UNUSED_USER_PROMPT_MESSAGE = (
 # metadata reads the same whether it came from the model or from the aggregator.
 _VIOLATION_TOKEN = "Yes"
 _COMPLIANT_TOKEN = "No"
+
+# The user prompt belongs to the conversation, not to an individual piece, so it is resolved
+# once per scored message and handed to the pieces through this. Resolving inside
+# _score_piece_async instead would issue one memory read per piece from tasks running
+# concurrently under asyncio.gather, which puts the shared SQLAlchemy session on several
+# threads and makes the lookup intermittently return nothing. A ContextVar is used rather than
+# an attribute or a lock because gather copies the context into each child task, and because
+# it carries no event-loop affinity.
+_RESOLVED_USER_PROMPT: ContextVar[str | None] = ContextVar("shieldgemma_resolved_user_prompt", default=None)
 
 _MISSING_USER_PROMPT_MESSAGE = (
     "ShieldGemma response classification needs the user prompt that produced the response, "
@@ -290,11 +300,7 @@ class ShieldGemmaScorer(TrueFalseScorer):
         Raises:
             ValueError: If a response is scored and no user prompt can be found.
         """
-        user_prompt = (
-            await self._resolve_user_prompt_async(message_piece)
-            if self._message_role is ShieldGemmaMessageRole.CHATBOT
-            else None
-        )
+        user_prompt = _RESOLVED_USER_PROMPT.get() if self._message_role is ShieldGemmaMessageRole.CHATBOT else None
         request_prompt = render_shieldgemma_prompt(
             message=message_piece.converted_value,
             guideline=self._guideline,
@@ -343,7 +349,15 @@ class ShieldGemmaScorer(TrueFalseScorer):
             list[Score]: A single aggregated true/false score, or an empty list when no piece
                 could be scored.
         """
-        scores = await super()._score_async(message, objective=objective)
+        token = None
+        if self._message_role is ShieldGemmaMessageRole.CHATBOT:
+            token = _RESOLVED_USER_PROMPT.set(await self._resolve_user_prompt_async(message.get_piece()))
+        try:
+            scores = await super()._score_async(message, objective=objective)
+        finally:
+            if token is not None:
+                _RESOLVED_USER_PROMPT.reset(token)
+
         if not scores:
             return scores
 
