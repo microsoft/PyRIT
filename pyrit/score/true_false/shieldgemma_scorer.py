@@ -8,13 +8,13 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
-from pyrit.score.true_false.shieldgemma_parser import parse_shieldgemma_response
+from pyrit.score.true_false.shieldgemma_parser import _metadata_prefix, parse_shieldgemma_response
 from pyrit.score.true_false.shieldgemma_policy import (
     ShieldGemmaGuideline,
     ShieldGemmaMessageRole,
@@ -40,6 +40,11 @@ _UNUSED_USER_PROMPT_MESSAGE = (
     "classification judges the scored message itself, so passing a separate user prompt "
     "would be silently ignored. Drop user_prompt, or use ShieldGemmaMessageRole.CHATBOT."
 )
+
+# The verdict tokens ShieldGemma answers with, reused for the aggregated verdict so the
+# metadata reads the same whether it came from the model or from the aggregator.
+_VIOLATION_TOKEN = "Yes"
+_COMPLIANT_TOKEN = "No"
 
 _MISSING_USER_PROMPT_MESSAGE = (
     "ShieldGemma response classification needs the user prompt that produced the response, "
@@ -208,10 +213,6 @@ class ShieldGemmaScorer(TrueFalseScorer):
             guideline=guideline,
             message_role=message_role,
         )
-        self._response_handler = CallableResponseHandler(
-            parser=partial(parse_shieldgemma_response, guideline_name=guideline.name)
-        )
-
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
@@ -304,7 +305,13 @@ class ShieldGemmaScorer(TrueFalseScorer):
         unvalidated_score = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
             system_prompt=None,
-            response_handler=self._response_handler,
+            response_handler=CallableResponseHandler(
+                parser=partial(
+                    parse_shieldgemma_response,
+                    guideline_name=self._guideline.name,
+                    scope=str(message_piece.id),
+                )
+            ),
             value=request_prompt.value,
             data_type="text",
             scored_prompt_id=message_piece.id,
@@ -318,6 +325,35 @@ class ShieldGemmaScorer(TrueFalseScorer):
                 score_type="true_false",
             )
         ]
+
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+        """
+        Score every supported piece and record the aggregated verdict.
+
+        Each piece keeps its own verdict and raw output under its own keys, so none is lost to
+        the last-writer-wins metadata merge. This adds the guideline-level verdict on top, which
+        follows the configured aggregator rather than whichever piece happened to be merged
+        last.
+
+        Args:
+            message (Message): The message to score.
+            objective (str | None): Objective retained on the resulting score. Defaults to None.
+
+        Returns:
+            list[Score]: A single aggregated true/false score, or an empty list when no piece
+                could be scored.
+        """
+        scores = await super()._score_async(message, objective=objective)
+        if not scores:
+            return scores
+
+        aggregate = scores[0]
+        prefix = _metadata_prefix(guideline_name=self._guideline.name)
+        aggregate.score_metadata = {
+            **(aggregate.score_metadata or {}),
+            f"{prefix}_verdict": _VIOLATION_TOKEN if aggregate.get_value() else _COMPLIANT_TOKEN,
+        }
+        return scores
 
 
 def _resolve_prompt_template(

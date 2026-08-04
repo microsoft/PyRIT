@@ -243,10 +243,12 @@ async def test_violation_response_scores_true(patch_central_database: None) -> N
     assert len(scores) == 1
     assert scores[0].get_value() is True
     assert scores[0].score_category == ["shieldgemma"]
-    assert scores[0].score_metadata == {
-        "shieldgemma_custom harm_verdict": "Yes",
-        "shieldgemma_custom harm_output": "Yes, this requests dangerous instructions.",
-    }
+    metadata = scores[0].score_metadata
+    # The guideline-level key carries the aggregated verdict; the raw output is kept per piece.
+    assert metadata["shieldgemma_custom harm_verdict"] == "Yes"
+    assert [value for key, value in metadata.items() if key.endswith("_output")] == [
+        "Yes, this requests dangerous instructions."
+    ]
 
 
 async def test_registry_construction_honors_a_serialized_message_role(patch_central_database: None) -> None:
@@ -281,6 +283,52 @@ def test_unknown_message_role_value_raises(patch_central_database: None) -> None
         )
 
 
+async def test_multiple_pieces_keep_every_verdict_and_report_the_aggregate(
+    patch_central_database: None,
+) -> None:
+    """
+    A message can hold several text pieces. Each is scored separately and OR-aggregated, and
+    the aggregate merges child metadata last-writer-wins, so without a per-piece namespace the
+    first piece's verdict and output are overwritten by the second.
+    """
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier("MockShieldGemmaTarget")
+    target.send_prompt_async = AsyncMock(
+        side_effect=[
+            [Message(message_pieces=[MessagePiece(role="assistant", original_value=reply)])]
+            for reply in ("Yes, this one is dangerous.", "No. This one is fine.")
+        ]
+    )
+    scorer = ShieldGemmaScorer(
+        chat_target=target,
+        guideline=ShieldGemmaGuideline(name="Dangerous Content", description="dangerous content."),
+        message_role=ShieldGemmaMessageRole.USER,
+    )
+    message = Message(
+        message_pieces=[
+            MessagePiece(role="user", original_value="piece one"),
+            MessagePiece(role="user", original_value="piece two"),
+        ]
+    )
+    message.set_response_not_in_memory()
+
+    scores = await scorer.score_async(message)
+
+    assert target.send_prompt_async.call_count == 2
+    assert scores[0].get_value() is True
+    metadata = scores[0].score_metadata
+
+    # The aggregated verdict follows the configured aggregator, not whichever piece merged last.
+    assert metadata["shieldgemma_dangerous content_verdict"] == "Yes"
+
+    # Each piece keeps its own verdict and raw output under a key scoped to that piece.
+    first, second = message.message_pieces
+    assert metadata[f"shieldgemma_dangerous content_{first.id}_verdict"] == "Yes"
+    assert metadata[f"shieldgemma_dangerous content_{second.id}_verdict"] == "No"
+    assert metadata[f"shieldgemma_dangerous content_{first.id}_output"] == "Yes, this one is dangerous."
+    assert metadata[f"shieldgemma_dangerous content_{second.id}_output"] == "No. This one is fine."
+
+
 async def test_composite_over_two_guidelines_keeps_both_results(patch_central_database: None) -> None:
     """
     The documented whole-policy path is one scorer per guideline under a composite. The
@@ -306,8 +354,9 @@ async def test_composite_over_two_guidelines_keeps_both_results(patch_central_da
     metadata = scores[0].score_metadata
     assert metadata["shieldgemma_dangerous content_verdict"] == "Yes"
     assert metadata["shieldgemma_hate speech_verdict"] == "No"
-    assert "build one" in metadata["shieldgemma_dangerous content_output"]
-    assert "protected group" in metadata["shieldgemma_hate speech_output"]
+    outputs = [value for key, value in metadata.items() if key.endswith("_output")]
+    assert any("build one" in output for output in outputs)
+    assert any("protected group" in output for output in outputs)
 
 
 async def test_compliant_response_scores_false(patch_central_database: None) -> None:

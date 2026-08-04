@@ -31,7 +31,9 @@ _COMPLIANT_VERDICT = "no"
 _VERDICT_PUNCTUATION = ".,:;!?\"'*"
 
 
-def parse_shieldgemma_response(text: str, *, guideline_name: str | None = None) -> dict[str, Any]:
+def parse_shieldgemma_response(
+    text: str, *, guideline_name: str | None = None, scope: str | None = None
+) -> dict[str, Any]:
     """
     Parse a ShieldGemma classifier response for ``CallableResponseHandler``.
 
@@ -45,6 +47,11 @@ def parse_shieldgemma_response(text: str, *, guideline_name: str | None = None) 
         text (str): The raw text response from a ShieldGemma endpoint.
         guideline_name (str | None): The guideline the response was judging. It namespaces the
             metadata keys, so composing one scorer per guideline keeps every child's result.
+            Defaults to None.
+        scope (str | None): Extra namespace for the metadata keys, used by the scorer to carry
+            the scored piece's id. A message can hold several text pieces, each scored
+            separately and then aggregated, and the aggregate merges child metadata
+            last-writer-wins, so without this every piece would overwrite the previous one.
             Defaults to None.
 
     Returns:
@@ -85,7 +92,7 @@ def parse_shieldgemma_response(text: str, *, guideline_name: str | None = None) 
         if explanation
         else f"ShieldGemma answered '{leading_token}'{judged}: the content {state} it."
     )
-    slug = _metadata_slug(guideline_name)
+    prefix = _metadata_prefix(guideline_name=guideline_name, scope=scope)
 
     return {
         "score_value": str(violates),
@@ -95,28 +102,30 @@ def parse_shieldgemma_response(text: str, *, guideline_name: str | None = None) 
         # TrueFalseCompositeScorer keeps every child's result. The aggregate merges child
         # metadata last-writer-wins, so shared keys would leave it naming the wrong guideline.
         "metadata": {
-            f"{slug}_verdict": leading_token.strip(_VERDICT_PUNCTUATION),
-            f"{slug}_output": raw,
+            f"{prefix}_verdict": leading_token.strip(_VERDICT_PUNCTUATION),
+            f"{prefix}_output": raw,
         },
     }
 
 
-def _metadata_slug(guideline_name: str | None) -> str:
+def _metadata_prefix(*, guideline_name: str | None, scope: str | None = None) -> str:
     """
-    Build the per-guideline metadata key prefix.
+    Build the metadata key prefix for one guideline, optionally scoped to one message piece.
 
     Args:
         guideline_name (str | None): The guideline the response was judging.
+        scope (str | None): Extra namespace, such as the scored piece's id. Defaults to None.
 
     Returns:
-        str: A key prefix unique to the guideline, so merged metadata does not collide.
+        str: A key prefix that does not collide with another guideline or another piece.
     """
     if not guideline_name:
-        return "shieldgemma"
+        return f"shieldgemma_{scope}" if scope else "shieldgemma"
     # The name is used as-is apart from case folding, which is exactly what
     # ShieldGemmaPolicy compares when it enforces unique guideline names. Any rewriting is
     # lossy: collapsing whitespace merges "Hate Speech" with "Hate_Speech", and folding
     # punctuation also merges "Hate-Speech", yet a policy accepts each of those pairs. Deriving
     # the key from the uniqueness value means two guidelines that can coexist in a policy can
     # never share a key.
-    return f"shieldgemma_{guideline_name.casefold()}"
+    prefix = f"shieldgemma_{guideline_name.casefold()}"
+    return f"{prefix}_{scope}" if scope else prefix
