@@ -113,11 +113,13 @@ html, body {
   overflow-x: clip;
 }
 
-/* The flag is centred on the page, so it anchors to the full-width `main`
-   rather than to the narrow, centred landing block that wraps its directive.
+/* Sprites resolve against the full-width `main` by default, rather than the
+   narrow, centred landing blocks that wrap their directives. That keeps the
+   flag centred on the page and lets the spyglass use centre-relative `calc`
+   offsets because the content column is centred and width-capped inside `main`.
 
-   The scout and the spyglass instead anchor to the content they sit on, so
-   their own rules below promote a nearer ancestor. */
+   Only the scout needs a nearer anchor because it perches on a card inside the
+   capabilities grid, so its rule below promotes that grid. */
 main:has(.roakey-sprite) {
   position: relative;
 }
