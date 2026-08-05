@@ -112,6 +112,7 @@ from pyrit.converter.unicode_replacement_converter import UnicodeReplacementConv
 from pyrit.converter.unicode_sub_converter import UnicodeSubstitutionConverter
 from pyrit.converter.url_converter import UrlConverter
 from pyrit.converter.variation_converter import VariationConverter
+from pyrit.converter.vigenere_converter import VigenereConverter
 from pyrit.converter.word_doc_converter import WordDocConverter
 from pyrit.converter.zalgo_converter import ZalgoConverter
 from pyrit.converter.zero_width_converter import ZeroWidthConverter
@@ -243,6 +244,7 @@ __all__ = [
     "UrlConverter",
     "VariationConverter",
     "VariationSelectorSmugglerConverter",
+    "VigenereConverter",
     "WordDocConverter",
     "WordIndexSelectionStrategy",
     "WordKeywordSelectionStrategy",
