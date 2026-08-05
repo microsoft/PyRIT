@@ -344,6 +344,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
 
         # Execution with lifecycle management
         # This uses an async context manager to ensure setup and teardown are handled correctly
+        retry_collector_started = False
         try:
             async with self._execution_context_async(context):
                 await self._handle_event_async(event=StrategyEvent.ON_PRE_EXECUTE, context=context)
@@ -356,15 +357,14 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
                 # handlers can see it.
                 collector = RetryCollector()
                 set_retry_collector(collector)
+                retry_collector_started = True
 
                 result = await self._perform_async(context=context)
                 await self._handle_event_async(event=StrategyEvent.ON_POST_EXECUTE, context=context, result=result)
-                clear_retry_collector()
                 return result
         except Exception as e:
             # Notify error event
             await self._handle_event_async(event=StrategyEvent.ON_ERROR, context=context, error=e)
-            clear_retry_collector()
 
             # Build enhanced error message with execution context if available
             # Note: The context is preserved on exception by ExecutionContextManager
@@ -394,6 +394,9 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
 
             runtime_error = _StrategyRuntimeError(error_message)
             raise runtime_error from e
+        finally:
+            if retry_collector_started:
+                clear_retry_collector()
 
     async def execute_async(self, **kwargs: Any) -> StrategyResultT:
         """
