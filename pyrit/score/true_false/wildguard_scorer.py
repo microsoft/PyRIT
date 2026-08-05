@@ -190,8 +190,12 @@ class WildGuardScorer(TrueFalseScorer):
         """
         Find the user prompt that a scored response is judged against.
 
+        Called once per scored message rather than once per piece, so that several pieces do
+        not issue concurrent memory reads.
+
         Args:
-            message_piece (MessagePiece): The response being scored.
+            message_piece (MessagePiece): Any piece of the scored message. Only its
+                conversation and sequence are read, which are shared across the message.
 
         Returns:
             str | None: The configured prompt, otherwise the preceding user turn of the
@@ -277,6 +281,9 @@ class WildGuardScorer(TrueFalseScorer):
         the last-writer-wins metadata merge. This adds the label-level verdict on top, which
         follows the configured aggregator rather than whichever piece happened to be merged
         last.
+
+        This is also where the user prompt is resolved, once for the whole message rather than
+        once per piece, since it is a property of the conversation.
 
         Args:
             message (Message): The message to score.
