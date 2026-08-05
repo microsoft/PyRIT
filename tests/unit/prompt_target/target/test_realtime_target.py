@@ -20,6 +20,10 @@ from pyrit.prompt_target.common.realtime_audio import (
 from pyrit.prompt_target.openai._openai_realtime_dispatcher import (
     _OpenAIRealtimeDispatcher,
 )
+from pyrit.prompt_target.openai._openai_realtime_event_router import (
+    _OpenAIRealtimeEventKind,
+    _OpenAIRealtimeEventRouter,
+)
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -417,6 +421,102 @@ async def test_receive_events_with_audio_and_transcript(target):
     assert result.transcripts[1] == "this is a test transcript."
 
 
+async def test_receive_events_soft_finishes_after_audio_done(target):
+    """Atomic receiving returns accumulated deltas when audio.done is followed by its grace-period timeout."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_soft_finish"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _events():
+        yield _scripted_event("response.output_audio.delta", delta=base64.b64encode(b"audio").decode("ascii"))
+        yield _scripted_event("response.output_audio_transcript.delta", delta="partial")
+        yield _scripted_event("response.output_audio.done")
+        raise asyncio.TimeoutError
+
+    mock_connection.__aiter__.side_effect = _events
+
+    result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b"audio"
+    assert result.transcripts == ["partial"]
+
+
+async def test_receive_events_connection_close_soft_finishes_with_audio(target):
+    """Atomic receiving returns accumulated audio when the provider closes before response.done."""
+
+    class ConnectionClosedTestError(Exception):
+        pass
+
+    mock_connection = AsyncMock()
+    conversation_id = "test_connection_close_with_audio"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _events():
+        yield _scripted_event("response.audio.delta", delta=base64.b64encode(b"partial").decode("ascii"))
+        raise ConnectionClosedTestError("closed")
+
+    mock_connection.__aiter__.side_effect = _events
+
+    result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b"partial"
+
+
+async def test_receive_events_connection_close_without_audio_raises(target):
+    """Atomic receiving must not hide a connection failure before any response audio arrives."""
+
+    class ConnectionClosedTestError(Exception):
+        pass
+
+    mock_connection = AsyncMock()
+    conversation_id = "test_connection_close_without_audio"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _events():
+        raise ConnectionClosedTestError("closed")
+        yield  # pragma: no cover
+
+    mock_connection.__aiter__.side_effect = _events
+
+    with pytest.raises(ConnectionClosedTestError, match="closed"):
+        await target.receive_events_async(conversation_id)
+
+
+async def test_receive_events_timeout_before_audio_done_raises(target):
+    """Atomic receiving only treats a timeout as completion after an audio.done event."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_timeout_without_audio_done"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _events():
+        raise asyncio.TimeoutError
+        yield  # pragma: no cover
+
+    mock_connection.__aiter__.side_effect = _events
+
+    with pytest.raises(asyncio.TimeoutError):
+        await target.receive_events_async(conversation_id)
+
+
+async def test_receive_events_ignores_non_response_and_empty_delta_events(target):
+    """Lifecycle, unknown, text-done, and empty transcript events do not mutate an atomic result."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_ignored_events"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    mock_connection.__aiter__.return_value = [
+        _scripted_event("response.audio_transcript.delta", delta=""),
+        _scripted_event("response.output_text.done"),
+        _scripted_event("provider.new_event"),
+        _scripted_event("response.done", **{"response.status": "success"}),
+    ]
+
+    result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b""
+    assert result.transcripts == []
+
+
 async def test_multi_turn_reuses_connection(target):
     """Test that multiple turns in the same conversation reuse the same connection.
 
@@ -582,6 +682,91 @@ def _make_dispatcher(connection):
     return _OpenAIRealtimeDispatcher(connection=connection)
 
 
+@pytest.mark.parametrize(
+    ("event_type", "expected_kind"),
+    [
+        ("response.done", _OpenAIRealtimeEventKind.RESPONSE_DONE),
+        ("error", _OpenAIRealtimeEventKind.ERROR),
+        ("response.audio.delta", _OpenAIRealtimeEventKind.AUDIO_DELTA),
+        ("response.output_audio.delta", _OpenAIRealtimeEventKind.AUDIO_DELTA),
+        ("response.audio.done", _OpenAIRealtimeEventKind.AUDIO_DONE),
+        ("response.output_audio.done", _OpenAIRealtimeEventKind.AUDIO_DONE),
+        ("response.audio_transcript.delta", _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA),
+        ("response.output_audio_transcript.delta", _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA),
+        ("response.output_text.done", _OpenAIRealtimeEventKind.OUTPUT_TEXT_DONE),
+        ("response.created", _OpenAIRealtimeEventKind.RESPONSE_CREATED),
+        ("response.output_item.added", _OpenAIRealtimeEventKind.OUTPUT_ITEM),
+        ("response.output_item.created", _OpenAIRealtimeEventKind.OUTPUT_ITEM),
+        ("input_audio_buffer.speech_started", _OpenAIRealtimeEventKind.SPEECH_STARTED),
+        ("input_audio_buffer.committed", _OpenAIRealtimeEventKind.INPUT_COMMITTED),
+        ("session.updated", _OpenAIRealtimeEventKind.LIFECYCLE),
+        ("provider.new_event", _OpenAIRealtimeEventKind.OTHER),
+    ],
+)
+def test_realtime_event_router_classifies_provider_events(event_type, expected_kind):
+    assert _OpenAIRealtimeEventRouter.classify_event(event_type) is expected_kind
+
+
+@pytest.mark.parametrize(
+    ("event_kind", "expected"),
+    [
+        (_OpenAIRealtimeEventKind.RESPONSE_CREATED, True),
+        (_OpenAIRealtimeEventKind.OUTPUT_ITEM, True),
+        (_OpenAIRealtimeEventKind.SPEECH_STARTED, True),
+        (_OpenAIRealtimeEventKind.INPUT_COMMITTED, True),
+        (_OpenAIRealtimeEventKind.LIFECYCLE, True),
+        (_OpenAIRealtimeEventKind.RESPONSE_DONE, False),
+        (_OpenAIRealtimeEventKind.OTHER, False),
+    ],
+)
+def test_realtime_event_router_identifies_atomic_lifecycle_events(event_kind, expected):
+    assert _OpenAIRealtimeEventRouter.is_lifecycle_event(event_kind) is expected
+
+
+def test_realtime_event_router_collects_audio_and_transcript_deltas():
+    audio_buffer = bytearray()
+    transcripts: list[str] = []
+
+    _OpenAIRealtimeEventRouter.collect_response_delta(
+        event=_scripted_event("response.output_audio.delta", delta=base64.b64encode(b"audio").decode("ascii")),
+        event_kind=_OpenAIRealtimeEventKind.AUDIO_DELTA,
+        audio_buffer=audio_buffer,
+        transcripts=transcripts,
+    )
+    _OpenAIRealtimeEventRouter.collect_response_delta(
+        event=_scripted_event("response.output_audio_transcript.delta", delta="hello"),
+        event_kind=_OpenAIRealtimeEventKind.TRANSCRIPT_DELTA,
+        audio_buffer=audio_buffer,
+        transcripts=transcripts,
+    )
+
+    assert bytes(audio_buffer) == b"audio"
+    assert transcripts == ["hello"]
+
+
+@pytest.mark.parametrize(
+    ("event_kind", "delta"),
+    [
+        (_OpenAIRealtimeEventKind.AUDIO_DELTA, ""),
+        (_OpenAIRealtimeEventKind.TRANSCRIPT_DELTA, ""),
+        (_OpenAIRealtimeEventKind.OTHER, base64.b64encode(b"ignored").decode("ascii")),
+    ],
+)
+def test_realtime_event_router_ignores_empty_or_unrelated_deltas(event_kind, delta):
+    audio_buffer = bytearray(b"existing")
+    transcripts = ["existing"]
+
+    _OpenAIRealtimeEventRouter.collect_response_delta(
+        event=_scripted_event("test", delta=delta),
+        event_kind=event_kind,
+        audio_buffer=audio_buffer,
+        transcripts=transcripts,
+    )
+
+    assert bytes(audio_buffer) == b"existing"
+    assert transcripts == ["existing"]
+
+
 async def test_cancel_does_not_send_response_cancel():
     """_cancel_async must NOT send response.cancel (server auto-cancels on speech detection)."""
     connection = AsyncMock()
@@ -642,6 +827,18 @@ async def test_cancel_marks_interrupted_when_truncate_raises(caplog):
     )
 
 
+async def test_cancel_without_current_item_only_marks_interrupted():
+    """A turn interrupted before an output item exists cannot be truncated but is still marked."""
+    connection = AsyncMock()
+    dispatcher = _make_dispatcher(connection)
+    state = _turn_state(item_id=None)
+
+    await dispatcher._cancel_async(state=state)
+
+    connection.conversation.item.truncate.assert_not_awaited()
+    assert state.interrupted is True
+
+
 def _scripted_event(event_type, **fields):
     """Build a MagicMock event with the named type plus any extra attribute paths."""
     event = MagicMock()
@@ -685,6 +882,87 @@ async def test_route_event_happy_path_resolves_completion_with_assembled_result(
     assert state.interrupted is False
 
 
+@pytest.mark.parametrize(
+    ("audio_event_type", "transcript_event_type"),
+    [
+        ("response.audio.delta", "response.audio_transcript.delta"),
+        ("response.output_audio.delta", "response.output_audio_transcript.delta"),
+    ],
+)
+async def test_route_event_accumulates_response_aliases(audio_event_type, transcript_event_type):
+    dispatcher = _make_dispatcher(AsyncMock())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event_async(
+        event=_scripted_event(audio_event_type, delta=base64.b64encode(b"audio").decode("ascii")),
+        state=state,
+    )
+    await dispatcher._route_event_async(
+        event=_scripted_event(transcript_event_type, delta="transcript"),
+        state=state,
+    )
+
+    assert bytes(state.delivered_audio) == b"audio"
+    assert state.delivered_transcripts == ["transcript"]
+    assert not state.completion.done()
+
+
+async def test_route_event_audio_done_does_not_complete_streaming_turn():
+    """Streaming waits for response.done or barge-in instead of using the atomic soft-finish policy."""
+    dispatcher = _make_dispatcher(AsyncMock())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event_async(event=_scripted_event("response.output_audio.done"), state=state)
+
+    assert not state.completion.done()
+
+
+async def test_route_event_missing_optional_payloads_leave_ids_unset():
+    """Missing speech timing, response, and output item payloads do not synthesize state identifiers."""
+    dispatcher = _make_dispatcher(AsyncMock())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+
+    await dispatcher._route_event_async(
+        event=_scripted_event("input_audio_buffer.speech_started", audio_start_ms=None),
+        state=state,
+    )
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.created", response=None),
+        state=state,
+    )
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.output_item.added", item=None),
+        state=state,
+    )
+
+    assert dispatcher._pending_speech_start_ms is None
+    assert state.is_responding is True
+    assert state.last_response_id is None
+    assert state.current_item_id is None
+
+
+async def test_route_event_drops_output_without_active_turn():
+    dispatcher = _make_dispatcher(AsyncMock())
+
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.audio.delta", delta=base64.b64encode(b"ignored").decode("ascii")),
+        state=None,
+    )
+
+
+async def test_route_event_drops_output_for_completed_turn():
+    dispatcher = _make_dispatcher(AsyncMock())
+    state = RealtimeTurnState(completion=asyncio.get_event_loop().create_future())
+    state.completion.set_result(RealtimeTargetResult())
+
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.audio.delta", delta=base64.b64encode(b"ignored").decode("ascii")),
+        state=state,
+    )
+
+    assert state.delivered_audio == bytearray()
+
+
 async def test_route_event_speech_started_while_responding_cancels_and_resolves_interrupted():
     """speech_started during a response triggers cancel and resolves with interrupted=True."""
     connection = AsyncMock()
@@ -724,6 +1002,24 @@ async def test_route_event_stale_response_done_after_cancel_is_dropped():
 
     # Late response.done for r1 arrives; router must not raise InvalidStateError.
     await dispatcher._route_event_async(event=_scripted_event("response.done", **{"response.id": "r1"}), state=state)
+
+
+async def test_route_event_stale_response_done_does_not_resolve_active_turn():
+    """An active turn ignores response.done from a different response id."""
+    dispatcher = _make_dispatcher(AsyncMock())
+    state = RealtimeTurnState(
+        completion=asyncio.get_event_loop().create_future(),
+        is_responding=True,
+        last_response_id="current",
+    )
+
+    await dispatcher._route_event_async(
+        event=_scripted_event("response.done", **{"response.id": "stale"}),
+        state=state,
+    )
+
+    assert not state.completion.done()
+    assert state.is_responding is True
 
 
 async def test_route_event_error_resolves_with_exception():
@@ -806,6 +1102,23 @@ async def test_route_event_committed_event_without_callback_is_noop():
         event=_scripted_event("input_audio_buffer.committed", item_id="raw_item_99"),
         state=None,
     )
+
+
+async def test_route_event_committed_without_item_id_is_ignored():
+    received: list[CommittedEvent] = []
+
+    async def on_committed(event: CommittedEvent) -> None:
+        received.append(event)
+
+    dispatcher = _OpenAIRealtimeDispatcher(connection=AsyncMock(), on_user_audio_committed=on_committed)
+
+    await dispatcher._route_event_async(
+        event=_scripted_event("input_audio_buffer.committed", item_id=None),
+        state=None,
+    )
+    await asyncio.sleep(0)
+
+    assert received == []
 
 
 async def test_route_event_speech_started_audio_start_propagates_to_commit():
@@ -901,6 +1214,36 @@ def _write_wav(
         w.setframerate(rate)
         w.writeframes(pcm)
     return str(path)
+
+
+async def test_send_audio_async_reads_wav_off_event_loop(target, tmp_path):
+    connection = AsyncMock()
+    target._existing_conversation["conv"] = connection
+    target.receive_events_async = AsyncMock(
+        return_value=RealtimeTargetResult(audio_bytes=b"response", transcripts=["transcript"])
+    )
+    target.send_response_create_async = AsyncMock()
+    target.save_audio_async = AsyncMock(return_value="output.wav")
+
+    pcm = b"\x01\x02" * 8
+    wav_path = _write_wav(tmp_path / "input.wav", pcm=pcm)
+    with patch(
+        "pyrit.prompt_target.openai.openai_realtime_target.asyncio.to_thread",
+        new_callable=AsyncMock,
+        wraps=asyncio.to_thread,
+    ) as to_thread_mock:
+        output_path, _ = await target.send_audio_async(filename=wav_path, conversation_id="conv")
+
+    assert output_path == "output.wav"
+    assert to_thread_mock.await_args.args[1] == wav_path
+    connection.conversation.item.create.assert_awaited_once_with(
+        item={
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_audio", "audio": base64.b64encode(pcm).decode("utf-8")}],
+        }
+    )
+    target.save_audio_async.assert_awaited_once_with(b"response", 1, 2, 24000)
 
 
 async def test_send_prompt_audio_path_calls_send_audio_async(target, tmp_path):

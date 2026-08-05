@@ -2,9 +2,11 @@
 # Licensed under the MIT license.
 
 import json
+import logging
 import os
 from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,6 +30,7 @@ from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSen
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import AttackOutcome, JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
+from pyrit.prompt_target.openai.openai_response_target import token_usage_from_responses
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 
 
@@ -54,6 +57,7 @@ def create_mock_response(response_dict: dict = None) -> MagicMock:
     # Set attributes based on response_dict to match OpenAI SDK Response type
     mock_response.error = response_dict.get("error")  # Should be None for successful responses
     mock_response.status = response_dict.get("status")  # Should be "completed" for successful responses
+    mock_response.usage = response_dict.get("usage")  # Optional usage payload (None when absent)
 
     # Mock the output sections with Pydantic-style attribute access
     if "output" in response_dict:
@@ -1253,9 +1257,196 @@ def test_validate_response_empty_output(target: OpenAIResponseTarget, dummy_text
         target._validate_response(mock_response, dummy_text_message_piece)
 
 
+def _make_reasoning_section() -> MagicMock:
+    section = MagicMock()
+    section.type = "reasoning"
+    section.model_dump.return_value = {"type": "reasoning", "summary": []}
+    return section
+
+
+def _make_message_section(text: str) -> MagicMock:
+    section = MagicMock()
+    section.type = "message"
+    section.content = [ResponseOutputText(annotations=[], text=text, type="output_text")]
+    return section
+
+
+def _make_empty_message_section() -> MagicMock:
+    section = MagicMock()
+    section.type = "message"
+    section.content = []
+    return section
+
+
+def _make_truncated_response(output: list | None) -> MagicMock:
+    mock_response = MagicMock()
+    mock_response.error = None
+    mock_response.status = "incomplete"
+    incomplete_details = MagicMock()
+    incomplete_details.reason = "max_output_tokens"
+    mock_response.incomplete_details = incomplete_details
+    mock_response.output = output
+    return mock_response
+
+
+def test_is_truncated_response_detects_max_output_tokens(target: OpenAIResponseTarget):
+    """_is_truncated_response is True only for incomplete status with a max_output_tokens reason."""
+    truncated = _make_truncated_response(output=[])
+    assert target._is_truncated_response(truncated) is True
+
+    content_filtered = _make_truncated_response(output=[])
+    content_filtered.incomplete_details.reason = "content_filter"
+    assert target._is_truncated_response(content_filtered) is False
+
+    completed = MagicMock()
+    completed.status = "completed"
+    assert target._is_truncated_response(completed) is False
+
+
+def test_validate_response_truncated_warns_and_does_not_raise(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """Truncation is treated as valid: _validate_response warns and returns None (does not raise)."""
+    response = _make_truncated_response(output=[_make_reasoning_section(), _make_empty_message_section()])
+
+    with caplog.at_level(logging.WARNING):
+        result = target._validate_response(response, dummy_text_message_piece)
+
+    assert result is None
+    assert "max_output_tokens" in caplog.text
+
+
+async def test_construct_message_truncated_keeps_reasoning_and_empty_text(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Truncated response with reasoning but empty text: keep reasoning, add a graceful empty text piece."""
+    response = _make_truncated_response(output=[_make_reasoning_section(), _make_empty_message_section()])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    reasoning_pieces = [p for p in result.message_pieces if p.original_value_data_type == "reasoning"]
+    text_pieces = [p for p in result.message_pieces if p.original_value_data_type == "text"]
+    assert len(reasoning_pieces) == 1
+    assert len(text_pieces) == 1
+    assert text_pieces[0].original_value == ""
+    assert text_pieces[0].response_error == "empty"
+    assert result.message_pieces[0].is_truncated is True
+
+
+async def test_construct_message_truncated_keeps_partial_text(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Truncated response with partial visible text keeps it (error=none), no empty piece added."""
+    response = _make_truncated_response(output=[_make_reasoning_section(), _make_message_section("Partial answer")])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    text_pieces = [p for p in result.message_pieces if p.original_value_data_type == "text"]
+    assert len(text_pieces) == 1
+    assert text_pieces[0].original_value == "Partial answer"
+    assert text_pieces[0].response_error == "none"
+    assert result.message_pieces[0].is_truncated is True
+
+
+async def test_construct_message_truncated_records_metadata_on_primary_piece_not_reasoning(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Truncation/usage metadata lands on the primary piece, even though reasoning is emitted first."""
+    response = _make_truncated_response(output=[_make_reasoning_section(), _make_message_section("Partial answer")])
+    response.usage = _make_usage()
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    primary = result.message_pieces[0]
+    assert primary.converted_value_data_type == "text"
+    assert primary.is_truncated is True
+    assert primary.prompt_metadata["token_usage_reasoning_tokens"] == 7
+    assert result.message_pieces[-1].converted_value_data_type == "reasoning"
+    assert result.message_pieces[-1].is_truncated is False
+
+
+async def test_construct_message_truncated_tolerates_empty_typed_content(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Typed message content that is present but empty is tolerated on the truncated path."""
+    response = _make_truncated_response(output=[_make_reasoning_section(), _make_message_section("")])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    text_pieces = [p for p in result.message_pieces if p.original_value_data_type == "text"]
+    assert len(text_pieces) == 1
+    assert text_pieces[0].original_value == ""
+    assert text_pieces[0].response_error == "empty"
+
+
+async def test_construct_message_truncated_keeps_structured_refusal(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A structured refusal is preserved when the response is also truncated."""
+    refusal = "I cannot assist with that request."
+    refusal_section = MagicMock()
+    refusal_section.type = "message"
+    refusal_section.content = [ResponseOutputRefusal(refusal=refusal, type="refusal")]
+    response = _make_truncated_response(output=[refusal_section])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert len(result.message_pieces) == 1
+    assert result.message_pieces[0].structured_refusal == refusal
+    assert result.message_pieces[0].is_truncated is True
+
+
+async def test_construct_message_truncated_empty_output_returns_graceful_empty(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Truncated response with no output yields a single graceful empty text piece (does not raise)."""
+    response = _make_truncated_response(output=[])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert len(result.message_pieces) == 1
+    assert result.message_pieces[0].original_value == ""
+    assert result.message_pieces[0].response_error == "empty"
+    assert result.message_pieces[0].is_truncated is True
+
+
+async def test_construct_message_truncated_none_output_returns_graceful_empty(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Truncated response whose output is None still yields a graceful empty piece (does not raise)."""
+    response = _make_truncated_response(output=None)
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert len(result.message_pieces) == 1
+    assert result.message_pieces[0].original_value == ""
+    assert result.message_pieces[0].response_error == "empty"
+    assert result.message_pieces[0].is_truncated is True
+
+
+async def test_construct_message_truncated_skips_partial_tool_call(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A partial function_call in a truncated response is skipped so it cannot re-enter the agentic loop."""
+    func_section = MagicMock()
+    func_section.type = "function_call"
+    func_section.call_id = "call_1"
+    func_section.name = "do_thing"
+    func_section.arguments = "{}"
+    response = _make_truncated_response(output=[_make_reasoning_section(), func_section])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    data_types = [p.original_value_data_type for p in result.message_pieces]
+    assert "function_call" not in data_types
+    assert "reasoning" in data_types
+    assert any(p.original_value_data_type == "text" and p.response_error == "empty" for p in result.message_pieces)
+
+
 async def test_construct_message_from_response(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     """Test _construct_message_from_response parses output sections."""
     mock_response = MagicMock()
+    mock_response.status = "completed"
     mock_response.output = [{"type": "message", "content": [{"type": "text", "text": "Hello from Response API"}]}]
 
     # Mock the _parse_response_output_section method
@@ -1272,7 +1463,97 @@ async def test_construct_message_from_response(target: OpenAIResponseTarget, dum
 
         assert isinstance(result, Message)
         assert len(result.message_pieces) == 1
+        assert result.message_pieces[0].is_truncated is False
         mock_parse.assert_called_once()
+
+
+def _make_usage(
+    *,
+    input_tokens: int | None = 11,
+    output_tokens: int | None = 22,
+    total_tokens: int | None = 33,
+    reasoning_tokens: int | None = 7,
+    cached_tokens: int | None = 3,
+    cache_write_tokens: int | None = 2,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        input_tokens_details=SimpleNamespace(cached_tokens=cached_tokens, cache_write_tokens=cache_write_tokens),
+        output_tokens_details=SimpleNamespace(reasoning_tokens=reasoning_tokens),
+    )
+
+
+def test_token_usage_from_responses_maps_fields():
+    """token_usage_from_responses maps the Responses usage shape onto TokenUsage."""
+    result = token_usage_from_responses(_make_usage())
+
+    assert result.input_tokens == 11
+    assert result.output_tokens == 22
+    assert result.total_tokens == 33
+    assert result.reasoning_tokens == 7
+    assert result.cached_tokens == 3
+    assert result.extra == {"cache_write_tokens": 2}
+
+
+def test_token_usage_from_responses_ignores_missing_and_non_int():
+    """Missing details objects and non-integer counts are dropped rather than stored as zero."""
+    usage = SimpleNamespace(input_tokens=5, output_tokens=None, input_tokens_details=None, output_tokens_details=None)
+
+    result = token_usage_from_responses(usage)
+
+    assert result.input_tokens == 5
+    assert result.output_tokens is None
+    assert result.total_tokens is None
+    assert result.reasoning_tokens is None
+    assert result.cached_tokens is None
+    assert result.extra == {}
+
+
+def test_token_usage_from_responses_derives_total_when_omitted():
+    """A provider that reports only input/output counts still gets a total, as in Chat Completions."""
+    usage = SimpleNamespace(input_tokens=5, output_tokens=6, input_tokens_details=None, output_tokens_details=None)
+
+    result = token_usage_from_responses(usage)
+
+    assert result.total_tokens == 11
+
+
+async def test_construct_message_captures_token_usage(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A completed response records token-usage counts in the first piece's metadata."""
+    response = MagicMock()
+    response.status = "completed"
+    response.output = [_make_message_section("Answer")]
+    response.usage = _make_usage()
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    metadata = result.message_pieces[0].prompt_metadata
+    assert metadata["token_usage_input_tokens"] == 11
+    assert metadata["token_usage_output_tokens"] == 22
+    assert metadata["token_usage_total_tokens"] == 33
+    assert metadata["token_usage_reasoning_tokens"] == 7
+    assert metadata["token_usage_cached_tokens"] == 3
+    assert metadata["token_usage_cache_write_tokens"] == 2
+
+
+async def test_construct_message_truncated_captures_token_usage(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Usage is captured on the truncated path too, alongside the truncated marker."""
+    response = _make_truncated_response(output=[_make_reasoning_section(), _make_empty_message_section()])
+    response.usage = _make_usage()
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["token_usage_input_tokens"] == 11
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 22
+    assert piece.prompt_metadata["token_usage_reasoning_tokens"] == 7
 
 
 async def test_handle_openai_request_output_text(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):

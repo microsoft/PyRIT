@@ -1,7 +1,8 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { makeTarget } from "@/test-utils/targetFixtures";
+import type { TargetCatalogResponse } from "@/types";
 import CreateTargetDialog from "./CreateTargetDialog";
 import { parseWeight, MAX_WEIGHT } from "./weightValidation";
 import { targetsApi } from "@/services/api";
@@ -16,31 +17,112 @@ jest.mock("@/services/api", () => ({
 
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
 
-// Representative target catalog covering the types the dialog renders. Mirrors
-// the shape returned by GET /targets/catalog.
-const TARGET_CATALOG = {
+const TARGET_CATALOG: TargetCatalogResponse = {
   items: [
-    { target_type: "OpenAIChatTarget", parameters: [], supported_auth_modes: ["api_key", "identity"] },
-    { target_type: "OpenAIResponseTarget", parameters: [], supported_auth_modes: ["api_key", "identity"] },
-    { target_type: "AzureMLChatTarget", parameters: [], supported_auth_modes: ["api_key", "identity"] },
-    { target_type: "RoundRobinTarget", parameters: [], supported_auth_modes: ["api_key"] },
+    {
+      target_type: "AzureMLChatTarget",
+      parameters: [],
+      supported_auth_modes: ["api_key", "identity"],
+      description: "A prompt target for Azure Machine Learning chat endpoints.",
+    },
+    {
+      target_type: "OpenAIChatTarget",
+      parameters: [],
+      supported_auth_modes: ["api_key", "identity"],
+      description: "Facilitates multimodal (image and text) input and text output generation.",
+    },
+    {
+      target_type: "OpenAICompletionTarget",
+      parameters: [],
+      supported_auth_modes: ["api_key", "identity"],
+      description: "A prompt target for OpenAI completion endpoints.",
+    },
+    {
+      target_type: "OpenAIImageTarget",
+      parameters: [],
+      supported_auth_modes: ["api_key", "identity"],
+      description: "A target for image generation or editing using OpenAI's image models.",
+    },
+    {
+      target_type: "OpenAIResponseTarget",
+      parameters: [],
+      supported_auth_modes: ["api_key", "identity"],
+      description: "Enables communication with endpoints that support the OpenAI Response API.",
+    },
+    {
+      target_type: "OpenAITTSTarget",
+      parameters: [],
+      supported_auth_modes: ["api_key", "identity"],
+      description: "A prompt target for OpenAI Text-to-Speech (TTS) endpoints.",
+    },
+    {
+      target_type: "OpenAIVideoTarget",
+      parameters: [],
+      supported_auth_modes: ["api_key", "identity"],
+      description: "OpenAI Video Target using the OpenAI SDK for video generation.",
+    },
+    {
+      target_type: "RoundRobinTarget",
+      parameters: [],
+      supported_auth_modes: ["api_key"],
+      description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
+    },
   ],
+};
+
+const TARGET_DISPLAY_NAMES: Record<string, string> = {
+  AzureMLChatTarget: "Azure Machine Learning chat",
+  OpenAIChatTarget: "OpenAI chat",
+  OpenAICompletionTarget: "OpenAI text completion",
+  OpenAIImageTarget: "OpenAI image",
+  OpenAIResponseTarget: "OpenAI Responses API",
+  OpenAITTSTarget: "OpenAI text to speech",
+  OpenAIVideoTarget: "OpenAI video",
+  RoundRobinTarget: "Weighted round robin",
 };
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
 
-/**
- * Helper to select a target type from the native select element.
- * Uses selectOptions from userEvent which works with native select.
- */
-async function selectTargetType(
-  user: ReturnType<typeof userEvent.setup>,
-  value: string
-) {
-  const select = screen.getByRole("combobox");
-  await user.selectOptions(select, value);
+// Fluent's Dropdown renders its listbox in a portal guarded by a focus
+// modalizer. Under jsdom the popover only toggles via a direct click event,
+// and the `aria-hidden` the modalizer puts on the dialog while the listbox is
+// open is never restored once it closes, which would hide the rest of the form
+// from role-based queries. Both behaviors are jsdom artifacts — real pointer
+// and keyboard interaction is covered by e2e/config.spec.ts.
+async function openTargetTypePicker(): Promise<HTMLElement> {
+  const picker = screen.getByRole("combobox", { name: /target type/i });
+  await waitFor(() => {
+    expect(picker).toBeEnabled();
+  });
+  fireEvent.click(picker);
+  await screen.findByRole("listbox");
+  return picker;
+}
+
+function restoreDialogAccessibility(): void {
+  const dialog = document.querySelector('[role="dialog"]');
+  if (!dialog) return;
+  const hiddenAncestors = document.querySelectorAll('[aria-hidden="true"]');
+  for (const element of Array.from(hiddenAncestors)) {
+    if (element === dialog || element.contains(dialog)) {
+      element.removeAttribute("aria-hidden");
+    }
+  }
+}
+
+async function selectTargetType(value: string): Promise<void> {
+  await openTargetTypePicker();
+  fireEvent.click(
+    screen.getByRole("option", {
+      name: new RegExp(`Implementation: ${value}`),
+    }),
+  );
+  await waitFor(() => {
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+  restoreDialogAccessibility();
 }
 
 describe("parseWeight", () => {
@@ -118,9 +200,7 @@ describe("CreateTargetDialog", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedTargetsApi.listTargetCatalog.mockResolvedValue(
-      TARGET_CATALOG as unknown as Awaited<ReturnType<typeof mockedTargetsApi.listTargetCatalog>>,
-    );
+    mockedTargetsApi.listTargetCatalog.mockResolvedValue(TARGET_CATALOG);
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: [],
       pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
@@ -137,6 +217,106 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByText("Create New Target")).toBeInTheDocument();
     expect(screen.getByText("Create Target")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
+  });
+
+  it("should show friendly names, catalog descriptions, implementation identifiers, and auth for all target types", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await openTargetTypePicker();
+
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(8);
+    for (const entry of TARGET_CATALOG.items) {
+      const option = screen.getByRole("option", {
+        name: new RegExp(`Implementation: ${entry.target_type}`),
+      });
+      expect(within(option).getByText(TARGET_DISPLAY_NAMES[entry.target_type])).toBeInTheDocument();
+      expect(within(option).getByText(entry.target_type)).toBeInTheDocument();
+      expect(within(option).getByText(entry.description ?? "")).toBeInTheDocument();
+    }
+
+    expect(within(screen.getByRole("option", {
+      name: /Implementation: OpenAIChatTarget/,
+    })).getByText(/API key or Microsoft Entra ID/)).toBeInTheDocument();
+    expect(within(screen.getByRole("option", {
+      name: /Implementation: RoundRobinTarget/,
+    })).getByText("Supported authentication: API key")).toBeInTheDocument();
+  });
+
+  it("should keep guidance for the selected target visible after the list closes", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("RoundRobinTarget");
+
+    expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent(
+      "Weighted round robin",
+    );
+    const selectedDetails = screen.getByRole("region", { name: /selected target details/i });
+    expect(selectedDetails).toHaveTextContent("RoundRobinTarget");
+    expect(selectedDetails).toHaveTextContent("weighted round-robin selection");
+    expect(selectedDetails).toHaveTextContent("Supported authentication: API key");
+  });
+
+  it("should keep the selected target displayed after focus moves to another field", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+
+    await user.click(
+      screen.getByPlaceholderText("https://your-resource.openai.azure.com/"),
+    );
+    await user.keyboard("https://api.openai.com");
+    restoreDialogAccessibility();
+
+    const picker = screen.getByRole("combobox", { name: /target type/i });
+    expect(picker).toHaveTextContent("OpenAI chat");
+    expect(picker).not.toHaveTextContent("Select a target type");
+  });
+
+  it("should disable target selection while catalog details are loading", () => {
+    mockedTargetsApi.listTargetCatalog.mockReturnValue(
+      new Promise<TargetCatalogResponse>(() => {}),
+    );
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByText("Loading target details...")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /target type/i })).toBeDisabled();
+  });
+
+  it("should keep all target types selectable and explain when catalog details fail to load", async () => {
+    mockedTargetsApi.listTargetCatalog.mockRejectedValueOnce(new Error("catalog unavailable"));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(await screen.findByText(/Target details could not be loaded/)).toBeInTheDocument();
+    await openTargetTypePicker();
+    expect(screen.getAllByRole("option")).toHaveLength(8);
+    expect(screen.getByRole("option", {
+      name: /Azure Machine Learning chat.*Implementation: AzureMLChatTarget/,
+    })).toBeInTheDocument();
   });
 
   it("should not render when closed", () => {
@@ -161,7 +341,6 @@ describe("CreateTargetDialog", () => {
   });
 
   it("should hide the Authentication field until a target type is selected", async () => {
-    const user = userEvent.setup();
 
     render(
       <TestWrapper>
@@ -178,7 +357,7 @@ describe("CreateTargetDialog", () => {
     ).toBeInTheDocument();
 
     // Selecting an identity-capable type should reveal the Authentication field.
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
     expect(
       screen.getByRole("radio", { name: /Identity-based/ })
     ).toBeInTheDocument();
@@ -214,7 +393,7 @@ describe("CreateTargetDialog", () => {
     );
 
     // Select target type
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     // Fill the endpoint & model names
     const endpointInput = screen.getByPlaceholderText(
@@ -255,7 +434,7 @@ describe("CreateTargetDialog", () => {
     );
 
     // Select target type
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     // Fill endpoint & model names
     const endpointInput = screen.getByPlaceholderText(
@@ -303,7 +482,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -341,7 +520,7 @@ describe("CreateTargetDialog", () => {
     );
 
     // Select target type
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     // Fill endpoint
     const endpointInput = screen.getByPlaceholderText(
@@ -371,7 +550,7 @@ describe("CreateTargetDialog", () => {
     );
 
     // Select target type
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     // Fill endpoint — use fireEvent.change because userEvent.type truncates
     // URLs containing periods in FluentUI Input under jsdom.
@@ -431,7 +610,6 @@ describe("CreateTargetDialog", () => {
   });
 
   it("should show field validation errors when submitting form without endpoint", async () => {
-    const user = userEvent.setup();
 
     render(
       <TestWrapper>
@@ -440,7 +618,7 @@ describe("CreateTargetDialog", () => {
     );
 
     // Select target type but leave endpoint empty
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     // Submit via form (bypass disabled button by submitting the form directly)
     const form = screen.getByText("Create New Target").closest("form") ??
@@ -464,7 +642,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -493,7 +671,7 @@ describe("CreateTargetDialog", () => {
     );
 
     // Select AzureMLChatTarget type
-    await selectTargetType(user, "AzureMLChatTarget");
+    await selectTargetType("AzureMLChatTarget");
 
     // Fill endpoint
     const endpointInput = screen.getByPlaceholderText(
@@ -527,7 +705,6 @@ describe("CreateTargetDialog", () => {
   });
 
   it("should show AzureML fields and hide OpenAI fields when AzureMLChatTarget selected", async () => {
-    const user = userEvent.setup();
 
     render(
       <TestWrapper>
@@ -535,7 +712,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "AzureMLChatTarget");
+    await selectTargetType("AzureMLChatTarget");
 
     // AzureML-specific fields should be visible
     expect(screen.getByText("Max New Tokens")).toBeInTheDocument();
@@ -561,7 +738,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "AzureMLChatTarget");
+    await selectTargetType("AzureMLChatTarget");
 
     // Fill endpoint — use fireEvent.change because userEvent.type truncates
     // URLs containing periods in FluentUI Input under jsdom.
@@ -641,7 +818,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -695,7 +872,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -732,7 +909,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -757,7 +934,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -784,7 +961,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "OpenAIChatTarget");
+    await selectTargetType("OpenAIChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -812,7 +989,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "AzureMLChatTarget");
+    await selectTargetType("AzureMLChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-model.region.inference.ml.azure.com/score"
@@ -841,7 +1018,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "AzureMLChatTarget");
+    await selectTargetType("AzureMLChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-model.region.inference.ml.azure.com/score"
@@ -870,7 +1047,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "AzureMLChatTarget");
+    await selectTargetType("AzureMLChatTarget");
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-model.region.inference.ml.azure.com/score"
@@ -892,7 +1069,6 @@ describe("CreateTargetDialog", () => {
   });
 
   it("should show target picker when RoundRobinTarget is selected", async () => {
-    const user = userEvent.setup();
 
     render(
       <TestWrapper>
@@ -916,7 +1092,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "RoundRobinTarget");
+    await selectTargetType("RoundRobinTarget");
 
     // Endpoint field should NOT be visible for RoundRobin
     expect(
@@ -928,7 +1104,6 @@ describe("CreateTargetDialog", () => {
   });
 
   it("should disable Create button when fewer than 2 inner targets are selected for RoundRobin", async () => {
-    const user = userEvent.setup();
 
     render(
       <TestWrapper>
@@ -945,7 +1120,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "RoundRobinTarget");
+    await selectTargetType("RoundRobinTarget");
 
     const createButton = screen.getByText("Create Target").closest("button");
     expect(createButton).toBeDisabled();
@@ -980,7 +1155,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "RoundRobinTarget");
+    await selectTargetType("RoundRobinTarget");
     const select = screen.getByText("Select a target to add...").closest("select");
     expect(select).not.toBeNull();
     if (!select) {
@@ -1042,7 +1217,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "RoundRobinTarget");
+    await selectTargetType("RoundRobinTarget");
 
     // Before selecting anything: all three are eligible.
     const select = screen.getByText("Select a target to add...").closest("select")!;
@@ -1094,7 +1269,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "RoundRobinTarget");
+    await selectTargetType("RoundRobinTarget");
     const select = screen.getByText("Select a target to add...").closest("select")!;
     await user.selectOptions(select, "foundry_a");
 
@@ -1146,7 +1321,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    await selectTargetType(user, "RoundRobinTarget");
+    await selectTargetType("RoundRobinTarget");
     const select = screen.getByText("Select a target to add...").closest("select")!;
     await user.selectOptions(select, "a");
     await user.selectOptions(select, "b");
@@ -1196,7 +1371,7 @@ describe("CreateTargetDialog", () => {
         />
       </TestWrapper>
     );
-    await selectTargetType(user, "RoundRobinTarget");
+    await selectTargetType("RoundRobinTarget");
     const select = screen.getByText("Select a target to add...").closest("select")!;
     await user.selectOptions(select, "a");
     await user.selectOptions(select, "b");

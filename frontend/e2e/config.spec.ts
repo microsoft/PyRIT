@@ -57,6 +57,57 @@ const RESPONSIVE_VIEWPORTS = [
   { name: "desktop", width: 1280, height: 800 },
 ] as const;
 
+const TARGET_PICKER_CHOICES = [
+  {
+    targetType: "AzureMLChatTarget",
+    displayName: "Azure Machine Learning chat",
+    description: "A prompt target for Azure Machine Learning chat endpoints.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAIChatTarget",
+    displayName: "OpenAI chat",
+    description: "Facilitates multimodal (image and text) input and text output generation.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAICompletionTarget",
+    displayName: "OpenAI text completion",
+    description: "A prompt target for OpenAI completion endpoints.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAIImageTarget",
+    displayName: "OpenAI image",
+    description: "A target for image generation or editing using OpenAI's image models.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAIResponseTarget",
+    displayName: "OpenAI Responses API",
+    description: "Enables communication with endpoints that support the OpenAI Response API.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAITTSTarget",
+    displayName: "OpenAI text to speech",
+    description: "A prompt target for OpenAI Text-to-Speech (TTS) endpoints.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAIVideoTarget",
+    displayName: "OpenAI video",
+    description: "OpenAI Video Target using the OpenAI SDK for video generation.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "RoundRobinTarget",
+    displayName: "Weighted round robin",
+    description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
+    authModes: ["api_key"],
+  },
+] as const;
+
 async function routeResponsiveTargetData(
   page: Page,
   targets: FlatTarget[]
@@ -107,6 +158,19 @@ async function goToConfig(page: Page) {
   await page.goto("/");
   await page.getByTitle("Configuration").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
+}
+
+async function selectTargetType(
+  page: Page,
+  dialog: Locator,
+  targetType: string
+): Promise<void> {
+  const picker = dialog.getByRole("combobox", { name: "Target Type" });
+  await expect(picker).toBeEnabled();
+  await picker.click();
+  await page.getByRole("option", {
+    name: new RegExp(`Implementation: ${targetType}`),
+  }).click();
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +272,66 @@ test.describe("Target Configuration Page", () => {
 });
 
 test.describe("Create Target Dialog", () => {
+  test("should make all target choices distinguishable and keyboard navigable", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route(/\/api\/targets\/catalog(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: TARGET_PICKER_CHOICES.map((choice) => ({
+            target_type: choice.targetType,
+            parameters: [],
+            supported_auth_modes: choice.authModes,
+            description: choice.description,
+          })),
+        }),
+      });
+    });
+    await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
+      await route.fulfill(mockTargetsList([]));
+    });
+
+    await goToConfig(page);
+    await page.getByRole("button", { name: /new target/i }).click();
+
+    const dialog = page.getByRole("dialog");
+    const picker = dialog.getByRole("combobox", { name: "Target Type" });
+    await expect(picker).toBeEnabled();
+    await picker.focus();
+    await page.keyboard.press("Enter");
+
+    const listbox = page.getByRole("listbox");
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole("option")).toHaveCount(8);
+    for (const choice of TARGET_PICKER_CHOICES) {
+      const option = listbox.getByRole("option", {
+        name: new RegExp(`Implementation: ${choice.targetType}`),
+      });
+      await expect(option).toContainText(choice.displayName);
+      await expect(option).toContainText(choice.targetType);
+      await expect(option).toContainText(choice.description);
+    }
+
+    const listboxWidths = await listbox.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(listboxWidths.scrollWidth).toBeLessThanOrEqual(listboxWidths.clientWidth);
+
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await expect(picker).toContainText("Weighted round robin");
+    const selectedDetails = dialog.getByRole("region", {
+      name: "Selected target details",
+    });
+    await expect(selectedDetails).toContainText("RoundRobinTarget");
+    await expect(selectedDetails).toContainText("weighted round-robin selection");
+    await expect(selectedDetails).toContainText("Supported authentication: API key");
+  });
+
   test("should create a target through the dialog", async ({ page }) => {
     let createdTarget: FlatTarget | null = null;
 
@@ -242,10 +366,15 @@ test.describe("Create Target Dialog", () => {
     const dialog = page.locator('[role="dialog"]');
 
     // Select target type
-    await dialog.locator("select").selectOption("OpenAIChatTarget");
+    await selectTargetType(page, dialog, "OpenAIChatTarget");
 
     // Fill endpoint
     await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://my-endpoint.openai.azure.com/");
+
+    // The picker must keep showing the selection once focus moves to another field
+    await expect(dialog.getByRole("combobox", { name: "Target Type" })).toContainText(
+      "OpenAI chat"
+    );
 
     // Fill model name
     await dialog.getByPlaceholder("e.g. gpt-4o, my-deployment").fill("gpt-4o-test");
@@ -280,7 +409,11 @@ test.describe("Create Target Dialog", () => {
 
     // Clear endpoint, select type — button should still be disabled
     await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("");
-    await page.locator('[role="dialog"]').locator("select").selectOption("OpenAIChatTarget");
+    await selectTargetType(
+      page,
+      page.locator('[role="dialog"]'),
+      "OpenAIChatTarget"
+    );
     await expect(createBtn).toBeDisabled();
 
     // Fill both — button should be enabled
@@ -339,9 +472,9 @@ test.describe("Responsive Target Configuration", () => {
       if (viewport.name === "desktop") {
         expect(dialogBox.width).toBeLessThanOrEqual(640);
       }
-      await dialog.locator("select").first().selectOption("RoundRobinTarget");
+      await selectTargetType(page, dialog, "RoundRobinTarget");
 
-      const addTargetSelect = dialog.locator("select").nth(1);
+      const addTargetSelect = dialog.locator("select");
       await addTargetSelect.selectOption(LONG_REGISTRY_NAME_A);
       await addTargetSelect.selectOption(LONG_REGISTRY_NAME_B);
 

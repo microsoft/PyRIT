@@ -16,6 +16,7 @@ directly from ``pyrit.models`` (e.g. ``from pyrit.models import
 ComponentIdentifier``).
 """
 
+from pyrit.models.additional_initializer import AdditionalInitializer
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
@@ -116,12 +117,15 @@ from pyrit.models.target import (
     TargetCapabilities,
     TokenUsage,
     get_common_json_schema,
+    read_usage_int,
+    read_usage_value,
     register_common_json_schema,
     unregister_common_json_schema,
 )
 
 __all__ = [
     "ALLOWED_CHAT_MESSAGE_ROLES",
+    "AdditionalInitializer",
     "AtomicAttackEvaluationIdentifier",
     "AtomicAttackIdentifier",
     "AttackIdentifier",
@@ -221,6 +225,8 @@ __all__ = [
     "TokenUsage",
     "ToolCall",
     "UnvalidatedScore",
+    "read_usage_int",
+    "read_usage_value",
     "validate_registry_name",
     "RetryEvent",
 ]
