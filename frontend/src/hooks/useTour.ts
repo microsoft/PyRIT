@@ -18,6 +18,7 @@ const JOYRIDE_FLOATING_OPTIONS = {
   },
 } as const
 const JOYRIDE_OPTIONS = {
+  blockTargetInteraction: false,
   closeButtonAction: 'skip' as const,
   overlayClickAction: false as const,
 }
@@ -44,6 +45,22 @@ export function useTour(
   const [run, setRun] = useState(false)
   const [stepIndex, setStepIndex] = useState(0)
   const steps = useMemo(() => createTourSteps(hasActiveTarget), [hasActiveTarget])
+  const visibleSteps = useMemo(() => {
+    const currentStep = steps[stepIndex]
+    if (!currentStep || currentStep.viewRequired === currentView) {
+      return steps
+    }
+
+    return steps.map((step, index) => index === stepIndex
+      ? {
+          ...step,
+          target: 'body',
+          placement: 'center' as const,
+          hideOverlay: true,
+          disableFocusTrap: true,
+        }
+      : step)
+  }, [currentView, stepIndex, steps])
 
   // Ref to track whether we're in the middle of a delayed view switch.
   // Prevents double-advancing if the user clicks rapidly.
@@ -169,18 +186,17 @@ export function useTour(
   // Memoize tourProps so Joyride only receives a new object reference when
   // something it cares about actually changed (run, stepIndex, callbacks, tooltip).
   const tourProps = useMemo(() => ({
-    steps,
+    steps: visibleSteps,
     run,
     stepIndex,
     onEvent: handleJoyrideEvent,
     continuous: true as const,
     showSkipButton: true,
-    spotlightClicks: false,
     tooltipComponent: tooltip,
     floatingOptions: JOYRIDE_FLOATING_OPTIONS,
     options: JOYRIDE_OPTIONS,
     locale: JOYRIDE_LOCALE,
-  }), [steps, run, stepIndex, handleJoyrideEvent, tooltip])
+  }), [visibleSteps, run, stepIndex, handleJoyrideEvent, tooltip])
 
   return {
     /** Call to start (or restart) the tour from step 1 on the Home view. */
