@@ -94,11 +94,12 @@
    first frame would leave the scout invisible, since its opening frame is an
    empty ledge.
 
-   Sprites sit absolutely (out of flow, so they never shift content) and are
-   hidden below the width where the gutters beside the centered content column
-   have room for them. */
+   Sprites sit absolutely (out of flow, so they never shift content). On wide
+   screens they live in the gutters beside the centred content column; below
+   that the narrow-screen rules further down open up vertical space for them
+   instead, since there are no gutters to sit in. */
 .roakey-sprite {
-  display: none;
+  display: block;
   position: absolute;
   object-fit: none;
   margin: 0;
@@ -125,12 +126,6 @@ main:has(.roakey-sprite) {
 }
 .myst-landing-block:has(.roakey-sprite) {
   position: static;
-}
-
-@media (min-width: 1536px) {
-  .roakey-sprite {
-    display: block;
-  }
 }
 
 /* Each sprite is anchored to the content it belongs to rather than to the page
@@ -180,6 +175,31 @@ main:has(.roakey-sprite-flag) {
   object-position: -755px 0;
 }
 
+/* Narrow screens have no gutters, so instead of moving the sprites off the
+   content we open vertical space for them to occupy. Each gap is added to the
+   element the sprite rests on, and only when that sprite is actually present.
+
+   The spyglass keeps its static position while the following block is pushed
+   down, so the gap is sized such that the artwork lands exactly on the block's
+   new top edge with no vertical transform needed. */
+@media (max-width: 1535px) {
+  .myst-grid:has(.roakey-sprite-scout) {
+    margin-top: 140px;
+  }
+  .roakey-sprite-scout {
+    right: 16px;
+  }
+
+  .roakey-sprite-spyglass + * {
+    margin-top: 136px;
+  }
+  .roakey-sprite-spyglass {
+    left: auto;
+    right: 16px;
+    transform: scaleX(-1);
+  }
+}
+
 /* Advance frames as each sprite scrolls through the viewport (Chromium/Edge).
    The range is `cover 0%` to `cover 50%`: the sequence starts as the sprite
    comes into view and resolves by the time it reaches mid-viewport, then holds
@@ -190,26 +210,24 @@ main:has(.roakey-sprite-flag) {
    `steps(n)` where the keyframe travel is n frame-widths lands the final frame
    at the end of the range. */
 @supports (animation-timeline: view()) {
-  @media (min-width: 1536px) {
-    .roakey-sprite-spyglass {
-      animation: roakey-spyglass-frames steps(4) both;
-      animation-timeline: view();
-      animation-range: cover 0% cover 50%;
-    }
-    .roakey-sprite-scout {
-      animation: roakey-scout-frames steps(6) both;
-      animation-timeline: view();
-      animation-range: cover 0% cover 50%;
-    }
-    /* The flag sits at the very bottom of the page, where only ~230px of
-       scrolling remains once it starts entering. A percentage of `cover` scales
-       with viewport height and would strand the sequence mid-run on tall
-       screens, so this one scrubs over a fixed length that always completes. */
-    .roakey-sprite-flag {
-      animation: roakey-flag-frames steps(5) both, roakey-flag-run linear both;
-      animation-timeline: view(), view();
-      animation-range: cover 0px cover 200px, cover 0px cover 200px;
-    }
+  .roakey-sprite-spyglass {
+    animation: roakey-spyglass-frames steps(4) both;
+    animation-timeline: view();
+    animation-range: cover 0% cover 50%;
+  }
+  .roakey-sprite-scout {
+    animation: roakey-scout-frames steps(6) both;
+    animation-timeline: view();
+    animation-range: cover 0% cover 50%;
+  }
+  /* The flag sits at the very bottom of the page, where only ~230px of
+     scrolling remains once it starts entering. A percentage of `cover` scales
+     with viewport height and would strand the sequence mid-run on tall
+     screens, so this one scrubs over a fixed length that always completes. */
+  .roakey-sprite-flag {
+    animation: roakey-flag-frames steps(5) both, roakey-flag-run linear both;
+    animation-timeline: view(), view();
+    animation-range: cover 0px cover 200px, cover 0px cover 200px;
   }
   @keyframes roakey-spyglass-frames {
     from { object-position: 0 0; }
