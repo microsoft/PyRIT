@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from contextvars import ContextVar
 from functools import partial
 from typing import Any, ClassVar
@@ -27,11 +26,10 @@ _PROMPT_PARAMETERS = ("user_prompt", "response")
 
 # The user prompt belongs to the conversation, not to an individual piece, so it is resolved
 # once per scored message and handed to the pieces through this. Resolving inside
-# _score_piece_async instead would issue one memory read per piece from tasks running
-# concurrently under asyncio.gather, which puts the shared SQLAlchemy session on several
-# threads and makes the lookup intermittently return nothing. A ContextVar is used rather than
-# an attribute or a lock because gather copies the context into each child task, and because
-# it carries no event-loop affinity.
+# _score_piece_async instead would repeat the same lookup for every piece of the message. A
+# ContextVar rather than an attribute because pieces are scored under asyncio.gather, which
+# copies the context into each child task, so this stays correct if one scorer instance is
+# used for several messages at once.
 _RESOLVED_USER_PROMPT: ContextVar[str | None] = ContextVar("wildguard_resolved_user_prompt", default=None)
 
 _MISSING_USER_PROMPT_MESSAGE = (
@@ -208,9 +206,10 @@ class WildGuardScorer(TrueFalseScorer):
 
         # get_message_pieces is a blocking SQLAlchemy query, so it is offloaded rather than
         # run on the event loop during scoring.
-        conversation = await asyncio.to_thread(
-            self._memory.get_message_pieces, conversation_id=message_piece.conversation_id
-        )
+        # Read synchronously. Moving this to a worker thread makes it intermittently return
+        # nothing, because the memory layer is not safe to use from several threads and scoring
+        # runs concurrently under asyncio.gather.
+        conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
         # The converted value is what the target actually received. After a converter runs, the
         # original value can be the seed prompt, which the target never saw.
         preceding_turn = [
