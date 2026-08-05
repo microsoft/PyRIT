@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from sqlalchemy import and_, case, create_engine, exists, func, or_, text
+from sqlalchemy import and_, create_engine, exists, func, or_, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
@@ -270,35 +270,6 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         joiner = " OR " if match_mode == "any" else " AND "
         combined = joiner.join(conditions)
         return text(f"({combined})").bindparams(**bindparams_dict)
-
-    def _attack_results_recency_expr(self) -> Any:
-        """
-        Return the SQLite recency sort expression reproducing the History-view sort.
-
-        Coalesces the ``attack_metadata`` ``updated_at`` key, falling back to ``created_at``
-        then an empty string. Only JSON *string* values are honored: ``json_type`` gates each
-        accessor so a non-string value (e.g. a JSON bool, which ``json_extract`` would return
-        as the integer ``0``) collapses to ``NULL`` -> ``""`` instead. This keeps recency a
-        pure text sort key -- SQLite orders numbers before text, so a typed scalar would break
-        keyset seek monotonicity (the anchor could never advance past such a row). Backs both
-        the recency ORDER BY and the keyset seek predicate so they stay in lockstep, matching
-        ``_attack_result_recency_key``'s string-only Python key.
-
-        Returns:
-            Any: A SQLAlchemy expression yielding the coalesced recency string.
-        """
-        metadata = AttackResultEntry.attack_metadata
-        return func.coalesce(
-            case(
-                (func.json_type(metadata, "$.updated_at") == "text", func.json_extract(metadata, "$.updated_at")),
-                else_=None,
-            ),
-            case(
-                (func.json_type(metadata, "$.created_at") == "text", func.json_extract(metadata, "$.created_at")),
-                else_=None,
-            ),
-            "",
-        )
 
     def get_all_table_models(self) -> list[type[Base]]:
         """

@@ -555,11 +555,13 @@ class TargetInitializer(PyRITInitializer):
                 name="tags",
                 description="Target tags to register (e.g., ['default'], ['default', 'scorer'], or ['all'])",
                 default=["default"],
+                param_type=list[TargetInitializerTags],
             ),
             Parameter(
                 name="auto_group",
                 description="Auto-create round-robin groups from targets with matching behavioral eval params",
                 default=True,
+                param_type=bool,
             ),
         ]
 

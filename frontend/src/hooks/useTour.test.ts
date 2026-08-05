@@ -53,8 +53,10 @@ describe('useTour', () => {
     expect(result.current.tourProps.floatingOptions).toEqual({
       hideArrow: true,
       shiftOptions: {
+        boundary: [],
         crossAxis: true,
         padding: 12,
+        rootBoundary: 'viewport',
       },
     })
   })

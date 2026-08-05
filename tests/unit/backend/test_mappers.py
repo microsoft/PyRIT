@@ -416,6 +416,22 @@ class TestAttackResultToSummary:
 
         assert summary.created_at == metadata_ts
 
+    async def test_updated_at_uses_ar_timestamp_ignoring_metadata_updated_at(self) -> None:
+        """``updated_at`` is the persisted ``ar.timestamp``; a stale ``metadata['updated_at']`` is ignored."""
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        stale = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        ar = AttackResult(
+            conversation_id="attack-1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=ar_ts,
+            metadata={"created_at": stale.isoformat(), "updated_at": stale.isoformat()},
+        )
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.updated_at == ar_ts
+        assert summary.created_at == stale
+
     async def test_created_at_falls_back_to_now_when_both_absent(self) -> None:
         """When neither metadata nor ar.timestamp is set, fall back to datetime.now()."""
         ar = AttackResult(

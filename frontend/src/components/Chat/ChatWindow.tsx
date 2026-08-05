@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import type { ChangeEvent } from 'react'
 import {
   Button,
   Drawer,
@@ -14,6 +15,7 @@ import {
   useRestoreFocusSource,
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
+import type { SwitchOnChangeData } from '@fluentui/react-components'
 import { AddRegular, ArrowDownloadRegular, PanelRightRegular } from '@fluentui/react-icons'
 import MessageList from './MessageList'
 import SystemPromptBanner from './SystemPromptBanner'
@@ -36,6 +38,26 @@ import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
 const NARROW_SCREEN_QUERY = '(max-width: 600px)'
+const MARKDOWN_PREFERENCE_STORAGE_KEY = 'pyrit.chatMarkdownMode'
+
+function readStoredMarkdownPreference(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    const storedPreference = window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)
+    return storedPreference === 'markdown'
+  } catch {
+    return false
+  }
+}
+
+function persistMarkdownPreference(enabled: boolean): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(MARKDOWN_PREFERENCE_STORAGE_KEY, enabled ? 'markdown' : 'raw')
+  } catch {
+    /* localStorage may be unavailable (private mode, quota, sandboxed iframe). */
+  }
+}
 
 function matchesNarrowScreen(): boolean {
   return typeof window !== 'undefined'
@@ -94,8 +116,8 @@ export default function ChatWindow({
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
-  // Conversation-wide default for rendering message text as Markdown.
-  const [globalMarkdown, setGlobalMarkdown] = useState(false)
+  // Conversation-wide preference for rendering message text as Markdown.
+  const [globalMarkdown, setGlobalMarkdown] = useState(() => readStoredMarkdownPreference())
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [attachmentTypes, setAttachmentTypes] = useState<string[]>([])
@@ -103,6 +125,14 @@ export default function ChatWindow({
   const [pieceConversions, setPieceConversions] = useState<Record<string, PieceConversion>>({})
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
+
+  const handleMarkdownChange = useCallback((
+    _event: ChangeEvent<HTMLInputElement>,
+    data: SwitchOnChangeData,
+  ): void => {
+    setGlobalMarkdown(data.checked)
+    persistMarkdownPreference(data.checked)
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
@@ -671,7 +701,7 @@ export default function ChatWindow({
             <Tooltip content="Render all messages as Markdown by default" relationship="label">
               <Switch
                 checked={globalMarkdown}
-                onChange={(_ev, data) => setGlobalMarkdown(data.checked)}
+                onChange={handleMarkdownChange}
                 label="Markdown"
                 data-testid="global-markdown-toggle"
               />
