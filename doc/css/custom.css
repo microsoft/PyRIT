@@ -145,17 +145,20 @@ main:has(.roakey-sprite) {
 }
 
 /* Climbs out of the install code block, flipped to look back along the line it
-   came from. The content column is centred in `main` and width-capped, so
-   offsetting from the centre lands the sprite at the right end of the code
-   block no matter how wide the viewport gets.
+   came from. It anchors to the content column so it stays at the block's right
+   end at every width; a centre-relative `calc` offset only held while the
+   column was at its capped width, and drifted off the block below that.
 
    `translateY` lifts it from its static position (immediately before the block)
    so its feet come to rest on the block's top edge. Two offsets matter here:
    the artwork stops 3px short of the frame's bottom, and the visible block edge
    is the `.myst-code` wrapper that paints the background — not the inner `<pre>`,
    which sits 12px lower behind the wrapper's padding. */
+.myst-landing-justified-body:has(.roakey-sprite-spyglass) {
+  position: relative;
+}
 .roakey-sprite-spyglass {
-  left: calc(50% + 388px);
+  right: 16px;
   width: 151px;
   height: 119px;
   object-position: -604px 0;
@@ -175,27 +178,28 @@ main:has(.roakey-sprite-flag) {
   object-position: -755px 0;
 }
 
-/* Narrow screens have no gutters, so instead of moving the sprites off the
-   content we open vertical space for them to occupy. Each gap is added to the
-   element the sprite rests on, and only when that sprite is actually present.
+/* Extra vertical space is only opened where a sprite would actually land on
+   text. Both breakpoints were measured against the rendered glyph rects rather
+   than the full-width block boxes, so they mark where wrapping first pushes
+   text under the artwork.
 
-   The spyglass keeps its static position while the following block is pushed
-   down, so the gap is sized such that the artwork lands exactly on the block's
-   new top edge with no vertical transform needed. */
-@media (max-width: 1535px) {
+   The scout only collides once the capabilities grid collapses to one column
+   and the heading sits directly above the first card. */
+@media (max-width: 767px) {
   .myst-grid:has(.roakey-sprite-scout) {
     margin-top: 140px;
   }
-  .roakey-sprite-scout {
-    right: 16px;
-  }
+}
 
+/* The install paragraph wraps under the spyglass below this width. The sprite
+   keeps its static position while the block below is pushed down, so the gap is
+   sized to land the artwork on the block's new top edge with no vertical
+   transform. */
+@media (max-width: 899px) {
   .roakey-sprite-spyglass + * {
     margin-top: 136px;
   }
   .roakey-sprite-spyglass {
-    left: auto;
-    right: 16px;
     transform: scaleX(-1);
   }
 }
