@@ -26,6 +26,7 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_response_pieces_async,
     capture_token_usage,
     extract_partial_content,
+    get_finish_reason,
     is_content_filter_response,
     save_audio_response_async,
     token_usage_from_chat_completion,
@@ -132,6 +133,16 @@ def test_validate_response_empty_raises():
 def test_validate_response_accepts_valid():
     for reason in ("stop", "length", "tool_calls", "content_filter"):
         validate_chat_completion_response(response=_mock_response(finish_reason=reason))
+
+
+def test_get_finish_reason_returns_first_choice_reason():
+    assert get_finish_reason(response=_mock_response(finish_reason="length")) == "length"
+
+
+def test_get_finish_reason_returns_none_without_choices():
+    resp = MagicMock()
+    resp.choices = []
+    assert get_finish_reason(response=resp) is None
 
 
 def test_capture_token_usage_populates_metadata():

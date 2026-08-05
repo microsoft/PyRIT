@@ -44,6 +44,7 @@ class MessagePiece(BaseModel):
     """
 
     STRUCTURED_REFUSAL_METADATA_KEY: ClassVar[str] = "structured_refusal"
+    TRUNCATED_METADATA_KEY: ClassVar[str] = "truncated"
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -192,6 +193,20 @@ class MessagePiece(BaseModel):
             return None
         refusal = self.prompt_metadata.get(self.STRUCTURED_REFUSAL_METADATA_KEY)
         return refusal if isinstance(refusal, str) and refusal else None
+
+    def mark_as_truncated(self) -> None:
+        """
+        Record that the target cut this response off at its output-token limit.
+
+        A truncated piece may still carry a partial answer with ``response_error == "none"``, so
+        without this flag a consumer cannot tell a complete answer from a clipped one.
+        """
+        self.prompt_metadata[self.TRUNCATED_METADATA_KEY] = True
+
+    @property
+    def is_truncated(self) -> bool:
+        """Whether the target cut this response off at its output-token limit."""
+        return bool(self.prompt_metadata.get(self.TRUNCATED_METADATA_KEY))
 
     # ------------------------------------------------------------------ #
     # Adversarial placeholder support

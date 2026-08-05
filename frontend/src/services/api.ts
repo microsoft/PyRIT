@@ -3,6 +3,8 @@ import { InteractionRequiredAuthError, type PublicClientApplication } from '@azu
 import { toApiError } from './errors'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
+  ApplyInitializerRequest,
+  ApplyInitializerResponse,
   TargetInstance,
   TargetListResponse,
   TargetCatalogResponse,
@@ -10,6 +12,11 @@ import type {
   ConverterInstance,
   ConverterListResponse,
   CreateTargetRequest,
+  InitializerSettingsResponse,
+  ListRegisteredInitializersResponse,
+  AdditionalInitializer,
+  CreateAdditionalInitializerRequest,
+  UpdateAdditionalInitializerRequest,
   CreateAttackRequest,
   CreateAttackResponse,
   AttackSummary,
@@ -188,6 +195,51 @@ export const convertersApi = {
 
   previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string; converted_value_data_type?: string }> => {
     const response = await apiClient.post('/converters/preview', request)
+    return response.data
+  },
+}
+
+export const initializersApi = {
+  getSettings: async (): Promise<InitializerSettingsResponse> => {
+    const response = await apiClient.get('/initializers/settings')
+    return response.data
+  },
+
+  listRegistered: async (): Promise<ListRegisteredInitializersResponse> => {
+    const response = await apiClient.get('/initializers', { params: { limit: 200 } })
+    return response.data
+  },
+
+  createAdditional: async (
+    request: CreateAdditionalInitializerRequest,
+  ): Promise<AdditionalInitializer> => {
+    const response = await apiClient.post('/initializers/settings', request)
+    return response.data
+  },
+
+  updateAdditional: async (
+    id: string,
+    request: UpdateAdditionalInitializerRequest,
+  ): Promise<AdditionalInitializer> => {
+    const response = await apiClient.put(
+      `/initializers/settings/${encodeURIComponent(id)}`,
+      request,
+    )
+    return response.data
+  },
+
+  deleteAdditional: async (id: string): Promise<void> => {
+    await apiClient.delete(`/initializers/settings/${encodeURIComponent(id)}`)
+  },
+
+  applyNow: async (
+    initializerName: string,
+    request?: ApplyInitializerRequest,
+  ): Promise<ApplyInitializerResponse> => {
+    const response = await apiClient.post(
+      `/initializers/${encodeURIComponent(initializerName)}/apply`,
+      request ?? {},
+    )
     return response.data
   },
 }
