@@ -879,6 +879,16 @@ class RealtimeTarget(OpenAITarget):
 
     @staticmethod
     def _read_wav_file(filename: str) -> tuple[bytes, int, int, int]:
+        """
+        Read raw audio frames and format metadata from a WAV file.
+
+        Args:
+            filename (str): Path to the WAV file to read.
+
+        Returns:
+            tuple[bytes, int, int, int]: The raw audio frames, number of channels,
+                sample width in bytes, and frame rate.
+        """
         with wave.open(filename, "rb") as wav_file:
             return (
                 wav_file.readframes(wav_file.getnframes()),
