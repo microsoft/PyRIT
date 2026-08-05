@@ -69,6 +69,7 @@ async def test_write_async_renders_full_summary(printer, capsys):
     assert "SCENARIO RESULTS" in out
     assert "TestScenario" in out
     assert "Scenario Information" in out
+    assert f"Result ID: {result.id}" in out
     assert "Description" in out
     assert "Target Type: MockTarget" in out
     assert "gpt-test" in out
