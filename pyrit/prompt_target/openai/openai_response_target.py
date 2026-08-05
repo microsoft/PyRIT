@@ -38,6 +38,8 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
+    set_response_metadata,
+    set_token_usage_metadata,
     validate_temperature,
     validate_top_p,
     warn_truncated_response,
@@ -562,6 +564,31 @@ class OpenAIResponseTarget(OpenAITarget):
         except (AttributeError, IndexError, TypeError):
             return None
 
+    def _capture_response_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
+        """
+        Record token usage, ``status`` and ``incomplete_reason`` from a Responses API response.
+
+        The Responses API reports why generation stopped as ``status`` plus, when the status is
+        ``incomplete``, ``incomplete_details.reason`` (for example ``max_output_tokens`` or
+        ``content_filter``). Together they are this format's equivalent of Chat Completions'
+        ``finish_reason``.
+
+        Args:
+            response: A Response object from the OpenAI SDK, or the synthetic stand-in used when
+                the SDK raises on a content filter.
+            pieces (list[MessagePiece]): The constructed response pieces.
+        """
+        if not pieces:
+            return
+
+        usage = getattr(response, "usage", None)
+        set_token_usage_metadata(pieces=pieces, usage=token_usage_from_responses(usage) if usage is not None else None)
+
+        status = getattr(response, "status", None)
+        incomplete_details = getattr(response, "incomplete_details", None)
+        incomplete_reason = getattr(incomplete_details, "reason", None) if incomplete_details else None
+        set_response_metadata(pieces=pieces, values={"status": status, "incomplete_reason": incomplete_reason})
+
     def _validate_response(self, response: Response, request: MessagePiece) -> None:
         """
         Validate a Response API response for errors.
@@ -688,12 +715,11 @@ class OpenAIResponseTarget(OpenAITarget):
         # This must stay ahead of the metadata writes below, which target the first piece.
         extracted_response_pieces.sort(key=lambda piece: piece.converted_value_data_type == "reasoning")
 
-        # Capture token usage in the first piece's metadata. This also runs on the truncated path:
-        # usage is populated on token-limit responses and is most valuable there, since the whole
-        # budget may have been spent on hidden reasoning with no visible answer.
-        usage = getattr(response, "usage", None)
-        if usage is not None and extracted_response_pieces:
-            extracted_response_pieces[0].prompt_metadata.update(token_usage_from_responses(usage).to_metadata())
+        # Capture token usage and the stop reason in the first piece's metadata. This also runs on
+        # the truncated path: usage is populated on token-limit responses and is most valuable
+        # there, since the whole budget may have been spent on hidden reasoning with no visible
+        # answer.
+        self._capture_response_metadata(response=response, pieces=extracted_response_pieces)
 
         if truncated and extracted_response_pieces:
             extracted_response_pieces[0].mark_as_truncated()

@@ -31,6 +31,7 @@ from pyrit.models import (
     read_usage_int,
     read_usage_value,
 )
+from pyrit.prompt_target.common.utils import set_response_metadata, set_token_usage_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -286,20 +287,45 @@ def capture_token_usage(*, pieces: list[MessagePiece], response: Any) -> None:
     Copy token-usage numbers from ``response.usage`` into the first piece's metadata.
 
     Parses the Chat Completions ``usage`` payload (see ``token_usage_from_chat_completion``) and
-    writes the resulting counts onto the first piece. Only fields the provider actually reports are
-    written; missing counts are omitted rather than stored as a misleading zero. No-op when the
-    response has no usage data or there are no pieces.
+    writes the resulting counts onto the first piece via ``set_token_usage_metadata``, which also
+    clears any stale caller-supplied counts. Only fields the provider actually reports are written;
+    missing counts are omitted rather than stored as a misleading zero.
 
     Args:
         pieces (list[MessagePiece]): The constructed response pieces.
         response (Any): The Chat Completions response object.
     """
     usage = getattr(response, "usage", None)
-    if not usage or not pieces:
+    set_token_usage_metadata(pieces=pieces, usage=token_usage_from_chat_completion(usage) if usage else None)
+
+
+def capture_usage_and_finish_reason(*, pieces: list[MessagePiece], response: Any) -> None:
+    """
+    Copy the provider's response metadata into the response pieces' metadata.
+
+    Captures token usage (see ``capture_token_usage``) together with the first choice's
+    ``finish_reason``, which records why generation stopped — ``stop``, ``length`` (token limit),
+    ``content_filter`` or ``tool_calls``. Both come from the same response object, so capturing them
+    together keeps every call site consistent: success, truncation, and content filter all record
+    the same set of keys. Applies to every ``usage``-plus-``choices`` response shape: Chat
+    Completions, Completions, and the LiteLLM responses modeled on them.
+
+    Args:
+        pieces (list[MessagePiece]): The constructed response pieces.
+        response (Any): The response object. Objects that carry no ``usage`` or no ``choices`` —
+            such as the synthetic response used when the SDK raises on a content filter — are
+            tolerated and simply yield no metadata.
+    """
+    if not pieces:
         return
 
-    token_usage = token_usage_from_chat_completion(usage)
-    pieces[0].prompt_metadata.update(token_usage.to_metadata())
+    capture_token_usage(pieces=pieces, response=response)
+
+    # Synthetic content-filter responses have no ``choices`` attribute at all, so probe for it
+    # rather than relying on ``get_finish_reason``'s empty-list guard.
+    choices = getattr(response, "choices", None)
+    finish_reason = get_finish_reason(response=response) if choices else None
+    set_response_metadata(pieces=pieces, values={"finish_reason": finish_reason})
 
 
 def token_usage_from_chat_completion(usage: Any) -> TokenUsage:

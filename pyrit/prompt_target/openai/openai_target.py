@@ -547,6 +547,9 @@ class OpenAITarget(PromptTarget):
         it is attached to each response piece as ``prompt_metadata["partial_content"]``
         so that scorers with ``score_blocked_content=True`` can evaluate it.
 
+        Provider-reported metadata (token usage, stop reason) is captured via
+        ``_capture_response_metadata`` so a filtered response records what it consumed.
+
         Args:
             response: The response object from OpenAI SDK.
             request: The original request message piece.
@@ -569,6 +572,8 @@ class OpenAITarget(PromptTarget):
             for piece in error_message.message_pieces:
                 piece.prompt_metadata["partial_content"] = partial_content
 
+        self._capture_response_metadata(response=response, pieces=error_message.message_pieces)
+
         return error_message
 
     def _extract_partial_content(self, response: Any) -> str | None:
@@ -585,6 +590,24 @@ class OpenAITarget(PromptTarget):
             The partial text content, or None if no content was generated.
         """
         return None
+
+    def _capture_response_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
+        """
+        Record provider-reported response metadata (token usage, stop reason) onto the pieces.
+
+        Override this in subclasses to read API-specific response structures. The base
+        implementation is a no-op.
+
+        Subclasses call this on their success path and the base class calls it on the
+        content-filter path, so a single override covers both. A filtered response still reports
+        the tokens it consumed, which would otherwise be lost precisely where a red teamer most
+        wants to see it.
+
+        Args:
+            response: The response object from OpenAI SDK. May be a synthetic stand-in that carries
+                no usage or completion data, so implementations must tolerate missing attributes.
+            pieces (list[MessagePiece]): The constructed response pieces.
+        """
 
     def _validate_response(self, response: Any, request: MessagePiece) -> None:
         """

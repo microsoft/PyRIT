@@ -3,11 +3,17 @@
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pyrit.exceptions import PyritException
-from pyrit.models import Message, MessagePiece, construct_response_from_request
+from pyrit.models import (
+    TOKEN_USAGE_METADATA_PREFIX,
+    Message,
+    MessagePiece,
+    TokenUsage,
+    construct_response_from_request,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +91,70 @@ def build_empty_truncated_response(*, request: MessagePiece) -> Message:
         response_type="text",
         error="empty",
     )
+
+
+#: ``prompt_metadata`` keys that record why a provider stopped generating. Every API shape names this
+#: differently, so the union is reserved rather than any single key: whichever target handles the
+#: response clears all of them and writes back only what its own provider reported.
+RESERVED_RESPONSE_METADATA_KEYS: frozenset[str] = frozenset({"finish_reason", "status", "incomplete_reason"})
+
+
+def set_response_metadata(*, pieces: list[MessagePiece], values: Mapping[str, Any]) -> None:
+    """
+    Record provider-reported, response-level metadata on the first response piece.
+
+    ``prompt_metadata`` is caller-controlled, and ``construct_response_from_request`` merges the
+    request's entries into every response piece, so a caller-supplied value could otherwise be
+    mistaken for the provider's. ``RESERVED_RESPONSE_METADATA_KEYS`` are therefore reserved for the
+    provider: all of them are cleared from every piece first, then the reported ones are set on the
+    first piece. Clearing the whole set in one pass — rather than one key per call — is what makes
+    the reservation hold, since a target only writes the subset its own API reports. Response-level
+    metadata lives on the first piece, matching where ``capture_token_usage`` writes token counts.
+
+    Args:
+        pieces (list[MessagePiece]): The constructed response pieces.
+        values (Mapping[str, Any]): The provider-reported values, keyed by reserved metadata key.
+            ``prompt_metadata`` is persisted as JSON, so anything that is not a non-empty string —
+            including a missing field read off a loosely-typed response object — is treated as "not
+            reported" and leaves that key unset.
+    """
+    if not pieces:
+        return
+
+    for piece in pieces:
+        for reserved_key in RESERVED_RESPONSE_METADATA_KEYS:
+            piece.prompt_metadata.pop(reserved_key, None)
+
+    for key, value in values.items():
+        if isinstance(value, str) and value:
+            pieces[0].prompt_metadata[key] = value
+
+
+def set_token_usage_metadata(*, pieces: list[MessagePiece], usage: TokenUsage | None) -> None:
+    """
+    Record the provider's token counts on the first response piece.
+
+    The whole ``token_usage_`` prefix is reserved for the provider for the same reason
+    ``RESERVED_RESPONSE_METADATA_KEYS`` are, with one extra consequence: the public
+    ``TokenUsage.from_metadata`` would read a caller-supplied count back as if the API had reported
+    it. Clearing the prefix is what makes "no usage reported" distinguishable from "the caller
+    guessed", which matters most on the paths that carry no usage at all, such as a content-filtered
+    response.
+
+    Args:
+        pieces (list[MessagePiece]): The constructed response pieces.
+        usage (TokenUsage | None): The provider's parsed counts, or None when the response reported
+            no usage. Either way the stale keys are cleared first; only reported counts are written.
+    """
+    if not pieces:
+        return
+
+    for piece in pieces:
+        for key in [k for k in piece.prompt_metadata if k.startswith(TOKEN_USAGE_METADATA_PREFIX)]:
+            del piece.prompt_metadata[key]
+
+    if usage is not None:
+        pieces[0].prompt_metadata.update(usage.to_metadata())
 
 
 def warn_truncated_response(*, signal: str, limit_parameter: str) -> None:
