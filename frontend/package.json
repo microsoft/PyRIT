@@ -31,7 +31,7 @@
     "react-dom": "19.2.8",
     "react-error-boundary": "6.1.2",
     "react-joyride": "^3.2.0",
-    "react-markdown": "^9.0.1",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "7.18.1",
     "remark-gfm": "^4.0.0"
   },
