@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useSystemPromptSetupStyles = makeStyles({
   root: {
@@ -15,6 +16,7 @@ export const useSystemPromptSetupStyles = makeStyles({
   },
   header: {
     color: tokens.colorNeutralForeground2,
+    ...mobileTouchTarget,
   },
   body: {
     display: 'flex',

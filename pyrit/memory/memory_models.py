@@ -1557,7 +1557,7 @@ class AttackResultEntry(Base):
         {"extend_existing": True},
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    conversation_id = mapped_column(String, nullable=False)
+    conversation_id = mapped_column(String(36), nullable=False)
     objective = mapped_column(Unicode, nullable=False)
     atomic_attack_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
