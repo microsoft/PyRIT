@@ -100,10 +100,10 @@ class TestPAIRAttackInit:
             attack_adversarial_config=adversarial_config,
         )
 
-        assert attack._tree_width == 3
-        assert attack._tree_depth == 5
-        assert attack._branching_factor == 1
-        assert attack._on_topic_checking_enabled is False
+        assert attack._configuration.tree_width == 3
+        assert attack._configuration.tree_depth == 5
+        assert attack._configuration.branching_factor == 1
+        assert attack._configuration.on_topic_checking_enabled is False
 
     def test_branching_factor_is_not_exposed_in_signature(self):
         """branching_factor is definitional for PAIR (always 1) and must not be a public init kwarg."""
@@ -125,8 +125,8 @@ class TestPAIRAttackInit:
             attack_adversarial_config=adversarial_config,
             tree_width=7,
         )
-        assert attack._tree_width == 7
-        assert attack._branching_factor == 1
+        assert attack._configuration.tree_width == 7
+        assert attack._configuration.branching_factor == 1
 
     def test_tree_depth_override(self, objective_target, adversarial_config):
         attack = PAIRAttack(
@@ -134,8 +134,8 @@ class TestPAIRAttackInit:
             attack_adversarial_config=adversarial_config,
             tree_depth=12,
         )
-        assert attack._tree_depth == 12
-        assert attack._on_topic_checking_enabled is False
+        assert attack._configuration.tree_depth == 12
+        assert attack._configuration.on_topic_checking_enabled is False
 
     def test_is_subclass_of_tap(self):
         assert issubclass(PAIRAttack, TreeOfAttacksWithPruningAttack)
