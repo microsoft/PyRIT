@@ -3,6 +3,7 @@
 
 """Additional tests for Scenario retry with AttackExecutorResult functionality."""
 
+import asyncio
 from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
@@ -403,6 +404,120 @@ class TestScenarioPartialAttackCompletion:
 
         # All 5 results should be in final scenario result
         assert len(result.attack_results["resume_attack"]) == 5
+
+    async def test_run_async_cancellation_persists_progress_cleans_workers_and_resumes(self, mock_objective_target):
+        completed_attack = create_mock_atomic_attack("completed_attack", ["obj1"])
+        in_flight_attack = create_mock_atomic_attack("in_flight_attack", ["obj2"])
+        queued_attack = create_mock_atomic_attack("queued_attack", ["obj3"])
+
+        completed_result = AttackResult(
+            conversation_id="conv-1",
+            objective="obj1",
+            outcome=AttackOutcome.SUCCESS,
+            executed_turns=1,
+        )
+        resumed_results = {
+            "in_flight_attack": AttackResult(
+                conversation_id="conv-2",
+                objective="obj2",
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=1,
+            ),
+            "queued_attack": AttackResult(
+                conversation_id="conv-3",
+                objective="obj3",
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=1,
+            ),
+        }
+
+        completed_persisted = asyncio.Event()
+        in_flight_started = asyncio.Event()
+        completed_worker_exited = asyncio.Event()
+        in_flight_worker_exited = asyncio.Event()
+        block_until_cancelled = asyncio.Event()
+        persisted_objectives: list[str] = []
+
+        async def run_completed_attack(*args, **kwargs):
+            save_attack_results_to_memory([completed_result], atomic_attack=completed_attack)
+            persisted_objectives.append(completed_result.objective)
+            completed_persisted.set()
+            try:
+                await block_until_cancelled.wait()
+            finally:
+                completed_worker_exited.set()
+
+        async def run_in_flight_attack(*args, **kwargs):
+            if in_flight_attack.run_async.call_count == 1:
+                in_flight_started.set()
+                try:
+                    await block_until_cancelled.wait()
+                finally:
+                    in_flight_worker_exited.set()
+
+            result = resumed_results["in_flight_attack"]
+            save_attack_results_to_memory([result], atomic_attack=in_flight_attack)
+            persisted_objectives.append(result.objective)
+            return AttackExecutorResult(completed_results=[result], incomplete_objectives=[])
+
+        async def run_queued_attack(*args, **kwargs):
+            result = resumed_results["queued_attack"]
+            save_attack_results_to_memory([result], atomic_attack=queued_attack)
+            persisted_objectives.append(result.objective)
+            return AttackExecutorResult(completed_results=[result], incomplete_objectives=[])
+
+        completed_attack.run_async = AsyncMock(side_effect=run_completed_attack)
+        in_flight_attack.run_async = AsyncMock(side_effect=run_in_flight_attack)
+        queued_attack.run_async = AsyncMock(side_effect=run_queued_attack)
+
+        scenario = ConcreteScenario(
+            name="Cancellation Test Scenario",
+            version=1,
+            atomic_attacks_to_return=[completed_attack, in_flight_attack, queued_attack],
+        )
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 2,
+                "max_retries": 3,
+            }
+        )
+        await scenario.initialize_async()
+
+        scenario_task = asyncio.create_task(scenario.run_async())
+        await asyncio.wait_for(completed_persisted.wait(), timeout=5.0)
+        await asyncio.wait_for(in_flight_started.wait(), timeout=5.0)
+        scenario_task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await scenario_task
+
+        assert completed_worker_exited.is_set()
+        assert in_flight_worker_exited.is_set()
+        queued_attack.run_async.assert_not_called()
+        assert persisted_objectives == ["obj1"]
+
+        [cancelled_result] = CentralMemory.get_memory_instance().get_scenario_results(
+            scenario_result_ids=[scenario._scenario_result_id]
+        )
+        assert cancelled_result.scenario_run_state == ScenarioRunState.CANCELLED
+        assert cancelled_result.error_type == "CancelledError"
+        assert cancelled_result.number_tries == 1
+        assert [result.objective for result in cancelled_result.attack_results["completed_attack"]] == ["obj1"]
+
+        await asyncio.sleep(0)
+        assert persisted_objectives == ["obj1"]
+
+        resumed_result = await scenario.run_async()
+
+        assert resumed_result.scenario_run_state == ScenarioRunState.COMPLETED
+        assert resumed_result.number_tries == 2
+        assert completed_attack.run_async.call_count == 1
+        assert in_flight_attack.run_async.call_count == 2
+        assert queued_attack.run_async.call_count == 1
+        assert persisted_objectives == ["obj1", "obj2", "obj3"]
+        assert sorted(resumed_result.get_objectives()) == ["obj1", "obj2", "obj3"]
+        assert all(len(results) == 1 for results in resumed_result.attack_results.values())
 
     async def test_multiple_atomic_attacks_with_partial_results(self, mock_objective_target):
         """Test scenario with multiple atomic attacks that return partial results."""

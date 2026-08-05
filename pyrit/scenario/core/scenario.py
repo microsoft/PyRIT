@@ -1018,6 +1018,8 @@ class Scenario(ABC):
                 attack results from all atomic attacks.
 
         Raises:
+            asyncio.CancelledError: If the scenario task is cancelled. Completed results remain persisted
+                and a later call can resume the unfinished objectives.
             ValueError: If the scenario has no atomic attacks configured. If your scenario
                 requires initialization, call await scenario.initialize() first.
             ScenarioPartialFailureException: If an atomic attack only partially completes.
@@ -1048,6 +1050,14 @@ class Scenario(ABC):
         for retry_attempt in range(self._max_retries + 1):  # +1 for initial attempt
             try:
                 return await self._execute_scenario_async()
+            except asyncio.CancelledError:
+                self._memory.update_scenario_run_state(
+                    scenario_result_id=scenario_result_id,
+                    scenario_run_state=ScenarioRunState.CANCELLED,
+                    error_message="Scenario run was cancelled",
+                    error_type="CancelledError",
+                )
+                raise
             except Exception as e:
                 last_exception = e
 
