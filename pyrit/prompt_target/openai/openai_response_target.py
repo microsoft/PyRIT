@@ -4,6 +4,7 @@
 import json
 import logging
 from collections.abc import Awaitable, Callable, MutableSequence
+from dataclasses import dataclass
 from enum import Enum
 from typing import (
     TYPE_CHECKING,
@@ -41,13 +42,20 @@ from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 if TYPE_CHECKING:
-    from openai.types.responses import ResponseInputImageParam
+    from openai.types.responses import ResponseFunctionToolCallParam, ResponseInputImageParam
+    from openai.types.responses.response_input_item_param import FunctionCallOutput
 
 logger = logging.getLogger(__name__)
 
 
 # Tool function registry (agentic extension)
 ToolExecutor = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+@dataclass(frozen=True)
+class _SerializedPiece:
+    item: dict[str, Any]
+    placement: Literal["inline", "top_level"]
 
 
 class MessagePieceType(str, Enum):
@@ -264,6 +272,57 @@ class OpenAIResponseTarget(OpenAITarget):
             return dict(image_item)
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
+    def _serialize_system_message(self, pieces: list[MessagePiece]) -> dict[str, Any]:
+        content = [{"type": "input_text", "text": piece.converted_value} for piece in pieces]
+        return {"role": "developer", "content": content}
+
+    def _serialize_function_call(self, piece: MessagePiece) -> "ResponseFunctionToolCallParam":
+        stored = json.loads(piece.original_value)
+        return {
+            "type": stored["type"],
+            "call_id": stored["call_id"],
+            "name": stored["name"],
+            "arguments": stored["arguments"],
+        }
+
+    def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any]:
+        stored = json.loads(piece.original_value)
+        if stored.get("type") == "web_search_call":
+            return {
+                "type": stored["type"],
+                "call_id": stored.get("call_id"),
+                "query": stored.get("query"),
+            }
+        filtered = {"type": stored["type"]}
+        filtered.update({key: stored[key] for key in ("call_id", "query", "name", "arguments") if key in stored})
+        return filtered
+
+    def _serialize_function_call_output(self, piece: MessagePiece) -> "FunctionCallOutput":
+        payload = json.loads(piece.original_value)
+        output = payload.get("output")
+        if not isinstance(output, str):
+            output = json.dumps(output, separators=(",", ":"))
+        return {
+            "type": "function_call_output",
+            "call_id": payload["call_id"],
+            "output": output,
+        }
+
+    async def _serialize_piece_async(self, *, piece: MessagePiece, message_index: int) -> _SerializedPiece | None:
+        data_type = piece.converted_value_data_type
+        if data_type == "reasoning":
+            return None
+        if data_type in {"text", "image_path"} or piece.structured_refusal is not None:
+            item = await self._construct_input_item_from_piece_async(piece)
+            return _SerializedPiece(item=item, placement="inline")
+        if data_type == "function_call":
+            return _SerializedPiece(item=dict(self._serialize_function_call(piece)), placement="top_level")
+        if data_type == "tool_call":
+            return _SerializedPiece(item=self._serialize_tool_call(piece), placement="top_level")
+        if data_type == "function_call_output":
+            return _SerializedPiece(item=dict(self._serialize_function_call_output(piece)), placement="top_level")
+        raise ValueError(f"Unsupported data type '{data_type}' in message index {message_index}")
+
     async def _build_input_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build the Responses API `input` array.
@@ -282,7 +341,7 @@ class OpenAIResponseTarget(OpenAITarget):
             A list of input items ready for the Responses API.
 
         Raises:
-            ValueError: If the conversation is empty or a system message has >1 piece.
+            ValueError: If the conversation is empty or a message has no pieces.
         """
         if not conversation:
             raise ValueError("Conversation cannot be empty")
@@ -296,85 +355,20 @@ class OpenAIResponseTarget(OpenAITarget):
                     f"Failed to process conversation message at index {msg_idx}: Message contains no message pieces"
                 )
 
-            # System message (remapped to developer)
             if pieces[0].api_role == "system":
-                system_content = [{"type": "input_text", "text": piece.converted_value} for piece in pieces]
-                input_items.append({"role": "developer", "content": system_content})
+                input_items.append(self._serialize_system_message(pieces))
                 continue
 
-            # All pieces in a Message share the same role
             role = pieces[0].api_role
             content: list[dict[str, Any]] = []
-
             for piece in pieces:
-                dtype = piece.converted_value_data_type
-
-                # Skip reasoning - it's stored in memory but not sent back to API
-                if dtype == "reasoning":
+                serialized = await self._serialize_piece_async(piece=piece, message_index=msg_idx)
+                if serialized is None:
                     continue
-
-                # Inline content (text/images/structured refusals) - accumulate in content list
-                if dtype in {"text", "image_path"} or piece.structured_refusal is not None:
-                    content.append(await self._construct_input_item_from_piece_async(piece))
-                    continue
-
-                # Top-level artifacts - emit as standalone items
-                if dtype not in {"function_call", "function_call_output", "tool_call"}:
-                    raise ValueError(f"Unsupported data type '{dtype}' in message index {msg_idx}")
-
-                if dtype in {"function_call", "tool_call"}:
-                    # Parse the stored JSON and filter to only API-expected fields
-                    stored = json.loads(piece.original_value)
-                    if dtype == "function_call":
-                        # Only include fields the API expects for function_call
-                        input_items.append(
-                            {
-                                "type": stored["type"],
-                                "call_id": stored["call_id"],
-                                "name": stored["name"],
-                                "arguments": stored["arguments"],
-                            }
-                        )
-                    elif dtype == "tool_call":
-                        # Filter tool_call fields based on type
-                        tool_type = stored.get("type")
-                        if tool_type == "web_search_call":
-                            # Web search call structure
-                            input_items.append(
-                                {
-                                    "type": stored["type"],
-                                    "call_id": stored.get("call_id"),
-                                    "query": stored.get("query"),
-                                }
-                            )
-                        else:
-                            # For unknown tool types, try to include only known fields
-                            filtered = {"type": stored["type"]}
-                            if "call_id" in stored:
-                                filtered["call_id"] = stored["call_id"]
-                            if "query" in stored:
-                                filtered["query"] = stored["query"]
-                            if "name" in stored:
-                                filtered["name"] = stored["name"]
-                            if "arguments" in stored:
-                                filtered["arguments"] = stored["arguments"]
-                            input_items.append(filtered)
-
-                if dtype == "function_call_output":
-                    payload = json.loads(piece.original_value)
-                    output = payload.get("output")
-                    if not isinstance(output, str):
-                        # Responses API requires string output; serialize if needed
-                        output = json.dumps(output, separators=(",", ":"))
-                    input_items.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": payload["call_id"],
-                            "output": output,
-                        }
-                    )
-
-            # Append accumulated inline content for this message
+                if serialized.placement == "inline":
+                    content.append(serialized.item)
+                else:
+                    input_items.append(serialized.item)
             if content:
                 input_items.append({"role": role, "content": content})
 
