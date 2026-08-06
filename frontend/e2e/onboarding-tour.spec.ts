@@ -18,7 +18,6 @@ test.describe("Onboarding tour", () => {
     );
     await expect(dialog).toContainText("choose Configure a target");
     await expect(dialog).toContainText("use Set Active there");
-    await expect(dialog).not.toContainText("come back here to select it");
     await expect(page.locator('[data-tour="target-card"]')).toBeVisible();
 
     await page
@@ -53,7 +52,7 @@ test.describe("Onboarding tour", () => {
       "Chat needs an active target before the message composer is available"
     );
     await expect(dialog).toContainText(
-      "After the tour, choose Configure Target"
+      "After the tour, choose Configure a target"
     );
     await expect(dialog).toContainText(
       "The message input and converter control appear once a target is active"

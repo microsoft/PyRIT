@@ -50,7 +50,7 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
       content: hasActiveTarget
         ? 'With a target active, Chat shows the message composer. Use this Toggle converter panel button to transform text ' +
           'before sending, such as Base64 encoding or translation.'
-        : 'Chat needs an active target before the message composer is available. After the tour, choose Configure Target to ' +
+        : 'Chat needs an active target before the message composer is available. After the tour, choose Configure a target to ' +
           'create or activate one in Configuration, then return to Chat. The message input and converter control appear once ' +
           'a target is active.',
       placement: 'bottom',
