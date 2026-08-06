@@ -700,7 +700,9 @@ def test_print_scenario_runs_list_populated(capsys):
     captured = capsys.readouterr()
     assert "scen-a" in captured.out
     assert "scen-b" in captured.out
-    assert "abcdefgh" in captured.out
+    assert "abcdefgh1234" in captured.out
+    assert "ijklmnop5678" in captured.out
+    assert "…" not in captured.out
     assert "Total runs: 2" in captured.out
 
 
