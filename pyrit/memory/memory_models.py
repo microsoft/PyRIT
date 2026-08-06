@@ -1815,7 +1815,8 @@ class ScenarioResultEntry(Base):
         pyrit_version (str): Version of PyRIT framework used during scenario execution.
         scenario_identifier (dict): Canonical scenario identity (class name, version,
             techniques, datasets, resolved params, objective target / scorer children).
-        objective_target_identifier (dict): Identifier for the target being evaluated in the scenario.
+        objective_target_identifier (dict): Optional identifier for the target being evaluated in the
+            scenario. None for scenarios that do not declare an objective target and supply their own.
         objective_scorer_identifier (dict): Optional identifier for the scorer used to evaluate results.
         scenario_run_state (str): Current execution state of the scenario
             (one of CREATED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED).
@@ -1848,7 +1849,7 @@ class ScenarioResultEntry(Base):
         "ScenarioIdentifierEntry",
         foreign_keys=[scenario_identifier_hash],
     )
-    objective_target_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    objective_target_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     objective_scorer_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
@@ -1893,9 +1894,7 @@ class ScenarioResultEntry(Base):
 
         # Convert ComponentIdentifier to dict for JSON storage
         target_identifier = entry.objective_target_identifier
-        self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
-            target_identifier.model_dump() if target_identifier else None
-        )
+        self.objective_target_identifier = target_identifier.model_dump() if target_identifier else None
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
         scorer_identifier = entry.objective_scorer_identifier

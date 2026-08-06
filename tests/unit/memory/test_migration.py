@@ -2391,6 +2391,114 @@ def test_attack_recency_downgrade_restores_updated_at_and_drops_indexes():
             engine.dispose()
 
 
+# =============================================================================
+# b6d2f4a8c0e1 — nullable objective_target_identifier
+# =============================================================================
+
+_NULLABLE_TARGET_REV = "b6d2f4a8c0e1"
+_NULLABLE_TARGET_PREV_REV = "4c9a6e1f2b7d"
+
+
+def _seed_scenario_result(connection, *, scenario_id: str, objective_target_identifier: str | None) -> None:
+    """Insert a minimal ScenarioResultEntries row."""
+    connection.execute(
+        text(
+            'INSERT INTO "ScenarioResultEntries" '
+            "(id, scenario_name, scenario_version, pyrit_version, scenario_identifier, "
+            "objective_target_identifier, scenario_run_state, number_tries, completion_time, timestamp) "
+            "VALUES (:id, 'TestScenario', 1, '1.0.0', '{}', :target, 'COMPLETED', 1, "
+            "'2026-08-01 00:00:00', '2026-08-01 00:00:00')"
+        ),
+        {"id": scenario_id, "target": objective_target_identifier},
+    )
+
+
+def _objective_target_column(connection):
+    return next(
+        column
+        for column in inspect(connection).get_columns("ScenarioResultEntries")
+        if column["name"] == "objective_target_identifier"
+    )
+
+
+def test_nullable_target_migration_script_metadata():
+    """The nullable-target migration declares the expected revision chain."""
+    from pyrit.memory.alembic.versions import b6d2f4a8c0e1_allow_null_objective_target_identifier as mig
+
+    assert mig.revision == _NULLABLE_TARGET_REV
+    assert mig.down_revision == _NULLABLE_TARGET_PREV_REV
+    assert mig.branch_labels is None
+    assert mig.depends_on is None
+
+
+def test_nullable_target_upgrade_relaxes_not_null_and_preserves_rows():
+    """Upgrading allows a null objective target while leaving existing rows intact."""
+    targeted_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'nullable-target.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _NULLABLE_TARGET_PREV_REV)
+
+                assert _objective_target_column(connection)["nullable"] is False
+                _seed_scenario_result(
+                    connection,
+                    scenario_id=targeted_id,
+                    objective_target_identifier='{"class_name": "OpenAI"}',
+                )
+
+                command.upgrade(config, _NULLABLE_TARGET_REV)
+
+                assert _objective_target_column(connection)["nullable"] is True
+                _seed_scenario_result(
+                    connection,
+                    scenario_id=str(uuid.uuid4()),
+                    objective_target_identifier=None,
+                )
+
+                rows = connection.execute(
+                    text('SELECT objective_target_identifier FROM "ScenarioResultEntries" ORDER BY id')
+                ).fetchall()
+
+            assert sorted(row[0] for row in rows if row[0] is not None) == ['{"class_name": "OpenAI"}']
+            assert sum(1 for row in rows if row[0] is None) == 1
+        finally:
+            engine.dispose()
+
+
+def test_nullable_target_downgrade_backfills_null_rows_before_restoring_not_null():
+    """Downgrading normalizes null targets to the JSON literal so NOT NULL can be restored."""
+    targetless_id = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'nullable-target-down.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _NULLABLE_TARGET_REV)
+
+                _seed_scenario_result(
+                    connection,
+                    scenario_id=targetless_id,
+                    objective_target_identifier=None,
+                )
+
+                command.downgrade(config, _NULLABLE_TARGET_PREV_REV)
+
+                nullable_after = _objective_target_column(connection)["nullable"]
+                backfilled = connection.execute(
+                    text('SELECT objective_target_identifier FROM "ScenarioResultEntries" WHERE id = :id'),
+                    {"id": targetless_id},
+                ).scalar_one()
+
+            assert nullable_after is False
+            assert backfilled == "null"
+        finally:
+            engine.dispose()
+
+
 _STRING_TYPES_REQUIRING_LENGTH = {"String", "VARCHAR", "NVARCHAR", "Unicode"}
 
 

@@ -797,3 +797,15 @@ class TestScenarioResultEntry:
         entry = ScenarioResultEntry(entry=sr)
         s = str(entry)
         assert "test_scenario" in s
+
+    def test_init_without_objective_target(self):
+        """A scenario that supplies its own targets leaves the denormalized column unset."""
+        sr = self._make_scenario_result(objective_target_identifier=None)
+        entry = ScenarioResultEntry(entry=sr)
+        assert entry.objective_target_identifier is None
+
+    def test_roundtrip_without_objective_target(self):
+        sr = self._make_scenario_result(objective_target_identifier=None)
+        recovered = ScenarioResultEntry(entry=sr).get_scenario_result()
+        assert recovered.objective_target_identifier is None
+        assert recovered.scenario_name == "test_scenario"

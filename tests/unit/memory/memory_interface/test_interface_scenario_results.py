@@ -1011,3 +1011,70 @@ def test_get_scenario_results_by_target_identifier_filter_no_match(
         ],
     )
     assert len(results) == 0
+
+
+def test_add_and_retrieve_scenario_result_without_objective_target(sqlite_instance: MemoryInterface):
+    """A scenario that supplies its own targets persists and round-trips with no objective target."""
+    attack_result = create_attack_result("conv_1", "Objective 1")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    scenario = make_scenario_result(
+        scenario_name="Targetless Scenario",
+        scenario_version=1,
+        objective_target_identifier=None,
+        attack_results={"Attack1": [attack_result]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+
+    results = sqlite_instance.get_scenario_results(scenario_name="Targetless Scenario")
+    assert len(results) == 1
+    assert results[0].objective_target_identifier is None
+
+
+def test_target_filters_exclude_scenario_result_without_objective_target(sqlite_instance: MemoryInterface):
+    """Target-based filters skip targetless scenarios instead of erroring on the null column."""
+    attack_result1 = create_attack_result("conv_1", "Objective 1")
+    attack_result2 = create_attack_result("conv_2", "Objective 2")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+
+    target_identifier = ComponentIdentifier(
+        class_name="OpenAI",
+        class_module="test",
+        params={"endpoint": "https://api.openai.com/v1", "model_name": "gpt-4"},
+    )
+    targeted = make_scenario_result(
+        scenario_name="Targeted Scenario",
+        scenario_version=1,
+        objective_target_identifier=target_identifier,
+        attack_results={"Attack1": [attack_result1]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+    targetless = make_scenario_result(
+        scenario_name="Targetless Scenario",
+        scenario_version=1,
+        objective_target_identifier=None,
+        attack_results={"Attack2": [attack_result2]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[targeted, targetless])
+
+    assert len(sqlite_instance.get_scenario_results()) == 2
+
+    by_endpoint = sqlite_instance.get_scenario_results(objective_target_endpoint="openai")
+    assert [r.scenario_name for r in by_endpoint] == ["Targeted Scenario"]
+
+    by_model = sqlite_instance.get_scenario_results(objective_target_model_name="gpt-4")
+    assert [r.scenario_name for r in by_model] == ["Targeted Scenario"]
+
+    by_hash = sqlite_instance.get_scenario_results(
+        identifier_filters=[
+            IdentifierFilter(
+                identifier_type=IdentifierType.TARGET,
+                property_path="$.hash",
+                value=target_identifier.hash,
+                partial_match=False,
+            )
+        ],
+    )
+    assert [r.scenario_name for r in by_hash] == ["Targeted Scenario"]
