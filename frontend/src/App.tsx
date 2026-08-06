@@ -347,7 +347,12 @@ function App() {
   // Onboarding tour — pass handleNavigate so the tour can switch views between steps.
   // The tour does not auto-start; users launch it from the "Take a tour" button in the top bar.
   const { resolved } = useTheme()
-  const { startTour, tourProps } = useTour(handleNavigate, resolved === 'dark', currentView)
+  const { startTour, tourProps } = useTour(
+    handleNavigate,
+    resolved === 'dark',
+    currentView,
+    activeTarget !== null,
+  )
 
   return (
     <ErrorBoundary>

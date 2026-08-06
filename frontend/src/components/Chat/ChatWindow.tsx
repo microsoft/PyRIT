@@ -684,7 +684,7 @@ export default function ChatWindow({
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
-        <div className={styles.ribbon} data-tour="chat-area">
+        <div className={styles.ribbon}>
           <div className={styles.conversationInfo}>
             {activeTarget ? (
               <TargetBadge target={activeTarget} />
