@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.exceptions.retry_collector import RetryCollector
+from pyrit.exceptions.retry_collector import RetryCollector, get_retry_collector
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import (
@@ -903,6 +904,31 @@ class TestAttackStrategyIntegration:
 
         # Current behavior: execution_time_ms is not modified by event handler
         assert result.execution_time_ms == 500
+
+    async def test_cancellation_clears_retry_collector(self, mock_objective_target):
+        teardown_calls = 0
+
+        class CancelledStrategy(AttackStrategy):
+            def _validate_context(self, *, context):
+                pass
+
+            async def _setup_async(self, *, context):
+                pass
+
+            async def _perform_async(self, *, context):
+                raise asyncio.CancelledError
+
+            async def _teardown_async(self, *, context):
+                nonlocal teardown_calls
+                teardown_calls += 1
+
+        strategy = CancelledStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+
+        with pytest.raises(asyncio.CancelledError):
+            await strategy.execute_async(objective="Test objective")
+
+        assert teardown_calls == 1
+        assert get_retry_collector() is None
 
     async def test_attack_strategy_with_custom_event_handler(self, mock_objective_target):
         """Test that AttackStrategy can work with custom event handlers"""
