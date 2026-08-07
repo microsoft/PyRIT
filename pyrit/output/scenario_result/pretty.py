@@ -139,6 +139,7 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         lines.append(self._render_section_header("Scenario Information"))
         lines.append(self._format_colored(f"{self._indent}📋 Scenario Details", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_name}", Fore.CYAN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Result ID: {result.id}", Fore.CYAN))
         lines.append(
             self._format_colored(f"{self._indent * 2}• Scenario Version: {result.scenario_version}", Fore.CYAN)
         )

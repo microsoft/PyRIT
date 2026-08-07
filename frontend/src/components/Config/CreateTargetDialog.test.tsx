@@ -88,9 +88,9 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
 // Fluent's Dropdown renders its listbox in a portal guarded by a focus
 // modalizer. Under jsdom the popover only toggles via a direct click event,
 // and the `aria-hidden` the modalizer puts on the dialog while the listbox is
-// open is never restored once it closes, which would hide the rest of the form
-// from role-based queries. Both behaviors are jsdom artifacts — real pointer
-// and keyboard interaction is covered by e2e/config.spec.ts.
+// open is not reliably restored once it closes, which would hide the rest of
+// the form from role-based queries. Both behaviors are jsdom artifacts — real
+// pointer and keyboard interaction is covered by e2e/config.spec.ts.
 async function openTargetTypePicker(): Promise<HTMLElement> {
   const picker = screen.getByRole("combobox", { name: /target type/i });
   await waitFor(() => {
@@ -101,15 +101,34 @@ async function openTargetTypePicker(): Promise<HTMLElement> {
   return picker;
 }
 
+// Drops the leftover `aria-hidden` from the dialog and everything above it.
+// It is a no-op while a listbox is open, so the modalizer keeps its real
+// behavior and only the missing restore is compensated for.
 function restoreDialogAccessibility(): void {
   const dialog = document.querySelector('[role="dialog"]');
   if (!dialog) return;
+  if (document.querySelector('[role="listbox"]')) return;
   const hiddenAncestors = document.querySelectorAll('[aria-hidden="true"]');
   for (const element of Array.from(hiddenAncestors)) {
     if (element === dialog || element.contains(dialog)) {
       element.removeAttribute("aria-hidden");
     }
   }
+}
+
+// The modalizer can re-apply `aria-hidden` well after the listbox closed —
+// on an unrelated focus change, for instance — so a one-shot cleanup leaves
+// every later `*ByRole` query racing against it. Re-run the cleanup whenever
+// the attribute reappears instead.
+function watchDialogAccessibility(): MutationObserver {
+  const observer = new MutationObserver(restoreDialogAccessibility);
+  observer.observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["aria-hidden"],
+  });
+  return observer;
 }
 
 async function selectTargetType(value: string): Promise<void> {
@@ -198,13 +217,20 @@ describe("CreateTargetDialog", () => {
     onCreated: jest.fn(),
   };
 
+  let dialogAccessibilityObserver: MutationObserver;
+
   beforeEach(() => {
+    dialogAccessibilityObserver = watchDialogAccessibility();
     jest.clearAllMocks();
     mockedTargetsApi.listTargetCatalog.mockResolvedValue(TARGET_CATALOG);
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: [],
       pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
     } as unknown as Awaited<ReturnType<typeof mockedTargetsApi.listTargets>>);
+  });
+
+  afterEach(() => {
+    dialogAccessibilityObserver.disconnect();
   });
 
   it("should render dialog when open", () => {
