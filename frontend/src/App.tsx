@@ -8,6 +8,7 @@ import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
+import Initializers from './components/Initializers/Initializers'
 import AttackHistory from './components/History/AttackHistory'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
@@ -36,6 +37,7 @@ const VIEW_PATHS: Record<ViewName, string> = {
   chat: '/chat',
   history: '/history',
   config: '/config',
+  initializers: '/initializers',
 }
 
 /** Resolves the active view from a URL path, defaulting to home for unknown paths. */
@@ -345,7 +347,12 @@ function App() {
   // Onboarding tour — pass handleNavigate so the tour can switch views between steps.
   // The tour does not auto-start; users launch it from the "Take a tour" button in the top bar.
   const { resolved } = useTheme()
-  const { startTour, tourProps } = useTour(handleNavigate, resolved === 'dark', currentView)
+  const { startTour, tourProps } = useTour(
+    handleNavigate,
+    resolved === 'dark',
+    currentView,
+    activeTarget !== null,
+  )
 
   return (
     <ErrorBoundary>
@@ -392,6 +399,7 @@ function App() {
                   />
                 }
               />
+              <Route path="/initializers" element={<Initializers />} />
               <Route
                 path="/history"
                 element={
@@ -399,6 +407,8 @@ function App() {
                     onOpenAttack={handleOpenAttack}
                     filters={historyFilters}
                     onFiltersChange={handleFiltersChange}
+                    activeTarget={activeTarget}
+                    onNavigate={handleNavigate}
                   />
                 }
               />

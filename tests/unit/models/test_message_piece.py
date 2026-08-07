@@ -1120,3 +1120,30 @@ class TestPhase3PydanticMigration:
         with pytest.raises(Exception) as exc_info:
             MessagePiece(role="user", original_value="hello", typo_field="oops")
         assert "typo_field" in str(exc_info.value) or "Extra" in str(exc_info.value)
+
+
+class TestTruncationFlag:
+    def test_is_truncated_defaults_to_false(self) -> None:
+        piece = MessagePiece(role="assistant", original_value="hello")
+        assert piece.is_truncated is False
+
+    def test_mark_as_truncated_sets_flag(self) -> None:
+        piece = MessagePiece(role="assistant", original_value="partial answer")
+        piece.mark_as_truncated()
+        assert piece.is_truncated is True
+        assert piece.prompt_metadata[MessagePiece.TRUNCATED_METADATA_KEY] is True
+
+    def test_mark_as_truncated_preserves_existing_metadata(self) -> None:
+        piece = MessagePiece(
+            role="assistant", original_value="partial", prompt_metadata={"token_usage_output_tokens": 5}
+        )
+        piece.mark_as_truncated()
+        assert piece.prompt_metadata["token_usage_output_tokens"] == 5
+        assert piece.is_truncated is True
+
+    def test_truncated_piece_can_still_report_no_error(self) -> None:
+        """A truncated partial answer is not an error, so is_truncated is the only signal."""
+        piece = MessagePiece(role="assistant", original_value="partial answer")
+        piece.mark_as_truncated()
+        assert piece.has_error() is False
+        assert piece.is_truncated is True

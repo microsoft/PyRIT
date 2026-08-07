@@ -1079,11 +1079,78 @@ def test_validate_response_success_stop(target: OpenAIChatTarget, dummy_text_mes
     assert result is None
 
 
-def test_validate_response_success_length(target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece):
-    """Test _validate_response passes for valid length response."""
+def test_validate_response_success_length(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """Test _validate_response passes for a truncated response that still has content, and warns."""
     mock_response = create_mock_completion(content="Hello", finish_reason="length")
-    result = target._validate_response(mock_response, dummy_text_message_piece)
+    with caplog.at_level(logging.WARNING):
+        result = target._validate_response(mock_response, dummy_text_message_piece)
     assert result is None
+    assert "finish_reason='length'" in caplog.text
+
+
+def test_validate_response_length_empty_does_not_raise(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """Test _validate_response treats a truncated-but-empty response as valid (warns, does not raise)."""
+    mock_response = create_mock_completion(content="", finish_reason="length")
+    with caplog.at_level(logging.WARNING):
+        result = target._validate_response(mock_response, dummy_text_message_piece)
+    assert result is None
+    assert "finish_reason='length'" in caplog.text
+
+
+def test_is_truncated_response_detects_length_finish_reason(target: OpenAIChatTarget):
+    """_is_truncated_response is True only when the completion stopped on the token limit."""
+    assert target._is_truncated_response(create_mock_completion(content="", finish_reason="length")) is True
+    assert target._is_truncated_response(create_mock_completion(content="hi", finish_reason="stop")) is False
+
+
+async def test_construct_message_length_empty_returns_graceful_empty_and_captures_usage(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test construction returns a graceful empty piece with usage captured for truncated empty responses."""
+    mock_response = create_mock_completion(content="", finish_reason="length")
+    mock_response.usage = MagicMock()
+    mock_response.usage.prompt_tokens = 10
+    mock_response.usage.completion_tokens = 20
+    mock_response.usage.total_tokens = 30
+    mock_response.usage.completion_tokens_details.reasoning_tokens = 100
+
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
+
+    assert isinstance(result, Message)
+    piece = result.message_pieces[0]
+    assert piece.original_value == ""
+    assert piece.response_error == "empty"
+    assert piece.prompt_metadata["token_usage_input_tokens"] == 10
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 20
+    assert piece.prompt_metadata["token_usage_total_tokens"] == 30
+    assert piece.prompt_metadata["token_usage_reasoning_tokens"] == 100
+    assert piece.is_truncated is True
+
+
+async def test_construct_message_length_with_content_sets_truncated_metadata(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test construction preserves partial content and marks token-limit truncation."""
+    mock_response = create_mock_completion(content="Partial answer", finish_reason="length")
+
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert piece.original_value == "Partial answer"
+    assert piece.is_truncated is True
+
+
+async def test_construct_message_empty_non_truncated_raises(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test construction raises for a genuinely empty (non-truncated) response so retries can kick in."""
+    mock_response = create_mock_completion(content="", finish_reason="stop")
+    with pytest.raises(EmptyResponseException, match="Failed to extract any response content"):
+        await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
 
 def test_validate_response_no_choices(target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece):
@@ -2084,6 +2151,7 @@ async def test_construct_message_from_response_captures_token_usage(
     assert piece.prompt_metadata["token_usage_total_tokens"] == 30
     assert piece.prompt_metadata["token_usage_cached_tokens"] == 5
     assert piece.prompt_metadata["token_usage_reasoning_tokens"] == 7
+    assert piece.is_truncated is False
 
 
 async def test_construct_message_from_response_no_usage_no_metadata(
