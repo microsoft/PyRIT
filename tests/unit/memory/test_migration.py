@@ -2315,6 +2315,11 @@ def test_attack_recency_upgrade_creates_indexes_and_backfills_timestamp():
                 command.upgrade(config, _ATTACK_RECENCY_REV)
 
                 index_names = {ix["name"] for ix in inspect(connection).get_indexes("AttackResultEntries")}
+                conversation_id_column = next(
+                    column
+                    for column in inspect(connection).get_columns("AttackResultEntries")
+                    if column["name"] == "conversation_id"
+                )
                 rows = dict(
                     connection.execute(text('SELECT id, attack_metadata FROM "AttackResultEntries"')).fetchall()
                 )
@@ -2324,6 +2329,7 @@ def test_attack_recency_upgrade_creates_indexes_and_backfills_timestamp():
 
             assert "ix_AttackResultEntries_conversation_id" in index_names
             assert "ix_AttackResultEntries_timestamp_id" in index_names
+            assert conversation_id_column["type"].length == 36
 
             edited_metadata = json.loads(rows[edited_id])
             assert "updated_at" not in edited_metadata
@@ -2364,6 +2370,11 @@ def test_attack_recency_downgrade_restores_updated_at_and_drops_indexes():
                 command.downgrade(config, _ATTACK_RECENCY_PREV_REV)
 
                 index_names_down = {ix["name"] for ix in inspect(connection).get_indexes("AttackResultEntries")}
+                conversation_id_column_down = next(
+                    column
+                    for column in inspect(connection).get_columns("AttackResultEntries")
+                    if column["name"] == "conversation_id"
+                )
                 restored = json.loads(
                     connection.execute(
                         text('SELECT attack_metadata FROM "AttackResultEntries" WHERE id = :id'),
@@ -2373,6 +2384,7 @@ def test_attack_recency_downgrade_restores_updated_at_and_drops_indexes():
 
             assert "ix_AttackResultEntries_conversation_id" not in index_names_down
             assert "ix_AttackResultEntries_timestamp_id" not in index_names_down
+            assert conversation_id_column_down["type"].length is None
             assert restored["created_at"] == "2026-06-01T00:00:00+00:00"
             assert restored["updated_at"].startswith("2026-06-01T12:00:00")
         finally:

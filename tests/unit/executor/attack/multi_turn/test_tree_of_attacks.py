@@ -433,6 +433,26 @@ class TestHelpers:
             attack._load_adversarial_prompts()
 
 
+class TestTAPAttackContext:
+    """Tests for TAP conversation correlation."""
+
+    def test_conversation_id_uses_first_active_branch_before_best_is_selected(self, node_factory):
+        context = TestHelpers.create_basic_context()
+        context.nodes = [
+            node_factory.create_node(NodeMockConfig(objective_target_conversation_id="first-branch")),
+            node_factory.create_node(NodeMockConfig(objective_target_conversation_id="second-branch")),
+        ]
+
+        assert context.conversation_id == "first-branch"
+
+    def test_conversation_id_prefers_best_branch(self, node_factory):
+        context = TestHelpers.create_basic_context()
+        context.nodes = [node_factory.create_node(NodeMockConfig(objective_target_conversation_id="active-branch"))]
+        context.best_conversation_id = "best-branch"
+
+        assert context.conversation_id == "best-branch"
+
+
 @pytest.fixture
 def node_factory():
     """Fixture providing the MockNodeFactory."""

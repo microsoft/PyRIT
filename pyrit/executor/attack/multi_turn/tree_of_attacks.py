@@ -179,6 +179,15 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_objective_score: Score | None = None
     best_adversarial_conversation_id: str | None = None
 
+    @property
+    def conversation_id(self) -> str | None:
+        """The best objective-target conversation, or the first active branch."""
+        if self.best_conversation_id:
+            return self.best_conversation_id
+        if self.nodes:
+            return self.nodes[0].objective_target_conversation_id
+        return None
+
 
 class TAPAttackResult(AttackResult):
     """

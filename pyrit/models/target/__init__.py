@@ -28,7 +28,7 @@ from pyrit.models.target.json_schema_definition import (
     unregister_common_json_schema,
 )
 from pyrit.models.target.target_capabilities import CapabilityName, TargetCapabilities
-from pyrit.models.target.token_usage import TokenUsage
+from pyrit.models.target.token_usage import TokenUsage, read_usage_int, read_usage_value
 
 __all__ = [
     "COMMON_JSON_SCHEMAS",
@@ -40,6 +40,8 @@ __all__ = [
     "TargetCapabilities",
     "TokenUsage",
     "get_common_json_schema",
+    "read_usage_int",
+    "read_usage_value",
     "register_common_json_schema",
     "unregister_common_json_schema",
 ]
