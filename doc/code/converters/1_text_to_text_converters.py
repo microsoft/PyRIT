@@ -53,12 +53,54 @@ from pyrit.converter import (
     NatoConverter,
     NegationTrapConverter,
     ROT13Converter,
+    TokenBijectionConverter,
 )
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
+
+
+class _ToyTokenizer:
+    """Minimal tokenizer-like object for demonstrating token bijection."""
+
+    VOCAB_WORDS: tuple[str, ...] = (
+        "cat",
+        "dog",
+        "fox",
+        "run",
+        "jump",
+        "tree",
+        "fish",
+        "bird",
+        "rock",
+        "sand",
+        "moon",
+        "star",
+        "rain",
+        "wind",
+        "fire",
+        "lake",
+        "hill",
+        "road",
+        "farm",
+        "town",
+        "book",
+        "door",
+        "hand",
+        "face",
+        "mind",
+        "body",
+        "soul",
+        "hope",
+        "love",
+        "time",
+    )
+
+    def get_vocab(self) -> dict[str, int]:
+        return {word: index for index, word in enumerate(self.VOCAB_WORDS)}
+
 
 print("ROT13:", await ROT13Converter().convert_async(prompt=prompt))  # type: ignore
 print("Base64:", await Base64Converter().convert_async(prompt=prompt))  # type: ignore
@@ -72,6 +114,10 @@ print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: 
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("Bijection (letter):", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("Bijection (digit):", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
+print(
+    "Bijection (token):",
+    await TokenBijectionConverter(tokenizer=_ToyTokenizer(), seed=42).convert_async(prompt=prompt),  # type: ignore
+)
 print("ASCII Art:", await AsciiArtConverter().convert_async(prompt=prompt))  # type: ignore
 print("Ecoji:", await EcojiConverter().convert_async(prompt=prompt))  # type: ignore
 
