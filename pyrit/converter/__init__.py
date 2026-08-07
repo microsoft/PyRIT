@@ -30,7 +30,6 @@ from pyrit.converter.base64_converter import Base64Converter
 from pyrit.converter.base2048_converter import Base2048Converter
 from pyrit.converter.bidi_converter import BidiConverter
 from pyrit.converter.bijection_converter import (
-    BijectionConverter,
     DigitBijectionConverter,
     LetterBijectionConverter,
     TokenBijectionConverter,
@@ -175,7 +174,6 @@ __all__ = [
     "Base2048Converter",
     "Base64Converter",
     "BidiConverter",
-    "BijectionConverter",
     "BinAsciiConverter",
     "BinaryConverter",
     "BrailleConverter",

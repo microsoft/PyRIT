@@ -5,7 +5,8 @@ import string
 
 import pytest
 
-from pyrit.converter import BijectionConverter, DigitBijectionConverter, LetterBijectionConverter, TokenBijectionConverter
+from pyrit.converter import DigitBijectionConverter, LetterBijectionConverter, TokenBijectionConverter
+from pyrit.converter.bijection_converter import BijectionConverter
 
 
 def test_mapping_generated():
@@ -184,15 +185,49 @@ async def test_digit_converter_unsupported_input_type():
 
 
 def test_token_converter_mapping_generated():
-    mock_tokenizer = type("MockTokenizer", (), {
-        "get_vocab": lambda self: {
-    word: i for i, word in enumerate([
-        "cat", "dog", "fox", "run", "jump", "tree", "fish", "bird", "rock", "sand",
-        "moon", "star", "rain", "wind", "fire", "lake", "hill", "road", "farm", "town",
-        "book", "door", "hand", "face", "mind", "body", "soul", "hope", "love", "time",
-    ])
-}
-    })()
+    mock_tokenizer = type(
+        "MockTokenizer",
+        (),
+        {
+            "get_vocab": lambda self: {
+                word: i
+                for i, word in enumerate(
+                    [
+                        "cat",
+                        "dog",
+                        "fox",
+                        "run",
+                        "jump",
+                        "tree",
+                        "fish",
+                        "bird",
+                        "rock",
+                        "sand",
+                        "moon",
+                        "star",
+                        "rain",
+                        "wind",
+                        "fire",
+                        "lake",
+                        "hill",
+                        "road",
+                        "farm",
+                        "town",
+                        "book",
+                        "door",
+                        "hand",
+                        "face",
+                        "mind",
+                        "body",
+                        "soul",
+                        "hope",
+                        "love",
+                        "time",
+                    ]
+                )
+            }
+        },
+    )()
     converter = TokenBijectionConverter(tokenizer=mock_tokenizer)
     assert len(converter.mapping) == 26
     for letter in string.ascii_lowercase:
@@ -200,62 +235,189 @@ def test_token_converter_mapping_generated():
 
 
 def test_token_converter_is_bijection():
-    mock_tokenizer = type("MockTokenizer", (), {
-        "get_vocab": lambda self: {
-            word: i for i, word in enumerate([
-    "cat", "dog", "fox", "run", "jump", "tree", "fish", "bird", "rock", "sand",
-    "moon", "star", "rain", "wind", "fire", "lake", "hill", "road", "farm", "town",
-    "book", "door", "hand", "face", "mind", "body", "soul", "hope", "love", "time",
-])
-        }
-    })()
+    mock_tokenizer = type(
+        "MockTokenizer",
+        (),
+        {
+            "get_vocab": lambda self: {
+                word: i
+                for i, word in enumerate(
+                    [
+                        "cat",
+                        "dog",
+                        "fox",
+                        "run",
+                        "jump",
+                        "tree",
+                        "fish",
+                        "bird",
+                        "rock",
+                        "sand",
+                        "moon",
+                        "star",
+                        "rain",
+                        "wind",
+                        "fire",
+                        "lake",
+                        "hill",
+                        "road",
+                        "farm",
+                        "town",
+                        "book",
+                        "door",
+                        "hand",
+                        "face",
+                        "mind",
+                        "body",
+                        "soul",
+                        "hope",
+                        "love",
+                        "time",
+                    ]
+                )
+            }
+        },
+    )()
     converter = TokenBijectionConverter(tokenizer=mock_tokenizer)
     values = list(converter.mapping.values())
     assert len(values) == len(set(values))
 
 
 def test_token_converter_seed_reproducibility():
-    mock_tokenizer = type("MockTokenizer", (), {
-        "get_vocab": lambda self: {
-            word: i for i, word in enumerate([
-    "cat", "dog", "fox", "run", "jump", "tree", "fish", "bird", "rock", "sand",
-    "moon", "star", "rain", "wind", "fire", "lake", "hill", "road", "farm", "town",
-    "book", "door", "hand", "face", "mind", "body", "soul", "hope", "love", "time",
-])
-        }
-    })()
+    mock_tokenizer = type(
+        "MockTokenizer",
+        (),
+        {
+            "get_vocab": lambda self: {
+                word: i
+                for i, word in enumerate(
+                    [
+                        "cat",
+                        "dog",
+                        "fox",
+                        "run",
+                        "jump",
+                        "tree",
+                        "fish",
+                        "bird",
+                        "rock",
+                        "sand",
+                        "moon",
+                        "star",
+                        "rain",
+                        "wind",
+                        "fire",
+                        "lake",
+                        "hill",
+                        "road",
+                        "farm",
+                        "town",
+                        "book",
+                        "door",
+                        "hand",
+                        "face",
+                        "mind",
+                        "body",
+                        "soul",
+                        "hope",
+                        "love",
+                        "time",
+                    ]
+                )
+            }
+        },
+    )()
     converter1 = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=42)
     converter2 = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=42)
     assert converter1.mapping == converter2.mapping
 
 
 def test_token_converter_not_enough_tokens():
-    mock_tokenizer = type("MockTokenizer", (), {
-        "get_vocab": lambda self: {"ab": 1, "cd": 2}
-    })()
+    mock_tokenizer = type("MockTokenizer", (), {"get_vocab": lambda self: {"ab": 1, "cd": 2}})()
     with pytest.raises(ValueError):
         TokenBijectionConverter(tokenizer=mock_tokenizer)
 
 
 async def test_token_converter_encodes_letters():
-    mock_tokenizer = type("MockTokenizer", (), {
-        "get_vocab": lambda self: {
-            word: i for i, word in enumerate([
-    "cat", "dog", "fox", "run", "jump", "tree", "fish", "bird", "rock", "sand",
-    "moon", "star", "rain", "wind", "fire", "lake", "hill", "road", "farm", "town",
-    "book", "door", "hand", "face", "mind", "body", "soul", "hope", "love", "time",
-])
-        }
-    })()
+    mock_tokenizer = type(
+        "MockTokenizer",
+        (),
+        {
+            "get_vocab": lambda self: {
+                word: i
+                for i, word in enumerate(
+                    [
+                        "cat",
+                        "dog",
+                        "fox",
+                        "run",
+                        "jump",
+                        "tree",
+                        "fish",
+                        "bird",
+                        "rock",
+                        "sand",
+                        "moon",
+                        "star",
+                        "rain",
+                        "wind",
+                        "fire",
+                        "lake",
+                        "hill",
+                        "road",
+                        "farm",
+                        "town",
+                        "book",
+                        "door",
+                        "hand",
+                        "face",
+                        "mind",
+                        "body",
+                        "soul",
+                        "hope",
+                        "love",
+                        "time",
+                    ]
+                )
+            }
+        },
+    )()
     converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=42)
     result = await converter.convert_async(prompt="hello")
     assert result.output_text != "hello"
 
 
 _PLAIN_VOCAB_WORDS = [
-    "cat", "dog", "fox", "run", "jump", "tree", "fish", "bird", "rock", "sand",
-    "moon", "star", "rain", "wind", "fire", "lake", "hill", "road", "farm", "town",
-    "book", "door", "hand", "face", "mind", "body", "soul", "hope", "love", "time",
+    "cat",
+    "dog",
+    "fox",
+    "run",
+    "jump",
+    "tree",
+    "fish",
+    "bird",
+    "rock",
+    "sand",
+    "moon",
+    "star",
+    "rain",
+    "wind",
+    "fire",
+    "lake",
+    "hill",
+    "road",
+    "farm",
+    "town",
+    "book",
+    "door",
+    "hand",
+    "face",
+    "mind",
+    "body",
+    "soul",
+    "hope",
+    "love",
+    "time",
 ]
 
 

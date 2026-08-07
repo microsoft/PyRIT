@@ -7,12 +7,13 @@ import uuid
 from typing import Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.converter import LetterBijectionConverter
+from pyrit.converter.bijection_converter import BijectionConverter
 from pyrit.executor.attack.core import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import SingleTurnAttackContext
 from pyrit.models import AttackResult, Message
-from pyrit.converter import BijectionConverter, LetterBijectionConverter
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
@@ -140,7 +141,9 @@ class BijectionAttack(PromptSendingAttack):
             if i == 0 and not supports_system_prompt:
                 messages.append(
                     Message.from_prompt(
-                        prompt=f"{setup_prompt}\n\nHere is the first encoded practice instruction:\n{encoded_instruction}",
+                        prompt=(
+                            f"{setup_prompt}\n\nHere is the first encoded practice instruction:\n{encoded_instruction}"
+                        ),
                         role="user",
                     )
                 )
