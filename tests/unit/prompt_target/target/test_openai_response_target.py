@@ -28,7 +28,14 @@ from pyrit.exceptions.exception_classes import (
 )
 from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import AttackOutcome, JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
+from pyrit.models import (
+    AttackOutcome,
+    JsonResponseConfig,
+    Message,
+    MessagePiece,
+    PromptDataType,
+    flatten_to_message_pieces,
+)
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.openai.openai_response_target import token_usage_from_responses
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
@@ -216,6 +223,23 @@ async def test_build_input_for_multi_modal_with_unsupported_data_types(target: O
     with pytest.raises(ValueError) as excinfo:
         await target._build_input_for_multi_modal_async([Message(message_pieces=[entry])])
     assert "Unsupported data type 'audio_path' in message index 0" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("data_type", ["audio_path", "binary_path", "video_path", "url"])
+async def test_build_input_for_multi_modal_preserves_unsupported_modalities(
+    target: OpenAIResponseTarget, data_type: PromptDataType
+):
+    piece = MessagePiece(
+        role="user",
+        original_value="unsupported-value",
+        original_value_data_type=data_type,
+        converted_value_data_type=data_type,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await target._build_input_for_multi_modal_async([Message(message_pieces=[piece])])
+
+    assert str(exc_info.value) == f"Unsupported data type '{data_type}' in message index 0"
 
 
 async def test_construct_request_body_includes_extra_body_params(
@@ -887,6 +911,184 @@ async def test_build_input_for_multi_modal_async_function_call_output_stringifie
     # The Output must be a string for Responses API
     assert isinstance(items[0]["output"], str)
     assert json.loads(items[0]["output"]) == {"ok": True, "value": 5}
+
+
+async def test_build_input_for_multi_modal_async_preserves_mixed_payload_contract(target: OpenAIResponseTarget):
+    refusal_piece = MessagePiece(
+        role="assistant",
+        original_value="stored refusal",
+        original_value_data_type="error",
+        response_error="blocked",
+    )
+    refusal_piece.mark_as_structured_refusal(refusal="refused")
+
+    conversation = [
+        Message(
+            message_pieces=[
+                MessagePiece(role="system", original_value="system-a"),
+                MessagePiece(role="system", original_value="system-b"),
+            ]
+        ),
+        Message(
+            message_pieces=[
+                MessagePiece(role="user", original_value="user text"),
+                MessagePiece(role="user", original_value="image.png", original_value_data_type="image_path"),
+            ]
+        ),
+        Message(
+            message_pieces=[
+                MessagePiece(role="assistant", original_value="assistant text"),
+                MessagePiece(
+                    role="assistant",
+                    original_value='{"type":"reasoning"}',
+                    original_value_data_type="reasoning",
+                ),
+                MessagePiece(
+                    role="assistant",
+                    original_value=json.dumps(
+                        {
+                            "type": "function_call",
+                            "call_id": "function-1",
+                            "name": "lookup",
+                            "arguments": '{"value":1}',
+                            "id": "drop-id",
+                            "status": "completed",
+                        }
+                    ),
+                    original_value_data_type="function_call",
+                ),
+                MessagePiece(
+                    role="assistant",
+                    original_value=json.dumps({"type": "web_search_call", "call_id": "web-1", "id": "drop-id"}),
+                    original_value_data_type="tool_call",
+                ),
+                MessagePiece(
+                    role="assistant",
+                    original_value=json.dumps(
+                        {
+                            "type": "provider_tool_call",
+                            "call_id": "tool-1",
+                            "query": "query",
+                            "name": "provider-tool",
+                            "arguments": "{}",
+                            "id": "drop-id",
+                            "status": "completed",
+                        }
+                    ),
+                    original_value_data_type="tool_call",
+                ),
+                MessagePiece(
+                    role="assistant",
+                    original_value=json.dumps(
+                        {
+                            "type": "function_call_output",
+                            "call_id": "function-1",
+                            "output": {"ok": True},
+                            "id": "drop-id",
+                        }
+                    ),
+                    original_value_data_type="function_call_output",
+                ),
+                refusal_piece,
+            ]
+        ),
+    ]
+
+    with patch(
+        "pyrit.prompt_target.openai.openai_response_target.convert_local_image_to_data_url_async",
+        return_value="data:image/png;base64,image-data",
+    ):
+        result = await target._build_input_for_multi_modal_async(conversation)
+
+    assert result == [
+        {
+            "role": "developer",
+            "content": [
+                {"type": "input_text", "text": "system-a"},
+                {"type": "input_text", "text": "system-b"},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "user text"},
+                {
+                    "detail": "auto",
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,image-data",
+                },
+            ],
+        },
+        {
+            "type": "function_call",
+            "call_id": "function-1",
+            "name": "lookup",
+            "arguments": '{"value":1}',
+        },
+        {"type": "web_search_call", "call_id": "web-1", "query": None},
+        {
+            "type": "provider_tool_call",
+            "call_id": "tool-1",
+            "query": "query",
+            "name": "provider-tool",
+            "arguments": "{}",
+        },
+        {"type": "function_call_output", "call_id": "function-1", "output": '{"ok":true}'},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "assistant text"},
+                {"type": "output_text", "text": "refused"},
+            ],
+        },
+    ]
+
+
+@pytest.mark.parametrize("data_type", ["function_call", "tool_call", "function_call_output"])
+async def test_build_input_for_multi_modal_async_preserves_malformed_artifact_error(
+    target: OpenAIResponseTarget, data_type: PromptDataType
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value="{",
+        original_value_data_type=data_type,
+    )
+
+    with pytest.raises(json.JSONDecodeError, match="Expecting property name enclosed in double quotes"):
+        await target._build_input_for_multi_modal_async([Message(message_pieces=[piece])])
+
+
+@pytest.mark.parametrize(
+    ("data_type", "payload", "missing_field"),
+    [
+        ("function_call", {"call_id": "call-1", "name": "lookup", "arguments": "{}"}, "type"),
+        ("tool_call", {"call_id": "call-1"}, "type"),
+        ("function_call_output", {"type": "function_call_output", "output": "done"}, "call_id"),
+    ],
+)
+async def test_build_input_for_multi_modal_async_preserves_missing_artifact_field_error(
+    target: OpenAIResponseTarget,
+    data_type: PromptDataType,
+    payload: dict[str, Any],
+    missing_field: str,
+):
+    piece = MessagePiece(
+        role="assistant",
+        original_value=json.dumps(payload),
+        original_value_data_type=data_type,
+    )
+
+    with pytest.raises(KeyError) as exc_info:
+        await target._build_input_for_multi_modal_async([Message(message_pieces=[piece])])
+
+    assert exc_info.value.args == (missing_field,)
+
+
+async def test_build_input_for_multi_modal_async_preserves_empty_conversation_error(target: OpenAIResponseTarget):
+    with pytest.raises(ValueError) as exc_info:
+        await target._build_input_for_multi_modal_async([])
+
+    assert str(exc_info.value) == "Conversation cannot be empty"
 
 
 def test_make_tool_piece_serializes_output_and_sets_call_id(target: OpenAIResponseTarget):
