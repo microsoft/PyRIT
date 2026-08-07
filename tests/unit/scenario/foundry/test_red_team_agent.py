@@ -673,7 +673,7 @@ class TestFoundryAllTechniques:
         attack = atomic_attack.attack_technique.attack
         assert type(attack) is expected_attack_type
         if expected_tree_width is not None:
-            assert attack._tree_width == expected_tree_width
+            assert attack._configuration.tree_width == expected_tree_width
             assert attack._objective_scorer is mock_float_threshold_scorer
 
     def test_mapping_cases_cover_all_concrete_foundry_techniques(self) -> None:
