@@ -1,6 +1,7 @@
 import type {
   BackendMessage,
   BackendMessagePiece,
+  BackendScore,
   Message,
   MessageAttachment,
   MessageError,
@@ -184,6 +185,23 @@ function pieceToError(piece: BackendMessagePiece): MessageError | undefined {
 }
 
 /**
+ * Select the newest score attached to any piece in a backend message.
+ */
+function getLatestScore(messagePieces: BackendMessagePiece[]): BackendScore | undefined {
+  let latestScore: BackendScore | undefined
+
+  for (const piece of messagePieces) {
+    for (const score of piece.scores) {
+      if (!latestScore || new Date(score.timestamp).getTime() >= new Date(latestScore.timestamp).getTime()) {
+        latestScore = score
+      }
+    }
+  }
+
+  return latestScore
+}
+
+/**
  * Convert a single backend Message DTO to a frontend Message for rendering.
  */
 export function backendMessageToFrontend(msg: BackendMessage): Message {
@@ -249,6 +267,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     role: role as Message['role'],
     content: convertedContent,
     timestamp: msg.created_at,
+    score: getLatestScore(msg.message_pieces),
     attachments: attachments.length > 0 ? attachments : undefined,
     error,
     reasoningSummaries: reasoningSummaries.length > 0 ? reasoningSummaries : undefined,

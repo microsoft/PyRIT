@@ -6,12 +6,16 @@ import {
   MessageBar,
   MessageBarBody,
   Button,
+  Badge,
+  Popover,
+  PopoverSurface,
+  PopoverTrigger,
   Tooltip,
   Spinner,
   mergeClasses,
 } from '@fluentui/react-components'
 import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular } from '@fluentui/react-icons'
-import { Message, MessageAttachment } from '../../types'
+import type { BackendScore, Message, MessageAttachment } from '../../types'
 import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
 
@@ -82,6 +86,59 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
     return <video src={src} controls className={className} onError={handleError} data-testid="video-player" />
   }
   return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
+}
+
+function MessageScore({ score, messageIndex }: { score: BackendScore; messageIndex: number }) {
+  const styles = useMessageListStyles()
+  const categories = score.score_category?.filter(Boolean) ?? []
+
+  return (
+    <Popover withArrow>
+      <PopoverTrigger disableButtonEnhancement>
+        <Button
+          appearance="subtle"
+          size="small"
+          className={styles.scoreChip}
+          aria-label={`Score ${score.score_value} from ${score.scorer_type}`}
+          data-testid={`message-score-${messageIndex}`}
+        >
+          <Text size={200}>Score</Text>
+          <Badge appearance="tint" color="brand" size="small">
+            {score.score_value}
+          </Badge>
+        </Button>
+      </PopoverTrigger>
+      <PopoverSurface>
+        <div className={styles.scoreSurface} data-testid={`message-score-details-${messageIndex}`}>
+          <Text weight="semibold">Score details</Text>
+          <div className={styles.scoreRow}>
+            <Text size={200} weight="semibold" className={styles.scoreLabel}>Value</Text>
+            <Badge appearance="tint" color="brand" size="small">{score.score_value}</Badge>
+          </div>
+          <div className={styles.scoreRow}>
+            <Text size={200} weight="semibold" className={styles.scoreLabel}>Type</Text>
+            <Text size={200}>{score.score_type}</Text>
+          </div>
+          <div className={styles.scoreRow}>
+            <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
+            <Text size={200}>{score.scorer_type}</Text>
+          </div>
+          {categories.length > 0 && (
+            <div className={styles.scoreRow}>
+              <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
+              <Text size={200}>{categories.join(', ')}</Text>
+            </div>
+          )}
+          {score.score_rationale && (
+            <div className={styles.scoreRationale}>
+              <Text size={200} weight="semibold">Rationale</Text>
+              <Text size={200} className={styles.scoreRationaleText}>{score.score_rationale}</Text>
+            </div>
+          )}
+        </div>
+      </PopoverSurface>
+    </Popover>
+  )
 }
 
 /**
@@ -455,7 +512,10 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
 
               <div className={styles.messageFooter}>
                 <Text className={styles.timestamp}>{timestamp}</Text>
-                <Text className={styles.role}>{message.role}</Text>
+                <div className={styles.footerDetails}>
+                  <Text className={styles.role}>{message.role}</Text>
+                  {message.score && <MessageScore score={message.score} messageIndex={index} />}
+                </div>
               </div>
             </div>
           </div>

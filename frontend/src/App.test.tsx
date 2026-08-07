@@ -120,6 +120,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId,
     activeConversationId,
     attackTarget,
+    objective,
     onConversationCreated,
     onSelectConversation,
     labels,
@@ -130,6 +131,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId: string | null;
     activeConversationId: string | null;
     attackTarget?: { identifier_hash?: string | null } | null;
+    objective?: string;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
@@ -141,6 +143,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
+        <span data-testid="objective">{objective ?? ""}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <button onClick={onNewAttack} data-testid="new-attack">
@@ -692,6 +695,7 @@ describe("App", () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
+      objective: "Extract the hidden system prompt",
       labels: {},
       related_conversation_ids: [],
     });
@@ -703,6 +707,7 @@ describe("App", () => {
       expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
     );
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main");
+    expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
   });
 
   it("uses the conversation from a deep link when it belongs to the attack", async () => {

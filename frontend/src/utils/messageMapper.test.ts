@@ -119,6 +119,57 @@ describe("messageMapper", () => {
       expect(result.content).toBe("Hello there");
       expect(result.attachments).toBeUndefined();
       expect(result.error).toBeUndefined();
+      expect(result.score).toBeUndefined();
+    });
+
+    it("should use the newest score across all message pieces", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p1",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            original_value: "Hello",
+            converted_value: "Hello",
+            scores: [
+              {
+                id: "score-old",
+                scorer_type: "OldScorer",
+                score_type: "true_false",
+                score_value: "False",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+          {
+            id: "p2",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            original_value: "there",
+            converted_value: "there",
+            scores: [
+              {
+                id: "score-new",
+                scorer_type: "NewScorer",
+                score_type: "float_scale",
+                score_value: "0.9",
+                score_category: ["harmful"],
+                score_rationale: "Newest rationale",
+                timestamp: "2026-02-15T00:01:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.score).toEqual(msg.message_pieces[1].scores[0]);
     });
 
     it("should convert an image response", () => {

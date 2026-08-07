@@ -24,6 +24,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
   content: string
   timestamp: string
+  /** Most recent score attached to any backend piece in this message. */
+  score?: BackendScore
   attachments?: MessageAttachment[]
   /** If the backend returned an error for this message */
   error?: MessageError
@@ -244,6 +246,7 @@ export interface AttackSummary {
   conversation_id: string
   attack_type: string
   attack_specific_params?: Record<string, unknown> | null
+  objective: string
   target?: TargetInfo | null
   converters: string[]
   outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null

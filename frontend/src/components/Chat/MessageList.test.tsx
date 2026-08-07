@@ -109,6 +109,54 @@ describe("MessageList", () => {
     expect(screen.getByText("Assistant message test")).toBeInTheDocument();
   });
 
+  it("should show the message score and its details when present", async () => {
+    const user = userEvent.setup();
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Scored response",
+        timestamp: new Date().toISOString(),
+        score: {
+          id: "score-1",
+          scorer_type: "SelfAskScaleScorer",
+          score_type: "float_scale",
+          score_value: "0.9",
+          score_category: ["harmful"],
+          score_rationale: "The response contains harmful content.",
+          timestamp: "2026-02-15T00:01:00Z",
+        },
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    const scoreButton = screen.getByRole("button", {
+      name: /score 0.9 from selfaskscalescorer/i,
+    });
+    expect(scoreButton).toBeInTheDocument();
+
+    await user.click(scoreButton);
+
+    expect(screen.getByText("float_scale")).toBeInTheDocument();
+    expect(screen.getByText("SelfAskScaleScorer")).toBeInTheDocument();
+    expect(screen.getByText("harmful")).toBeInTheDocument();
+    expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
+  });
+
+  it("should not show a score chip when the message has no score", () => {
+    render(
+      <TestWrapper>
+        <MessageList messages={mockMessages} />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByText("Score")).not.toBeInTheDocument();
+  });
+
   describe("structured JSON assistant responses", () => {
     // Targets like PromptShieldTarget return structured JSON instead of
     // natural-language text. Render these as pretty-printed JSON in a <pre>

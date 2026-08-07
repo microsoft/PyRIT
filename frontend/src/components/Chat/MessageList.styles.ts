@@ -70,6 +70,46 @@ export const useMessageListStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     fontStyle: 'italic',
   },
+  footerDetails: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+  },
+  scoreChip: {
+    minWidth: 'auto',
+    height: '24px',
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+  },
+  scoreSurface: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: tokens.spacingVerticalXS,
+    minWidth: '240px',
+    maxWidth: '360px',
+  },
+  scoreRow: {
+    display: 'flex',
+    columnGap: tokens.spacingHorizontalS,
+  },
+  scoreLabel: {
+    minWidth: '72px',
+    color: tokens.colorNeutralForeground2,
+  },
+  scoreRationale: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: tokens.spacingVerticalXXS,
+    marginTop: tokens.spacingVerticalXS,
+    paddingTop: tokens.spacingVerticalXS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  scoreRationaleText: {
+    color: tokens.colorNeutralForeground2,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    maxHeight: '30vh',
+    overflowY: 'auto',
+  },
   loadingEllipsis: {
     fontSize: tokens.fontSizeBase500,
     animationName: {
