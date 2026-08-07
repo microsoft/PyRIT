@@ -1893,9 +1893,8 @@ class ScenarioResultEntry(Base):
 
         # Convert ComponentIdentifier to dict for JSON storage
         target_identifier = entry.objective_target_identifier
-        self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
-            target_identifier.model_dump() if target_identifier else None
-        )
+        target_identifier_dict = target_identifier.model_dump() if target_identifier else None
+        self.objective_target_identifier = target_identifier_dict  # type: ignore[ty:invalid-assignment]
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
         scorer_identifier = entry.objective_scorer_identifier
