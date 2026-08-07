@@ -211,6 +211,15 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     # Visualization parent for first-level nodes in this execution
     visualization_root_id: str = "root"
 
+    @property
+    def conversation_id(self) -> str | None:
+        """The best objective-target conversation, or the first active branch."""
+        if self.best_conversation_id:
+            return self.best_conversation_id
+        if self.nodes:
+            return self.nodes[0].objective_target_conversation_id
+        return None
+
 
 class TAPAttackResult(AttackResult):
     """

@@ -18,6 +18,7 @@ import pytest
 
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
+    AttackParameters,
     AttackScoringConfig,
     PAIRAttack,
     TreeOfAttacksWithPruningAttack,
@@ -147,6 +148,22 @@ class TestPAIRAttackInit:
             attack_adversarial_config=adversarial_config,
         )
         assert attack._context_type is TAPAttackContext
+
+    def test_pair_context_uses_best_objective_target_conversation(self, objective_target, adversarial_config):
+        attack = PAIRAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=adversarial_config,
+        )
+        context = attack._context_type(params=AttackParameters(objective="Test objective"))
+        active_node = MagicMock()
+        active_node.objective_target_conversation_id = "pair-active-conversation"
+        context.nodes = [active_node]
+
+        assert context.conversation_id == "pair-active-conversation"
+
+        context.best_conversation_id = "pair-best-conversation"
+
+        assert context.conversation_id == "pair-best-conversation"
 
     def test_pair_validates_adversarial_target_capabilities(self, objective_target):
         """An adversarial target lacking native MULTI_TURN/SYSTEM_PROMPT must be rejected (inherited from TAP)."""
