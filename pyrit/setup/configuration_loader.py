@@ -216,6 +216,11 @@ class ConfigurationLoader(YamlLoadable):
         """The normalized ``server:`` block, or ``None`` when not configured."""
         return self._server_config
 
+    @property
+    def initializer_configs(self) -> Sequence[InitializerConfig]:
+        """The ordered initializer configurations with registry names normalized to snake case."""
+        return self._initializer_configs
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigurationLoader":
         """
@@ -399,15 +404,16 @@ class ConfigurationLoader(YamlLoadable):
 
         from pyrit.registry import InitializerRegistry
 
-        if not self._initializer_configs:
+        configs = self._initializer_configs
+        if not configs:
             return []
 
         registry = InitializerRegistry()
         resolved: list[PyRITInitializer] = []
 
-        logging.getLogger(__name__).info("Running %d initializer(s)...", len(self._initializer_configs))
+        logging.getLogger(__name__).info("Running %d initializer(s)...", len(configs))
 
-        for config in self._initializer_configs:
+        for config in configs:
             try:
                 instance = registry.create_and_configure(config.name, initializer_params=config.args)
             except KeyError as exc:
@@ -483,8 +489,10 @@ class ConfigurationLoader(YamlLoadable):
         """
         Initialize PyRIT with the loaded configuration.
 
-        This method resolves all initializer names to instances and calls
-        the core initialize_pyrit_async function.
+        Resolves the ``.pyrit_conf`` baseline initializers to instances and calls the core
+        ``initialize_pyrit_async`` function. This method is intentionally unaware of any
+        persisted additional initializers: consumers such as ``pyrit.backend.main.lifespan``
+        run those after the baseline.
 
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.

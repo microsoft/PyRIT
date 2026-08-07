@@ -344,3 +344,34 @@ test.describe("Attack History Filters", () => {
     await expect(page.getByTestId("attack-row-atk-page-000")).toBeVisible({ timeout: 5_000 });
   });
 });
+
+test.describe("Attack History empty state", () => {
+  test("guides keyboard users to target configuration and preserves Back navigation", async ({ page }) => {
+    await mockHistoryAPIs(page, { attacks: [] });
+    await page.route(/\/api\/targets(?:\?|$)/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [],
+          pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+        }),
+      });
+    });
+
+    await page.goto("/history");
+
+    const configureTargetButton = page.getByRole("button", { name: "Configure target" });
+    await expect(configureTargetButton).toBeVisible();
+    await configureTargetButton.focus();
+    await expect(configureTargetButton).toBeFocused();
+    await configureTargetButton.press("Enter");
+
+    await expect(page).toHaveURL(/\/config$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Target Configuration" })).toBeVisible();
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/history$/);
+    await expect(page.getByRole("button", { name: "Configure target" })).toBeVisible();
+  });
+});

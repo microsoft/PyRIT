@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.models import TokenUsage
+from types import SimpleNamespace
+
+from pyrit.models import TokenUsage, read_usage_int, read_usage_value
 
 
 def test_to_metadata_uses_input_output_key_names_and_omits_none():
@@ -64,3 +66,34 @@ def test_from_metadata_ignores_cost_and_unrelated_keys():
 
 def test_from_metadata_returns_none_without_token_usage_keys():
     assert TokenUsage.from_metadata({"partial_content": "x"}) is None
+
+
+def test_read_usage_value_reads_attribute_objects():
+    usage = SimpleNamespace(input_tokens=11, input_tokens_details=SimpleNamespace(cached_tokens=3))
+    assert read_usage_value(source=usage, name="input_tokens") == 11
+    assert read_usage_value(source=usage, name="input_tokens_details").cached_tokens == 3
+
+
+def test_read_usage_value_reads_mappings():
+    usage = {"input_tokens": 11, "input_tokens_details": {"cached_tokens": 3}}
+    assert read_usage_value(source=usage, name="input_tokens") == 11
+    assert read_usage_value(source=usage, name="input_tokens_details") == {"cached_tokens": 3}
+
+
+def test_read_usage_value_returns_none_for_missing_and_none_source():
+    assert read_usage_value(source=SimpleNamespace(), name="input_tokens") is None
+    assert read_usage_value(source=None, name="input_tokens") is None
+    assert read_usage_value(source={}, name="input_tokens") is None
+
+
+def test_read_usage_int_guards_non_integer_values():
+    usage = SimpleNamespace(input_tokens=11, output_tokens=None, total_tokens="30", cached_tokens=True)
+    assert read_usage_int(source=usage, name="input_tokens") == 11
+    assert read_usage_int(source=usage, name="output_tokens") is None
+    assert read_usage_int(source=usage, name="total_tokens") is None
+    assert read_usage_int(source=usage, name="cached_tokens") is None
+
+
+def test_read_usage_int_reads_mappings_and_missing_sources():
+    assert read_usage_int(source={"input_tokens": 7}, name="input_tokens") == 7
+    assert read_usage_int(source=None, name="input_tokens") is None
