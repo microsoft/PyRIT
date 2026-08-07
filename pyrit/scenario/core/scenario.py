@@ -1051,12 +1051,15 @@ class Scenario(ABC):
             try:
                 return await self._execute_scenario_async()
             except asyncio.CancelledError:
-                self._memory.update_scenario_run_state(
-                    scenario_result_id=scenario_result_id,
-                    scenario_run_state=ScenarioRunState.CANCELLED,
-                    error_message="Scenario run was cancelled",
-                    error_type="CancelledError",
-                )
+                try:
+                    self._memory.update_scenario_run_state(
+                        scenario_result_id=scenario_result_id,
+                        scenario_run_state=ScenarioRunState.CANCELLED,
+                        error_message="Scenario run was cancelled",
+                        error_type="CancelledError",
+                    )
+                except Exception:
+                    logger.exception(f"Failed to persist cancellation state for scenario '{self._name}'")
                 raise
             except Exception as e:
                 last_exception = e

@@ -519,6 +519,34 @@ class TestScenarioPartialAttackCompletion:
         assert sorted(resumed_result.get_objectives()) == ["obj1", "obj2", "obj3"]
         assert all(len(results) == 1 for results in resumed_result.attack_results.values())
 
+    async def test_run_async_cancellation_is_not_masked_by_persistence_failure(
+        self, mock_objective_target: MagicMock
+    ) -> None:
+        atomic_attack = create_mock_atomic_attack("cancelled_attack", ["obj1"])
+        scenario = ConcreteScenario(
+            name="Cancellation Persistence Failure Scenario",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack],
+        )
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+
+        with (
+            patch.object(
+                scenario,
+                "_execute_scenario_async",
+                new_callable=AsyncMock,
+                side_effect=asyncio.CancelledError,
+            ),
+            patch.object(
+                scenario._memory,
+                "update_scenario_run_state",
+                side_effect=RuntimeError("database unavailable"),
+            ),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await scenario.run_async()
+
     async def test_multiple_atomic_attacks_with_partial_results(self, mock_objective_target):
         """Test scenario with multiple atomic attacks that return partial results."""
         # Create 3 atomic attacks
