@@ -23,10 +23,8 @@ class ShieldGemmaMessageRole(enum.Enum):
     """
     The conversation role whose message ShieldGemma classifies.
 
-    ShieldGemma is trained on two distinct instructions: a prompt-only one that judges the
-    user turn, and a prompt-response one that judges the model turn given the user turn
-    that produced it. The two differ in the guideline wording as well as the request
-    layout, so the role selects both.
+    Prompt and response classification use different guideline wording and request layouts,
+    so the role selects both.
     """
 
     USER = "user"
@@ -49,7 +47,7 @@ class ShieldGemmaGuideline(BaseModel):
 
     ``description`` holds only the role-independent body of the principle, which Google's
     policy text phrases as ``content that ...``. The attributing clause differs between
-    the prompt-only and prompt-response use cases, so it is supplied by the role at render
+    prompt and response classification, so it is supplied by the role at render
     time rather than baked into the stored text. That keeps a guideline from being worded
     for one use case and then sent in the other.
     """

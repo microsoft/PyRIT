@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -30,36 +29,15 @@ if TYPE_CHECKING:
 
 _SHIELDGEMMA_DATA_PATH = SCORER_SEED_PROMPT_PATH / "shieldgemma"
 _DEFAULT_PROMPT_ONLY_PATH = _SHIELDGEMMA_DATA_PATH / "shieldgemma_prompt.yaml"
-_DEFAULT_PROMPT_RESPONSE_PATH = _SHIELDGEMMA_DATA_PATH / "shieldgemma_response_prompt.yaml"
+_DEFAULT_RESPONSE_ONLY_PATH = _SHIELDGEMMA_DATA_PATH / "shieldgemma_response_prompt.yaml"
 
 _PROMPT_ONLY_PARAMETERS = ("user_prompt", "guideline")
-_PROMPT_RESPONSE_PARAMETERS = ("user_prompt", "response", "guideline")
-
-_UNUSED_USER_PROMPT_MESSAGE = (
-    "user_prompt only applies to ShieldGemma response classification. Prompt-only "
-    "classification judges the scored message itself, so passing a separate user prompt "
-    "would be silently ignored. Drop user_prompt, or use ShieldGemmaMessageRole.CHATBOT."
-)
+_RESPONSE_ONLY_PARAMETERS = ("response", "guideline")
 
 # The verdict tokens ShieldGemma answers with, reused for the aggregated verdict so the
 # metadata reads the same whether it came from the model or from the aggregator.
 _VIOLATION_TOKEN = "Yes"
 _COMPLIANT_TOKEN = "No"
-
-# The user prompt belongs to the conversation, not to an individual piece, so it is resolved
-# once per scored message and handed to the pieces through this. Resolving inside
-# _score_piece_async instead would repeat the same lookup for every piece of the message. A
-# ContextVar rather than an attribute because pieces are scored under asyncio.gather, which
-# copies the context into each child task, so this stays correct if one scorer instance is
-# used for several messages at once.
-_RESOLVED_USER_PROMPT: ContextVar[str | None] = ContextVar("shieldgemma_resolved_user_prompt", default=None)
-
-_MISSING_USER_PROMPT_MESSAGE = (
-    "ShieldGemma response classification needs the user prompt that produced the response, "
-    "because the model is trained on a Human Question followed by a Chatbot Response. "
-    "Score a piece that follows a user turn in a stored conversation, pass user_prompt= to "
-    "the scorer, or use ShieldGemmaMessageRole.USER to classify a prompt on its own."
-)
 
 
 def _coerce_message_role(message_role: ShieldGemmaMessageRole | str) -> ShieldGemmaMessageRole:
@@ -92,7 +70,7 @@ def _coerce_message_role(message_role: ShieldGemmaMessageRole | str) -> ShieldGe
 def _default_template_path(message_role: ShieldGemmaMessageRole) -> Path:
     if message_role is ShieldGemmaMessageRole.USER:
         return _DEFAULT_PROMPT_ONLY_PATH
-    return _DEFAULT_PROMPT_RESPONSE_PATH
+    return _DEFAULT_RESPONSE_ONLY_PATH
 
 
 def render_shieldgemma_prompt(
@@ -100,15 +78,14 @@ def render_shieldgemma_prompt(
     message: str,
     guideline: ShieldGemmaGuideline,
     message_role: ShieldGemmaMessageRole | str = ShieldGemmaMessageRole.CHATBOT,
-    user_prompt: str | None = None,
     prompt_template: SeedPrompt | str | None = None,
 ) -> SeedPrompt:
     """
     Render a ShieldGemma classification request for one message and one guideline.
 
-    Google documents two use cases with different instructions. Prompt-only classification
-    judges a user turn on its own. Prompt-response classification judges a model turn and
-    includes the user turn that produced it, because the model was trained to read both.
+    Prompt classification judges a user turn. Response classification judges a model turn
+    without including the originating prompt, so unrelated or harmful prompt content cannot
+    influence the response verdict.
 
     Args:
         message (str): The message to classify. This is the user prompt for
@@ -117,9 +94,6 @@ def render_shieldgemma_prompt(
         guideline (ShieldGemmaGuideline): The single safety principle to judge against.
         message_role (ShieldGemmaMessageRole | str): Which use case to render, as the enum or
             its value such as ``"user"``. Defaults to the response side.
-        user_prompt (str | None): The user prompt that produced ``message``. Required for
-            the response side. The prompt side judges ``message`` itself, so supplying one
-            there is rejected rather than quietly dropped. Defaults to None.
         prompt_template (SeedPrompt | str | None): Custom request template. Defaults to the
             bundled template for the selected use case.
 
@@ -127,24 +101,18 @@ def render_shieldgemma_prompt(
         SeedPrompt: The rendered request prompt.
 
     Raises:
-        ValueError: If the response side is rendered without a user prompt, if the prompt side
-            is rendered with one, or if ``message_role`` does not name a role.
+        ValueError: If ``message_role`` does not name a role.
     """
     message_role = _coerce_message_role(message_role)
     if message_role is ShieldGemmaMessageRole.USER:
-        if user_prompt is not None:
-            raise ValueError(_UNUSED_USER_PROMPT_MESSAGE)
         render_params = {"user_prompt": message, "guideline": guideline.rendered(message_role)}
         required_parameters: tuple[str, ...] = _PROMPT_ONLY_PARAMETERS
     else:
-        if not user_prompt:
-            raise ValueError(_MISSING_USER_PROMPT_MESSAGE)
         render_params = {
-            "user_prompt": user_prompt,
             "response": message,
             "guideline": guideline.rendered(message_role),
         }
-        required_parameters = _PROMPT_RESPONSE_PARAMETERS
+        required_parameters = _RESPONSE_ONLY_PARAMETERS
 
     return _render_system_prompt_template(
         system_prompt_template=prompt_template,
@@ -161,10 +129,8 @@ class ShieldGemmaScorer(TrueFalseScorer):
     ShieldGemma judges a single principle per request, so a scorer is bound to one
     guideline. Compose several with ``TrueFalseCompositeScorer`` to cover a whole policy.
 
-    The default configuration classifies a model response, which ShieldGemma does in
-    reference to the user prompt that produced it. That prompt is read from the preceding
-    turn of the scored conversation, or can be supplied with ``user_prompt``. To classify a
-    prompt on its own, use ``ShieldGemmaMessageRole.USER``.
+    The default configuration classifies a model response on its own. To classify a user
+    prompt, use ``ShieldGemmaMessageRole.USER``.
     """
 
     SCORE_CATEGORY: ClassVar[str] = "shieldgemma"
@@ -178,7 +144,6 @@ class ShieldGemmaScorer(TrueFalseScorer):
         chat_target: PromptTarget,
         guideline: ShieldGemmaGuideline,
         message_role: ShieldGemmaMessageRole | str = ShieldGemmaMessageRole.CHATBOT,
-        user_prompt: str | None = None,
         prompt_template: SeedPrompt | str | None = None,
         validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
@@ -193,11 +158,6 @@ class ShieldGemmaScorer(TrueFalseScorer):
             message_role (ShieldGemmaMessageRole | str): Whether the scored message is a user
                 prompt or a model response, as the enum or its value such as ``"user"``, which
                 is what a serialized configuration supplies. Defaults to the response side.
-            user_prompt (str | None): Fixed user prompt to classify responses against, which
-                takes precedence over the preceding turn of the scored conversation. Applies
-                only to the response side; supplying it with
-                ``ShieldGemmaMessageRole.USER`` raises rather than being ignored.
-                Defaults to None.
             prompt_template (SeedPrompt | str | None): Custom ShieldGemma request template.
                 Defaults to the bundled template for the selected use case.
             validator (ScorerPromptValidator | None): Custom validator. Defaults to text only.
@@ -205,17 +165,13 @@ class ShieldGemmaScorer(TrueFalseScorer):
                 Defaults to TrueFalseScoreAggregator.OR.
 
         Raises:
-            ValueError: If ``user_prompt`` is supplied for prompt-only classification, where
-                it would have no effect, or if ``message_role`` does not name a role.
+            ValueError: If ``message_role`` does not name a role.
         """
         message_role = _coerce_message_role(message_role)
-        if message_role is ShieldGemmaMessageRole.USER and user_prompt is not None:
-            raise ValueError(_UNUSED_USER_PROMPT_MESSAGE)
 
         self._prompt_target = chat_target
         self._guideline = guideline
         self._message_role = message_role
-        self._user_prompt = user_prompt
         self._prompt_template = _resolve_prompt_template(
             prompt_template=prompt_template,
             guideline=guideline,
@@ -239,54 +195,12 @@ class ShieldGemmaScorer(TrueFalseScorer):
             "guideline": self._guideline.model_dump(),
             "prompt_template": self._prompt_template.value,
         }
-        # A fixed user prompt changes the request that gets sent, so it belongs in the
-        # identity. It is only read on the response side, so it only distinguishes there.
-        if self._message_role is ShieldGemmaMessageRole.CHATBOT:
-            params["user_prompt"] = self._user_prompt
 
         return self._create_identifier(
             params=params,
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
         )
-
-    async def _resolve_user_prompt_async(self, message_piece: MessagePiece) -> str | None:
-        """
-        Find the user prompt that a scored response is judged against.
-
-        Called once per scored message rather than once per piece, so that several pieces do
-        not issue concurrent memory reads.
-
-        Args:
-            message_piece (MessagePiece): Any piece of the scored message. Only its
-                conversation and sequence are read, which are shared across the message.
-
-        Returns:
-            str | None: The configured prompt, otherwise the preceding user turn of the
-                scored conversation, otherwise None.
-        """
-        if self._user_prompt:
-            return self._user_prompt
-        if not message_piece.conversation_id or message_piece.sequence < 1:
-            return None
-
-        # get_message_pieces is a blocking SQLAlchemy query, so it is offloaded rather than
-        # run on the event loop during scoring.
-        # Read synchronously. Moving this to a worker thread makes it intermittently return
-        # nothing, because the memory layer is not safe to use from several threads and scoring
-        # runs concurrently under asyncio.gather.
-        conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
-        # The converted value is what the target actually received. After a converter runs,
-        # the original value can be the seed prompt instead, which would have ShieldGemma
-        # judge the response against context the target never saw.
-        preceding_turn = [
-            piece.converted_value
-            for piece in conversation
-            if piece.sequence == message_piece.sequence - 1
-            and piece.converted_value_data_type == "text"
-            and piece.api_role == "user"
-        ]
-        return "\n".join(preceding_turn) or None
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
@@ -300,15 +214,11 @@ class ShieldGemmaScorer(TrueFalseScorer):
         Returns:
             list[Score]: A single true/false ShieldGemma score.
 
-        Raises:
-            ValueError: If a response is scored and no user prompt can be found.
         """
-        user_prompt = _RESOLVED_USER_PROMPT.get() if self._message_role is ShieldGemmaMessageRole.CHATBOT else None
         request_prompt = render_shieldgemma_prompt(
             message=message_piece.converted_value,
             guideline=self._guideline,
             message_role=self._message_role,
-            user_prompt=user_prompt,
             prompt_template=self._prompt_template,
         )
         unvalidated_score = await _run_llm_scoring_async(
@@ -344,9 +254,6 @@ class ShieldGemmaScorer(TrueFalseScorer):
         follows the configured aggregator rather than whichever piece happened to be merged
         last.
 
-        For response classification this is also where the user prompt is resolved, once for the
-        whole message rather than once per piece, since it is a property of the conversation.
-
         Args:
             message (Message): The message to score.
             objective (str | None): Objective retained on the resulting score. Defaults to None.
@@ -355,14 +262,7 @@ class ShieldGemmaScorer(TrueFalseScorer):
             list[Score]: A single aggregated true/false score, or an empty list when no piece
                 could be scored.
         """
-        token = None
-        if self._message_role is ShieldGemmaMessageRole.CHATBOT:
-            token = _RESOLVED_USER_PROMPT.set(await self._resolve_user_prompt_async(message.get_piece()))
-        try:
-            scores = await super()._score_async(message, objective=objective)
-        finally:
-            if token is not None:
-                _RESOLVED_USER_PROMPT.reset(token)
+        scores = await super()._score_async(message, objective=objective)
 
         if not scores:
             return scores
@@ -392,12 +292,11 @@ def _resolve_prompt_template(
         raise TypeError("prompt_template must be a SeedPrompt, str, or None.")
 
     # Render once here so a template missing a parameter fails at construction rather than
-    # on the first scored message. Prompt-only rendering takes no separate user prompt.
+    # on the first scored message.
     render_shieldgemma_prompt(
         message="validation message",
         guideline=guideline,
         message_role=message_role,
-        user_prompt="validation prompt" if message_role is ShieldGemmaMessageRole.CHATBOT else None,
         prompt_template=resolved,
     )
     return resolved

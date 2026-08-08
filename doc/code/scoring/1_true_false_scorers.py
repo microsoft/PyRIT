@@ -212,9 +212,8 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 # - **`ShieldGemmaScorer`** — sends text to a `PromptTarget` serving ShieldGemma and returns
 #   True when the content violates the one guideline the scorer is bound to. ShieldGemma judges
 #   a single principle per request, so compose several with `TrueFalseCompositeScorer` to cover
-#   a whole policy. It follows Google's two documented use cases: prompt-only classification
-#   judges a user turn, and the default response classification judges a model turn alongside
-#   the user prompt that produced it.
+#   a whole policy. Prompt classification judges a user turn, while the default response
+#   classification judges a model turn on its own so prompt content cannot bias the verdict.
 #
 # All four need their respective endpoints/credentials even though they are not "self-ask".
 # %% [markdown]
