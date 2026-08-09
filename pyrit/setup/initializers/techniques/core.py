@@ -174,6 +174,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="code_attack",
             attack_class=PromptSendingAttack,
+            description="Encodes the objective as data in a code template and asks the target to complete the code.",
             technique_tags=["single_turn", "light"],
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
