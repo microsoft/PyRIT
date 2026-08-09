@@ -95,6 +95,7 @@ from pyrit.converter import (
     BidiConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
+    CodeAttackConverter,
     CodeChameleonConverter,
     ColloquialWordswapConverter,
     DiacriticConverter,
@@ -176,6 +177,11 @@ print("Colloquial Wordswap:", await colloquial.convert_async(prompt=prompt))  # 
 # CodeChameleon [@lv2024codechameleon] encrypts and wraps in code
 code_chameleon = CodeChameleonConverter(encrypt_type="reverse")
 print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # type: ignore
+
+# %%
+# CodeAttack [@ren2024codeattack] hides the request inside a code-completion task
+code_attack = CodeAttackConverter(template=CodeAttackConverter.Template.PYTHON_LIST)
+print("CodeAttack:", await code_attack.convert_async(prompt=prompt))  # type: ignore
 
 # %% [markdown]
 # ### 1.3 Text Manipulation Converters
