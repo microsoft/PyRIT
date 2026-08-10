@@ -186,6 +186,8 @@ Client settings for connecting to or launching a PyRIT backend.
 
 `startup_timeout` must be a finite number greater than zero. The `--startup-timeout` CLI option overrides the configured value for an individual scanner invocation.
 
+Set `server: null` to reset all server settings, including values inherited from an earlier configuration layer, to their defaults.
+
 ```yaml
 server:
   url: http://localhost:8000
