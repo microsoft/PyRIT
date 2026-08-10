@@ -1,14 +1,7 @@
 name: vigenere cipher
 description: |
   A Vigenere cipher description for prepending.
-authors:
-  - Divij Handa
-  - Advait Chirmule
-  - Bimal Gajera
-  - Chitta Baral
-groups:
-  - Arizona State University
-source: https://arxiv.org/abs/2402.10601
+source: https://arxiv.org/abs/2402.10601v1
 parameters:
   - prompt
   - example
