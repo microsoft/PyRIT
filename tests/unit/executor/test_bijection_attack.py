@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pyrit.converter import DigitBijectionConverter, LetterBijectionConverter
 from pyrit.executor.attack import BijectionAttack
 from pyrit.executor.attack.core import AttackParameters
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import SingleTurnAttackContext
-from pyrit.models import Message, MessagePiece
+from pyrit.models import MessagePiece
 from pyrit.models.identifiers import ComponentIdentifier
-from pyrit.converter import DigitBijectionConverter, LetterBijectionConverter
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from tests.unit.mocks import MockPromptTarget
 
@@ -384,9 +384,9 @@ class TestBijectionAttackEndToEnd:
             "low: decoded text was not more English-like than the raw response"
         )
 
-    async def test_invalid_cipher_response_is_decoded_with_low_confidence_marker(self):
+    async def test_unrecognized_cipher_response_still_exposes_decoded_candidate(self):
         """Cipher-looking text that doesn't decode to recognizable English still gets a
-        decoded candidate plus a low-confidence marker, not a hidden/dropped result."""
+        decoded candidate, not a hidden/dropped result."""
         from tests.unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()
@@ -413,9 +413,6 @@ class TestBijectionAttackEndToEnd:
         result = await attack._perform_async(context=context)
 
         assert "decoded_response" in result.metadata
-        assert result.metadata["decoded_response_confidence"] == (
-            "low: decoded text was not more English-like than the raw response"
-        )
 
     async def test_short_one_word_response_is_decoded_and_never_hidden(self):
         """Regression test (romanlutz review): a valid encoded one-word answer -- exactly
@@ -452,3 +449,4 @@ class TestBijectionAttackEndToEnd:
         result = await attack._perform_async(context=context)
 
         assert result.metadata["decoded_response"] == plain_response
+        assert "decoded_response_confidence" not in result.metadata

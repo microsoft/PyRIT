@@ -50,11 +50,28 @@ _COMMON_ENGLISH_WORDS = frozenset(
         "you",
     }
 )
+_COMMON_ENGLISH_BIGRAMS = frozenset(
+    {"an", "ar", "at", "ed", "en", "er", "es", "ge", "he", "in", "nd", "on", "or", "qu", "re", "th"}
+)
+_VOWELS = frozenset("aeiou")
 
 
-def _common_english_word_count(*, text: str) -> int:
+def _english_likeness_score(*, text: str) -> int:
     words = re.findall(r"[a-z]+", text.lower())
-    return sum(word in _COMMON_ENGLISH_WORDS for word in words)
+    score = 0
+    for word in words:
+        vowel_count = sum(char in _VOWELS for char in word)
+        if word in _COMMON_ENGLISH_WORDS:
+            score += 4
+        if vowel_count:
+            score += 1
+        if len(word) >= 3 and 0.25 <= vowel_count / len(word) <= 0.75:
+            score += 1
+        if not re.search(r"[bcdfghjklmnpqrstvwxyz]{4,}", word):
+            score += 1
+        if any(bigram in word for bigram in _COMMON_ENGLISH_BIGRAMS):
+            score += 1
+    return score
 
 
 class BijectionAttack(PromptSendingAttack):
@@ -219,7 +236,7 @@ class BijectionAttack(PromptSendingAttack):
             raw_response = result.last_response.original_value
             decoded = self._bijection_converter.decode(raw_response)
             result.metadata["decoded_response"] = decoded
-            if _common_english_word_count(text=decoded) <= _common_english_word_count(text=raw_response):
+            if _english_likeness_score(text=decoded) <= _english_likeness_score(text=raw_response):
                 result.metadata["decoded_response_confidence"] = (
                     "low: decoded text was not more English-like than the raw response"
                 )
