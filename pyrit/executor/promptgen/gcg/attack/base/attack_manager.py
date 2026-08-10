@@ -72,6 +72,83 @@ class NpEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
+def _filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
+    """Return options whose names use the ``mpa_`` prefix."""
+    return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
+
+
+def _initialize_attack_log(
+    *,
+    logfile: str | None,
+    goals: list[str],
+    targets: list[str],
+    test_goals: list[str],
+    test_targets: list[str],
+    control_init: str,
+    test_prefixes: list[str],
+    workers: list[ModelWorker],
+    test_workers: list[ModelWorker],
+    additional_params: dict[str, Any] | None = None,
+) -> None:
+    """Initialize an attack log while preserving its established JSON schema."""
+    if logfile is None:
+        return
+
+    with open(logfile, "w") as f:
+        params: dict[str, Any] = {
+            "goals": goals,
+            "targets": targets,
+            "test_goals": test_goals,
+            "test_targets": test_targets,
+        }
+        if additional_params:
+            params.update(additional_params)
+        params.update(
+            {
+                "control_init": control_init,
+                "test_prefixes": test_prefixes,
+                "models": [_get_worker_log_params(worker) for worker in workers],
+                "test_models": [_get_worker_log_params(worker) for worker in test_workers],
+            }
+        )
+
+        json.dump(
+            {
+                "params": params,
+                "controls": [],
+                "losses": [],
+                "runtimes": [],
+                "tests": [],
+            },
+            f,
+            indent=4,
+        )
+
+
+def _update_attack_log_params(*, logfile: str | None, params: dict[str, Any]) -> None:
+    """Add run parameters to an initialized attack log."""
+    if logfile is None:
+        return
+
+    with open(logfile) as f:
+        log = json.load(f)
+
+    for key, value in params.items():
+        log["params"][key] = value
+
+    with open(logfile, "w") as f:
+        json.dump(log, f, indent=4)
+
+
+def _get_worker_log_params(worker: ModelWorker) -> dict[str, Any]:
+    """Return the model metadata recorded for one worker."""
+    return {
+        "model_path": worker.model.name_or_path,
+        "tokenizer_path": worker.tokenizer.name_or_path,
+        "chat_template": worker.tokenizer.chat_template,
+    }
+
+
 def get_embedding_layer(model: Any) -> Any:
     """
     Return the token embedding layer for a supported causal language model.
@@ -1153,53 +1230,26 @@ class ProgressiveMultiPromptAttack:
         self.managers = managers
         self.mpa_kwargs = ProgressiveMultiPromptAttack.filter_mpa_kwargs(**kwargs)
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "progressive_goals": progressive_goals,
-                            "progressive_models": progressive_models,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+            additional_params={
+                "progressive_goals": progressive_goals,
+                "progressive_models": progressive_models,
+            },
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return _filter_mpa_kwargs(**kwargs)
 
     def run(
         self,
@@ -1251,24 +1301,22 @@ class ProgressiveMultiPromptAttack:
         Returns:
             tuple[str, int]: The final control suffix and completed step count.
         """
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
-
-            log["params"]["n_steps"] = n_steps
-            log["params"]["test_steps"] = test_steps
-            log["params"]["batch_size"] = batch_size
-            log["params"]["topk"] = topk
-            log["params"]["temp"] = temp
-            log["params"]["allow_non_ascii"] = allow_non_ascii
-            log["params"]["target_weight"] = target_weight
-            log["params"]["control_weight"] = control_weight
-            log["params"]["anneal"] = anneal
-            log["params"]["incr_control"] = incr_control
-            log["params"]["stop_on_success"] = stop_on_success
-
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
+        _update_attack_log_params(
+            logfile=self.logfile,
+            params={
+                "n_steps": n_steps,
+                "test_steps": test_steps,
+                "batch_size": batch_size,
+                "topk": topk,
+                "temp": temp,
+                "allow_non_ascii": allow_non_ascii,
+                "target_weight": target_weight,
+                "control_weight": control_weight,
+                "anneal": anneal,
+                "incr_control": incr_control,
+                "stop_on_success": stop_on_success,
+            },
+        )
 
         num_goals = 1 if self.progressive_goals else len(self.goals)
         num_workers = 1 if self.progressive_models else len(self.workers)
@@ -1405,51 +1453,22 @@ class IndividualPromptAttack:
         self.managers = managers
         self.mpa_kwargs = IndividualPromptAttack.filter_mpa_kwargs(**kwargs)
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return _filter_mpa_kwargs(**kwargs)
 
     def run(
         self,
@@ -1501,24 +1520,22 @@ class IndividualPromptAttack:
         Returns:
             tuple[str, int]: The final control suffix and configured step count.
         """
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
-
-            log["params"]["n_steps"] = n_steps
-            log["params"]["test_steps"] = test_steps
-            log["params"]["batch_size"] = batch_size
-            log["params"]["topk"] = topk
-            log["params"]["temp"] = temp
-            log["params"]["allow_non_ascii"] = allow_non_ascii
-            log["params"]["target_weight"] = target_weight
-            log["params"]["control_weight"] = control_weight
-            log["params"]["anneal"] = anneal
-            log["params"]["incr_control"] = incr_control
-            log["params"]["stop_on_success"] = stop_on_success
-
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
+        _update_attack_log_params(
+            logfile=self.logfile,
+            params={
+                "n_steps": n_steps,
+                "test_steps": test_steps,
+                "batch_size": batch_size,
+                "topk": topk,
+                "temp": temp,
+                "allow_non_ascii": allow_non_ascii,
+                "target_weight": target_weight,
+                "control_weight": control_weight,
+                "anneal": anneal,
+                "incr_control": incr_control,
+                "stop_on_success": stop_on_success,
+            },
+        )
 
         stop_inner_on_success = stop_on_success
 
@@ -1630,51 +1647,22 @@ class EvaluateAttack:
         if len(self.workers) != 1:
             raise ValueError("EvaluateAttack requires exactly 1 worker")
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return _filter_mpa_kwargs(**kwargs)
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def run(
@@ -1698,14 +1686,7 @@ class EvaluateAttack:
         model, tokenizer = self.workers[0].model, self.workers[0].tokenizer
         tokenizer.padding_side = "left"
 
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
-
-            log["params"]["num_tests"] = len(controls)
-
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
+        _update_attack_log_params(logfile=self.logfile, params={"num_tests": len(controls)})
 
         total_jb, total_em, total_outputs = [], [], []
         test_total_jb, test_total_em, test_total_outputs = [], [], []
