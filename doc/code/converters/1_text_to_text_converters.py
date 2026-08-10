@@ -36,7 +36,6 @@
 # These converters encode text into various formats:
 
 # %%
-from string import ascii_lowercase
 from types import SimpleNamespace
 
 from pyrit.converter import (
@@ -63,8 +62,40 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
+token_bijection_vocab = (
+    "cat",
+    "dog",
+    "fox",
+    "run",
+    "jump",
+    "tree",
+    "fish",
+    "bird",
+    "rock",
+    "sand",
+    "moon",
+    "star",
+    "rain",
+    "wind",
+    "fire",
+    "lake",
+    "hill",
+    "road",
+    "farm",
+    "town",
+    "book",
+    "door",
+    "hand",
+    "face",
+    "mind",
+    "body",
+    "soul",
+    "hope",
+    "love",
+    "time",
+)
 token_bijection_tokenizer = SimpleNamespace(
-    get_vocab=lambda: {f"token{letter}": index for index, letter in enumerate(ascii_lowercase)}
+    get_vocab=lambda: {word: index for index, word in enumerate(token_bijection_vocab)}
 )
 
 print("ROT13:", await ROT13Converter().convert_async(prompt=prompt))  # type: ignore
@@ -77,10 +108,10 @@ print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: igno
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
-print("Bijection (letter):", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
-print("Bijection (digit):", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
+print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
+print("DigitBijectionConverter:", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print(
-    "Bijection (token):",
+    "TokenBijectionConverter:",
     await TokenBijectionConverter(tokenizer=token_bijection_tokenizer, seed=42).convert_async(  # type: ignore
         prompt=prompt,
     ),
