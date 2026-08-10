@@ -1,7 +1,6 @@
 name: vigenere cipher
 description: |
   A Vigenere cipher description for prepending.
-source: https://arxiv.org/abs/2402.10601v1
 parameters:
   - prompt
   - example
