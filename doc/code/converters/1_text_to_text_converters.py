@@ -36,6 +36,7 @@
 # These converters encode text into various formats:
 
 # %%
+from pathlib import Path
 from types import SimpleNamespace
 
 from pyrit.converter import (
@@ -62,38 +63,7 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
-token_bijection_vocab = (
-    "cat",
-    "dog",
-    "fox",
-    "run",
-    "jump",
-    "tree",
-    "fish",
-    "bird",
-    "rock",
-    "sand",
-    "moon",
-    "star",
-    "rain",
-    "wind",
-    "fire",
-    "lake",
-    "hill",
-    "road",
-    "farm",
-    "town",
-    "book",
-    "door",
-    "hand",
-    "face",
-    "mind",
-    "body",
-    "soul",
-    "hope",
-    "love",
-    "time",
-)
+token_bijection_vocab = Path("token_bijection_vocab.txt").read_text(encoding="utf-8").splitlines()
 token_bijection_tokenizer = SimpleNamespace(
     get_vocab=lambda: {word: index for index, word in enumerate(token_bijection_vocab)}
 )
