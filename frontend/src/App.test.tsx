@@ -4,7 +4,7 @@
  */
 
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import App from "./App";
 import { ThemeProvider } from "./hooks/useTheme";
 
@@ -36,10 +36,9 @@ jest.mock("./hooks/useTour", () => ({
       onEvent: jest.fn(),
       continuous: true,
       showSkipButton: true,
-      spotlightClicks: false,
       tooltipComponent: () => null,
       floatingOptions: { hideArrow: true },
-      options: { closeButtonAction: "skip", overlayClickAction: false },
+      options: { blockTargetInteraction: false, closeButtonAction: "skip", overlayClickAction: false },
       locale: { back: "Back", close: "Close", last: "Let's go!", next: "Next", skip: "Skip tour" },
     },
   }),

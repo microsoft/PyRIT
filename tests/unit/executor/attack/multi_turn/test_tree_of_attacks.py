@@ -2,10 +2,11 @@
 # Licensed under the MIT license.
 
 import asyncio
+import inspect
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import FrozenInstanceError, dataclass, field, replace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,6 +26,7 @@ from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRou
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     AttackScoringConfig,
     TAPAttackScoringConfig,
+    _TAPAttackConfiguration,
     _TreeOfAttacksNode,
 )
 from pyrit.models import (
@@ -433,6 +435,26 @@ class TestHelpers:
             attack._load_adversarial_prompts()
 
 
+class TestTAPAttackContext:
+    """Tests for TAP conversation correlation."""
+
+    def test_conversation_id_uses_first_active_branch_before_best_is_selected(self, node_factory):
+        context = TestHelpers.create_basic_context()
+        context.nodes = [
+            node_factory.create_node(NodeMockConfig(objective_target_conversation_id="first-branch")),
+            node_factory.create_node(NodeMockConfig(objective_target_conversation_id="second-branch")),
+        ]
+
+        assert context.conversation_id == "first-branch"
+
+    def test_conversation_id_prefers_best_branch(self, node_factory):
+        context = TestHelpers.create_basic_context()
+        context.nodes = [node_factory.create_node(NodeMockConfig(objective_target_conversation_id="active-branch"))]
+        context.best_conversation_id = "best-branch"
+
+        assert context.conversation_id == "best-branch"
+
+
 @pytest.fixture
 def node_factory():
     """Fixture providing the MockNodeFactory."""
@@ -465,42 +487,91 @@ class TestTreeOfAttacksInitialization:
         """Test that attack initializes correctly with only required parameters."""
         attack = attack_builder.with_default_mocks().build()
 
-        assert attack._tree_width == 3
-        assert attack._tree_depth == 5
-        assert attack._branching_factor == 2
-        assert attack._on_topic_checking_enabled is True
-        assert attack._batch_size == 10
+        assert attack._configuration == _TAPAttackConfiguration(
+            tree_width=3,
+            tree_depth=5,
+            branching_factor=2,
+            on_topic_checking_enabled=True,
+            desired_response_prefix="Sure, here is",
+            batch_size=10,
+        )
 
     def test_init_with_custom_tree_parameters(self, attack_builder):
         """Test initialization with custom tree parameters."""
         attack = (
             attack_builder.with_default_mocks()
-            .with_tree_params(tree_width=5, tree_depth=10, branching_factor=3, batch_size=20)
+            .with_tree_params(
+                tree_width=5,
+                tree_depth=10,
+                branching_factor=3,
+                on_topic_checking_enabled=False,
+                desired_response_prefix="Absolutely",
+                batch_size=20,
+            )
             .build()
         )
 
-        assert attack._tree_width == 5
-        assert attack._tree_depth == 10
-        assert attack._branching_factor == 3
-        assert attack._batch_size == 20
+        assert attack._configuration == _TAPAttackConfiguration(
+            tree_width=5,
+            tree_depth=10,
+            branching_factor=3,
+            on_topic_checking_enabled=False,
+            desired_response_prefix="Absolutely",
+            batch_size=20,
+        )
+
+    def test_configuration_is_immutable(self, basic_attack):
+        with pytest.raises(FrozenInstanceError):
+            basic_attack._configuration.tree_width = 4  # type: ignore[misc]
+
+    def test_constructor_preserves_legacy_keyword_contract(self):
+        signature = inspect.signature(TreeOfAttacksWithPruningAttack.__init__)
+
+        assert list(signature.parameters) == [
+            "self",
+            "objective_target",
+            "attack_adversarial_config",
+            "attack_converter_config",
+            "attack_scoring_config",
+            "prompt_normalizer",
+            "tree_width",
+            "tree_depth",
+            "branching_factor",
+            "on_topic_checking_enabled",
+            "desired_response_prefix",
+            "batch_size",
+            "prepended_conversation_config",
+        ]
+        assert all(
+            parameter.kind is inspect.Parameter.KEYWORD_ONLY
+            for name, parameter in signature.parameters.items()
+            if name != "self"
+        )
+        assert signature.parameters["tree_width"].default == 3
+        assert signature.parameters["tree_depth"].default == 5
+        assert signature.parameters["branching_factor"].default == 2
+        assert signature.parameters["on_topic_checking_enabled"].default is True
+        assert signature.parameters["desired_response_prefix"].default == "Sure, here is"
+        assert signature.parameters["batch_size"].default == 10
 
     @pytest.mark.parametrize(
         "tree_params,expected_error",
         [
-            ({"tree_width": 0}, "tree width must be at least 1"),
-            ({"tree_depth": 0}, "tree depth must be at least 1"),
-            ({"branching_factor": 0}, "branching factor must be at least 1"),
-            ({"batch_size": 0}, "batch size must be at least 1"),
-            ({"tree_width": -1}, "tree width must be at least 1"),
-            ({"tree_depth": -1}, "tree depth must be at least 1"),
-            ({"branching_factor": -1}, "branching factor must be at least 1"),
-            ({"batch_size": -1}, "batch size must be at least 1"),
+            ({"tree_width": 0}, "The tree width must be at least 1."),
+            ({"tree_depth": 0}, "The tree depth must be at least 1."),
+            ({"branching_factor": 0}, "The branching factor must be at least 1."),
+            ({"batch_size": 0}, "The batch size must be at least 1."),
+            ({"tree_width": -1}, "The tree width must be at least 1."),
+            ({"tree_depth": -1}, "The tree depth must be at least 1."),
+            ({"branching_factor": -1}, "The branching factor must be at least 1."),
+            ({"batch_size": -1}, "The batch size must be at least 1."),
         ],
     )
     def test_init_with_invalid_tree_parameters(self, attack_builder, tree_params, expected_error):
         """Test that invalid tree parameters raise ValueError."""
-        with pytest.raises(ValueError, match=expected_error):
+        with pytest.raises(ValueError) as exc_info:
             attack_builder.with_default_mocks().with_tree_params(**tree_params).build()
+        assert str(exc_info.value) == expected_error
 
     def test_init_with_auxiliary_scorers(self, attack_builder):
         """Test initialization with auxiliary scorers."""
@@ -582,6 +653,43 @@ class TestTreeOfAttacksInitialization:
                 next_message=next_message,
             )
 
+    async def test_interleaved_contexts_keep_independent_visualization_roots(self, basic_attack, helpers):
+        prepended_context = helpers.create_basic_context()
+        prepended_context.prepended_conversation = [
+            Message.from_prompt(prompt="Hello", role="user"),
+            Message.from_prompt(prompt="Hi", role="assistant"),
+        ]
+        plain_context = helpers.create_basic_context()
+        first_setup_complete = asyncio.Event()
+        second_setup_complete = asyncio.Event()
+
+        def create_node(**_: Any) -> MagicMock:
+            node = MagicMock(spec=_TreeOfAttacksNode)
+            node.adversarial_chat_conversation_id = str(uuid.uuid4())
+            node.initialize_with_prepended_conversation_async = AsyncMock()
+            return node
+
+        async def initialize_context_async(*, context: TAPAttackContext, first: bool) -> None:
+            await basic_attack._setup_async(context=context)
+            if first:
+                first_setup_complete.set()
+                await second_setup_complete.wait()
+            else:
+                await first_setup_complete.wait()
+                second_setup_complete.set()
+            await basic_attack._initialize_first_level_nodes_async(context)
+
+        with patch.object(basic_attack, "_create_attack_node", side_effect=create_node):
+            await asyncio.gather(
+                initialize_context_async(context=prepended_context, first=True),
+                initialize_context_async(context=plain_context, first=False),
+            )
+
+        assert prepended_context.visualization_root_id == "prepended_1"
+        assert {node._vis_node_id for node in prepended_context.nodes} == {"prepended_1"}
+        assert plain_context.visualization_root_id == "root"
+        assert {node._vis_node_id for node in plain_context.nodes} == {"root"}
+
     def test_default_scorer_detects_text_output_modalities(self):
         """Test that default scorer detects text output modalities from target capabilities."""
         builder = AttackBuilder()
@@ -623,7 +731,7 @@ class TestPruningLogic:
         nodes = node_factory.create_nodes_with_scores([0.9, 0.7, 0.5, 0.3, 0.1])
         context.nodes = nodes
         helpers.add_nodes_to_tree(context, nodes)
-        basic_attack._tree_width = 3
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
 
         # Execute pruning
         basic_attack._prune_nodes_to_maintain_width(context=context)
@@ -901,7 +1009,7 @@ class TestPruningLogic:
 
     def test_no_pruning_when_below_width(self, basic_attack, node_factory, helpers):
         """Test that blocked nodes are not pruned when completed list is below tree_width."""
-        basic_attack._tree_width = 5
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=5)
 
         context = helpers.create_basic_context()
 
@@ -1085,7 +1193,7 @@ class TestBranchingLogic:
     def test_branch_existing_nodes(self, basic_attack, node_factory, helpers):
         """Test that nodes are branched correctly."""
         context = helpers.create_basic_context()
-        basic_attack._branching_factor = 3
+        basic_attack._configuration = replace(basic_attack._configuration, branching_factor=3)
 
         # Create initial nodes
         initial_nodes = node_factory.create_nodes_with_scores([0.8, 0.7])
@@ -2137,7 +2245,7 @@ class TestTreeOfAttacksConversationTracking:
         helpers.add_nodes_to_tree(context, nodes)
 
         # Set up branching factor to create additional nodes
-        basic_attack._branching_factor = 3
+        basic_attack._configuration = replace(basic_attack._configuration, branching_factor=3)
 
         # Branch the nodes
         basic_attack._branch_existing_nodes(context)
@@ -2171,7 +2279,7 @@ class TestTreeOfAttacksConversationTracking:
         context = helpers.create_basic_context()
 
         # Set tree width to create multiple nodes
-        basic_attack._tree_width = 3
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
 
         # Initialize first level nodes
         asyncio.run(basic_attack._initialize_first_level_nodes_async(context))
@@ -2217,7 +2325,7 @@ class TestTreeOfAttacksConversationTracking:
     def test_initialize_first_level_nodes_text_objective_keeps_seed_on_first_root_only(self, basic_attack, helpers):
         """Text-capable objectives keep historical behavior: node 0 consumes next_message."""
         context = helpers.create_basic_context()
-        basic_attack._tree_width = 3
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
         context.next_message = Message(
             message_pieces=[
                 MessagePiece.adversarial_placeholder(),
