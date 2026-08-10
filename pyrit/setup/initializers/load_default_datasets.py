@@ -57,11 +57,13 @@ class LoadDefaultDatasets(PyRITInitializer):
                 name="dataset_names",
                 description="Explicit dataset names to load. Overrides the scenario-default selection.",
                 default=[],
+                param_type=list[str],
             ),
             Parameter(
                 name="tags",
                 description="Load datasets whose metadata matches these tags. Overrides scenario-default selection.",
                 default=[],
+                param_type=list[str],
             ),
         ]
 

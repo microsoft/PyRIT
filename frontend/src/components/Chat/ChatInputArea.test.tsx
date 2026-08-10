@@ -58,7 +58,10 @@ describe("ChatInputArea", () => {
 
     expect(screen.getByRole("textbox")).toBeInTheDocument();
     expect(getSendButton()).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /convert/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /convert/i })).toHaveAttribute(
+      "data-tour",
+      "converter-toggle"
+    );
   });
 
   it("should call converter panel toggle handler when convert button is clicked", async () => {
@@ -77,6 +80,22 @@ describe("ChatInputArea", () => {
     await user.click(screen.getByRole("button", { name: /convert/i }));
 
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("should expose the visible target prerequisite to the tour", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea {...defaultProps} noTargetSelected />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("no-target-banner")).toHaveAttribute(
+      "data-tour",
+      "chat-prerequisite"
+    );
+    expect(
+      screen.queryByRole("button", { name: /toggle converter panel/i })
+    ).not.toBeInTheDocument();
   });
 
   it("should call onSend with input value when send button clicked", async () => {
