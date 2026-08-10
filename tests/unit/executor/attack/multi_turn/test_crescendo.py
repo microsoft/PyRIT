@@ -2578,8 +2578,17 @@ class TestEdgeCases:
         # Verify contexts remain independent
         # Each should maintain its own state without interference
         assert setup_started == {"Objective 1", "Objective 2"}
-        assert context1.objective == "Objective 1"
-        assert context2.objective == "Objective 2"
+        calls = mock_adversarial_chat.set_system_prompt.call_args_list
+        assert len(calls) == 2
+        actual = {(call.kwargs["conversation_id"], call.kwargs["system_prompt"]) for call in calls}
+        assert any(
+            context1.session.adversarial_chat_conversation_id == conversation_id and "Objective 1" in prompt
+            for conversation_id, prompt in actual
+        )
+        assert any(
+            context2.session.adversarial_chat_conversation_id == conversation_id and "Objective 2" in prompt
+            for conversation_id, prompt in actual
+        )
         # Most importantly, they should have different conversation IDs
         assert context1.session.conversation_id != context2.session.conversation_id
 
