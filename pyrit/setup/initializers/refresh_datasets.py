@@ -71,11 +71,13 @@ class RefreshDatasets(PyRITInitializer):
                     "0 refreshes every selected dataset regardless of age."
                 ),
                 default=self.DEFAULT_DAYS,
+                param_type=int,
             ),
             Parameter(
                 name="dataset_names",
                 description="Explicit dataset names to refresh; refreshes all in-memory datasets if omitted.",
                 default=[],
+                param_type=list[str],
             ),
         ]
 
