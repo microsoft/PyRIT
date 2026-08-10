@@ -1,6 +1,13 @@
+# Authors: Wenjun Zeng, Yuchi Liu, Ryan Mullins, Ludovic Peran, Joe Fernandez,
+#   Hamza Harkous, Karthik Narasimhan, Drew Proud, Piyush Kumar,
+#   Bhaktipriya Radharapu, Olivia Sturman, and Oscar Wahltinez
+# Paper: "ShieldGemma: Generative AI Content Moderation Based on Gemma" (2024)
+# Source: https://arxiv.org/abs/2407.21772
 name: ShieldGemma default safety policy
 version: "gemma-2"
-# The guideline text below is reproduced verbatim from Google's ShieldGemma model card,
+# The guideline text below is reproduced verbatim from Google's ShieldGemma model card:
+# https://huggingface.co/google/shieldgemma-9b
+#
 # including wording such as "content that harming oneself" and "content that targeting
 # identity". ShieldGemma was fine-tuned on these exact strings and is sensitive to their
 # phrasing, so please do not correct the grammar: doing so moves the default policy off

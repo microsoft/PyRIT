@@ -131,6 +131,9 @@ class ShieldGemmaScorer(TrueFalseScorer):
 
     The default configuration classifies a model response on its own. To classify a user
     prompt, use ``ShieldGemmaMessageRole.USER``.
+
+    Reference: [@zeng2024shieldgemma]
+    Paper: https://arxiv.org/abs/2407.21772
     """
 
     SCORE_CATEGORY: ClassVar[str] = "shieldgemma"

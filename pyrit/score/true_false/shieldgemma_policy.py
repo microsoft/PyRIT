@@ -1,6 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""
+Policy models for text ShieldGemma classifiers.
+
+Reference: Wenjun Zeng et al., "ShieldGemma: Generative AI Content Moderation Based on
+Gemma" (2024), https://arxiv.org/abs/2407.21772.
+"""
+
 from __future__ import annotations
 
 import enum

@@ -3,8 +3,24 @@ name: ShieldGemma prompt-only classification request
 description: >
   Request template for Google's prompt-only ShieldGemma use case, which classifies a user
   prompt against one safety guideline. Reproduced from the instruction ShieldGemma was
-  fine-tuned on (Figure 2, left, in arXiv:2407.21772), so the layout and wording are kept
-  verbatim rather than tidied.
+  fine-tuned on (Figure 2, left), so the layout and wording are kept verbatim rather than
+  tidied.
+authors:
+  - Wenjun Zeng
+  - Yuchi Liu
+  - Ryan Mullins
+  - Ludovic Peran
+  - Joe Fernandez
+  - Hamza Harkous
+  - Karthik Narasimhan
+  - Drew Proud
+  - Piyush Kumar
+  - Bhaktipriya Radharapu
+  - Olivia Sturman
+  - Oscar Wahltinez
+groups:
+  - Google
+source: https://arxiv.org/abs/2407.21772
 parameters:
   - user_prompt
   - guideline

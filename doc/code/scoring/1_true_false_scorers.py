@@ -210,10 +210,11 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #   True for unsafe content, with violated policy categories in the score metadata. Its
 #   bundled defaults follow the Meta Llama Guard 3 8B S1-S14 contract.
 # - **`ShieldGemmaScorer`** — sends text to a `PromptTarget` serving ShieldGemma and returns
-#   True when the content violates the one guideline the scorer is bound to. ShieldGemma judges
-#   a single principle per request, so compose several with `TrueFalseCompositeScorer` to cover
-#   a whole policy. Prompt classification judges a user turn, while the default response
-#   classification judges a model turn on its own so prompt content cannot bias the verdict.
+#   True when the content violates the one guideline the scorer is bound to. ShieldGemma
+#   [@zeng2024shieldgemma] judges a single principle per request, so compose several with
+#   `TrueFalseCompositeScorer` to cover a whole policy. Prompt classification judges a user turn,
+#   while the default response classification judges a model turn on its own so prompt content
+#   cannot bias the verdict.
 #
 # All four need their respective endpoints/credentials even though they are not "self-ask".
 # %% [markdown]
