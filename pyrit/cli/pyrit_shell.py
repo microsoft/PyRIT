@@ -73,7 +73,8 @@ class PyRITShell(cmd.Cmd):
         list-converters            - List all registered converter instances
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
-        print-scenario [id]        - Print detailed results for a scenario run
+        scenario-results [id]      - Inspect a run: --view overview|attacks
+        print-scenario [id]        - Deprecated alias for 'scenario-results'
         start-server               - Start a local backend server
         stop-server                - Stop the owned backend server
         help [command]             - Show help for a command
@@ -536,28 +537,91 @@ class PyRITShell(cmd.Cmd):
         except Exception as e:
             print(f"Error: {e}")
 
+    def do_scenario_results(self, arg: str) -> None:
+        """
+        Inspect the results of a completed scenario run.
+
+        Usage:
+            scenario-results <scenario_result_id> [--view overview|attacks]
+                [--attack-result-ids <id> ...] [--limit N]
+
+        Views:
+            overview   Scenario-level aggregate: totals and per-group success
+                       rates (the default).
+            attacks    One row per attack result (id, objective, outcome,
+                       turns, score).
+        """
+        if not self._ensure_client():
+            return
+
+        import shlex
+
+        from pyrit.cli._cli_args import ScenarioResultView, build_scenario_results_parser
+        from pyrit.cli._output import print_attacks_table, print_scenario_result_async
+        from pyrit.cli._results import apply_view_limit_policy, build_attacks_table_payload, resolve_view
+
+        try:
+            tokens = shlex.split(arg)
+        except ValueError as exc:
+            print(f"Error parsing arguments: {exc}")
+            return
+        if not tokens:
+            print(
+                "Usage: scenario-results <scenario_result_id> "
+                "[--view overview|attacks] [--attack-result-ids <id> ...] [--limit N]"
+            )
+            print("Use 'scenario-history' to see available run IDs.")
+            return
+
+        parser = build_scenario_results_parser()
+        try:
+            parsed = parser.parse_args(tokens)
+        except SystemExit:
+            return
+
+        view = resolve_view(view=parsed.view)
+        limit = apply_view_limit_policy(view=view, limit=parsed.limit)
+
+        try:
+            result = self._run_async(
+                self._api_client.get_scenario_run_results_async(scenario_result_id=parsed.scenario_result_id)
+            )
+        except Exception as exc:
+            print(f"Error: {exc}")
+            return
+
+        if view is ScenarioResultView.OVERVIEW:
+            self._run_async(print_scenario_result_async(result=result))
+            return
+
+        payload = build_attacks_table_payload(
+            result=result,
+            scenario_result_id=parsed.scenario_result_id,
+            attack_result_ids=parsed.attack_result_ids,
+            limit=limit,
+        )
+        print_attacks_table(payload=payload)
+
     def do_print_scenario(self, arg: str) -> None:
         """
-        Print detailed results for a scenario run.
+        Print a scenario run's overview (deprecated alias for ``scenario-results``).
+
+        Equivalent to ``scenario-results <id>``, whose default ``overview`` view
+        produces the same output.
 
         Usage:
             print-scenario <scenario_result_id>
         """
-        if not self._ensure_client():
-            return
-        from pyrit.cli._output import print_scenario_result_async
+        from pyrit.common.deprecation import print_deprecation_message
 
-        arg = arg.strip()
-        if not arg:
-            print("Usage: print-scenario <scenario_result_id>")
-            print("Use 'scenario-history' to see available run IDs.")
-            return
-
-        try:
-            detail = self._run_async(self._api_client.get_scenario_run_results_async(scenario_result_id=arg))
-            self._run_async(print_scenario_result_async(result=detail))
-        except Exception as e:
-            print(f"Error: {e}")
+        print_deprecation_message(
+            old_item="print-scenario",
+            new_item="scenario-results",
+            removed_in="1.3.0",
+        )
+        # DeprecationWarning is suppressed by default in the REPL, so also print a visible note.
+        print("Note: 'print-scenario' is deprecated; use 'scenario-results <id>' instead.")
+        self.do_scenario_results(arg.strip())
 
     # ------------------------------------------------------------------
     # Server management
