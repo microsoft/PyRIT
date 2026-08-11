@@ -192,7 +192,10 @@ class PyRITShell(cmd.Cmd):
         if not healthy and self._start_server:
             self._launcher = ServerLauncher()
             try:
-                base_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
+                base_url = self._run_async(
+                    self._launcher.start_async(config_file=self._config_file),
+                    timeout=None,
+                )
                 healthy = True
             except RuntimeError as exc:
                 print(f"Error starting server: {exc}")
@@ -584,7 +587,10 @@ class PyRITShell(cmd.Cmd):
 
         self._launcher = ServerLauncher()
         try:
-            new_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
+            new_url = self._run_async(
+                self._launcher.start_async(config_file=self._config_file),
+                timeout=None,
+            )
             self._base_url = new_url
             # Create new client for the started server
             if self._api_client is not None:
@@ -599,26 +605,30 @@ class PyRITShell(cmd.Cmd):
         if arg.strip():
             print(f"Error: stop-server does not accept arguments, got: {arg.strip()}")
             return
-        from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
+        from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address, stop_server_on_port
 
         # If we own the launcher, use it directly
         if self._launcher is not None:
-            self._launcher.stop()
+            if not self._launcher.stop():
+                print("Server could not be stopped.")
+                return
             print("Server stopped.")
         else:
             # Find and kill by port. Probe first so we don't SIGTERM a non-pyrit
             # process that happens to be listening on this port.
-            from urllib.parse import urlparse
-
             base_url = self._base_url or self._resolve_base_url()
-            port = urlparse(base_url).port or 8000
+            local_address = parse_local_server_address(base_url=base_url)
+            if local_address is None:
+                print(f"Cannot stop non-local server {base_url}. Stop it on its host instead.")
+                return
+            _, port = local_address
             if not self._run_async(ServerLauncher.probe_health_async(base_url=base_url)):
                 print(f"No pyrit backend responding at {base_url}; not stopping anything.")
                 return
             if stop_server_on_port(port=port):
                 print(f"Server on port {port} stopped.")
             else:
-                print(f"No server found on port {port}.")
+                print(f"Server on port {port} could not be stopped.")
                 return
 
         # Close the API client since the server is gone
