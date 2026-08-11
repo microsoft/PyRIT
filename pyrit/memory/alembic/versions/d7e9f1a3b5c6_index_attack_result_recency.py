@@ -9,7 +9,9 @@ Adds an index on ``conversation_id`` (serves the per-conversation dedup window) 
 composite ``(timestamp, id)`` index (serves the recency ORDER BY + keyset seek). Backfills
 ``timestamp`` from the legacy ``attack_metadata.updated_at``/``created_at`` JSON keys so
 manually-edited conversations keep their current History order, and drops the now-redundant
-``updated_at`` key from the JSON metadata.
+``updated_at`` key from the JSON metadata. Narrows ``conversation_id`` to ``VARCHAR(36)`` on
+all backends so the persisted schema matches the ORM model; this is required on SQL Server
+because ``VARCHAR(MAX)`` columns cannot be index keys.
 
 Revision ID: d7e9f1a3b5c6
 Revises: 3f6e8a0c2d4b
@@ -40,6 +42,7 @@ logger = logging.getLogger(__name__)
 # executemany per batch keeps the number of statements (and, on SQL Server, database roundtrips)
 # proportional to the row count / batch size instead of one statement per row.
 _BACKFILL_UPDATE_BATCH_SIZE = 400
+_CONVERSATION_ID_LENGTH = 36
 
 
 def _attack_results_table() -> sa.Table:
@@ -80,6 +83,7 @@ def _parse_iso(value: object) -> datetime | None:
 
 def upgrade() -> None:
     """Apply this schema upgrade."""
+    _set_conversation_id_type(length=_CONVERSATION_ID_LENGTH)
     op.create_index(
         "ix_AttackResultEntries_conversation_id",
         "AttackResultEntries",
@@ -102,6 +106,27 @@ def downgrade() -> None:
     _restore_updated_at_to_metadata()
     op.drop_index("ix_AttackResultEntries_timestamp_id", table_name="AttackResultEntries")
     op.drop_index("ix_AttackResultEntries_conversation_id", table_name="AttackResultEntries")
+    _set_conversation_id_type(length=None)
+
+
+def _set_conversation_id_type(*, length: int | None) -> None:
+    """
+    Set ``conversation_id`` to bounded or unbounded ``VARCHAR``.
+
+    Batch alteration recreates the table on SQLite, which does not support ``ALTER COLUMN``
+    directly, and emits an in-place alteration on SQL Server. The bounded type keeps the
+    persisted schema aligned with the ORM model and makes the column indexable on SQL Server.
+
+    Args:
+        length (int | None): The target ``VARCHAR`` length, or ``None`` for ``VARCHAR(MAX)``.
+    """
+    with op.batch_alter_table("AttackResultEntries") as batch_op:
+        batch_op.alter_column(
+            "conversation_id",
+            existing_type=sa.String(),
+            type_=sa.String(length=length),
+            existing_nullable=False,
+        )
 
 
 def _backfill_timestamp_from_metadata() -> None:

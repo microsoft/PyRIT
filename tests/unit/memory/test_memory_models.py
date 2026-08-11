@@ -797,3 +797,9 @@ class TestScenarioResultEntry:
         entry = ScenarioResultEntry(entry=sr)
         s = str(entry)
         assert "test_scenario" in s
+
+    def test_init_without_objective_target_raises(self):
+        """The denormalized target column is the filter key, so a targetless result is rejected."""
+        sr = self._make_scenario_result(objective_target_identifier=None)
+        with pytest.raises(ValueError, match="objective_target_identifier is required"):
+            ScenarioResultEntry(entry=sr)

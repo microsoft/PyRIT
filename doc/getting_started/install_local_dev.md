@@ -40,7 +40,7 @@ Set up a PyRIT development environment on your local machine.
     git clone https://github.com/microsoft/PyRIT
     ```
 
-4. **Node.js and npm**. Required for building the TypeScript/React frontend. Download [Node.js](https://nodejs.org/) (which includes npm). Version 18 or higher is recommended.
+4. **Node.js and npm**. Required for building the TypeScript/React frontend. Download [Node.js](https://nodejs.org/) (which includes npm). Version 22 or higher is required (the frontend's `react-router` dependency requires Node >= 22.22.0).
 
 ### Installation
 

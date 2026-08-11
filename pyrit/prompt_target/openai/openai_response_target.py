@@ -4,6 +4,7 @@
 import json
 import logging
 from collections.abc import Awaitable, Callable, MutableSequence
+from dataclasses import dataclass
 from enum import Enum
 from typing import (
     TYPE_CHECKING,
@@ -12,7 +13,7 @@ from typing import (
     cast,
 )
 
-from openai.types.responses import ResponseOutputRefusal, ResponseOutputText
+from openai.types.responses import Response, ResponseOutputRefusal, ResponseOutputText
 from openai.types.shared import ReasoningEffort
 
 from pyrit.common import forward_init_parameters
@@ -29,25 +30,37 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
+    TokenUsage,
+    read_usage_int,
+    read_usage_value,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
+    build_empty_truncated_response,
     limit_requests_per_minute,
     validate_temperature,
     validate_top_p,
+    warn_truncated_response,
 )
 from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 if TYPE_CHECKING:
-    from openai.types.responses import ResponseInputImageParam
+    from openai.types.responses import ResponseFunctionToolCallParam, ResponseInputImageParam
+    from openai.types.responses.response_input_item_param import FunctionCallOutput
 
 logger = logging.getLogger(__name__)
 
 
 # Tool function registry (agentic extension)
 ToolExecutor = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+@dataclass(frozen=True)
+class _SerializedPiece:
+    item: dict[str, Any]
+    placement: Literal["inline", "top_level"]
 
 
 class MessagePieceType(str, Enum):
@@ -65,6 +78,47 @@ class MessagePieceType(str, Enum):
     MCP_CALL = "mcp_call"
     MCP_LIST_TOOLS = "mcp_list_tools"
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
+
+
+def token_usage_from_responses(usage: Any) -> TokenUsage:
+    """
+    Build a ``TokenUsage`` from a Responses API ``usage`` payload.
+
+    The Responses API reports usage under different names than Chat Completions -- top-level
+    ``input_tokens`` / ``output_tokens`` / ``total_tokens`` with ``input_tokens_details`` and
+    ``output_tokens_details`` breakdowns -- so the field names are resolved here rather than by
+    ``token_usage_from_chat_completion``. Both parsers share the format-agnostic reads
+    (``read_usage_value`` / ``read_usage_int``), so a partial usage payload contributes only the
+    counts the provider actually reports. ``total_tokens`` is derived when the provider omits it.
+
+    Args:
+        usage (Any): The Responses API usage object.
+
+    Returns:
+        TokenUsage: The parsed token usage.
+    """
+    input_details = read_usage_value(source=usage, name="input_tokens_details")
+    output_details = read_usage_value(source=usage, name="output_tokens_details")
+
+    input_tokens = read_usage_int(source=usage, name="input_tokens")
+    output_tokens = read_usage_int(source=usage, name="output_tokens")
+    total_tokens = read_usage_int(source=usage, name="total_tokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    extra: dict[str, int] = {}
+    cache_write_tokens = read_usage_int(source=input_details, name="cache_write_tokens")
+    if cache_write_tokens is not None:
+        extra["cache_write_tokens"] = cache_write_tokens
+
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        reasoning_tokens=read_usage_int(source=output_details, name="reasoning_tokens"),
+        cached_tokens=read_usage_int(source=input_details, name="cached_tokens"),
+        extra=extra,
+    )
 
 
 class OpenAIResponseTarget(OpenAITarget):
@@ -264,6 +318,57 @@ class OpenAIResponseTarget(OpenAITarget):
             return dict(image_item)
         raise ValueError(f"Unsupported piece type for inline content: {piece.converted_value_data_type}")
 
+    def _serialize_system_message(self, pieces: list[MessagePiece]) -> dict[str, Any]:
+        content = [{"type": "input_text", "text": piece.converted_value} for piece in pieces]
+        return {"role": "developer", "content": content}
+
+    def _serialize_function_call(self, piece: MessagePiece) -> "ResponseFunctionToolCallParam":
+        stored = json.loads(piece.original_value)
+        return {
+            "type": stored["type"],
+            "call_id": stored["call_id"],
+            "name": stored["name"],
+            "arguments": stored["arguments"],
+        }
+
+    def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any]:
+        stored = json.loads(piece.original_value)
+        if stored.get("type") == "web_search_call":
+            return {
+                "type": stored["type"],
+                "call_id": stored.get("call_id"),
+                "query": stored.get("query"),
+            }
+        filtered = {"type": stored["type"]}
+        filtered.update({key: stored[key] for key in ("call_id", "query", "name", "arguments") if key in stored})
+        return filtered
+
+    def _serialize_function_call_output(self, piece: MessagePiece) -> "FunctionCallOutput":
+        payload = json.loads(piece.original_value)
+        output = payload.get("output")
+        if not isinstance(output, str):
+            output = json.dumps(output, separators=(",", ":"))
+        return {
+            "type": "function_call_output",
+            "call_id": payload["call_id"],
+            "output": output,
+        }
+
+    async def _serialize_piece_async(self, *, piece: MessagePiece, message_index: int) -> _SerializedPiece | None:
+        data_type = piece.converted_value_data_type
+        if data_type == "reasoning":
+            return None
+        if data_type in {"text", "image_path"} or piece.structured_refusal is not None:
+            item = await self._construct_input_item_from_piece_async(piece)
+            return _SerializedPiece(item=item, placement="inline")
+        if data_type == "function_call":
+            return _SerializedPiece(item=dict(self._serialize_function_call(piece)), placement="top_level")
+        if data_type == "tool_call":
+            return _SerializedPiece(item=self._serialize_tool_call(piece), placement="top_level")
+        if data_type == "function_call_output":
+            return _SerializedPiece(item=dict(self._serialize_function_call_output(piece)), placement="top_level")
+        raise ValueError(f"Unsupported data type '{data_type}' in message index {message_index}")
+
     async def _build_input_for_multi_modal_async(self, conversation: MutableSequence[Message]) -> list[dict[str, Any]]:
         """
         Build the Responses API `input` array.
@@ -282,7 +387,7 @@ class OpenAIResponseTarget(OpenAITarget):
             A list of input items ready for the Responses API.
 
         Raises:
-            ValueError: If the conversation is empty or a system message has >1 piece.
+            ValueError: If the conversation is empty or a message has no pieces.
         """
         if not conversation:
             raise ValueError("Conversation cannot be empty")
@@ -296,85 +401,20 @@ class OpenAIResponseTarget(OpenAITarget):
                     f"Failed to process conversation message at index {msg_idx}: Message contains no message pieces"
                 )
 
-            # System message (remapped to developer)
             if pieces[0].api_role == "system":
-                system_content = [{"type": "input_text", "text": piece.converted_value} for piece in pieces]
-                input_items.append({"role": "developer", "content": system_content})
+                input_items.append(self._serialize_system_message(pieces))
                 continue
 
-            # All pieces in a Message share the same role
             role = pieces[0].api_role
             content: list[dict[str, Any]] = []
-
             for piece in pieces:
-                dtype = piece.converted_value_data_type
-
-                # Skip reasoning - it's stored in memory but not sent back to API
-                if dtype == "reasoning":
+                serialized = await self._serialize_piece_async(piece=piece, message_index=msg_idx)
+                if serialized is None:
                     continue
-
-                # Inline content (text/images/structured refusals) - accumulate in content list
-                if dtype in {"text", "image_path"} or piece.structured_refusal is not None:
-                    content.append(await self._construct_input_item_from_piece_async(piece))
-                    continue
-
-                # Top-level artifacts - emit as standalone items
-                if dtype not in {"function_call", "function_call_output", "tool_call"}:
-                    raise ValueError(f"Unsupported data type '{dtype}' in message index {msg_idx}")
-
-                if dtype in {"function_call", "tool_call"}:
-                    # Parse the stored JSON and filter to only API-expected fields
-                    stored = json.loads(piece.original_value)
-                    if dtype == "function_call":
-                        # Only include fields the API expects for function_call
-                        input_items.append(
-                            {
-                                "type": stored["type"],
-                                "call_id": stored["call_id"],
-                                "name": stored["name"],
-                                "arguments": stored["arguments"],
-                            }
-                        )
-                    elif dtype == "tool_call":
-                        # Filter tool_call fields based on type
-                        tool_type = stored.get("type")
-                        if tool_type == "web_search_call":
-                            # Web search call structure
-                            input_items.append(
-                                {
-                                    "type": stored["type"],
-                                    "call_id": stored.get("call_id"),
-                                    "query": stored.get("query"),
-                                }
-                            )
-                        else:
-                            # For unknown tool types, try to include only known fields
-                            filtered = {"type": stored["type"]}
-                            if "call_id" in stored:
-                                filtered["call_id"] = stored["call_id"]
-                            if "query" in stored:
-                                filtered["query"] = stored["query"]
-                            if "name" in stored:
-                                filtered["name"] = stored["name"]
-                            if "arguments" in stored:
-                                filtered["arguments"] = stored["arguments"]
-                            input_items.append(filtered)
-
-                if dtype == "function_call_output":
-                    payload = json.loads(piece.original_value)
-                    output = payload.get("output")
-                    if not isinstance(output, str):
-                        # Responses API requires string output; serialize if needed
-                        output = json.dumps(output, separators=(",", ":"))
-                    input_items.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": payload["call_id"],
-                            "output": output,
-                        }
-                    )
-
-            # Append accumulated inline content for this message
+                if serialized.placement == "inline":
+                    content.append(serialized.item)
+                else:
+                    input_items.append(serialized.item)
             if content:
                 input_items.append({"role": role, "content": content})
 
@@ -516,30 +556,46 @@ class OpenAIResponseTarget(OpenAITarget):
         except (AttributeError, IndexError, TypeError):
             return None
 
-    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
+    def _validate_response(self, response: Response, request: MessagePiece) -> None:
         """
         Validate a Response API response for errors.
 
         Checks for:
         - Error responses (excluding content filtering which is checked separately)
+        - Truncation at the token limit (``max_output_tokens``), which is warned about, not raised
         - Invalid status
         - Empty output
+
+        Truncation is treated as valid, with a warning, so that
+        ``_construct_message_from_response_async`` can preserve any completed output (reasoning,
+        partial text) or fall back to a graceful empty response. Genuinely empty responses (no
+        truncation) are raised so the retry logic can attempt to get a complete response. Content
+        filter responses are handled separately by ``_check_content_filter``.
 
         Args:
             response: The Response object from the OpenAI SDK.
             request: The original request MessagePiece.
 
-        Returns:
-            None if valid, does not return Message for content filter (handled by _check_content_filter).
-
         Raises:
             PyritException: For unexpected response structures or errors.
-            EmptyResponseException: When the API returns no valid output.
+            EmptyResponseException: When the API returns no valid output (and was not truncated).
         """
         # Check for error response - error is a ResponseError object or None
         # (content_filter is handled by _check_content_filter)
         if response.error is not None and response.error.code != "content_filter":
             raise PyritException(message=f"Response error: {response.error.code} - {response.error.message}")
+
+        # Truncation: the model hit max_output_tokens. Mirroring OpenAIChatTarget's handling of
+        # finish_reason == "length", warn instead of raising so the run continues -- reasoning models
+        # can spend the whole budget on hidden reasoning before emitting a visible answer, and a low
+        # limit may be a deliberate configuration. Construction preserves any completed output
+        # (reasoning, partial text) and falls back to a graceful empty response.
+        if self._is_truncated_response(response):
+            warn_truncated_response(
+                signal="status='incomplete', reason='max_output_tokens'",
+                limit_parameter="max_output_tokens",
+            )
+            return
 
         # Check status - should be "completed" for successful responses
         if response.status != "completed":
@@ -550,35 +606,91 @@ class OpenAIResponseTarget(OpenAITarget):
             logger.error("The response returned no valid output.")
             raise EmptyResponseException(message="The response returned an empty response.")
 
-        return None
+    def _is_truncated_response(self, response: Response) -> bool:
+        """
+        Return True if the response was cut off by the ``max_output_tokens`` limit.
 
-    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
+        The Responses API signals truncation via ``status == "incomplete"`` with
+        ``incomplete_details.reason == "max_output_tokens"`` (``content_filter`` is handled
+        separately by ``_check_content_filter``).
+
+        Args:
+            response: A Response object from the OpenAI SDK.
+
+        Returns:
+            bool: True if the response was truncated at the token limit, False otherwise.
+        """
+        if response.status != "incomplete":
+            return False
+        incomplete_details = response.incomplete_details
+        reason = incomplete_details.reason if incomplete_details else None
+        return reason == "max_output_tokens"
+
+    async def _construct_message_from_response_async(self, response: Response, request: MessagePiece) -> Message:
         """
         Construct a Message from a Response API response.
+
+        For a truncated response (see ``_is_truncated_response``), empty output sections are
+        tolerated, partial tool/function calls are skipped so an incomplete call cannot re-enter the
+        agentic loop, and a graceful empty text piece is appended when no visible response was
+        produced. Reasoning, any partial text, and structured refusals are always preserved.
 
         Args:
             response: The Response object from OpenAI SDK.
             request: The original request MessagePiece.
 
         Returns:
-            Message: Constructed message with extracted content from output sections.
+            Message: Constructed message with extracted content from output sections. Token-usage
+                counts from ``response.usage`` are recorded in the first piece's ``prompt_metadata``.
+                Truncated responses are flagged via ``MessagePiece.mark_as_truncated`` on the first
+                piece.
         """
-        # Extract and parse message pieces from validated output sections
+        truncated = self._is_truncated_response(response)
+
+        # Extract and parse message pieces from validated output sections. A truncated response
+        # skips the empty-output guard in _validate_response, so ``output`` is falsy-guarded here to
+        # keep the graceful-empty fallback working even if the section list is missing.
         extracted_response_pieces: list[MessagePiece] = []
-        for section in response.output:
+        has_visible_response = False
+        for section in response.output or []:
             piece = self._parse_response_output_section(
                 section=section,
                 message_piece=request,
                 error=None,  # error is already handled in validation
+                tolerate_empty=truncated,
             )
             if piece is None:
                 continue
+            # On truncation, drop partial tool/function calls so an incomplete call cannot
+            # re-enter the agentic loop. Everything else (reasoning, partial text, structured
+            # refusals) is preserved.
+            if truncated and piece.original_value_data_type in ("function_call", "tool_call"):
+                continue
             extracted_response_pieces.append(piece)
+            # Reasoning is the one output the caller cannot read as an answer, so anything else
+            # with a value counts as a visible response and suppresses the empty fallback below.
+            if piece.original_value and piece.original_value_data_type != "reasoning":
+                has_visible_response = True
+
+        if truncated and not has_visible_response:
+            empty_piece = build_empty_truncated_response(request=request).message_pieces[0]
+            extracted_response_pieces.append(empty_piece)
 
         # Consumers use the first piece as the semantic response. Responses API
         # reasoning commonly precedes the actual message in provider output, so
         # retain it for memory/debugging after the actionable response pieces.
+        # This must stay ahead of the metadata writes below, which target the first piece.
         extracted_response_pieces.sort(key=lambda piece: piece.converted_value_data_type == "reasoning")
+
+        # Capture token usage in the first piece's metadata. This also runs on the truncated path:
+        # usage is populated on token-limit responses and is most valuable there, since the whole
+        # budget may have been spent on hidden reasoning with no visible answer.
+        usage = getattr(response, "usage", None)
+        if usage is not None and extracted_response_pieces:
+            extracted_response_pieces[0].prompt_metadata.update(token_usage_from_responses(usage).to_metadata())
+
+        if truncated and extracted_response_pieces:
+            extracted_response_pieces[0].mark_as_truncated()
 
         return Message(message_pieces=extracted_response_pieces)
 
@@ -658,7 +770,8 @@ class OpenAIResponseTarget(OpenAITarget):
         content: list[ResponseOutputText | ResponseOutputRefusal],
         message_piece: MessagePiece,
         error: PromptResponseError | None,
-    ) -> MessagePiece:
+        tolerate_empty: bool = False,
+    ) -> MessagePiece | None:
         """
         Parse a Responses API message content union into a PyRIT message piece.
 
@@ -666,16 +779,22 @@ class OpenAIResponseTarget(OpenAITarget):
             content (list[ResponseOutputText | ResponseOutputRefusal]): Typed message content.
             message_piece (MessagePiece): The original request piece.
             error (PromptResponseError | None): Any response error classification.
+            tolerate_empty (bool): When True, empty content returns None instead of raising
+                EmptyResponseException. Used when constructing a truncated response.
 
         Returns:
-            MessagePiece: A text piece or blocked-error refusal piece.
+            MessagePiece | None: A text piece or blocked-error refusal piece, or None when the
+                content is empty and tolerate_empty is True.
 
         Raises:
-            EmptyResponseException: If the message content has no usable value.
+            EmptyResponseException: If the message content has no usable value (and tolerate_empty
+                is False).
             PyritException: If the SDK returns an unsupported message content model.
         """
         if not content:
-            raise EmptyResponseException(message="The chat returned an empty message section.")
+            if tolerate_empty:
+                return None
+            raise EmptyResponseException(message="The response returned an empty message section.")
 
         unsupported = [
             content_item
@@ -710,7 +829,9 @@ class OpenAIResponseTarget(OpenAITarget):
 
         piece_value = "\n".join(text_parts)
         if not piece_value:
-            raise EmptyResponseException(message="The chat returned an empty response.")
+            if tolerate_empty:
+                return None
+            raise EmptyResponseException(message="The response returned an empty response.")
         return MessagePiece(
             role="assistant",
             original_value=piece_value,
@@ -720,7 +841,12 @@ class OpenAIResponseTarget(OpenAITarget):
         )
 
     def _parse_response_output_section(
-        self, *, section: Any, message_piece: MessagePiece, error: PromptResponseError | None
+        self,
+        *,
+        section: Any,
+        message_piece: MessagePiece,
+        error: PromptResponseError | None,
+        tolerate_empty: bool = False,
     ) -> MessagePiece | None:
         """
         Parse model output sections, forwarding tool-calls for the agentic loop.
@@ -729,12 +855,15 @@ class OpenAIResponseTarget(OpenAITarget):
             section: The section object from OpenAI SDK (Pydantic model).
             message_piece: The original message piece.
             error: Any error information from OpenAI.
+            tolerate_empty: When True, empty sections return None instead of raising
+                EmptyResponseException. Used when constructing a truncated response.
 
         Returns:
             A MessagePiece for this section, or None to skip.
 
         Raises:
-            EmptyResponseException: If the section content is empty or invalid.
+            EmptyResponseException: If the section content is empty or invalid (and tolerate_empty
+                is False).
             PyritException: If a message section contains an unsupported content model.
             ValueError: If the section type is unsupported.
         """
@@ -747,6 +876,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 content=section.content,
                 message_piece=message_piece,
                 error=error,
+                tolerate_empty=tolerate_empty,
             )
 
         if section_type == MessagePieceType.REASONING:
@@ -800,7 +930,9 @@ class OpenAIResponseTarget(OpenAITarget):
                 raise ValueError(msg)
             piece_value = section.input
             if len(piece_value) == 0:
-                raise EmptyResponseException(message="The chat returned an empty message section.")
+                if tolerate_empty:
+                    return None
+                raise EmptyResponseException(message="The response returned an empty message section.")
 
         else:
             # Other possible types are not yet handled in PyRIT
@@ -808,7 +940,9 @@ class OpenAIResponseTarget(OpenAITarget):
 
         # Handle empty response
         if not piece_value:
-            raise EmptyResponseException(message="The chat returned an empty response.")
+            if tolerate_empty:
+                return None
+            raise EmptyResponseException(message="The response returned an empty response.")
 
         return MessagePiece(
             role="assistant",

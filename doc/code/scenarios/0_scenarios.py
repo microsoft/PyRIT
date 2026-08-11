@@ -178,9 +178,10 @@ print_scenario_list(items=response.items)
 #
 # Every scenario can optionally include a **baseline attack** — a `PromptSendingAttack` that sends
 # each objective directly to the target without any converters or multi-turn techniques. This is
-# controlled by the `include_baseline` parameter on `initialize_async`; when omitted, each
-# scenario falls back to its own `BASELINE_ATTACK_POLICY` class attribute (most scenarios default
-# it on; `Jailbreak` defaults it off). See
+# controlled by the `include_baseline` scenario parameter, supplied through the CLI, config, or
+# `set_params_from_args` before `initialize_async`; when omitted, each scenario falls back to its
+# own `BASELINE_ATTACK_POLICY` class attribute (most scenarios default it on; `Jailbreak` defaults
+# it off). See
 # [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a worked example.
 #
 # Custom scenarios should choose their `BASELINE_ATTACK_POLICY` based on whether an unmodified

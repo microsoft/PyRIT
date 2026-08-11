@@ -4,7 +4,7 @@
  */
 
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import App from "./App";
 import { ThemeProvider } from "./hooks/useTheme";
 
@@ -36,10 +36,9 @@ jest.mock("./hooks/useTour", () => ({
       onEvent: jest.fn(),
       continuous: true,
       showSkipButton: true,
-      spotlightClicks: false,
       tooltipComponent: () => null,
       floatingOptions: { hideArrow: true },
-      options: { closeButtonAction: "skip", overlayClickAction: false },
+      options: { blockTargetInteraction: false, closeButtonAction: "skip", overlayClickAction: false },
       locale: { back: "Back", close: "Close", last: "Let's go!", next: "Next", skip: "Skip tour" },
     },
   }),
@@ -210,14 +209,28 @@ jest.mock("./components/History/AttackHistory", () => {
     onOpenAttack,
     filters,
     onFiltersChange,
+    activeTarget,
+    onNavigate,
   }: {
     onOpenAttack: (attackResultId: string) => void;
     filters: Record<string, unknown>;
     onFiltersChange: (filters: Record<string, unknown>) => void;
+    activeTarget: unknown;
+    onNavigate: (view: string) => void;
   }) => {
     return (
       <div data-testid="attack-history">
         <span data-testid="history-filters">{JSON.stringify(filters)}</span>
+        <span data-testid="history-has-target">{activeTarget ? "yes" : "no"}</span>
+        {activeTarget ? (
+          <button onClick={() => onNavigate("chat")} data-testid="history-start-attack">
+            Start attack
+          </button>
+        ) : (
+          <button onClick={() => onNavigate("config")} data-testid="history-configure-target">
+            Configure target
+          </button>
+        )}
         <button
           onClick={() => onOpenAttack("ar-attack-1")}
           data-testid="open-attack"
@@ -438,6 +451,30 @@ describe("App", () => {
       "history"
     );
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+  });
+
+  it("navigates from empty history to config when no target is active", () => {
+    renderApp("/history");
+
+    expect(screen.getByTestId("history-has-target")).toHaveTextContent("no");
+    fireEvent.click(screen.getByTestId("history-configure-target"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "config");
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+  });
+
+  it("navigates from empty history to chat when a target is active", () => {
+    renderApp();
+
+    fireEvent.click(screen.getByTestId("nav-config"));
+    fireEvent.click(screen.getByTestId("set-target"));
+    fireEvent.click(screen.getByTestId("nav-history"));
+
+    expect(screen.getByTestId("history-has-target")).toHaveTextContent("yes");
+    fireEvent.click(screen.getByTestId("history-start-attack"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "chat");
+    expect(screen.getByTestId("chat-window")).toBeInTheDocument();
   });
 
   it("opens attack from history and switches to chat", async () => {
