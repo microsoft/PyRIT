@@ -239,6 +239,16 @@ export interface TargetInfo {
   identifier_hash: string
 }
 
+export type AttackTargetResolutionStatus =
+  | 'idle'
+  | 'loading'
+  | 'resolved'
+  | 'explicit-mismatch'
+  | 'unavailable'
+  | 'ambiguous'
+  | 'error'
+  | 'legacy'
+
 export interface AttackSummary {
   attack_result_id: string
   conversation_id: string

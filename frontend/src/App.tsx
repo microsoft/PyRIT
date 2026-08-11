@@ -14,11 +14,12 @@ import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { TargetInstance, TargetInfo } from './types'
+import type { TargetInfo } from './types'
 import {
   targetEndpoint,
   targetIdentifierHash,
@@ -54,6 +55,7 @@ type AttackLoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 /** Attack data named by the URL; `id` marks which attack the data belongs to. */
 interface LoadedAttack {
   id: string
+  loadSequence: number
   mainConversationId: string | null
   labels: Record<string, string> | null
   target: TargetInfo | null
@@ -102,7 +104,6 @@ function App() {
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
 
-  const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
   const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
 
   // History filters live in the URL query string so they are shareable and
@@ -131,6 +132,7 @@ function App() {
   // When set, the loader skips exactly one fetch for this id — used after
   // first-message/branch creation seeds the data, avoiding a redundant getAttack.
   const skipNextLoadForAttackId = useRef<string | null>(null)
+  const attackLoadSequence = useRef(0)
   // The attack whose deep-linked conversation id we have already validated.
   const validatedConversationForAttack = useRef<string | null>(null)
 
@@ -170,22 +172,6 @@ function App() {
     return () => { ignore = true }
   }, [instance])
 
-  const handleSetActiveTarget = useCallback((target: TargetInstance) => {
-    setActiveTarget(prev => {
-      const isSame = prev &&
-        prev.target_registry_name === target.target_registry_name &&
-        targetType(prev) === targetType(target) &&
-        (targetEndpoint(prev) ?? '') === (targetEndpoint(target) ?? '') &&
-        (targetModelName(prev) ?? '') === (targetModelName(target) ?? '')
-      if (isSame) return prev
-      // Switching targets no longer clears the loaded attack.  The cross-target
-      // guard in ChatWindow prevents sending to a mismatched target, and the
-      // backend enforces this server-side as well.  Clearing state here was
-      // confusing because navigating to config to pick the *correct* target
-      // would wipe the conversation the user was trying to continue.
-      return target
-    })
-  }, [])
   // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
   // ONLY, so switching conversations within an attack never refetches.
   useEffect(() => {
@@ -201,8 +187,11 @@ function App() {
       return
     }
     let cancelled = false
+    const loadSequence = attackLoadSequence.current + 1
+    attackLoadSequence.current = loadSequence
     setLoadedAttack({
       id: routeAttackId,
+      loadSequence,
       status: 'loading',
       mainConversationId: null,
       labels: null,
@@ -215,6 +204,7 @@ function App() {
         if (cancelled) return
         setLoadedAttack({
           id: routeAttackId,
+          loadSequence,
           mainConversationId: attack.conversation_id,
           labels: attack.labels ?? {},
           target: attack.target ?? null,
@@ -230,6 +220,7 @@ function App() {
         const isMissing = toApiError(err).status === 404
         setLoadedAttack({
           id: routeAttackId,
+          loadSequence,
           status: isMissing ? 'not-found' : 'error',
           mainConversationId: null,
           labels: null,
@@ -249,6 +240,16 @@ function App() {
   const isAttackNotFound = attackForRoute?.status === 'not-found'
   const isAttackError = attackForRoute?.status === 'error'
   const isLoadingAttack = routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError
+  const {
+    activeTarget,
+    setExplicitTarget: handleSetActiveTarget,
+    resolutionStatus: targetResolutionStatus,
+    retryResolution: retryTargetResolution,
+  } = useAttackTargetResolution({
+    attackId: readyAttack?.id ?? null,
+    attackLoadSequence: readyAttack?.loadSequence ?? 0,
+    attackTarget: readyAttack?.target ?? null,
+  })
   const activeConversationId = readyAttack
     ? routeConversationId ?? readyAttack.mainConversationId
     : null
@@ -295,8 +296,11 @@ function App() {
         }
       : null
     skipNextLoadForAttackId.current = arId
+    const loadSequence = attackLoadSequence.current + 1
+    attackLoadSequence.current = loadSequence
     setLoadedAttack({
       id: arId,
+      loadSequence,
       mainConversationId: convId,
       // New attack uses the current user's labels, so it is never operator-locked.
       labels: null,
@@ -339,6 +343,8 @@ function App() {
       onNavigate={handleNavigate}
       attackLabels={readyAttack ? readyAttack.labels : null}
       attackTarget={readyAttack ? readyAttack.target : null}
+      targetResolutionStatus={targetResolutionStatus}
+      onRetryTargetResolution={retryTargetResolution}
       isLoadingAttack={isLoadingAttack}
       relatedConversationCount={readyAttack ? readyAttack.relatedConversationIds.length : 0}
     />
