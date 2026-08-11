@@ -305,17 +305,19 @@ class TestBuildObjectiveInputMessage:
     def test_turn_zero_text_only_target(self):
         router = _ModalityFeedbackRouter(
             adversarial_chat=_build_target(input_modalities=[{"text"}]),
-            objective_target=_build_target(input_modalities=[{"text"}]),
+            objective_target=_build_target(input_modalities=[{"text"}, {"text", "image_path"}]),
         )
+        last_response = _make_response(data_type="image_path", value="/tmp/prev.png")
 
         msg = router.build_objective_input_message(
             text="adversarial prompt",
-            last_response=None,
+            last_response=last_response,
             turn_index=0,
         )
 
         assert len(msg.message_pieces) == 1
         assert msg.get_value() == "adversarial prompt"
+        assert not router.has_forwardable_objective_media(message=last_response, turn_index=0)
 
     def test_turn_zero_edit_only_target_raises_defensive(self):
         router = _ModalityFeedbackRouter(

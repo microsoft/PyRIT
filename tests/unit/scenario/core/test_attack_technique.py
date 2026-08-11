@@ -6,12 +6,12 @@
 from unittest.mock import MagicMock
 
 from pyrit.executor.attack import AttackStrategy
-from pyrit.models import ComponentIdentifier, SeedAttackTechniqueGroup, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, SeedPrompt
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
 
-def _make_technique_seeds() -> SeedAttackTechniqueGroup:
-    return SeedAttackTechniqueGroup(
+def _make_technique_seeds() -> AttackTechniqueSeedGroup:
+    return AttackTechniqueSeedGroup(
         seeds=[
             SeedPrompt(value="technique1", data_type="text", is_general_technique=True),
             SeedPrompt(value="technique2", data_type="text", is_general_technique=True),
@@ -115,6 +115,38 @@ class TestAttackTechniqueIdentifier:
         result = technique.get_identifier()
         assert "technique_seeds" in result.children
         assert len(result.children["technique_seeds"]) == 2
+
+    def test_prompt_placement_is_part_of_identifier(self):
+        mock_attack = MagicMock(spec=AttackStrategy)
+        mock_attack.get_identifier.return_value = ComponentIdentifier(
+            class_name="PromptSendingAttack", class_module="pyrit.executor.attack"
+        )
+        seed_technique = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+        technique = AttackTechnique(attack=mock_attack, seed_technique=seed_technique)
+
+        result = technique.get_identifier()
+
+        assert result.params["prompt_placement"] == "prepend"
+
+    def test_prompt_placement_changes_identifier_hash(self):
+        attack_id = ComponentIdentifier(class_name="PromptSendingAttack", class_module="pyrit.executor.attack")
+        preserve_attack = MagicMock(spec=AttackStrategy)
+        preserve_attack.get_identifier.return_value = attack_id
+        prepend_attack = MagicMock(spec=AttackStrategy)
+        prepend_attack.get_identifier.return_value = attack_id
+        seeds = [SeedPrompt(value="technique", data_type="text", is_general_technique=True)]
+        preserve = AttackTechnique(
+            attack=preserve_attack,
+            seed_technique=AttackTechniqueSeedGroup(seeds=seeds, prompt_placement="preserve"),
+        )
+        prepend = AttackTechnique(
+            attack=prepend_attack,
+            seed_technique=AttackTechniqueSeedGroup(seeds=seeds, prompt_placement="prepend"),
+        )
+
+        assert "prompt_placement" not in preserve.get_identifier().params
+        assert prepend.get_identifier().params["prompt_placement"] == "prepend"
+        assert preserve.get_identifier().hash != prepend.get_identifier().hash
 
     def test_identifier_is_cached(self):
         mock_attack = MagicMock(spec=AttackStrategy)

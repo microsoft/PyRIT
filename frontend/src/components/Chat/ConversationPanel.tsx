@@ -112,7 +112,7 @@ export default function ConversationPanel({
   // Actually, we'll handle refresh via the attackConversationId dependency
 
   return (
-    <div className={styles.root} data-testid="conversation-panel">
+    <div id="conversation-panel" className={styles.root} data-testid="conversation-panel">
       <div className={styles.header}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, overflow: 'hidden' }}>
           <div className={styles.headerTitle}>
@@ -141,6 +141,7 @@ export default function ConversationPanel({
             <Button
               appearance="subtle"
               size="small"
+              className={styles.headerButton}
               icon={<AddRegular />}
               onClick={onNewConversation}
               disabled={!attackResultId || !!lockedReason}
@@ -151,6 +152,7 @@ export default function ConversationPanel({
             <Button
               appearance="subtle"
               size="small"
+              className={styles.headerButton}
               icon={<DismissRegular />}
               onClick={onClose}
               data-testid="close-panel-btn"
@@ -174,6 +176,7 @@ export default function ConversationPanel({
             <Button
               appearance="primary"
               size="small"
+              className={styles.retryButton}
               icon={<ArrowSyncRegular />}
               onClick={handleRetry}
               data-testid="conversation-retry-btn"
@@ -240,7 +243,7 @@ export default function ConversationPanel({
                         }
                       }}
                       data-testid={`star-btn-${conv.conversation_id}`}
-                      style={{ minWidth: 'auto', padding: '2px' }}
+                      className={styles.starButton}
                     />
                   </Tooltip>
                   <Badge appearance="tint" size="small">

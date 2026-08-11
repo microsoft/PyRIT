@@ -80,13 +80,13 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["--list-datasets"])
         assert args.list_datasets is True
 
-    def test_parse_args_with_strategies(self):
-        args = pyrit_scan.parse_args(["test_scenario", "--strategies", "s1", "s2"])
-        assert args.scenario_strategies == ["s1", "s2"]
+    def test_parse_args_with_techniques(self):
+        args = pyrit_scan.parse_args(["test_scenario", "--techniques", "s1", "s2"])
+        assert args.scenario_techniques == ["s1", "s2"]
 
-    def test_parse_args_with_strategies_short_flag(self):
-        args = pyrit_scan.parse_args(["test_scenario", "-s", "s1", "s2"])
-        assert args.scenario_strategies == ["s1", "s2"]
+    def test_parse_args_with_techniques_short_flag(self):
+        args = pyrit_scan.parse_args(["test_scenario", "-t", "s1", "s2"])
+        assert args.scenario_techniques == ["s1", "s2"]
 
     def test_parse_args_with_max_concurrency(self):
         args = pyrit_scan.parse_args(["test_scenario", "--max-concurrency", "5"])
@@ -116,7 +116,7 @@ class TestParseArgs:
                 "INFO",
                 "--initializers",
                 "openai_target",
-                "--strategies",
+                "--techniques",
                 "base64",
                 "rot13",
                 "--max-concurrency",
@@ -130,7 +130,7 @@ class TestParseArgs:
         assert args.scenario_name == "encoding_scenario"
         assert args.log_level == logging.INFO
         assert args.initializers == ["openai_target"]
-        assert args.scenario_strategies == ["base64", "rot13"]
+        assert args.scenario_techniques == ["base64", "rot13"]
         assert args.max_concurrency == 10
         assert args.max_retries == 5
 
@@ -178,6 +178,15 @@ class TestParseArgs:
     def test_parse_args_with_stop_server(self):
         args = pyrit_scan.parse_args(["--stop-server"])
         assert args.stop_server is True
+
+    def test_parse_args_with_startup_timeout(self):
+        args = pyrit_scan.parse_args(["--start-server", "--startup-timeout", "45.5"])
+        assert args.startup_timeout == 45.5
+
+    @pytest.mark.parametrize("value", ["0", "-1", "inf", "nan", "slow"])
+    def test_parse_args_rejects_invalid_startup_timeout(self, value):
+        with pytest.raises(SystemExit):
+            pyrit_scan.parse_args(["--start-server", "--startup-timeout", value])
 
     def test_main_with_invalid_args(self):
         result = pyrit_scan.main(["--invalid-flag"])
@@ -258,9 +267,9 @@ def _mock_api_client():
         scenario_name="test_scenario",
         scenario_type="X",
         description="",
-        default_strategy="",
-        aggregate_strategies=[],
-        all_strategies=[],
+        default_technique="",
+        aggregate_techniques=[],
+        all_techniques=[],
         default_datasets=[],
         supported_parameters=[],
     )
@@ -271,7 +280,7 @@ def _mock_api_client():
         status=ScenarioRunState.CREATED,
         created_at=now,
         updated_at=now,
-        strategies_used=[],
+        techniques_used=[],
         total_attacks=0,
         completed_attacks=0,
         objective_achieved_rate=0,
@@ -283,7 +292,7 @@ def _mock_api_client():
         status=ScenarioRunState.COMPLETED,
         created_at=now,
         updated_at=now,
-        strategies_used=[],
+        techniques_used=[],
         total_attacks=5,
         completed_attacks=5,
         objective_achieved_rate=40,
@@ -519,7 +528,8 @@ class TestStopServerOnPort:
     @patch("sys.platform", "win32")
     @patch("subprocess.run")
     @patch("os.kill")
-    def test_stop_on_windows_finds_pid_via_netstat(self, mock_kill, mock_run):
+    @patch("pyrit.cli._server_launcher._wait_for_process_exit", return_value=True)
+    def test_stop_on_windows_finds_pid_via_netstat(self, _mock_wait, mock_kill, mock_run):
         from pyrit.cli import _server_launcher
 
         mock_run.return_value = MagicMock(
@@ -547,7 +557,8 @@ class TestStopServerOnPort:
     @patch("sys.platform", "win32")
     @patch("subprocess.run")
     @patch("os.kill")
-    def test_stop_on_windows_matches_ipv6_local_address(self, mock_kill, mock_run):
+    @patch("pyrit.cli._server_launcher._wait_for_process_exit", return_value=True)
+    def test_stop_on_windows_matches_ipv6_local_address(self, _mock_wait, mock_kill, mock_run):
         from pyrit.cli import _server_launcher
 
         mock_run.return_value = MagicMock(
@@ -559,7 +570,8 @@ class TestStopServerOnPort:
     @patch("sys.platform", "linux")
     @patch("subprocess.run")
     @patch("os.kill")
-    def test_stop_on_unix_finds_pid_via_lsof(self, mock_kill, mock_run):
+    @patch("pyrit.cli._server_launcher._wait_for_process_exit", return_value=True)
+    def test_stop_on_unix_finds_pid_via_lsof(self, _mock_wait, mock_kill, mock_run):
         from pyrit.cli import _server_launcher
 
         mock_run.return_value = MagicMock(stdout="5678\n")
@@ -624,7 +636,7 @@ class TestBuildRunRequest:
                 {"name": "openai_target", "args": {"model": "gpt-4"}},
                 "datasets",
             ],
-            scenario_strategies=None,
+            scenario_techniques=None,
             max_concurrency=None,
             max_retries=None,
             dataset_names=None,
@@ -640,7 +652,7 @@ class TestBuildRunRequest:
         parsed = Namespace(
             target="t",
             initializers=None,
-            scenario_strategies=["s1"],
+            scenario_techniques=["s1"],
             max_concurrency=3,
             max_retries=2,
             dataset_names=["d1"],
@@ -649,7 +661,7 @@ class TestBuildRunRequest:
             memory_labels='{"key":"value"}',
         )
         request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="s")
-        assert request.strategies == ["s1"]
+        assert request.techniques == ["s1"]
         assert request.max_concurrency == 3
         assert request.max_retries == 2
         assert request.dataset_names == ["d1"]
@@ -660,7 +672,7 @@ class TestBuildRunRequest:
         parsed = Namespace(
             target="t",
             initializers=None,
-            scenario_strategies=None,
+            scenario_techniques=None,
             max_concurrency=None,
             max_retries=None,
             dataset_names=None,
@@ -675,7 +687,7 @@ class TestBuildRunRequest:
         parsed = Namespace(
             target="t",
             initializers=None,
-            scenario_strategies=None,
+            scenario_techniques=None,
             max_concurrency=None,
             max_retries=None,
             dataset_names=None,
@@ -690,7 +702,7 @@ class TestBuildRunRequest:
         parsed = Namespace(
             target=None,
             initializers=None,
-            scenario_strategies=None,
+            scenario_techniques=None,
             max_concurrency=None,
             max_retries=None,
             dataset_names=None,
@@ -712,9 +724,15 @@ class TestResolveServerUrl:
             start_server=False,
             config_file=None,
         )
-        with patch(
-            "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
-            new=AsyncMock(return_value=True),
+        with (
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=True),
+            ),
         ):
             result = await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
         assert result == "http://override:7000"
@@ -723,8 +741,8 @@ class TestResolveServerUrl:
         parsed = Namespace(server_url=None, start_server=False, config_file=None)
         with (
             patch(
-                "pyrit.cli._config_reader.read_server_url",
-                return_value=None,
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
             ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -735,23 +753,36 @@ class TestResolveServerUrl:
 
     async def test_auto_starts_server_when_requested(self):
         parsed = Namespace(server_url=None, start_server=True, config_file=None)
+        start_async_mock = AsyncMock(return_value="http://localhost:8000")
         with (
-            patch("pyrit.cli._config_reader.read_server_url", return_value=None),
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=False),
             ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.start_async",
-                new=AsyncMock(return_value="http://localhost:8000"),
+                new=start_async_mock,
             ),
         ):
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) == "http://localhost:8000"
+        start_async_mock.assert_awaited_once_with(
+            host="localhost",
+            port=8000,
+            config_file=None,
+            startup_timeout=120.0,
+        )
 
     async def test_returns_none_when_start_server_raises(self, capsys):
         parsed = Namespace(server_url=None, start_server=True, config_file=None)
         with (
-            patch("pyrit.cli._config_reader.read_server_url", return_value=None),
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=False),
@@ -764,12 +795,14 @@ class TestResolveServerUrl:
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) is None
         assert "nope" in capsys.readouterr().out
 
-    async def test_start_server_refuses_when_url_differs_from_default(self, capsys):
-        # User explicitly configured a non-default URL but asks us to launch the bundled
-        # backend. The launcher only knows how to bind localhost:8000, so we must refuse.
+    async def test_start_server_refuses_remote_url(self, capsys):
         parsed = Namespace(server_url="http://other:9999", start_server=True, config_file=None)
         start_async_mock = AsyncMock()
         with (
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=False),
@@ -786,14 +819,66 @@ class TestResolveServerUrl:
         assert "cannot --start-server" in err
         assert "http://other:9999" in err
 
+    async def test_start_server_uses_custom_local_port(self):
+        parsed = Namespace(server_url="http://127.0.0.1:8765", start_server=True, config_file=None)
+        start_async_mock = AsyncMock(return_value="http://127.0.0.1:8765")
+        with (
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new=start_async_mock,
+            ),
+        ):
+            result = await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
+        assert result == "http://127.0.0.1:8765"
+        start_async_mock.assert_awaited_once_with(
+            host="127.0.0.1",
+            port=8765,
+            config_file=None,
+            startup_timeout=120.0,
+        )
+
+    async def test_start_server_cli_timeout_overrides_config(self):
+        parsed = Namespace(
+            server_url=None,
+            start_server=True,
+            config_file=None,
+            startup_timeout=15.0,
+        )
+        start_async_mock = AsyncMock(return_value="http://localhost:8000")
+        with (
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(startup_timeout=90.0),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.start_async",
+                new=start_async_mock,
+            ),
+        ):
+            await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
+
+        assert start_async_mock.await_args.kwargs["startup_timeout"] == 15.0
+
     async def test_resolution_order_cli_beats_config_beats_default(self):
         """CLI flag > config-file value > built-in default."""
         # 1) CLI flag wins even when config has a different value.
         parsed = Namespace(server_url="http://cli:1111", start_server=False, config_file=None)
         with (
             patch(
-                "pyrit.cli._config_reader.read_server_url",
-                return_value="http://cfg:2222",
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(url="http://cfg:2222"),
             ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -806,8 +891,8 @@ class TestResolveServerUrl:
         parsed = Namespace(server_url=None, start_server=False, config_file=None)
         with (
             patch(
-                "pyrit.cli._config_reader.read_server_url",
-                return_value="http://cfg:2222",
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(url="http://cfg:2222"),
             ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -821,7 +906,10 @@ class TestResolveServerUrl:
 
         parsed = Namespace(server_url=None, start_server=False, config_file=None)
         with (
-            patch("pyrit.cli._config_reader.read_server_url", return_value=None),
+            patch(
+                "pyrit.cli._config_reader.read_server_settings",
+                return_value=pyrit_scan_config_reader.ServerSettings(),
+            ),
             patch(
                 "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
                 new=AsyncMock(return_value=True),
@@ -958,18 +1046,18 @@ class TestMainExtraPaths:
                 scenario_name="alt_a",
                 scenario_type="X",
                 description="",
-                default_strategy="",
-                aggregate_strategies=[],
-                all_strategies=[],
+                default_technique="",
+                aggregate_techniques=[],
+                all_techniques=[],
                 default_datasets=[],
             ),
             RegisteredScenario(
                 scenario_name="alt_b",
                 scenario_type="X",
                 description="",
-                default_strategy="",
-                aggregate_strategies=[],
-                all_strategies=[],
+                default_technique="",
+                aggregate_techniques=[],
+                all_techniques=[],
                 default_datasets=[],
             ),
         ]
@@ -1036,10 +1124,27 @@ class TestMainExtraPaths:
         return_value=True,
     )
     @patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True)
-    def test_main_stop_server_kills_process_and_returns_zero(self, _stop_mock, _mock_probe, capsys):
+    def test_main_stop_server_kills_process_and_returns_zero(self, _stop_mock, mock_probe, capsys):
+        mock_probe.side_effect = [True, False]
         result = pyrit_scan.main(["--stop-server"])
         assert result == 0
         assert "stopped" in capsys.readouterr().out
+
+    async def test_handle_stop_server_offloads_blocking_shutdown(self):
+        parsed_args = pyrit_scan.parse_args(["--stop-server"])
+        to_thread_mock = AsyncMock(return_value=True)
+        probe_mock = AsyncMock(side_effect=[True, False])
+
+        with (
+            patch("asyncio.to_thread", new=to_thread_mock),
+            patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new=probe_mock),
+            patch("pyrit.cli._server_launcher.stop_server_on_port") as stop_mock,
+        ):
+            result = await pyrit_scan._handle_stop_server_async(parsed_args=parsed_args)
+
+        assert result == 0
+        to_thread_mock.assert_awaited_once_with(stop_mock, port=8000)
+        stop_mock.assert_not_called()
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -1049,9 +1154,32 @@ class TestMainExtraPaths:
     @patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=False)
     def test_main_stop_server_when_process_cannot_be_identified(self, _stop_mock, _mock_probe, capsys):
         result = pyrit_scan.main(["--stop-server"])
-        assert result == 0
+        assert result == 1
         out = capsys.readouterr().out
-        assert "could not identify" in out
+        assert "could not be stopped" in out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli._server_launcher.stop_server_on_port", return_value=True)
+    def test_main_stop_server_fails_when_backend_remains_healthy(self, _stop_mock, _mock_probe, capsys):
+        result = pyrit_scan.main(["--stop-server"])
+        assert result == 1
+        assert "still responding" in capsys.readouterr().out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+    )
+    @patch("pyrit.cli._server_launcher.stop_server_on_port")
+    def test_main_stop_server_refuses_remote_url(self, stop_mock, probe_mock, capsys):
+        result = pyrit_scan.main(["--stop-server", "--server-url", "http://remote:8000"])
+        assert result == 1
+        stop_mock.assert_not_called()
+        probe_mock.assert_not_called()
+        assert "Cannot stop non-local server" in capsys.readouterr().err
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -1145,9 +1273,9 @@ class TestScenarioParamFlow:
                 scenario_name="foo",
                 scenario_type="X",
                 description="",
-                default_strategy="",
-                aggregate_strategies=[],
-                all_strategies=[],
+                default_technique="",
+                aggregate_techniques=[],
+                all_techniques=[],
                 default_datasets=[],
             )
         ]
@@ -1155,9 +1283,9 @@ class TestScenarioParamFlow:
             scenario_name="foo",
             scenario_type="X",
             description="",
-            default_strategy="",
-            aggregate_strategies=[],
-            all_strategies=[],
+            default_technique="",
+            aggregate_techniques=[],
+            all_techniques=[],
             default_datasets=[],
             supported_parameters=typed_params,
         )
@@ -1273,3 +1401,64 @@ class TestScenarioParamFlow:
         assert parsed.scenario_name == "foo"
         assert parsed.target == "t"
         assert parsed._unknown_args == ["--max-turns", "7"]
+
+
+class TestPollStreamsRetryWarnings:
+    """The poll loop should stream retry warnings as attack results land."""
+
+    async def test_poll_prints_retry_warnings_once(self, capsys):
+        from datetime import datetime, timezone
+
+        from pyrit.models import ScenarioRunState
+        from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
+        from pyrit.models.retry_event import RetryEvent
+
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        retry = RetryEvent(
+            attempt_number=3,
+            exception_type="RateLimitError",
+            exception_message="429 Too Many Requests",
+            component_role="objective_scorer",
+            component_name="TrueFalseScorer",
+            endpoint="https://ep/",
+        )
+
+        def _summary(*, status, with_retry):
+            return ScenarioRunSummary(
+                scenario_result_id="sr-1",
+                scenario_name="s",
+                scenario_version=0,
+                status=status,
+                created_at=now,
+                updated_at=now,
+                techniques_used=["a"],
+                total_attacks=1,
+                completed_attacks=1,
+                objective_achieved_rate=0,
+                attack_retries=(
+                    [AttackRetrySummary(attack_result_id="ar-1", atomic_attack_name="baseline", retries=[retry])]
+                    if with_retry
+                    else []
+                ),
+            )
+
+        client = MagicMock()
+        # First poll: retry present but still running. Second poll: same retry, terminal.
+        client.get_scenario_run_async = AsyncMock(
+            side_effect=[
+                _summary(status=ScenarioRunState.IN_PROGRESS, with_retry=True),
+                _summary(status=ScenarioRunState.COMPLETED, with_retry=True),
+            ]
+        )
+
+        with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
+            final = await pyrit_scan._poll_until_terminal_async(
+                client=client, scenario_result_id="sr-1", total_techniques=1
+            )
+
+        assert final.status == ScenarioRunState.COMPLETED
+        out = capsys.readouterr().out
+        # The warning is printed exactly once despite appearing in both polls.
+        assert out.count("retry #3") == 1
+        assert "RateLimitError" in out
+        assert "endpoint https://ep/" in out

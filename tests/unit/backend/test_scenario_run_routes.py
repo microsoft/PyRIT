@@ -108,7 +108,7 @@ class TestStartScenarioRunRoute:
                     "scenario_name": "foundry.red_team_agent",
                     "target_name": "my_target",
                     "initializers": ["target", "load_default_datasets"],
-                    "strategies": ["base64", "rot13"],
+                    "techniques": ["base64", "rot13"],
                     "dataset_names": ["harmful_content"],
                     "max_dataset_size": 50,
                     "max_concurrency": 5,
@@ -243,7 +243,7 @@ class TestGetScenarioRunResultsRoute:
         scenario_result = make_scenario_result(
             scenario_name="foundry.red_team_agent",
             scenario_description="Foundry red-team agent",
-            objective_target_identifier=ComponentIdentifier.from_dict(
+            objective_target_identifier=ComponentIdentifier.model_validate(
                 {"__type__": "FakeTarget", "__module__": "test.mod", "params": {}}
             ),
             objective_scorer_identifier=None,

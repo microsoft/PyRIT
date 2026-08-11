@@ -109,7 +109,6 @@ class ConversationScorer(Scorer, ABC):
                     converted_value=conversation_text,
                     id=original_piece.id,
                     conversation_id=original_piece.conversation_id,
-                    labels=original_piece.labels,  # deprecated
                     original_value_data_type="text",
                     converted_value_data_type="text",
                     response_error="none",
@@ -182,7 +181,7 @@ def create_conversation_scorer(
         ValueError: If the scorer is not an instance of FloatScaleScorer or TrueFalseScorer.
 
     Example:
-        >>> float_scorer = SelfAskLikertScorer(chat_target=target, likert_scale=scale)
+        >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
         >>> conversation_scorer = create_conversation_scorer(scorer=float_scorer)
         >>> isinstance(conversation_scorer, FloatScaleScorer)  # True
         >>> isinstance(conversation_scorer, ConversationScorer)  # True

@@ -5,10 +5,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.0
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
-# # 10. HTTP Target
+# # HTTP Target
 # This notebook shows how to interact with the HTTP Target:
 #
 #
@@ -18,6 +19,7 @@
 import os
 
 from pyrit.auth import get_azure_token_provider
+from pyrit.converter import JsonStringConverter
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -26,15 +28,14 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
 )
 from pyrit.output import output_attack_async
-from pyrit.prompt_converter import JsonStringConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import (
     HTTPTarget,
     OpenAIChatTarget,
     get_http_target_json_response_callback_function,
     get_http_target_regex_matching_callback_function,
 )
-from pyrit.score import SelfAskTrueFalseScorer
+from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
@@ -74,7 +75,7 @@ parsing_function = get_http_target_json_response_callback_function(key="choices[
 # httpx AsyncClient parameters can be passed as kwargs to HTTPTarget, for example the timeout below
 http_prompt_target = HTTPTarget(http_request=raw_http_request, callback_function=parsing_function, timeout=20.0)
 
-converters = PromptConverterConfiguration.from_converters(converters=[JsonStringConverter()])
+converters = ConverterConfiguration.from_converters(converters=[JsonStringConverter()])
 
 # Note, a converter is used to format the prompt to be JSON safe by properly escaping special characters
 converter_config = AttackConverterConfig(request_converters=converters)
@@ -102,9 +103,9 @@ adversarial_config = AttackAdversarialConfig(
     target=red_teaming_chat,
 )
 
-scorer = SelfAskTrueFalseScorer(
+scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question_path=Path("../../../assets/demo_scorer_definitions/check_fraud_classifier.yaml"),
+    question=TrueFalseQuestion.from_yaml(Path("./check_fraud_classifier.yaml")),
 )
 scoring_config = AttackScoringConfig(
     objective_scorer=scorer,
@@ -115,7 +116,7 @@ http_prompt_target = HTTPTarget(
 )
 
 converter_config = AttackConverterConfig(
-    request_converters=PromptConverterConfiguration.from_converters(converters=[JsonStringConverter()])
+    request_converters=ConverterConfiguration.from_converters(converters=[JsonStringConverter()])
 )
 
 # Note, like above, a converter is used to format the prompt to be JSON safe by properly escaping special characters
@@ -174,7 +175,7 @@ q={PROMPT}s&qs=ds
 # ### Using Regex Parsing (this searches for a path using a regex pattern)
 
 # %%
-from pyrit.prompt_converter import UrlConverter
+from pyrit.converter import UrlConverter
 
 # Add the prompt you want to send to the URL
 prompt = "pirate raccoons celebrating Canadian Thanksgiving together"
@@ -184,8 +185,8 @@ parsing_function = get_http_target_regex_matching_callback_function(
 )
 http_prompt_target = HTTPTarget(http_request=http_req, callback_function=parsing_function)
 
-# Note the prompt needs to be formatted in a URL safe way by the prompt converter in this example, this should be done accordingly for your target as needed.
-converters = PromptConverterConfiguration.from_converters(converters=[UrlConverter()])
+# Note the prompt needs to be formatted in a URL safe way by the converter in this example, this should be done accordingly for your target as needed.
+converters = ConverterConfiguration.from_converters(converters=[UrlConverter()])
 converter_config = AttackConverterConfig(request_converters=converters)
 
 attack = PromptSendingAttack(

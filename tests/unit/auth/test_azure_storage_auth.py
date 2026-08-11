@@ -112,31 +112,3 @@ async def test_get_sas_token_invalid_url_path_async():
         " The correct format is 'https://storageaccountname.core.windows.net/containername'.",
     ):
         await AzureStorageAuth.get_sas_token_async(invalid_url)
-
-
-async def test_get_user_delegation_key_emits_deprecation_warning_and_delegates():
-    mock_blob_service_client = AsyncMock(spec=BlobServiceClient)
-    expected_key = UserDelegationKey()
-    with patch.object(
-        AzureStorageAuth,
-        "get_user_delegation_key_async",
-        new=AsyncMock(return_value=expected_key),
-    ) as mock_new:
-        with pytest.warns(DeprecationWarning, match="get_user_delegation_key_async"):
-            result = await AzureStorageAuth.get_user_delegation_key(mock_blob_service_client)
-
-    assert result is expected_key
-    mock_new.assert_awaited_once_with(mock_blob_service_client)
-
-
-async def test_get_sas_token_emits_deprecation_warning_and_delegates():
-    with patch.object(
-        AzureStorageAuth,
-        "get_sas_token_async",
-        new=AsyncMock(return_value="shim-sas-token"),
-    ) as mock_new:
-        with pytest.warns(DeprecationWarning, match="get_sas_token_async"):
-            result = await AzureStorageAuth.get_sas_token(MOCK_CONTAINER_URL)
-
-    assert result == "shim-sas-token"
-    mock_new.assert_awaited_once_with(MOCK_CONTAINER_URL)

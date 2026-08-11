@@ -6,10 +6,11 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
-import { ArrowSyncRegular } from '@fluentui/react-icons'
+import { ArrowSyncRegular, ChatRegular, SettingsRegular } from '@fluentui/react-icons'
 import { attacksApi, labelsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
-import type { AttackSummary } from '../../types'
+import type { AttackSummary, TargetInstance } from '../../types'
+import type { ViewName } from '../Sidebar/Navigation'
 import type { HistoryFilters } from './historyFilters'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
 import HistoryFiltersBar from './HistoryFiltersBar'
@@ -20,6 +21,8 @@ interface AttackHistoryProps {
   onOpenAttack: (attackResultId: string) => void
   filters: HistoryFilters
   onFiltersChange: (filters: HistoryFilters) => void
+  activeTarget: TargetInstance | null
+  onNavigate: (view: ViewName) => void
 }
 
 const PAGE_SIZE = 25
@@ -44,7 +47,13 @@ function buildListParams(filters: HistoryFilters, pageCursor: string | undefined
   return params
 }
 
-export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }: AttackHistoryProps) {
+export default function AttackHistory({
+  onOpenAttack,
+  filters,
+  onFiltersChange,
+  activeTarget,
+  onNavigate,
+}: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -175,13 +184,27 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
     filters.attackTypes.length > 0 || filters.outcome || filters.converter.length > 0 ||
     filters.hasConverters !== undefined ||
     filters.operator.length > 0 || filters.operation.length > 0 || filters.otherLabels.length > 0
+  const emptyStateGuidance = activeTarget
+    ? {
+        text: 'Start an attack to see it here.',
+        label: 'Start attack',
+        icon: <ChatRegular />,
+        view: 'chat' as const,
+      }
+    : {
+        text: 'Configure a target before starting an attack.',
+        label: 'Configure target',
+        icon: <SettingsRegular />,
+        view: 'config' as const,
+      }
 
   return (
     <div className={styles.root}>
       <div className={styles.header} data-tour="history-filters">
         <div className={styles.headerRow}>
-          <Text size={500} weight="semibold">Attack History</Text>
+          <Text as="h1" size={500} weight="semibold">Attack History</Text>
           <Button
+            className={styles.touchTargetHeight}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={() => fetchAttacks()}
@@ -213,6 +236,7 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
               <MessageBarBody>{error}</MessageBarBody>
             </MessageBar>
             <Button
+              className={styles.touchTargetHeight}
               appearance="primary"
               icon={<ArrowSyncRegular />}
               onClick={() => fetchAttacks()}
@@ -226,10 +250,18 @@ export default function AttackHistory({ onOpenAttack, filters, onFiltersChange }
           <div className={styles.emptyState} data-testid="empty-state">
             <Text size={400}>No attacks found</Text>
             <Text size={200}>
-              {hasActiveFilters
-                ? 'Try adjusting your filters.'
-                : 'Run an attack to see it here.'}
+              {hasActiveFilters ? 'Try adjusting your filters.' : emptyStateGuidance.text}
             </Text>
+            {!hasActiveFilters && (
+              <Button
+                className={styles.touchTargetHeight}
+                appearance="primary"
+                icon={emptyStateGuidance.icon}
+                onClick={() => onNavigate(emptyStateGuidance.view)}
+              >
+                {emptyStateGuidance.label}
+              </Button>
+            )}
           </div>
         ) : (
           <AttackTable attacks={attacks} onOpenAttack={onOpenAttack} formatDate={formatDate} />

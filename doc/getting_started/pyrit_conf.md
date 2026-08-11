@@ -117,6 +117,10 @@ Most users should enable the following initializers. These are what the `.pyrit_
 **Execution order follows listing order.** Initializers execute in the order they appear in the config. Ensure dependencies are satisfied — for example, list `target` before `scorer` since scorers need targets to be registered first.
 ```
 
+```{important}
+The default initializers were consolidated and renamed as part of the cleanup leading up to the **v1.0.0** release. Configurations created before v1.0.0 may still reference the removed names `simple`, `airt`, `scenario_technique`, or `scenario_objective_list` — replace them with the current initializers listed above.
+```
+
 The recommended config:
 
 ```yaml
@@ -170,6 +174,25 @@ env_files:
 ### `silent`
 
 If `true`, suppresses print statements during initialization. Useful for non-interactive environments or when embedding PyRIT in other tools. Defaults to `false`.
+
+### `server`
+
+Client settings for connecting to or launching a PyRIT backend.
+
+| Field | Description | Default |
+|---|---|---|
+| `url` | Backend URL used when `--server-url` is omitted | `http://localhost:8000` |
+| `startup_timeout` | Seconds `pyrit_scan --start-server` waits for a healthy backend before terminating the spawned process | `120` |
+
+`startup_timeout` must be a finite number greater than zero. The `--startup-timeout` CLI option overrides the configured value for an individual scanner invocation.
+
+Set `server: null` to reset all server settings, including values inherited from an earlier configuration layer, to their defaults.
+
+```yaml
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
+```
 
 ## Configuration Precedence
 
@@ -278,6 +301,11 @@ initializers:
 
 # Suppress initialization messages
 silent: false
+
+# Backend connection and local startup settings
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
 ```
 
 ## What's Next?

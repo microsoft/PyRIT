@@ -18,8 +18,8 @@ from pyrit.scenario.core.dataset_configuration import (
     require_nonempty,
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioCompositeStrategy, ScenarioStrategy
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 __all__ = [
     "AtomicAttack",
@@ -36,8 +36,7 @@ __all__ = [
     "ResolvedDataset",
     "require_nonempty",
     "Scenario",
-    "ScenarioCompositeStrategy",
-    "ScenarioStrategy",
+    "ScenarioTechnique",
     "ScorerOverridePolicy",
     "get_default_scorer_target",
     "get_default_adversarial_target",

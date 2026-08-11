@@ -1,5 +1,7 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { makeTarget } from '@/test-utils/targetFixtures'
 import AttackHistory from './AttackHistory'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import { attacksApi, labelsApi } from '../../services/api'
@@ -60,6 +62,8 @@ describe('AttackHistory', () => {
     onOpenAttack: jest.fn(),
     filters: { ...DEFAULT_HISTORY_FILTERS },
     onFiltersChange: jest.fn(),
+    activeTarget: null,
+    onNavigate: jest.fn(),
   }
 
   beforeEach(() => {
@@ -81,7 +85,7 @@ describe('AttackHistory', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByText('Attack History')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Attack History' })).toBeInTheDocument()
     expect(screen.getByTestId('refresh-btn')).toBeInTheDocument()
     expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
@@ -95,7 +99,9 @@ describe('AttackHistory', () => {
     })
   })
 
-  it('should show empty state when no attacks', async () => {
+  it('should guide users without an active target to configuration', async () => {
+    const user = userEvent.setup()
+    const onNavigate = jest.fn()
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
@@ -103,7 +109,7 @@ describe('AttackHistory', () => {
 
     render(
       <TestWrapper>
-        <AttackHistory {...defaultProps} />
+        <AttackHistory {...defaultProps} onNavigate={onNavigate} />
       </TestWrapper>
     )
 
@@ -111,6 +117,55 @@ describe('AttackHistory', () => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
     expect(screen.getByText('No attacks found')).toBeInTheDocument()
+    expect(screen.getByText('Configure a target before starting an attack.')).toBeInTheDocument()
+
+    const configureTargetButton = screen.getByRole('button', { name: 'Configure target' })
+    expect(configureTargetButton).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
+
+    await user.click(configureTargetButton)
+    expect(onNavigate).toHaveBeenCalledWith('config')
+  })
+
+  it('should guide users with an active target to start an attack', async () => {
+    const user = userEvent.setup()
+    const onNavigate = jest.fn()
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: [],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    render(
+      <TestWrapper>
+        <AttackHistory
+          {...defaultProps}
+          activeTarget={makeTarget({ target_registry_name: 'active_target' })}
+          onNavigate={onNavigate}
+        />
+      </TestWrapper>
+    )
+
+    const startAttackButton = await screen.findByRole('button', { name: 'Start attack' })
+    expect(startAttackButton).toBeEnabled()
+    expect(screen.getByText('Start an attack to see it here.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+
+    await user.click(startAttackButton)
+    expect(onNavigate).toHaveBeenCalledWith('chat')
+  })
+
+  it('should not show an empty-state action while attacks are loading', () => {
+    mockedAttacksApi.listAttacks.mockImplementation(() => new Promise(() => {}))
+
+    render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+
+    expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
   })
 
   it('should render attack table rows', async () => {
@@ -427,6 +482,8 @@ describe('AttackHistory', () => {
     })
     expect(screen.getByText('Internal server error')).toBeInTheDocument()
     expect(screen.getByTestId('retry-btn')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
   })
 
   it('should retry on clicking retry button', async () => {
@@ -600,18 +657,20 @@ describe('AttackHistory', () => {
       items: [],
       pagination: { limit: 25, has_more: false },
     })
+    const activeFilters = { ...DEFAULT_HISTORY_FILTERS, outcome: 'success' }
 
     render(
       <TestWrapper>
-        <AttackHistory {...defaultProps} />
+        <AttackHistory {...defaultProps} filters={activeFilters} />
       </TestWrapper>
     )
 
     await waitFor(() => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
-    // Default empty text (no filters active)
-    expect(screen.getByText('Run an attack to see it here.')).toBeInTheDocument()
+    expect(screen.getByText('Try adjusting your filters.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
   })
 
   it('should show reset filters button when a filter is active', async () => {

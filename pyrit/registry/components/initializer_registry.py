@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models import class_name_to_snake_case, validate_registry_name
 from pyrit.registry.discovery import discover_in_directory
-from pyrit.registry.registry import Registry
+from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 # Compute PYRIT_PATH directly to avoid importing pyrit package
@@ -59,7 +59,7 @@ class InitializerMetadata(RegistryMetadata):
     supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
 
 
-class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
+class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetadata]):
     """
     Registry for discovering and managing available initializers.
 
@@ -67,7 +67,7 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
     ``pyrit/setup/initializers`` directory structure via a filesystem scan (so
     ``_discover`` is overridden rather than supplying ``_base_type`` /
     ``_discovery_package``). Initializers are identified by their suffix-stripped
-    snake_case class name (e.g., ``"objective_target"``, ``"simple"``); the
+    snake_case class name (e.g., ``"objective_target"``, ``"technique"``); the
     directory structure is used for organization but not exposed to users.
     """
 
@@ -203,7 +203,7 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
         Returns:
             InitializerMetadata describing the initializer class.
         """
-        description = RegistryMetadata.description_from_docstring(cls, fallback="No description available")
+        description = RegistryMetadata.summary_from_docstring(cls) or "No description available"
 
         try:
             instance = cls()
@@ -249,9 +249,8 @@ class InitializerRegistry(Registry["PyRITInitializer", InitializerMetadata]):
             KeyError: If the name is not registered.
             ValueError: If the configured parameters are invalid.
         """
-        instance = self.create_instance(name)
+        instance = self._create_and_configure(name, params=initializer_params or None)
         if initializer_params:
-            instance.set_params_from_args(args=initializer_params)
             instance.validate_params()
         return instance
 

@@ -273,11 +273,11 @@ class TestEvaluationIdentifier:
         original_eval_hash = _StubEvaluationIdentifier(scorer_id).eval_hash
 
         # Simulate DB storage: full values are retained (no truncation).
-        stored_dict = scorer_id.to_dict()
+        stored_dict = scorer_id.model_dump()
         assert stored_dict["system_prompt_template"] == long_prompt
 
         # Reconstruct from the stored dict (simulates DB read) and recompute.
-        reconstructed = ComponentIdentifier.from_dict(stored_dict)
+        reconstructed = ComponentIdentifier.model_validate(stored_dict)
         assert _StubEvaluationIdentifier(reconstructed).eval_hash == original_eval_hash
 
     def test_eval_hash_recomputed_through_double_roundtrip(self):
@@ -290,15 +290,15 @@ class TestEvaluationIdentifier:
         )
 
         original_eval_hash = _StubEvaluationIdentifier(scorer_id).eval_hash
-        d1 = scorer_id.to_dict()
+        d1 = scorer_id.model_dump()
 
         # First retrieve
-        r1 = ComponentIdentifier.from_dict(d1)
+        r1 = ComponentIdentifier.model_validate(d1)
         assert _StubEvaluationIdentifier(r1).eval_hash == original_eval_hash
 
         # Re-store and retrieve again
-        d2 = r1.to_dict()
-        r2 = ComponentIdentifier.from_dict(d2)
+        d2 = r1.model_dump()
+        r2 = ComponentIdentifier.model_validate(d2)
         assert _StubEvaluationIdentifier(r2).eval_hash == original_eval_hash
 
 

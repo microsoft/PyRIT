@@ -99,6 +99,16 @@ class Parameter(BaseModel):
         exclude=True,
         description="Where the parameter is consumed at build time; not serialized.",
     )
+    opaque: bool = Field(
+        default=False,
+        exclude=True,
+        description=(
+            "When True, the value is a live object passed through by identity: it is neither "
+            "coerced nor copied, and no ``param_type`` is required. Use for run-resolved inputs "
+            "the scalar/list model can't represent (e.g. a live config object or a mapping of "
+            "converter instances). Not serialized."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -181,18 +191,16 @@ class Parameter(BaseModel):
         Whether a single string token can be coerced to this parameter's value.
 
         True for a non-reference plain scalar (``str`` / ``int`` / ``float`` /
-        ``bool``) or ``Literal[...]`` parameter — exactly the forms a text field or
-        CLI token can supply. References and structured types (lists, enums,
-        arbitrary objects) are False and are surfaced/handled elsewhere.
+        ``bool``), ``Literal[...]``, or ``Enum`` parameter — exactly the forms a
+        text field or CLI token can supply. References and structured types (lists
+        and arbitrary objects) are False and are surfaced/handled elsewhere.
 
         Returns:
             bool: True when a string can be coerced to this parameter's value.
         """
-        if self.reference is not None:
+        if self.reference is not None or self.opaque:
             return False
-        if self.param_type in _SUPPORTED_SCALAR_TYPES:
-            return True
-        return get_origin(self.param_type) is Literal
+        return _is_scalar_param_type(_unwrap_optional(self.param_type))
 
     def is_reference_to(self, component_type: ComponentType) -> bool:
         """
@@ -215,27 +223,31 @@ class Parameter(BaseModel):
         """
         Coerce ``raw_value`` to this parameter's declared type.
 
-        A reference parameter passes its value through unchanged (the registry
-        layer resolves it by name). Otherwise it branches by shape: ``None``
-        passes through (deep-copied), a ``list`` coerces per element, and a scalar
-        form (including ``Literal``/``Enum``) coerces and validates membership.
-        Arbitrary defaulted types pass through unchanged.
+        An opaque or reference parameter passes its value through unchanged (by
+        identity — the registry layer resolves a reference by name; an opaque
+        value is a live object owned by the caller). Otherwise it branches by
+        shape: ``None`` passes through (deep-copied), a ``list`` coerces per
+        element, and a scalar form (including ``Literal``/``Enum``) coerces and
+        validates membership. Arbitrary defaulted types pass through unchanged.
 
         Args:
             raw_value (Any): The raw value to coerce.
 
         Returns:
-            Any: The coerced value (a deep copy for the ``None`` passthrough, a
-                coerced list for list types, a coerced scalar for scalar types, or
-                the raw value unchanged for reference/arbitrary types).
+            Any: The coerced value (the raw value unchanged for opaque/reference/
+                arbitrary types, a deep copy for the ``None`` passthrough, a
+                coerced list for list types, or a coerced scalar for scalar types).
 
         Raises:
             ValueError: If the value cannot be coerced to a constrained scalar or
                 list element type.
         """
-        if self.reference is not None:
+        if self.reference is not None or self.opaque:
             return raw_value
         param_type = self.param_type
+        if raw_value is None and type(None) in get_args(param_type):
+            return None
+        param_type = _unwrap_optional(param_type)
         if param_type is None:
             return copy.deepcopy(raw_value)
         if get_origin(param_type) is list:
@@ -250,14 +262,14 @@ class Parameter(BaseModel):
 
         Supported forms are a plain scalar, a constrained scalar
         (``Literal``/``Enum``), a ``list`` of any of those, a registry reference,
-        or ``None``. An otherwise-unsupported type is tolerated only when the
-        parameter declares a default (the builder simply does not supply it, and
-        the value passes through unchanged).
+        an opaque passthrough, or ``None``. An otherwise-unsupported type is
+        tolerated only when the parameter declares a default (the builder simply
+        does not supply it, and the value passes through unchanged).
 
         Raises:
             ValueError: If ``param_type`` is unsupported and no default is declared.
         """
-        if self.reference is not None:
+        if self.reference is not None or self.opaque:
             return
         param_type = self.param_type
         if param_type is None or _is_scalar_param_type(param_type):
@@ -526,11 +538,16 @@ def _render_type_name(param_type: Any) -> str:
         return type(args[0]).__name__ if args else "str"
     if get_origin(param_type) is list:
         type_args = get_args(param_type)
-        element_type = type_args[0] if type_args else str
+        element_type = _unwrap_optional(type_args[0]) if type_args else str
         if get_origin(element_type) is Literal:
             element_args = get_args(element_type)
             element_name = type(element_args[0]).__name__ if element_args else "str"
             return f"list[{element_name}]"
+        if isinstance(element_type, type) and issubclass(element_type, Enum):
+            member = next(iter(element_type), None)
+            return f"list[{type(member.value).__name__ if member is not None else 'str'}]"
+        if _is_scalar_param_type(element_type):
+            return f"list[{element_type.__name__}]"
     # Detect parameterized generics (list[str], dict[str, int], ...) reliably across Python
     # versions: get_origin returns the unparameterized type for GenericAlias, None otherwise.
     if get_origin(param_type) is not None:
@@ -552,11 +569,19 @@ def display_choices(param_type: Any) -> tuple[Any, ...] | None:
     Args:
         param_type (Any): The parameter's type annotation.
 
+    A ``list[...]`` parameter is unwrapped to its element type first, so a
+    constrained list (``list[Literal[...]]`` / ``list[Enum]``) surfaces its
+    element's allowed set — the ``is_list`` + ``choices`` projection a multi-select
+    consumer needs.
+
     Returns:
         tuple[Any, ...] | None: The allowed members for a constrained scalar
         (``Literal`` args or ``Enum`` member values), or None when unconstrained.
     """
     unwrapped = _unwrap_optional(param_type)
+    if get_origin(unwrapped) is list:
+        type_args = get_args(unwrapped)
+        unwrapped = _unwrap_optional(type_args[0]) if type_args else str
     if get_origin(unwrapped) is Literal:
         return get_args(unwrapped)
     if isinstance(unwrapped, type) and issubclass(unwrapped, Enum):

@@ -10,7 +10,7 @@ import pytest
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.garak import AudioAchillesHeel, AudioAchillesHeelStrategy  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.garak import AudioAchillesHeel, AudioAchillesHeelTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.garak.audio_achilles_heel import (
     DEFAULT_MAX_DATASET_SIZE,
     DEFAULT_TEXT_PROMPT,
@@ -88,9 +88,9 @@ class TestAudioAchillesHeelInitialization:
         config = AudioAchillesHeel(objective_scorer=mock_objective_scorer)._default_dataset_config
         assert config.max_dataset_size == DEFAULT_MAX_DATASET_SIZE
 
-    def test_default_strategy_is_all(self, mock_objective_scorer):
+    def test_default_technique_is_all(self, mock_objective_scorer):
         scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
-        assert scenario._default_strategy == AudioAchillesHeelStrategy.ALL
+        assert scenario._default_technique == AudioAchillesHeelTechnique.ALL
 
     def test_default_text_prompt_used(self, mock_objective_scorer):
         config = AudioAchillesHeel(objective_scorer=mock_objective_scorer)._default_dataset_config
@@ -141,30 +141,36 @@ class TestAudioAchillesHeelDatasetConfiguration:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAudioAchillesHeelStrategyExpansion:
-    """Tests for strategy expansion and atomic attack generation."""
+class TestAudioAchillesHeelTechniqueExpansion:
+    """Tests for technique expansion and atomic attack generation."""
 
     async def test_all_expands_to_audio_jailbreak(
         self, mock_objective_target, mock_objective_scorer, audio_dataset_config
     ):
         scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            scenario_strategies=[AudioAchillesHeelStrategy.ALL],
-            dataset_config=audio_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [AudioAchillesHeelTechnique.ALL],
+                "dataset_config": audio_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
-        strategy_values = {s.value for s in scenario._scenario_strategies}
-        assert strategy_values == {"audio_jailbreak"}
+        technique_values = {s.value for s in scenario._scenario_techniques}
+        assert technique_values == {"audio_jailbreak"}
 
     async def test_builds_single_prompt_sending_attack(
         self, mock_objective_target, mock_objective_scorer, audio_dataset_config
     ):
         scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            dataset_config=audio_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": audio_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         atomic_attacks = scenario._atomic_attacks
         assert len(atomic_attacks) == 1
@@ -175,21 +181,24 @@ class TestAudioAchillesHeelStrategyExpansion:
         self, mock_objective_target, mock_objective_scorer, audio_dataset_config
     ):
         scenario = AudioAchillesHeel(objective_scorer=mock_objective_scorer)
-        await scenario.initialize_async(
-            objective_target=mock_objective_target,
-            dataset_config=audio_dataset_config,
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": audio_dataset_config,
+            }
         )
+        await scenario.initialize_async()
 
         atomic_attack = scenario._atomic_attacks[0]
         assert len(atomic_attack.seed_groups) == 2
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestAudioAchillesHeelStrategyValues:
-    """Tests for AudioAchillesHeelStrategy members."""
+class TestAudioAchillesHeelTechniqueValues:
+    """Tests for AudioAchillesHeelTechnique members."""
 
-    def test_concrete_strategy_value(self):
-        assert AudioAchillesHeelStrategy.AudioJailbreak.value == "audio_jailbreak"
+    def test_concrete_technique_value(self):
+        assert AudioAchillesHeelTechnique.AudioJailbreak.value == "audio_jailbreak"
 
     def test_all_aggregate_present(self):
-        assert "all" in AudioAchillesHeelStrategy.get_aggregate_tags()
+        assert "all" in AudioAchillesHeelTechnique.get_aggregate_tags()

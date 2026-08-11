@@ -298,8 +298,7 @@ async def _probe_system_prompt_async(target: PromptTarget, timeout_s: float, ret
     Probe whether ``target`` accepts a system prompt followed by a user message.
 
     Writes a system-role ``MessagePiece`` directly to ``target._memory``
-    rather than calling ``pyrit.prompt_target.PromptChatTarget.set_system_prompt``
-    (which is only defined on ``PromptChatTarget`` subclasses anyway).
+    rather than calling ``target.set_system_prompt``.
     ``set_system_prompt`` can be overridden by subclasses (e.g. mocks) to do
     nothing or to perform extra work, which would mask whether the underlying
     API actually accepts a system message. A direct memory write also works

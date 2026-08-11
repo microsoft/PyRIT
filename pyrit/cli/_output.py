@@ -50,6 +50,18 @@ def _header(text: str) -> None:
     _cprint(f"\n  {text}", color="cyan", bold=True)
 
 
+def _truncate_text(text: str, max_length: int) -> str:
+    """
+    Truncate *text* to *max_length* characters, appending an ellipsis when cut.
+
+    Returns:
+        str: The original text, or a truncated copy ending in ``...``.
+    """
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3].rstrip() + "..."
+
+
 def _wrap(*, text: str, indent: str, width: int = 78) -> str:
     """
     Word-wrap *text* with the given *indent*.
@@ -97,14 +109,14 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.description:
             print("    Description:")
             print(_wrap(text=sc.description, indent="      "))
-        if sc.aggregate_strategies:
-            print("    Aggregate Strategies:")
-            print(_wrap(text=", ".join(sc.aggregate_strategies), indent="      - "))
-        if sc.all_strategies:
-            print(f"    Available Strategies ({len(sc.all_strategies)}):")
-            print(_wrap(text=", ".join(sc.all_strategies), indent="      "))
-        if sc.default_strategy:
-            print(f"    Default Strategy: {sc.default_strategy}")
+        if sc.aggregate_techniques:
+            print("    Aggregate Techniques:")
+            print(_wrap(text=", ".join(sc.aggregate_techniques), indent="      - "))
+        if sc.all_techniques:
+            print(f"    Available Techniques ({len(sc.all_techniques)}):")
+            print(_wrap(text=", ".join(sc.all_techniques), indent="      "))
+        if sc.default_technique:
+            print(f"    Default Technique: {sc.default_technique}")
         if sc.default_datasets:
             print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
@@ -210,7 +222,7 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
         print(
             "\nConverters are registered by initializers. Include an initializer that "
             "registers converters to attach them to scenario techniques, for example:\n"
-            "  --strategies role_play:converter.translation_spanish\n"
+            "  --techniques role_play_movie_script:converter.translation_spanish\n"
         )
         return
 
@@ -229,7 +241,7 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
     print("\n" + "=" * 80)
     print(f"\nTotal converters: {len(items)}")
     print("\nAttach a converter to a scenario technique with, for example:")
-    print("  --strategies role_play:converter.<name>\n")
+    print("  --techniques role_play_movie_script:converter.<name>\n")
 
 
 # ---------------------------------------------------------------------------
@@ -262,34 +274,84 @@ def print_dataset_list(*, items: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_run_progress(*, run: ScenarioRunSummary, total_strategies: int = 0) -> None:
+def _format_retry_location(retry: Any) -> str:
+    """
+    Build a human-readable "on <component>, endpoint <url>" clause for a retry.
+
+    Returns:
+        str: The location clause, or an empty string when no context is available.
+    """
+    bits: list[str] = []
+    if retry.component_role:
+        role = retry.component_role.replace("_", " ")
+        bits.append(f"{role} {retry.component_name}" if retry.component_name else role)
+    if retry.endpoint:
+        bits.append(f"endpoint {retry.endpoint}")
+    return " on " + ", ".join(bits) if bits else ""
+
+
+def print_scenario_retry_warnings(*, run: ScenarioRunSummary, seen_attack_ids: set[str]) -> None:
+    """
+    Print retry warnings for attack results seen for the first time.
+
+    Called during polling so retries stream to the console as each attack result
+    lands. ``seen_attack_ids`` is mutated to de-duplicate across polls.
+
+    Args:
+        run: ``ScenarioRunSummary`` from ``GET /api/scenarios/runs/{id}``.
+        seen_attack_ids: Attack-result IDs already printed; updated in place.
+    """
+    new_attacks = [a for a in run.attack_retries if a.attack_result_id not in seen_attack_ids]
+    if not new_attacks:
+        return
+
+    # Finalize the in-place progress line (written with `\r`, no newline) so these
+    # warnings become persistent scrollback above the next progress redraw.
+    print()
+    for attack in new_attacks:
+        seen_attack_ids.add(attack.attack_result_id)
+        for retry in attack.retries:
+            exc = retry.exception_type or "error"
+            message = (retry.exception_message or "").strip().splitlines()
+            if message:
+                exc = f"{exc}: {_truncate_text(message[0], 160)}"
+            location = _format_retry_location(retry)
+            _cprint(
+                f"  ! retry #{retry.attempt_number} [{attack.atomic_attack_name}]{location}: {exc}",
+                color="yellow",
+            )
+
+
+def print_scenario_run_progress(*, run: ScenarioRunSummary, total_techniques: int = 0) -> None:
     """
     Print a single-line progress update (overwrites the current line).
 
     Args:
         run: ``ScenarioRunSummary`` from ``GET /api/scenarios/runs/{id}``.
-        total_strategies: Total number of strategies expected (0 if unknown).
+        total_techniques: Total number of techniques expected (0 if unknown).
     """
-    strategies_done = len(run.strategies_used)
-    # Strategies the user passed may be aggregates that expand on the server
-    # (e.g. `single_turn` -> N concrete strategies). Trust whichever count is larger.
-    effective_total = max(total_strategies, strategies_done)
+    techniques_done = len(run.techniques_used)
+    # Techniques the user passed may be aggregates that expand on the server
+    # (e.g. `single_turn` -> N concrete techniques). Trust whichever count is larger.
+    effective_total = max(total_techniques, techniques_done)
 
     parts: list[str] = []
 
+    # The bar tracks techniques completed / total, which is the only ratio we can
+    # honestly compute mid-run: the server only knows about attacks already persisted,
+    # so an attacks-based bar would always read 100%.
     if effective_total > 0:
-        parts.append(f"strategies: {strategies_done}/{effective_total}")
-    elif strategies_done > 0:
-        parts.append(f"strategies: {strategies_done}")
-
-    if run.total_attacks > 0:
-        pct = int((run.completed_attacks / run.total_attacks) * 100)
+        pct = int((techniques_done / effective_total) * 100)
         bar_width = 30
-        filled = int(bar_width * run.completed_attacks / run.total_attacks)
+        filled = int(bar_width * techniques_done / effective_total)
         bar = "█" * filled + "░" * (bar_width - filled)
-        parts.append(f"[{bar}] {run.completed_attacks}/{run.total_attacks} attacks ({pct}%)")
+        try:
+            bar.encode(sys.stdout.encoding or "utf-8")
+        except (LookupError, UnicodeEncodeError):
+            bar = "#" * filled + "-" * (bar_width - filled)
+        parts.append(f"[{bar}] techniques: {techniques_done}/{effective_total} ({pct}%)")
     else:
-        parts.append(f"attacks: {run.completed_attacks}")
+        parts.append(f"techniques: {techniques_done}")
 
     parts.append(f"success rate: {run.objective_achieved_rate}%")
     parts.append(run.status.value)
@@ -310,15 +372,28 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
     print(f"\nScenario: {run.scenario_name}")
     print(f"  Result ID:      {run.scenario_result_id}")
     print(f"  Status:         {run.status.value}")
-    print(f"  Total Attacks:  {run.total_attacks}")
-    print(f"  Completed:      {run.completed_attacks}")
+    # Count of individual attack-result records persisted (one per technique x objective
+    # that ran), not a planned total. It stops growing wherever a failed run halted.
+    print(f"  Attack Results: {run.total_attacks}")
     print(f"  Success Rate:   {run.objective_achieved_rate}%")
+
+    if run.total_retries:
+        print(f"  Retries:        {run.total_retries} (endpoint-stress signal)")
 
     if run.error:
         print(f"  Error:          {run.error}")
 
-    if run.strategies_used:
-        print(f"  Strategies:     {', '.join(run.strategies_used)}")
+    if run.techniques_used:
+        print(f"  Techniques:     {', '.join(run.techniques_used)}")
+
+    if run.failed_attacks:
+        print(f"\n  Failed Attacks ({len(run.failed_attacks)}):")
+        for failed in run.failed_attacks:
+            error_type = failed.error_type or "Error"
+            message = (failed.error_message or "").strip().splitlines()
+            detail = _truncate_text(message[0], 200) if message else "no detail"
+            retry_note = f" [{failed.total_retries} retries]" if failed.total_retries else ""
+            print(f"    - {failed.atomic_attack_name}{retry_note}: {error_type}: {detail}")
 
 
 # ---------------------------------------------------------------------------
@@ -358,10 +433,9 @@ def print_scenario_runs_list(*, runs: list[ScenarioRunSummary]) -> None:
     print("\nScenario Run History:")
     print("=" * 80)
     for idx, run in enumerate(runs, start=1):
-        rid = run.scenario_result_id[:8]
         created = run.created_at.isoformat() if run.created_at else "?"
         print(
-            f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {rid}…) — "
+            f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {run.scenario_result_id}) — "
             f"{run.total_attacks} attacks, {run.objective_achieved_rate}% success — {created}"
         )
     print("=" * 80)

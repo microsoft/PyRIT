@@ -13,7 +13,7 @@
 #
 # The Foundry scenario family provides the `RedTeamAgent` — a comprehensive red teaming scenario
 # that combines converter-based attacks (encoding/obfuscation), multi-turn attacks (Crescendo,
-# RedTeaming), and strategy composition. It's organized into difficulty levels: EASY, MODERATE,
+# RedTeaming), and technique composition. It's organized into difficulty levels: EASY, MODERATE,
 # and DIFFICULT.
 #
 # For full programming details, see
@@ -24,8 +24,8 @@ from pathlib import Path
 
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.foundry import FoundryStrategy, RedTeamAgent
+from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
 from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type: ignore
@@ -34,18 +34,18 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # %% [markdown]
 # ## RedTeamAgent
 #
-# Tests a target using a wide range of attack strategies — from simple encoding converters to
+# Tests a target using a wide range of attack techniques — from simple encoding converters to
 # complex multi-turn conversations. The default dataset is HarmBench.
 #
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan foundry.red_team_agent --target openai_chat --strategies base64 --max-dataset-size 1
+# pyrit_scan foundry.red_team_agent --target openai_chat --techniques base64 --max-dataset-size 1
 # ```
 #
-# **Available strategies by difficulty:**
+# **Available techniques by difficulty:**
 #
-# | Difficulty | Strategies |
+# | Difficulty | Techniques |
 # |---|---|
 # | **EASY** | AnsiAttack, AsciiArt, AsciiSmuggler, Atbash, Base64, Binary, Caesar, CharacterSpace, CharSwap, Diacritic, Flip, Jailbreak, Leetspeak, Morse, ROT13, StringJoin, SuffixAppend, UnicodeConfusable, UnicodeSubstitution, Url |
 # | **MODERATE** | Tense |
@@ -53,14 +53,17 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # | **Aggregates** | ALL, EASY, MODERATE, DIFFICULT |
 
 # %%
-dataset_config = DatasetConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
 
 scenario = RedTeamAgent()
-await scenario.initialize_async(  # type: ignore
-    objective_target=objective_target,
-    scenario_strategies=[FoundryStrategy.Base64],
-    dataset_config=dataset_config,
+scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [FoundryTechnique.Base64],
+        "dataset_config": dataset_config,
+    }
 )
+await scenario.initialize_async()  # type: ignore
 
 print(f"Scenario: {scenario.name}")
 print(f"Atomic attacks: {scenario.atomic_attack_count}")
@@ -71,21 +74,21 @@ scenario_result = await scenario.run_async()  # type: ignore
 await output_scenario_async(scenario_result)
 
 # %% [markdown]
-# ## Strategy Composition
+# ## Technique Composition
 #
-# You can pair a multi-turn attack with one or more converter strategies using `FoundryComposite`.
+# You can pair a multi-turn attack with one or more converter techniques using `FoundryComposite`.
 # Each converter in the composite is applied in sequence before the attack runs.
 #
 # ```python
 # from pyrit.scenario.foundry import FoundryComposite
 #
-# composed = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
+# composed = FoundryComposite(attack=FoundryTechnique.Crescendo, converters=[FoundryTechnique.Caesar, FoundryTechnique.CharSwap])
 # ```
 
 # %%
 # from pyrit.scenario.foundry import FoundryComposite
-# composed = FoundryComposite(attack=FoundryStrategy.Crescendo, converters=[FoundryStrategy.Caesar, FoundryStrategy.CharSwap])
-# scenario_strategies = [FoundryStrategy.Base64, composed]
+# composed = FoundryComposite(attack=FoundryTechnique.Crescendo, converters=[FoundryTechnique.Caesar, FoundryTechnique.CharSwap])
+# scenario_techniques = [FoundryTechnique.Base64, composed]
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

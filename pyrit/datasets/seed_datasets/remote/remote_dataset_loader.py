@@ -9,7 +9,7 @@ import logging
 import tempfile
 import zipfile
 from abc import ABC
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields
 from enum import Enum
 from pathlib import Path
@@ -25,6 +25,7 @@ from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.text_helper import read_txt, write_txt
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetMetadata
+from pyrit.models.harm_category import standardize_harm_categories
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,28 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             raise ValueError(
                 f"Expected {enum_cls.__name__}, got {type(value).__name__}: {value!r}. Valid values: {valid}"
             )
+
+    @staticmethod
+    def _standardize_harm_categories(
+        raw_categories: list[str] | str | None,
+        *,
+        alias_overrides: Mapping[str, object] | None = None,
+    ) -> list[str]:
+        """
+        Standardize raw harm categories.
+
+        Converts raw category string(s) to standardized HarmCategory enum names.
+
+        Args:
+            raw_categories: Raw category string(s) from the dataset
+                           (e.g., "violence", "harmful"), or None.
+            alias_overrides: Optional dataset-specific mapping that overrides alias
+                resolution and can map one raw category to multiple canonical values.
+
+        Returns:
+            List of standardized HarmCategory enum names.
+        """
+        return standardize_harm_categories(raw_categories, alias_overrides=alias_overrides)
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
         """
@@ -338,13 +361,15 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             """
             cache_dir = str(DB_DATA_PATH / "huggingface") if cache else None
 
-            # Explicitly set download_mode to reuse cached data and never re-download
+            # Reuse cached data when caching is enabled; force a re-download otherwise so
+            # cache=False genuinely picks up upstream edits instead of silently reusing the cache.
+            download_mode = DownloadMode.REUSE_DATASET_IF_EXISTS if cache else DownloadMode.FORCE_REDOWNLOAD
             return load_dataset(
                 dataset_name,
                 config,
                 split=split,
                 cache_dir=cache_dir,
-                download_mode=DownloadMode.REUSE_DATASET_IF_EXISTS,
+                download_mode=download_mode,
                 token=token,
                 **kwargs,
             )
@@ -424,26 +449,31 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         def _download_and_parse() -> dict[str, list[dict[str, Any]]]:
             zip_path: Path
             temp_to_clean: Path | None = None
-            if cache and cache_path.exists():
-                zip_path = cache_path
-            else:
-                if cache:
-                    cache_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                if cache and cache_path.exists():
                     zip_path = cache_path
                 else:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
-                        zip_path = Path(tmp.name)
+                    if cache:
+                        cache_dir.mkdir(parents=True, exist_ok=True)
+                        with tempfile.NamedTemporaryFile(
+                            delete=False,
+                            dir=cache_dir,
+                            suffix=".zip.part",
+                        ) as tmp:
+                            zip_path = Path(tmp.name)
+                    else:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+                            zip_path = Path(tmp.name)
                     temp_to_clean = zip_path
 
-                logger.info(f"Downloading zip archive from {source}")
-                with requests.get(source, stream=True) as response:
-                    response.raise_for_status()
-                    with zip_path.open("wb") as fh:
-                        for chunk in response.iter_content(chunk_size=1 << 16):
-                            if chunk:
-                                fh.write(chunk)
+                    logger.info(f"Downloading zip archive from {source}")
+                    with requests.get(source, stream=True) as response:
+                        response.raise_for_status()
+                        with zip_path.open("wb") as fh:
+                            for chunk in response.iter_content(chunk_size=1 << 16):
+                                if chunk:
+                                    fh.write(chunk)
 
-            try:
                 results: dict[str, list[dict[str, Any]]] = {}
                 with zipfile.ZipFile(zip_path) as zf:
                     members = set(zf.namelist())
@@ -460,6 +490,9 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
                                 "list[dict[str, Any]]",
                                 self.FILE_TYPE_HANDLERS[file_type]["read"](text),
                             )
+                if cache and temp_to_clean is not None:
+                    zip_path.replace(cache_path)
+                    temp_to_clean = None
                 return results
             finally:
                 if temp_to_clean is not None:

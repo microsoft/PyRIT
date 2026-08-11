@@ -26,12 +26,12 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.models import Seed, SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -60,8 +60,8 @@ class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
     """
     Dataset configuration for the Audio Achilles Heel scenario.
 
-    Shapes each ``audio_path`` seed from the ``garak_audio_achilles_heel`` dataset into a
-    ``SeedAttackGroup`` carrying:
+    Shapes each ``audio_path`` seed from the ``garak_audio_achilles_heel`` dataset into an
+    ``AttackSeedGroup`` carrying:
 
     - A ``SeedObjective`` derived from the clip's harm category (for scoring).
     - A text ``SeedPrompt`` (the benign nudge) at sequence 0.
@@ -109,7 +109,7 @@ class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
         humanized = category.replace("_", " ").strip()
         return OBJECTIVE_TEMPLATE.format(category=humanized) if humanized else GENERIC_OBJECTIVE
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[SeedAttackGroup]:
+    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
         Shape audio seeds into multimodal attack groups.
 
@@ -117,11 +117,11 @@ class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
             seeds (list[Seed]): The raw audio seeds loaded from memory.
 
         Returns:
-            list[SeedAttackGroup]: One attack group per audio clip, each pairing the text nudge
+            list[AttackSeedGroup]: One attack group per audio clip, each pairing the text nudge
                 and the audio clip in a single user turn under a derived objective.
         """
         return [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value=self._derive_objective(seed)),
                     SeedPrompt(value=self._text_prompt, data_type="text", sequence=0),
@@ -132,9 +132,9 @@ class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
         ]
 
 
-class AudioAchillesHeelStrategy(ScenarioStrategy):
+class AudioAchillesHeelTechnique(ScenarioTechnique):
     """
-    Strategies for the Audio Achilles Heel scenario.
+    Techniques for the Audio Achilles Heel scenario.
 
     The scenario has a single technique — send the spoken jailbreak as a multimodal
     (text + audio) turn. The comparison axis is the dataset's harm categories, not techniques.
@@ -143,7 +143,7 @@ class AudioAchillesHeelStrategy(ScenarioStrategy):
     # Aggregate member
     ALL = ("all", {"all"})
 
-    # Concrete strategy (value matches the atomic attack name)
+    # Concrete technique (value matches the atomic attack name)
     AudioJailbreak = ("audio_jailbreak", set[str]())
 
 
@@ -201,8 +201,7 @@ class AudioAchillesHeel(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=AudioAchillesHeelStrategy,
-            default_strategy=AudioAchillesHeelStrategy.ALL,
+            technique_class=AudioAchillesHeelTechnique,
             default_dataset_config=AudioAchillesHeelDatasetConfiguration(
                 dataset_names=["garak_audio_achilles_heel"],
                 text_prompt=text_prompt,
@@ -229,7 +228,7 @@ class AudioAchillesHeel(Scenario):
         Raises:
             ValueError: If no seed groups are available to attack.
         """
-        seed_groups: Sequence[SeedAttackGroup] = context.seed_groups
+        seed_groups: Sequence[AttackSeedGroup] = context.seed_groups
         if not seed_groups:
             raise ValueError("AudioAchillesHeel requires at least one audio seed group to attack.")
 
@@ -240,7 +239,7 @@ class AudioAchillesHeel(Scenario):
 
         return [
             AtomicAttack(
-                atomic_attack_name=AudioAchillesHeelStrategy.AudioJailbreak.value,
+                atomic_attack_name=AudioAchillesHeelTechnique.AudioJailbreak.value,
                 attack_technique=AttackTechnique(attack=attack),
                 seed_groups=list(seed_groups),
                 memory_labels=context.memory_labels,

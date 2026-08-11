@@ -14,7 +14,6 @@ from pyrit.common import apply_defaults
 from pyrit.models import AttackOutcome, AttackResult, ObjectiveTargetEvaluationIdentifier, ScenarioResult
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
-from pyrit.registry.tag_query import TagQuery
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder, resolve_technique_factories
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -31,42 +30,39 @@ logger = logging.getLogger(__name__)
 
 
 @cache
-def _build_benchmark_strategy() -> type[ScenarioStrategy]:
+def _build_benchmark_technique() -> type[ScenarioTechnique]:
     """
-    Build the ``BenchmarkStrategy`` enum from the registered factory catalog.
+    Build the ``BenchmarkTechnique`` enum from the registered factory catalog.
 
-    Reads ``core`` adversarial-capable factories from the
+    Reads adversarial-capable factories from the
     ``AttackTechniqueRegistry`` singleton and passes them to
-    ``build_strategy_class_from_factories``. Factories that bake their own
+    ``build_technique_class_from_factories``. Factories that bake their own
     ``adversarial_chat`` are excluded — the benchmark sweeps each technique
     across the user-supplied targets, which is incompatible with a technique
-    that pins its own adversarial target. The resulting enum has one
+    that pins its own adversarial target. Which techniques are registered is
+    decided by the active initializer (the registration gate); this scenario
+    does not narrow the pool further by group. The resulting enum has one
     concrete member per factory (e.g. ``red_teaming``, ``tap``,
-    ``crescendo_simulated``) plus ``default`` / ``light`` / ``single_turn``
-    / ``multi_turn`` aggregates derived from each factory's ``strategy_tags``.
+    ``crescendo_simulated``) and a ``light`` / ``single_turn`` / ``multi_turn``
+    aggregate for each catalog tag. ``light`` is the scenario's default run.
 
     The (technique × target) cross-product is materialized lazily in
     ``AdversarialBenchmark._build_atomic_attacks_async`` from the
     user-supplied ``adversarial_targets`` parameter.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically generated ``BenchmarkStrategy`` class.
+        type[ScenarioTechnique]: The dynamically generated ``BenchmarkTechnique`` class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
     factories = [
         factory
         for factory in registry.get_factories_or_raise().values()
-        if factory.uses_adversarial and "core" in factory.strategy_tags and factory.adversarial_chat is None
+        if factory.uses_adversarial and factory.adversarial_chat is None
     ]
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
-        class_name="BenchmarkStrategy",
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+        class_name="BenchmarkTechnique",
         factories=factories,
-        aggregate_tags={
-            "default": TagQuery.any_of("default"),
-            "light": TagQuery.any_of("light"),
-            "single_turn": TagQuery.any_of("single_turn"),
-            "multi_turn": TagQuery.any_of("multi_turn"),
-        },
+        default_tags={"light"},
     )
 
 
@@ -82,7 +78,7 @@ class AdversarialBenchmark(Scenario):
 
     At run time, ``_build_atomic_attacks_async`` performs the
     ``(technique × adversarial_target × dataset)`` cross-product: for each
-    selected adversarial-capable ``core`` factory in the
+    selected adversarial-capable factory in the
     ``AttackTechniqueRegistry`` and each requested target, it calls
     ``factory.create(adversarial_chat=...)`` with the
     resolved target — no global registry mutation. The resulting
@@ -95,16 +91,19 @@ class AdversarialBenchmark(Scenario):
     #: from a constructor parameter to the ``adversarial_targets`` scenario
     #: parameter and changed ``atomic_attack_name`` from
     #: ``{technique}__{model}__{dataset}`` to ``{technique}__{target}_{dataset}``.
+    #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
+    #: technique pool (and therefore the ``all`` aggregate) reflects whatever the
+    #: initializer registered rather than only core-tagged factories.
     #: ``use_cached`` only matches against prior runs at the current
-    #: ``VERSION``; v1 results remain queryable but won't suppress v2 runs.
-    VERSION: int = 2
+    #: ``VERSION``; older results remain queryable but won't suppress v3 runs.
+    VERSION: int = 3
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     @classmethod
-    def supported_parameters(cls) -> list[Parameter]:
+    def additional_parameters(cls) -> list[Parameter]:
         """
         Declare the ``adversarial_targets`` parameter.
 
@@ -175,13 +174,12 @@ class AdversarialBenchmark(Scenario):
         self._precomputed_cached_display_groups: dict[str, str] = {}
         self._cached_results_by_name: dict[str, list[AttackResult]] = {}
 
-        strategy_class = _build_benchmark_strategy()
+        technique_class = _build_benchmark_technique()
 
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=strategy_class,
-            default_strategy=strategy_class("light"),
+            technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=["harmbench"],
                 max_dataset_size=8,
@@ -240,7 +238,7 @@ class AdversarialBenchmark(Scenario):
             dataset_groups=context.seed_groups_by_dataset,
             adversarial_targets=resolved_targets,
             display_group_fn=lambda combo: combo.target_name or "",
-            include_baseline=False,
+            include_baseline=context.include_baseline,
         )
 
         if not self._use_cached:

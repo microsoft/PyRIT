@@ -48,9 +48,9 @@ def mock_api_client():
         scenario_name="foo",
         scenario_type="X",
         description="",
-        default_strategy="",
-        aggregate_strategies=[],
-        all_strategies=[],
+        default_technique="",
+        aggregate_techniques=[],
+        all_techniques=[],
         default_datasets=[],
         supported_parameters=[],
     )
@@ -62,9 +62,9 @@ def mock_api_client():
         scenario_name=kw.get("scenario_name", "foo"),
         scenario_type=kw.get("scenario_type", "X"),
         description=kw.get("description", ""),
-        default_strategy=kw.get("default_strategy", ""),
-        aggregate_strategies=kw.get("aggregate_strategies", []),
-        all_strategies=kw.get("all_strategies", []),
+        default_technique=kw.get("default_technique", ""),
+        aggregate_techniques=kw.get("aggregate_techniques", []),
+        all_techniques=kw.get("all_techniques", []),
         default_datasets=kw.get("default_datasets", []),
         supported_parameters=kw.get("supported_parameters", []),
     )
@@ -218,7 +218,32 @@ class TestPyRITShell:
         ):
             s.do_stop_server("")
         captured = capsys.readouterr()
-        assert "No server found" in captured.out
+        assert "could not be stopped" in captured.out
+
+    def test_do_stop_server_reports_owned_launcher_failure(self, shell, capsys):
+        s, _ = shell
+        s._launcher = MagicMock()
+        s._launcher.stop.return_value = False
+
+        s.do_stop_server("")
+
+        assert "could not be stopped" in capsys.readouterr().out
+
+    def test_do_stop_server_refuses_remote_url(self, shell, capsys):
+        s, _ = shell
+        s._base_url = "http://remote:8765"
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+            ) as probe_mock,
+            patch("pyrit.cli._server_launcher.stop_server_on_port") as stop_mock,
+        ):
+            s.do_stop_server("")
+
+        probe_mock.assert_not_called()
+        stop_mock.assert_not_called()
+        assert "Cannot stop non-local server" in capsys.readouterr().out
 
     def test_ensure_client_already_connected(self, shell):
         s, _ = shell
@@ -539,7 +564,7 @@ class TestDoRun:
                     "scenario_name": "foo",
                     "target": "t",
                     "initializers": ["a", {"name": "b", "args": {"x": 1}}],
-                    "scenario_strategies": ["s1"],
+                    "scenario_techniques": ["s1"],
                     "max_concurrency": 2,
                     "max_retries": 3,
                     "memory_labels": {"k": "v"},
@@ -557,7 +582,7 @@ class TestDoRun:
         sent = client.start_scenario_run_async.call_args.kwargs["request"]
         assert sent.initializers == ["a", "b"]
         assert sent.initializer_args == {"b": {"x": 1}}
-        assert sent.strategies == ["s1"]
+        assert sent.techniques == ["s1"]
         assert sent.max_concurrency == 2
         assert sent.max_retries == 3
         assert sent.labels == {"k": "v"}

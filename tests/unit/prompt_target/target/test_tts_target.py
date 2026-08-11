@@ -12,7 +12,7 @@ from openai import BadRequestError, RateLimitError
 from unit.mocks import get_image_message_piece, get_sample_conversations
 
 from pyrit.exceptions import RateLimitException
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAITTSTarget
 from pyrit.prompt_target.openai.openai_tts_target import TTSResponseFormat
 
@@ -20,7 +20,7 @@ from pyrit.prompt_target.openai.openai_tts_target import TTSResponseFormat
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture

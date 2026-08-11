@@ -108,6 +108,72 @@ export interface CreateTargetRequest {
   auth_mode?: 'api_key' | 'identity'
 }
 
+// --- Initializers ---
+
+export interface RegisteredInitializer {
+  initializer_name: string
+  initializer_type: string
+  description: string
+  required_env_vars: string[]
+  supported_parameters: Parameter[]
+}
+
+/** A read-only initializer from the `.pyrit_conf` baseline, referenced by registry name. */
+export interface BaselineInitializerSetting {
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index: number
+}
+
+/** A persisted additional initializer, referenced by registry name. */
+export interface AdditionalInitializerSetting {
+  id: string
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface InitializerSettingsResponse {
+  /** Read-only initializers from the `.pyrit_conf` baseline, in run order. */
+  baseline: BaselineInitializerSetting[]
+  /** Persisted additional initializers that run after the baseline, in run order. */
+  additional: AdditionalInitializerSetting[]
+}
+
+/** The persisted domain row returned by create/update of an additional initializer. */
+export interface AdditionalInitializer {
+  id: string
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface CreateAdditionalInitializerRequest {
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface UpdateAdditionalInitializerRequest {
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface ListRegisteredInitializersResponse {
+  items: RegisteredInitializer[]
+  pagination: PaginationInfo
+}
+
+export interface ApplyInitializerRequest {
+  parameters?: Record<string, unknown> | null
+}
+
+export interface ApplyInitializerResponse {
+  initializer_name: string
+  status: 'applied'
+  applied_parameters?: Record<string, unknown> | null
+}
+
 // --- Converters ---
 
 export interface ConverterIdentifier {
@@ -170,6 +236,7 @@ export interface TargetInfo {
   target_type: string
   endpoint?: string | null
   model_name?: string | null
+  identifier_hash: string
 }
 
 export interface AttackSummary {
@@ -194,6 +261,8 @@ export interface CreateAttackRequest {
   labels?: Record<string, string>
   source_conversation_id?: string
   cutoff_index?: number
+  system_prompt?: string
+  prepended_conversation?: PrependedMessageRequest[]
 }
 
 export interface CreateAttackResponse {
@@ -251,6 +320,11 @@ export interface MessagePieceRequest {
   mime_type?: string
   original_prompt_id?: string
   prompt_metadata?: Record<string, unknown>
+}
+
+export interface PrependedMessageRequest {
+  role: string // 'system' | 'user' | 'assistant'
+  pieces: MessagePieceRequest[]
 }
 
 export interface AddMessageRequest {

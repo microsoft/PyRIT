@@ -18,7 +18,7 @@ Helper functions include:
 """
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from unit.mocks import get_mock_scorer_identifier
@@ -33,8 +33,9 @@ from pyrit.executor.attack.component.conversation_manager import (
 )
 from pyrit.executor.attack.core import AttackContext
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 
@@ -348,36 +349,6 @@ class TestGetAdversarialChatMessages:
 
         assert result == []
 
-    def test_applies_labels(self) -> None:
-        """Test that labels are applied to transformed messages."""
-        piece = MessagePiece(role="user", original_value="Message", conversation_id="original")
-        messages = [Message(message_pieces=[piece])]
-        labels = {"category": "test", "source": "unit_test"}
-
-        result = get_adversarial_chat_messages(
-            messages,
-            adversarial_chat_conversation_id="adversarial_conv",
-            labels=labels,
-        )
-
-        assert result[0].get_piece().labels == labels
-
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning."""
-        piece = MessagePiece(role="user", original_value="Message", conversation_id="original")
-        messages = [Message(message_pieces=[piece])]
-
-        with patch(
-            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
-        ) as mock_deprecation:
-            get_adversarial_chat_messages(
-                messages,
-                adversarial_chat_conversation_id="adversarial_conv",
-                labels={"env": "prod"},
-            )
-
-        mock_deprecation.assert_called_once()
-
 
 class TestBuildConversationContextStringAsync:
     """Tests for the build_conversation_context_string_async helper function."""
@@ -613,56 +584,17 @@ class TestSystemPromptHandling:
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
         system_prompt = "You are a helpful assistant"
-        labels = {"type": "system"}
 
         manager.set_system_prompt(
             target=mock_chat_target,
             conversation_id=conversation_id,
             system_prompt=system_prompt,
-            labels=labels,
         )
 
         mock_chat_target.set_system_prompt.assert_called_once_with(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
-            labels=labels,
         )
-
-    def test_set_system_prompt_without_labels(
-        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
-    ) -> None:
-        """Test set_system_prompt works without labels."""
-        manager = ConversationManager()
-        conversation_id = str(uuid.uuid4())
-        system_prompt = "You are a helpful assistant"
-
-        manager.set_system_prompt(
-            target=mock_chat_target,
-            conversation_id=conversation_id,
-            system_prompt=system_prompt,
-        )
-
-        mock_chat_target.set_system_prompt.assert_called_once()
-        call_args = mock_chat_target.set_system_prompt.call_args
-        assert call_args.kwargs["labels"] is None
-
-    def test_set_system_prompt_labels_emit_deprecation_warning(
-        self, attack_identifier: ComponentIdentifier, mock_chat_target: MagicMock
-    ) -> None:
-        """Test that passing labels emits deprecation warning."""
-        manager = ConversationManager()
-
-        with patch(
-            "pyrit.executor.attack.component.conversation_manager.print_deprecation_message"
-        ) as mock_deprecation:
-            manager.set_system_prompt(
-                target=mock_chat_target,
-                conversation_id=str(uuid.uuid4()),
-                system_prompt="You are a helpful assistant",
-                labels={"type": "system"},
-            )
-
-        mock_deprecation.assert_called_once()
 
 
 # =============================================================================
@@ -830,6 +762,105 @@ class TestInitializeContext:
         text_value = context.next_message.get_piece().original_value
         assert "Next message" in text_value
         assert "Hello" in text_value or "doing well" in text_value
+
+    @pytest.mark.parametrize(
+        "prepended_conversation_config",
+        [
+            None,
+            PrependedConversationConfig(message_normalizer=ConversationContextNormalizer()),
+        ],
+    )
+    async def test_system_prompt_for_non_chat_target_preserves_instruction_and_objective(
+        self,
+        attack_identifier: ComponentIdentifier,
+        mock_prompt_target: MagicMock,
+        prepended_conversation_config: PrependedConversationConfig | None,
+    ) -> None:
+        manager = ConversationManager()
+        context = _TestAttackContext(params=AttackParameters(objective="Explain saponification"))
+        context.prepended_conversation = [Message.from_system_prompt("You are a chemistry tutor")]
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+            prepended_conversation_config=prepended_conversation_config,
+        )
+
+        assert context.next_message is not None
+        assert context.next_message.get_value() == "Turn 1:\nuser: You are a chemistry tutor\n\nExplain saponification"
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+            prepended_conversation_config=prepended_conversation_config,
+        )
+
+        assert context.next_message.get_value() == "Turn 1:\nuser: You are a chemistry tutor\n\nExplain saponification"
+
+    async def test_system_prompt_for_non_chat_target_preserves_supplied_next_message(
+        self,
+        attack_identifier: ComponentIdentifier,
+        mock_prompt_target: MagicMock,
+    ) -> None:
+        manager = ConversationManager()
+        context = _TestAttackContext(
+            params=AttackParameters(
+                objective="Unused objective",
+                next_message=Message.from_prompt(prompt="Caller-supplied question", role="user"),
+            )
+        )
+        context.prepended_conversation = [Message.from_system_prompt("Follow the policy")]
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        assert context.next_message is not None
+        assert context.next_message.get_value() == "Turn 1:\nuser: Follow the policy\n\nCaller-supplied question"
+
+    async def test_system_prompt_for_non_chat_target_preserves_multimodal_next_message(
+        self,
+        attack_identifier: ComponentIdentifier,
+        mock_prompt_target: MagicMock,
+    ) -> None:
+        manager = ConversationManager()
+        image_piece = MessagePiece(
+            role="user",
+            original_value="diagram.png",
+            original_value_data_type="image_path",
+        )
+        context = _TestAttackContext(
+            params=AttackParameters(
+                objective="Unused objective",
+                next_message=Message(message_pieces=[image_piece]),
+            )
+        )
+        context.prepended_conversation = [Message.from_system_prompt("Describe images precisely")]
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        assert context.next_message is not None
+        assert len(context.next_message.message_pieces) == 2
+        assert context.next_message.message_pieces[0].converted_value == "Turn 1:\nuser: Describe images precisely"
+        assert context.next_message.message_pieces[1].converted_value == "diagram.png"
+        assert context.next_message.message_pieces[1].original_value_data_type == "image_path"
+
+        await manager.initialize_context_async(
+            context=context,
+            target=mock_prompt_target,
+            conversation_id=str(uuid.uuid4()),
+        )
+
+        assert len(context.next_message.message_pieces) == 2
+        assert context.next_message.message_pieces[0].converted_value == "Turn 1:\nuser: Describe images precisely"
 
     async def test_returns_turn_count_for_multi_turn_attacks(
         self,
@@ -1062,33 +1093,6 @@ class TestPrependedConversationConfigSettings:
         text_value = context.next_message.get_piece().original_value
         assert len(text_value) > 0
 
-    async def test_non_chat_target_behavior_raise_explicit(
-        self,
-        attack_identifier: ComponentIdentifier,
-        mock_prompt_target: MagicMock,
-        sample_conversation: list[Message],
-    ) -> None:
-        """Test that non_chat_target_behavior='raise' raises ValueError."""
-        manager = ConversationManager()
-        conversation_id = str(uuid.uuid4())
-        context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
-        context.prepended_conversation = sample_conversation
-
-        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
-            config = PrependedConversationConfig(non_chat_target_behavior="raise")
-
-        with pytest.raises(
-            ValueError,
-            match="prepended_conversation requires the objective target to support multi-turn conversations"
-            " with editable history",
-        ):
-            await manager.initialize_context_async(
-                context=context,
-                target=mock_prompt_target,
-                conversation_id=conversation_id,
-                prepended_conversation_config=config,
-            )
-
     async def test_non_chat_target_behavior_normalize_first_turn_creates_next_message(
         self,
         attack_identifier: ComponentIdentifier,
@@ -1188,7 +1192,7 @@ class TestPrependedConversationConfigSettings:
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.initialize_context_async(
             context=context,
@@ -1215,7 +1219,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         config = PrependedConversationConfig(apply_converters_to_roles=["user"])
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.initialize_context_async(
             context=context,
@@ -1243,7 +1247,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         config = PrependedConversationConfig(apply_converters_to_roles=["assistant"])
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.initialize_context_async(
             context=context,
@@ -1271,7 +1275,7 @@ class TestPrependedConversationConfigSettings:
         context.prepended_conversation = sample_conversation
 
         config = PrependedConversationConfig(apply_converters_to_roles=[])
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.initialize_context_async(
             context=context,
@@ -1353,72 +1357,22 @@ class TestPrependedConversationConfigSettings:
         assert "CUSTOM_FORMAT: test content" in text_value
 
     # -------------------------------------------------------------------------
-    # Factory Methods Tests
-    # -------------------------------------------------------------------------
-
-    def test_default_factory_creates_raise_behavior(self) -> None:
-        """Test that PrependedConversationConfig.default() creates raise behavior."""
-        with pytest.warns(DeprecationWarning, match="PrependedConversationConfig.default\\(\\) is deprecated"):
-            config = PrependedConversationConfig.default()
-
-        assert config.non_chat_target_behavior == "raise"
-        assert config.message_normalizer is None
-        # Should include all roles
-        assert "user" in config.apply_converters_to_roles
-        assert "assistant" in config.apply_converters_to_roles
-        assert "system" in config.apply_converters_to_roles
-
-    def test_for_non_chat_target_factory_creates_normalize_behavior(self) -> None:
-        """Test that for_non_chat_target() creates normalize_first_turn behavior."""
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target()
-
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    def test_for_non_chat_target_with_custom_normalizer(self) -> None:
-        """Test that for_non_chat_target() accepts custom message_normalizer."""
-        from pyrit.message_normalizer import MessageStringNormalizer
-
-        mock_normalizer = MagicMock(spec=MessageStringNormalizer)
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target(message_normalizer=mock_normalizer)
-
-        assert config.message_normalizer == mock_normalizer
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    def test_for_non_chat_target_with_custom_roles(self) -> None:
-        """Test that for_non_chat_target() accepts custom apply_converters_to_roles."""
-        with pytest.warns(
-            DeprecationWarning, match="PrependedConversationConfig.for_non_chat_target\\(\\) is deprecated"
-        ):
-            config = PrependedConversationConfig.for_non_chat_target(apply_converters_to_roles=["user"])
-
-        assert config.apply_converters_to_roles == ["user"]
-        assert config.non_chat_target_behavior == "normalize_first_turn"
-
-    # -------------------------------------------------------------------------
     # Chat Target Behavior (Config has no effect)
     # -------------------------------------------------------------------------
 
-    async def test_chat_target_ignores_non_chat_target_behavior(
+    async def test_chat_target_adds_prepended_conversation(
         self,
         attack_identifier: ComponentIdentifier,
         mock_chat_target: MagicMock,
         sample_conversation: list[Message],
     ) -> None:
-        """Test that chat targets ignore non_chat_target_behavior setting."""
+        """Test that chat targets add the prepended conversation to memory."""
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = sample_conversation
 
-        # Even with raise behavior, chat targets should work
-        with pytest.warns(DeprecationWarning, match="non_chat_target_behavior"):
-            config = PrependedConversationConfig(non_chat_target_behavior="raise")
+        config = PrependedConversationConfig()
 
         state = await manager.initialize_context_async(
             context=context,
@@ -1610,7 +1564,7 @@ class TestAddPrependedConversationToMemory:
         manager = ConversationManager(prompt_normalizer=mock_prompt_normalizer)
         conversation_id = str(uuid.uuid4())
         conversation = [Message(message_pieces=[sample_user_piece])]
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
 
         await manager.add_prepended_conversation_to_memory_async(
             prepended_conversation=conversation,
@@ -1656,8 +1610,6 @@ class TestEdgeCasesAndErrorHandling:
         manager = ConversationManager()
         conversation_id = str(uuid.uuid4())
 
-        # Add metadata to piece
-        sample_user_piece.labels = {"test": "label"}
         sample_user_piece.prompt_metadata = {"key": "value", "count": 1}
         context = _TestAttackContext(params=AttackParameters(objective="Test objective"))
         context.prepended_conversation = [Message(message_pieces=[sample_user_piece])]
@@ -1671,7 +1623,6 @@ class TestEdgeCasesAndErrorHandling:
         stored = manager.get_conversation(conversation_id)
         assert len(stored) == 1
         processed_piece = stored[0].message_pieces[0]
-        assert processed_piece.labels == {"test": "label"}
         assert processed_piece.prompt_metadata == {"key": "value", "count": 1}
 
     async def test_preserves_original_and_converted_values(

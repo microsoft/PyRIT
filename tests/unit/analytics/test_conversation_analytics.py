@@ -9,7 +9,7 @@ import pytest
 from pyrit.analytics.conversation_analytics import ConversationAnalytics
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import EmbeddingDataEntry
-from pyrit.models import Message, MessagePiece
+from pyrit.models import MessagePiece, flatten_to_message_pieces
 from unit.mocks import get_sample_conversations
 
 
@@ -21,7 +21,7 @@ def mock_memory_interface():
 @pytest.fixture
 def sample_message_pieces() -> Sequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 def test_get_similar_chat_messages_by_content(mock_memory_interface, sample_message_pieces):

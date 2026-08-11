@@ -115,6 +115,13 @@ class TestParameterSerialization:
         assert dumped["is_list"] is True
         assert dumped["default"] == ["x"]
 
+    def test_constrained_list_surfaces_element_choices(self) -> None:
+        dumped = Parameter(name="tags", description="d", default=["fast"], param_type=list[_Speed]).model_dump()
+
+        assert dumped["type_name"] == "list[str]"
+        assert dumped["is_list"] is True
+        assert dumped["choices"] == ["fast", "slow"]
+
     def test_list_default_serializes_elementwise(self) -> None:
         """A list default is preserved as a list of display strings, not flattened to ``"['1', '2']"``."""
         dumped = Parameter(name="nums", description="d", default=[1, 2], param_type=list[int]).model_dump()
@@ -156,16 +163,23 @@ class TestDisplayChoices:
     def test_unconstrained_returns_none(self, annotation: object) -> None:
         assert display_choices(annotation) is None
 
+    def test_constrained_list_unwraps_to_element_choices(self) -> None:
+        assert display_choices(list[Literal["a", "b"]]) == ("a", "b")
+        assert display_choices(list[_Speed]) == ("fast", "slow")
+
 
 class TestIsStringCoercible:
     """``Parameter.is_string_coercible`` reflects whether a string token can supply the value."""
 
-    @pytest.mark.parametrize("param_type", [str, int, float, bool, Literal["a", "b"]])
+    @pytest.mark.parametrize(
+        "param_type",
+        [str, int, float, bool, Literal["a", "b"], _Speed, int | None, _Speed | None],
+    )
     def test_coercible_value_types(self, param_type: object) -> None:
         p = Parameter(name="x", description="d", param_type=param_type)
         assert p.is_string_coercible is True
 
-    @pytest.mark.parametrize("param_type", [None, list[str], _Speed, _Unsupported])
+    @pytest.mark.parametrize("param_type", [None, list[str], _Unsupported])
     def test_non_coercible_value_types(self, param_type: object) -> None:
         p = Parameter(name="x", description="d", param_type=param_type)
         assert p.is_string_coercible is False
@@ -176,6 +190,10 @@ class TestIsStringCoercible:
             description="d",
             reference=RegistryReference(component_type=ComponentType.TARGET),
         )
+        assert p.is_string_coercible is False
+
+    def test_opaque_is_never_coercible(self) -> None:
+        p = Parameter(name="value", description="d", param_type=str, opaque=True)
         assert p.is_string_coercible is False
 
 
@@ -259,6 +277,10 @@ class TestCoerceValueConstrainedScalars:
         p = Parameter(name="speed", description="d", param_type=_Speed)
         assert p.coerce_value(_Speed.SLOW) is _Speed.SLOW
 
+    def test_optional_enum_by_value(self) -> None:
+        p = Parameter(name="speed", description="d", param_type=_Speed | None)
+        assert p.coerce_value("slow") is _Speed.SLOW
+
     def test_enum_invalid_raises(self) -> None:
         p = Parameter(name="speed", description="d", param_type=_Speed)
         with pytest.raises(ValueError, match="one of"):
@@ -294,6 +316,11 @@ class TestCoerceValueLists:
 class TestCoerceValuePassthrough:
     """Reference / arbitrary / None param_types pass through unchanged."""
 
+    @pytest.mark.parametrize("param_type", [int | None, _Speed | None, list[str] | None])
+    def test_optional_type_accepts_none(self, param_type: object) -> None:
+        p = Parameter(name="value", description="d", param_type=param_type)
+        assert p.coerce_value(None) is None
+
     def test_param_type_none_returns_distinct_object(self) -> None:
         raw = ["a", "b"]
         coerced = Parameter(name="opts", description="d").coerce_value(raw)
@@ -317,6 +344,18 @@ class TestCoerceValuePassthrough:
             reference=RegistryReference(component_type=ComponentType.TARGET),
         )
         assert p.coerce_value("my_target") == "my_target"
+
+    def test_opaque_param_passes_value_through_by_identity(self) -> None:
+        """An opaque parameter returns the live object unchanged — never coerced or copied."""
+        live = {"converter": object()}
+        p = Parameter(name="technique_converters", description="d", opaque=True)
+        assert p.coerce_value(live) is live
+
+    def test_opaque_param_does_not_deepcopy_none(self) -> None:
+        """Opaque takes precedence over the ``param_type=None`` deep-copy passthrough."""
+        raw = ["a", "b"]
+        coerced = Parameter(name="cfg", description="d", opaque=True).coerce_value(raw)
+        assert coerced is raw
 
 
 class TestValidate:
@@ -345,6 +384,10 @@ class TestValidate:
             reference=RegistryReference(component_type=ComponentType.TARGET),
         )
         p.validate()
+
+    def test_opaque_param_is_valid_without_param_type_or_default(self) -> None:
+        """An opaque parameter needs neither a ``param_type`` nor a default to validate."""
+        Parameter(name="technique_converters", description="d", opaque=True).validate()
 
 
 class TestCoercionParity:

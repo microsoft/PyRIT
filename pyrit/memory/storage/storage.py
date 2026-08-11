@@ -12,8 +12,6 @@ from urllib.parse import urlparse
 
 import aiofiles
 
-from pyrit.common.deprecation import print_deprecation_message
-
 if TYPE_CHECKING:
     from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
@@ -65,86 +63,6 @@ class StorageIO(ABC):
         """
         Asynchronously creates a directory or equivalent in the storage system if it doesn't exist.
         """
-
-    async def read_file(self, path: Path | str) -> bytes:  # pyrit-async-suffix-exempt
-        """
-        Read a file from storage (deprecated alias of ``read_file_async``).
-
-        Args:
-            path (Path | str): The path to the file.
-
-        Returns:
-            bytes: The content of the file.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.storage.StorageIO.read_file",
-            new_item="pyrit.memory.storage.storage.StorageIO.read_file_async",
-            removed_in="0.16.0",
-        )
-        return await self.read_file_async(path)
-
-    async def write_file(self, path: Path | str, data: bytes) -> None:  # pyrit-async-suffix-exempt
-        """
-        Write data to storage (deprecated alias of ``write_file_async``).
-
-        Args:
-            path (Path | str): The path to the file.
-            data (bytes): The content to write to the file.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.storage.StorageIO.write_file",
-            new_item="pyrit.memory.storage.storage.StorageIO.write_file_async",
-            removed_in="0.16.0",
-        )
-        await self.write_file_async(path, data)
-
-    async def path_exists(self, path: Path | str) -> bool:  # pyrit-async-suffix-exempt
-        """
-        Check whether a path exists (deprecated alias of ``path_exists_async``).
-
-        Args:
-            path (Path | str): The path to check.
-
-        Returns:
-            bool: True if the path exists, False otherwise.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.storage.StorageIO.path_exists",
-            new_item="pyrit.memory.storage.storage.StorageIO.path_exists_async",
-            removed_in="0.16.0",
-        )
-        return await self.path_exists_async(path)
-
-    async def is_file(self, path: Path | str) -> bool:  # pyrit-async-suffix-exempt
-        """
-        Check whether the given path is a file (deprecated alias of ``is_file_async``).
-
-        Args:
-            path (Path | str): The path to check.
-
-        Returns:
-            bool: True if the path is a file, False otherwise.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.storage.StorageIO.is_file",
-            new_item="pyrit.memory.storage.storage.StorageIO.is_file_async",
-            removed_in="0.16.0",
-        )
-        return await self.is_file_async(path)
-
-    async def create_directory_if_not_exists(self, path: Path | str) -> None:  # pyrit-async-suffix-exempt
-        """
-        Create a directory if it does not exist (deprecated alias of ``create_directory_if_not_exists_async``).
-
-        Args:
-            path (Path | str): The directory path to create.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.storage.StorageIO.create_directory_if_not_exists",
-            new_item="pyrit.memory.storage.storage.StorageIO.create_directory_if_not_exists_async",
-            removed_in="0.16.0",
-        )
-        await self.create_directory_if_not_exists_async(path)
 
 
 class DiskStorageIO(StorageIO):

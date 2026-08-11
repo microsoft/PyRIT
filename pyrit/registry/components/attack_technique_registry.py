@@ -14,7 +14,7 @@ later when the factory is decoupled into a buildable component.
 Scenarios and initializers register self-describing factories (via
 ``register_from_factories``), retrieve them with ``get_factories`` /
 ``get_factories_or_raise``, filter them in-place by factory properties (e.g.
-``factory.uses_adversarial`` or strategy tags), and call ``factory.create()``
+``factory.uses_adversarial`` or technique tags), and call ``factory.create()``
 with the scenario's objective target and scorer.
 """
 
@@ -29,7 +29,6 @@ from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
-    from pyrit.registry.tag_query import TagQuery
     from pyrit.scenario.core.attack_technique_factory import (
         AttackTechniqueFactory,
         ScorerOverridePolicy,
@@ -52,6 +51,46 @@ def _attack_technique_factory_type() -> type[AttackTechniqueFactory]:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
     return AttackTechniqueFactory
+
+
+def _validate_generated_member_collisions(
+    *,
+    class_name: str,
+    factories: list[AttackTechniqueFactory],
+    aggregate_tags: set[str],
+) -> None:
+    """
+    Validate that generated enum member names and values are unambiguous.
+
+    Args:
+        class_name (str): Name of the enum class being generated.
+        factories (list[AttackTechniqueFactory]): Technique factories that become enum members.
+        aggregate_tags (set[str]): Catalog tags that become aggregate members.
+
+    Raises:
+        ValueError: If a factory or aggregate would collide with a reserved or generated member.
+    """
+    member_sources = {"ALL": "reserved aggregate 'all'", "DEFAULT": "reserved aggregate 'default'"}
+    value_sources = {"all": "reserved aggregate 'all'", "default": "reserved aggregate 'default'"}
+
+    def _reserve(*, member_name: str, member_value: str, source: str) -> None:
+        if existing := member_sources.get(member_name):
+            raise ValueError(
+                f"Cannot build {class_name}: {source} maps to enum member name {member_name!r}, "
+                f"already used by {existing}. Rename the tag or factory."
+            )
+        if existing := value_sources.get(member_value):
+            raise ValueError(
+                f"Cannot build {class_name}: {source} maps to enum value {member_value!r}, "
+                f"already used by {existing}. Rename the tag or factory."
+            )
+        member_sources[member_name] = source
+        value_sources[member_value] = source
+
+    for tag in sorted(aggregate_tags):
+        _reserve(member_name=tag.upper(), member_value=tag, source=f"aggregate tag {tag!r}")
+    for factory in factories:
+        _reserve(member_name=factory.name, member_value=factory.name, source=f"technique factory {factory.name!r}")
 
 
 @dataclass(frozen=True)
@@ -132,7 +171,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Return all registered factories as a name→factory dict.
 
         Callers filter the result in-place using factory properties (e.g.
-        ``factory.uses_adversarial`` or ``factory.strategy_tags``).
+        ``factory.uses_adversarial`` or ``factory.technique_tags``).
 
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
@@ -144,9 +183,9 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Return all registered factories, raising if the registry is empty.
 
         Use this from any code path that needs the registry to be populated
-        (scenario strategy builders, scenario initialization) so an empty
+        (scenario technique builders, scenario initialization) so an empty
         registry surfaces a single, descriptive error instead of silently
-        producing empty strategy enums or empty attack lists.
+        producing empty technique enums or empty attack lists.
 
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
@@ -173,62 +212,123 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         return self._scorer_override_policy
 
     @staticmethod
-    def build_strategy_class_from_factories(
+    def build_technique_class_from_factories(
         *,
         class_name: str,
         factories: list[AttackTechniqueFactory],
-        aggregate_tags: dict[str, TagQuery],
+        default_tags: set[str] | None = None,
+        default_names: set[str] | None = None,
     ) -> type:
         """
-        Build a ``ScenarioStrategy`` enum subclass dynamically from technique factories.
+        Build a ``ScenarioTechnique`` enum subclass dynamically from technique factories.
 
         Creates an enum class with:
         - An ``ALL`` aggregate member (always included).
-        - Additional aggregate members from ``aggregate_tags`` keys.
+        - A ``DEFAULT`` aggregate member when a default selection is provided and at
+            least one pool technique matches it.
+        - An aggregate member for every catalog tag present in the pool, so tags and
+            aggregates are synonymous: selecting a tag (e.g. ``core`` or a custom
+            ``airt_internal``) expands to every technique carrying it.
         - One technique member per factory, with tags from the factory.
 
-        Each aggregate maps to a ``TagQuery`` that determines which
-        technique factories belong to it.
+        The catalog's *default* — what runs when the caller selects nothing — is defined
+        by exactly one of ``default_tags`` or ``default_names`` (or neither). Both build
+        the synthetic ``DEFAULT`` aggregate and are recorded on the class, returned by
+        ``ScenarioTechnique.default()``. When neither is given, or the chosen set matches
+        no pool technique (e.g. a custom initializer registers no ``light``-tagged
+        factory), the default falls back to ``ALL``. The default is chosen per-scenario,
+        so the same technique can be the default for one scenario and not another.
 
         Args:
             class_name (str): Name for the generated enum class.
-            factories (list[AttackTechniqueFactory]): Technique factories to include
-                as enum members.
-            aggregate_tags (dict[str, TagQuery]): Maps aggregate member names to a
-                ``TagQuery`` that selects which techniques belong to the aggregate.
-                An ``ALL`` aggregate (expanding to all techniques) is always added.
+            factories (list[AttackTechniqueFactory]): The technique factories that form
+                this scenario's pool of enum members. Callers pre-filter this list to
+                shape the pool.
+            default_tags (set[str] | None): Tags whose union defines the scenario's
+                ``DEFAULT`` aggregate — every pool technique carrying any of these tags is
+                the default (e.g. ``{"light"}``). Mutually exclusive with ``default_names``.
+            default_names (set[str] | None): Exact technique names that form the
+                scenario's ``DEFAULT`` aggregate. Names not present in the pool are
+                ignored, so a scenario can list its intended default set even when some of
+                those techniques are filtered out. Mutually exclusive with ``default_tags``.
 
         Returns:
-            type: A ``ScenarioStrategy`` subclass with the generated members.
-        """
-        from pyrit.scenario import ScenarioStrategy
+            type: A ``ScenarioTechnique`` subclass with the generated members.
 
-        all_aggregate_tag_names = {"all"} | set(aggregate_tags.keys())
+        Raises:
+            ValueError: If both ``default_tags`` and ``default_names`` are provided, or if generated
+                enum member names or values collide.
+        """
+        from pyrit.scenario import ScenarioTechnique
+
+        if default_tags and default_names:
+            raise ValueError("Provide at most one of default_tags or default_names, not both.")
+
+        pool = list(factories)
+        pool_technique_names = {f.name for f in pool}
+        pool_tags = {tag for f in pool for tag in f.technique_tags}
+
+        # default: the pool techniques that form the DEFAULT aggregate, from either an
+        # explicit set of names or the union over a set of tags. Limited to the pool, so
+        # DEFAULT is always a subset of ALL. When it is empty (nothing matched) no DEFAULT
+        # aggregate is built and the catalog default falls back to ALL.
+        if default_names:
+            default_member_names = {f.name for f in pool if f.name in default_names}
+        elif default_tags:
+            default_member_names = {f.name for f in pool if set(f.technique_tags) & default_tags}
+        else:
+            default_member_names = set()
+
+        # Auto-promote every catalog tag present in the pool into a selectable aggregate,
+        # so tags and aggregates are synonymous: selecting a tag expands to every technique
+        # carrying it. "all" and "default" are reserved synthetic aggregates and are never
+        # derived from tags. A tag that collides with a technique name stays a concrete
+        # technique (name selection wins).
+        reserved_aggregate_tags = {"all", "default"}
+        auto_aggregate_tags = pool_tags - reserved_aggregate_tags - pool_technique_names
+        _validate_generated_member_collisions(
+            class_name=class_name,
+            factories=pool,
+            aggregate_tags=auto_aggregate_tags,
+        )
+
+        all_aggregate_tag_names = {"all"} | auto_aggregate_tags
+        if default_member_names:
+            all_aggregate_tag_names.add("default")
 
         members: dict[str, tuple[str, set[str]]] = {}
 
         # Aggregate members first (ALL is always present)
         members["ALL"] = ("all", {"all"})
-        for agg_name in aggregate_tags:
+        if default_member_names:
+            members["DEFAULT"] = ("default", {"default"})
+        for agg_name in sorted(auto_aggregate_tags):
             members[agg_name.upper()] = (agg_name, {agg_name})
 
-        # Technique members from factories — assign aggregate tags based on TagQuery matching
-        for factory in factories:
-            factory_tags = set(factory.strategy_tags)
-            matched_agg_tags = {agg_name for agg_name, query in aggregate_tags.items() if query.matches(factory_tags)}
-            members[factory.name] = (factory.name, factory_tags | matched_agg_tags)
+        # Technique members from the pool — tag DEFAULT members so the aggregate expands.
+        for factory in pool:
+            factory_tags = set(factory.technique_tags)
+            if factory.name in default_member_names:
+                factory_tags = factory_tags | {"default"}
+            members[factory.name] = (factory.name, factory_tags)
 
         # Build the enum class dynamically
-        strategy_cls = ScenarioStrategy(class_name, members)
+        technique_cls = ScenarioTechnique(class_name, members)
 
         # Override get_aggregate_tags on the generated class
         @classmethod
         def _get_aggregate_tags(cls: type) -> set[str]:
             return set(all_aggregate_tag_names)
 
-        strategy_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[ty:invalid-assignment]
+        technique_cls.get_aggregate_tags = _get_aggregate_tags  # type: ignore[ty:invalid-assignment]
 
-        return strategy_cls  # type: ignore[ty:invalid-return-type]
+        # Record the catalog's default only when a DEFAULT aggregate was actually built.
+        # When it wasn't, the attribute is left unset and ScenarioTechnique.default() owns
+        # the single ALL fallback — so the "no default -> ALL" rule lives in one place.
+        if default_member_names:
+            technique_cls._default_technique_value = "default"  # type: ignore[ty:unresolved-attribute]
+
+        return technique_cls  # type: ignore[ty:invalid-return-type]
 
     def register_from_factories(
         self,
@@ -241,12 +341,12 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
 
         Args:
             factories (list[AttackTechniqueFactory]): Self-describing factories to
-                register. Each factory's ``name`` and ``strategy_tags`` properties are
+                register. Each factory's ``name`` and ``technique_tags`` properties are
                 used directly.
         """
         for factory in factories:
             if factory.name not in self.instances:
-                tags: dict[str, str] = dict.fromkeys(factory.strategy_tags, "")
+                tags: dict[str, str] = dict.fromkeys(factory.technique_tags, "")
                 self.register_technique(
                     name=factory.name,
                     factory=factory,

@@ -14,8 +14,12 @@ import yaml
 import pyrit.datasets.seed_datasets.remote  # noqa: F401  triggers loader registration
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+    _AgentThreatRulesDataset,
+)
 from pyrit.datasets.seed_datasets.remote.darkbench_dataset import _DarkBenchDataset
 from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
+from pyrit.datasets.seed_datasets.remote.promptintel_dataset import _PromptIntelDataset
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
 from pyrit.datasets.seed_datasets.seed_metadata import (
     RECOMMENDED_TAGS,
@@ -154,30 +158,11 @@ class TestSeedDatasetProvider:
                 await SeedDatasetProvider.fetch_datasets_async(dataset_names=["d1", "invalid1", "invalid2"])
 
 
-class TestFetchDatasetDeprecation:
-    """Tests for the fetch_dataset -> fetch_dataset_async deprecation bridge."""
-
-    async def test_legacy_caller_warns_and_dispatches_to_new_override(self):
-        """Calling deprecated fetch_dataset on a new-style subclass warns and works."""
-
-        class NewStyleProvider(SeedDatasetProvider):
-            should_register = False
-
-            @property
-            def dataset_name(self) -> str:
-                return "new_style"
-
-            async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
-                return SeedDataset(seeds=[SeedPrompt(value="x", data_type="text")], dataset_name="new_style")
-
-        provider = NewStyleProvider()
-        with pytest.warns(DeprecationWarning, match="fetch_dataset is deprecated"):
-            dataset = await provider.fetch_dataset()
-        assert isinstance(dataset, SeedDataset)
-        assert dataset.dataset_name == "new_style"
+class TestFetchDatasetAsync:
+    """Tests for fetch_dataset_async on provider subclasses."""
 
     async def test_new_caller_does_not_warn_for_new_override(self):
-        """Calling fetch_dataset_async on a new-style subclass does not warn."""
+        """Calling fetch_dataset_async on a subclass does not warn."""
 
         class NewStyleProvider(SeedDatasetProvider):
             should_register = False
@@ -194,43 +179,6 @@ class TestFetchDatasetDeprecation:
             warnings.simplefilter("error", DeprecationWarning)
             dataset = await provider.fetch_dataset_async()
         assert isinstance(dataset, SeedDataset)
-
-    async def test_legacy_subclass_emits_class_definition_warning(self):
-        """Defining a subclass that overrides only fetch_dataset emits a DeprecationWarning."""
-
-        with pytest.warns(DeprecationWarning, match="fetch_dataset is deprecated"):
-
-            class LegacyProvider(SeedDatasetProvider):
-                should_register = False
-
-                @property
-                def dataset_name(self) -> str:
-                    return "legacy"
-
-                async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
-                    return SeedDataset(seeds=[SeedPrompt(value="x", data_type="text")], dataset_name="legacy")
-
-    async def test_new_caller_dispatches_to_legacy_override_with_warning(self):
-        """Calling fetch_dataset_async on a legacy-style subclass warns and delegates."""
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-
-            class LegacyProvider(SeedDatasetProvider):
-                should_register = False
-
-                @property
-                def dataset_name(self) -> str:
-                    return "legacy"
-
-                async def fetch_dataset(self, *, cache: bool = True) -> SeedDataset:
-                    return SeedDataset(seeds=[SeedPrompt(value="x", data_type="text")], dataset_name="legacy")
-
-        provider = LegacyProvider()
-        with pytest.warns(DeprecationWarning, match="fetch_dataset is deprecated"):
-            dataset = await provider.fetch_dataset_async()
-        assert isinstance(dataset, SeedDataset)
-        assert dataset.dataset_name == "legacy"
 
     async def test_no_override_raises_not_implemented(self):
         """Subclass that overrides neither method raises NotImplementedError on fetch."""
@@ -266,7 +214,7 @@ class TestHarmBenchDataset:
             assert first_prompt.value == "Test harmful behavior 1"
             assert first_prompt.data_type == "text"
             assert first_prompt.dataset_name == "harmbench"
-            assert first_prompt.harm_categories == ["chemical_biological"]
+            assert first_prompt.harm_categories == ["CBRN"]
             assert first_prompt.name == "HarmBench Examples"
 
     def test_dataset_name(self):
@@ -320,7 +268,8 @@ class TestDarkBenchDataset:
             assert first_prompt.value == "Test dark pattern example 1"
             assert first_prompt.data_type == "text"
             assert first_prompt.dataset_name == "dark_bench"
-            assert first_prompt.harm_categories == ["manipulative_design"]
+            assert first_prompt.harm_categories == []
+            assert first_prompt.metadata["deceptive_pattern"] == "manipulative_design"
 
     def test_dataset_name(self):
         """Test dataset_name property."""
@@ -343,7 +292,7 @@ class TestDarkBenchDataset:
             assert call_kwargs["dataset_name"] == "custom/darkbench"
             assert call_kwargs["config"] == "custom_config"
             # split is hardcoded at the call site since upstream apart/darkbench
-            # publishes only the "train" split (constructor kwarg is deprecated)
+            # publishes only the "train" split
             assert call_kwargs["split"] == "train"
 
 
@@ -363,6 +312,24 @@ class TestMetadataParsingRemote:
         # load_time inherits the UNINITIALIZED default from SeedDatasetProvider base class
         assert metadata.source_type is None
         assert metadata.load_time == {SeedDatasetLoadTime.UNINITIALIZED}
+
+    async def test_promptintel_tagged_as_feed(self):
+        """PromptIntel is a live API, so it carries the 'feed' tag and matches a feed filter."""
+        metadata = await _PromptIntelDataset()._parse_metadata_async()
+        assert metadata is not None
+        assert "feed" in metadata.tags
+        assert SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata, dataset_filter=SeedDatasetFilter(tags={"feed"})
+        )
+
+    async def test_agent_threat_rules_not_tagged_as_feed(self):
+        """ATR is pinned to a commit by default, so it is intentionally not a feed."""
+        metadata = await _AgentThreatRulesDataset()._parse_metadata_async()
+        assert metadata is not None
+        assert "feed" not in metadata.tags
+        assert not SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata, dataset_filter=SeedDatasetFilter(tags={"feed"})
+        )
 
     def test_all_tag(self):
         """Filter with tags={'all'} matches any metadata."""
