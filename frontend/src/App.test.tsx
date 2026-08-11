@@ -426,7 +426,7 @@ describe("App", () => {
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
   });
 
-  it("retains the active target identifier when creating an attack", () => {
+  it("retains and trusts the active target when creating an attack", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
@@ -435,6 +435,40 @@ describe("App", () => {
     fireEvent.click(screen.getByTestId("set-conversation"));
 
     expect(screen.getByTestId("attack-target-hash")).toHaveTextContent("test-target-hash");
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("retains a route-resolved target when branching to a new attack", async () => {
+    const resolvedTarget = makeTarget({
+      target_registry_name: "branch-target",
+      identifier_hash: "branch-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-source",
+      conversation_id: "conv-source",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "branch-target-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [resolvedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-source");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("branch-target")
+    );
+
+    fireEvent.click(screen.getByTestId("set-conversation"));
+
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("branch-target");
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockListTargets).toHaveBeenCalledTimes(1);
   });
 
   it("clears conversationId on new attack", () => {
@@ -846,6 +880,35 @@ describe("App", () => {
     expect(mockListTargets).toHaveBeenNthCalledWith(2, 200, "page-2");
   });
 
+  it("fails closed when registry pagination does not advance", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-stalled-pagination",
+      conversation_id: "conv-stalled-pagination",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "pagination-hash",
+      },
+    });
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: true, next_cursor: "same-cursor" },
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: true, next_cursor: "same-cursor" },
+      });
+
+    renderApp("/attacks/ar-stalled-pagination");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
   it("restores the target again after an app remount", async () => {
     const exactTarget = makeTarget({
       target_registry_name: "remounted-target",
@@ -877,6 +940,44 @@ describe("App", () => {
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("remounted-target")
     );
     expect(mockListTargets).toHaveBeenCalledTimes(2);
+  });
+
+  it("revokes a restored target when it is removed before remount", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "removed-target",
+      identifier_hash: "removed-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-removed",
+      conversation_id: "conv-removed",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "removed-hash",
+      },
+    });
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [exactTarget],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      });
+
+    const firstRender = renderApp("/attacks/ar-removed");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("removed-target")
+    );
+    firstRender.unmount();
+
+    renderApp("/attacks/ar-removed");
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("unavailable")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
   });
 
   it("revalidates a previously resolved target when revisiting the same attack", async () => {

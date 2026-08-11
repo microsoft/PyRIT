@@ -9,6 +9,7 @@ import {
 } from '@fluentui/react-components'
 import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 import type { AttackTargetResolutionStatus, MessageAttachment, TargetInstance } from '../../types'
+import { isTargetResolutionBlocking } from '../../utils/targetIdentity'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
 import SystemPromptSetup from './SystemPromptSetup'
 import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
@@ -594,7 +595,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   return (
     <div className={styles.root}>
       <div className={styles.inputContainer}>
-        {['loading', 'unavailable', 'ambiguous', 'error', 'legacy'].includes(targetResolutionStatus) ? (
+        {isTargetResolutionBlocking(targetResolutionStatus) ? (
           <TargetResolutionBanner
             status={targetResolutionStatus}
             activeTarget={activeTarget}

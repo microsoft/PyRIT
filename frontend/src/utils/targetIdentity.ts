@@ -1,4 +1,4 @@
-import type { TargetInfo, TargetInstance } from '../types'
+import type { AttackTargetResolutionStatus, TargetInfo, TargetInstance } from '../types'
 
 /**
  * Helpers for reading a target's identity off its embedded `identifier`.
@@ -83,4 +83,13 @@ export function resolveTargetByIdentifierHash(
 /** Whether persisted attack target information identifies the active target. */
 export function targetInfoMatchesTarget(targetInfo: TargetInfo, target: TargetInstance): boolean {
   return targetInfo.identifier_hash === targetIdentifierHash(target)
+}
+
+/** Whether target resolution must keep an existing attack read-only. */
+export function isTargetResolutionBlocking(status: AttackTargetResolutionStatus): boolean {
+  return status === 'loading'
+    || status === 'unavailable'
+    || status === 'ambiguous'
+    || status === 'error'
+    || status === 'legacy'
 }

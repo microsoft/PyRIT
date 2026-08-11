@@ -12,6 +12,7 @@ import {
 } from '@/utils/targetIdentity'
 
 const TARGET_PAGE_SIZE = 200
+const TARGET_MAX_PAGES = 100
 
 interface TargetSelection {
   target: TargetInstance | null
@@ -30,6 +31,7 @@ interface UseAttackTargetResolutionOptions {
   attackId: string | null
   attackLoadSequence: number
   attackTarget: TargetInfo | null
+  attackTargetSource: 'persisted' | 'active-selection'
 }
 
 interface UseAttackTargetResolutionResult {
@@ -51,8 +53,13 @@ async function listAllTargets(): Promise<TargetInstance[]> {
   const targets: TargetInstance[] = []
   const seenCursors = new Set<string>()
   let cursor: string | undefined
+  let pageCount = 0
 
   do {
+    pageCount += 1
+    if (pageCount > TARGET_MAX_PAGES) {
+      throw new Error('Target registry pagination exceeded the page limit')
+    }
     const response = await targetsApi.listTargets(TARGET_PAGE_SIZE, cursor)
     targets.push(...response.items)
     if (!response.pagination.has_more) break
@@ -72,6 +79,7 @@ export function useAttackTargetResolution({
   attackId,
   attackLoadSequence,
   attackTarget,
+  attackTargetSource,
 }: UseAttackTargetResolutionOptions): UseAttackTargetResolutionResult {
   const [selection, setSelection] = useState<TargetSelection>({
     target: null,
@@ -84,19 +92,19 @@ export function useAttackTargetResolution({
     attackLoadSequence: 0,
     status: 'idle',
   })
-  const [retryCount, setRetryCount] = useState(0)
-  const [explicitSelectionCount, setExplicitSelectionCount] = useState(0)
+  const [resolutionAttempt, setResolutionAttempt] = useState(0)
 
   const setExplicitTarget = useCallback((target: TargetInstance): void => {
     const next: TargetSelection = { target, source: 'explicit', attackId: null }
     selectionRef.current = next
     setSelection(next)
     setRegistryResolution({ attackId: null, attackLoadSequence: 0, status: 'idle' })
-    setExplicitSelectionCount((count) => count + 1)
+    setResolutionAttempt((attempt) => attempt + 1)
   }, [])
 
   useEffect(() => {
     if (!attackId || !hasCompleteIdentifier(attackTarget)) return
+    if (attackTargetSource === 'active-selection') return
     const initialSelection = selectionRef.current
     if (
       initialSelection.source === 'explicit'
@@ -173,7 +181,7 @@ export function useAttackTargetResolution({
     return () => {
       cancelled = true
     }
-  }, [attackId, attackLoadSequence, attackTarget, explicitSelectionCount, retryCount])
+  }, [attackId, attackLoadSequence, attackTarget, attackTargetSource, resolutionAttempt])
 
   const resolutionStatus = useMemo<AttackTargetResolutionStatus>(() => {
     if (!attackId) return 'idle'
@@ -182,13 +190,15 @@ export function useAttackTargetResolution({
       if (targetIdentifierHash(selection.target) !== attackTarget.identifier_hash) {
         return 'explicit-mismatch'
       }
+      if (attackTargetSource === 'active-selection') return 'resolved'
     }
+    if (attackTargetSource === 'active-selection') return 'unavailable'
     if (
       registryResolution.attackId !== attackId
       || registryResolution.attackLoadSequence !== attackLoadSequence
     ) return 'loading'
     return registryResolution.status
-  }, [attackId, attackLoadSequence, attackTarget, registryResolution, selection])
+  }, [attackId, attackLoadSequence, attackTarget, attackTargetSource, registryResolution, selection])
 
   const activeTarget = useMemo<TargetInstance | null>(() => {
     if (selection.source !== 'route') return selection.target
@@ -205,7 +215,7 @@ export function useAttackTargetResolution({
 
   const retryResolution = useCallback((): void => {
     setRegistryResolution({ attackId: null, attackLoadSequence: 0, status: 'idle' })
-    setRetryCount((count) => count + 1)
+    setResolutionAttempt((attempt) => attempt + 1)
   }, [])
 
   return {

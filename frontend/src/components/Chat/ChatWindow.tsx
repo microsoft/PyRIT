@@ -39,7 +39,7 @@ import type {
   TargetInstance,
   TargetInfo,
 } from '../../types'
-import { targetInfoMatchesTarget } from '../../utils/targetIdentity'
+import { isTargetResolutionBlocking, targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
@@ -220,7 +220,7 @@ export default function ChatWindow({
   const supportsSystemPrompt = activeTarget?.capabilities?.supports_system_prompt === true
   const isTargetResolutionLocked = Boolean(
     attackResultId
-    && ['loading', 'unavailable', 'ambiguous', 'error', 'legacy'].includes(targetResolutionStatus),
+    && isTargetResolutionBlocking(targetResolutionStatus),
   )
   const currentOperator = labels?.operator
   const attackOperator = attackLabels?.operator
@@ -233,6 +233,7 @@ export default function ChatWindow({
     && activeTarget
     && !targetInfoMatchesTarget(attackTarget, activeTarget),
   )
+  const isMutationLocked = isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked
 
   // Clear internal messages when attack state is reset (e.g. New Attack).
   // Uses the "adjust state during render" pattern (see React docs:
@@ -329,9 +330,7 @@ export default function ChatWindow({
     if (
       !activeTarget
       || isLoadingAttack
-      || isOperatorLocked
-      || isCrossTargetLocked
-      || isTargetResolutionLocked
+      || isMutationLocked
     ) {
       return
     }
@@ -532,7 +531,7 @@ export default function ChatWindow({
   }
 
   const handleNewConversation = useCallback(async () => {
-    if (!attackResultId || isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked) { return }
+    if (!attackResultId || isMutationLocked) { return }
 
     try {
       const response = await attacksApi.createConversation(attackResultId, {})
@@ -543,10 +542,8 @@ export default function ChatWindow({
     }
   }, [
     attackResultId,
-    isCrossTargetLocked,
     isNarrowScreen,
-    isOperatorLocked,
-    isTargetResolutionLocked,
+    isMutationLocked,
     onSelectConversation,
   ])
 
@@ -568,7 +565,7 @@ export default function ChatWindow({
 
   /** 2. Create a new conversation in the same attack and copy ONLY this message to its input box */
   const handleCopyToNewConversation = useCallback(async (messageIndex: number) => {
-    if (!attackResultId || isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked) { return }
+    if (!attackResultId || isMutationLocked) { return }
     const msg = messages[messageIndex]
     if (!msg) { return }
 
@@ -591,10 +588,8 @@ export default function ChatWindow({
     }
   }, [
     attackResultId,
-    isCrossTargetLocked,
     isNarrowScreen,
-    isOperatorLocked,
-    isTargetResolutionLocked,
+    isMutationLocked,
     messages,
     onSelectConversation,
   ])
@@ -604,9 +599,7 @@ export default function ChatWindow({
     if (
       !attackResultId
       || !activeConversationId
-      || isOperatorLocked
-      || isCrossTargetLocked
-      || isTargetResolutionLocked
+      || isMutationLocked
     ) {
       return
     }
@@ -628,10 +621,8 @@ export default function ChatWindow({
   }, [
     attackResultId,
     activeConversationId,
-    isCrossTargetLocked,
     isNarrowScreen,
-    isOperatorLocked,
-    isTargetResolutionLocked,
+    isMutationLocked,
     onSelectConversation,
   ])
 
@@ -660,9 +651,7 @@ export default function ChatWindow({
   const handleChangeMainConversation = useCallback(async (convId: string) => {
     if (
       !attackResultId
-      || isOperatorLocked
-      || isCrossTargetLocked
-      || isTargetResolutionLocked
+      || isMutationLocked
     ) {
       return
     }
@@ -675,9 +664,7 @@ export default function ChatWindow({
     }
   }, [
     attackResultId,
-    isCrossTargetLocked,
-    isOperatorLocked,
-    isTargetResolutionLocked,
+    isMutationLocked,
   ])
 
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
@@ -845,9 +832,7 @@ export default function ChatWindow({
             || !activeTarget
             || isLoadingAttack
             || singleTurnLimitReached
-            || isOperatorLocked
-            || isCrossTargetLocked
-            || isTargetResolutionLocked
+            || isMutationLocked
           }
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}

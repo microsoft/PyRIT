@@ -56,6 +56,7 @@ type AttackLoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 interface LoadedAttack {
   id: string
   loadSequence: number
+  targetSource: 'persisted' | 'active-selection'
   mainConversationId: string | null
   labels: Record<string, string> | null
   target: TargetInfo | null
@@ -192,6 +193,7 @@ function App() {
     setLoadedAttack({
       id: routeAttackId,
       loadSequence,
+      targetSource: 'persisted',
       status: 'loading',
       mainConversationId: null,
       labels: null,
@@ -205,6 +207,7 @@ function App() {
         setLoadedAttack({
           id: routeAttackId,
           loadSequence,
+          targetSource: 'persisted',
           mainConversationId: attack.conversation_id,
           labels: attack.labels ?? {},
           target: attack.target ?? null,
@@ -221,6 +224,7 @@ function App() {
         setLoadedAttack({
           id: routeAttackId,
           loadSequence,
+          targetSource: 'persisted',
           status: isMissing ? 'not-found' : 'error',
           mainConversationId: null,
           labels: null,
@@ -249,6 +253,7 @@ function App() {
     attackId: readyAttack?.id ?? null,
     attackLoadSequence: readyAttack?.loadSequence ?? 0,
     attackTarget: readyAttack?.target ?? null,
+    attackTargetSource: readyAttack?.targetSource ?? 'persisted',
   })
   const activeConversationId = readyAttack
     ? routeConversationId ?? readyAttack.mainConversationId
@@ -287,6 +292,11 @@ function App() {
   const handleConversationCreated = useCallback((arId: string, convId: string) => {
     // Seed the freshly-created attack synchronously and tell the loader to skip
     // its next fetch for this id, so the attack opens without a redundant load.
+    if (activeTarget) {
+      // The target that created or branched this attack is now an explicit
+      // selection for the new attack; a later reload will revalidate it.
+      handleSetActiveTarget(activeTarget)
+    }
     const target: TargetInfo | null = activeTarget
       ? {
           target_type: targetType(activeTarget),
@@ -301,6 +311,7 @@ function App() {
     setLoadedAttack({
       id: arId,
       loadSequence,
+      targetSource: 'active-selection',
       mainConversationId: convId,
       // New attack uses the current user's labels, so it is never operator-locked.
       labels: null,
@@ -311,7 +322,7 @@ function App() {
     // Replace when promoting an empty /chat to its attack url (first message);
     // push when branching from an existing attack so Back returns to the source.
     navigate(attackPath(arId), { replace: routeAttackId === null })
-  }, [activeTarget, routeAttackId, navigate])
+  }, [activeTarget, handleSetActiveTarget, routeAttackId, navigate])
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
