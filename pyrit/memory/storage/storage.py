@@ -7,7 +7,7 @@ import logging
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from urllib.parse import urlparse
 
 import aiofiles
@@ -156,6 +156,42 @@ class AzureBlobStorageIO(StorageIO):
     """
     Implementation of StorageIO for Azure Blob Storage.
     """
+
+    _EXTENSION_TO_CONTENT_TYPE: ClassVar[dict[str, str]] = {
+        ".txt": "text/plain",
+        ".html": "text/html",
+        ".htm": "text/html",
+        ".csv": "text/csv",
+        ".md": "text/markdown",
+        ".json": "application/json",
+        ".xml": "application/xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+        ".bmp": "image/bmp",
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".m4a": "audio/mp4",
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".ogv": "video/ogg",
+        ".avi": "video/x-msvideo",
+        ".pdf": "application/pdf",
+        ".doc": "application/msword",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls": "application/vnd.ms-excel",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".ppt": "application/vnd.ms-powerpoint",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".rtf": "application/rtf",
+        ".zip": "application/zip",
+        ".bin": "application/octet-stream",
+    }
 
     def __init__(
         self,
@@ -382,8 +418,9 @@ class AzureBlobStorageIO(StorageIO):
         if not self._client_async:
             self._client_async = await self._create_container_client_async()
         blob_name = self._resolve_blob_name(path)
+        content_type = self._EXTENSION_TO_CONTENT_TYPE.get(Path(blob_name).suffix.lower(), self._blob_content_type)
         try:
-            await self._upload_blob_async(file_name=blob_name, data=data, content_type=self._blob_content_type)
+            await self._upload_blob_async(file_name=blob_name, data=data, content_type=content_type)
         except Exception as exc:
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise
