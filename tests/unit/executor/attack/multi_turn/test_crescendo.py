@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -2548,21 +2549,46 @@ class TestEdgeCases:
         context1 = CrescendoAttackContext(params=AttackParameters(objective="Objective 1"))
         context2 = CrescendoAttackContext(params=AttackParameters(objective="Objective 2"))
 
-        # Mock conversation manager for both setups
-        mock_state1 = ConversationState(turn_count=0)
-        mock_state2 = ConversationState(turn_count=0)
+        setup_started: set[str] = set()
+        both_setups_started = asyncio.Event()
+
+        async def initialize_context_async(
+            *,
+            context: CrescendoAttackContext,
+            **_kwargs: object,
+        ) -> ConversationState:
+            setup_started.add(context.objective)
+            if len(setup_started) == 2:
+                both_setups_started.set()
+            await both_setups_started.wait()
+            return ConversationState(turn_count=0)
 
         with patch.object(
-            attack._conversation_manager, "initialize_context_async", side_effect=[mock_state1, mock_state2]
+            attack._conversation_manager,
+            "initialize_context_async",
+            new_callable=AsyncMock,
+            side_effect=initialize_context_async,
         ):
-            # Simulate concurrent setup - both contexts use the same attack instance
-            await attack._setup_async(context=context1)
-            await attack._setup_async(context=context2)
+            # The first setup waits for the second to start, guaranteeing real overlap.
+            await asyncio.gather(
+                attack._setup_async(context=context1),
+                attack._setup_async(context=context2),
+            )
 
         # Verify contexts remain independent
         # Each should maintain its own state without interference
-        assert context1.objective == "Objective 1"
-        assert context2.objective == "Objective 2"
+        assert setup_started == {"Objective 1", "Objective 2"}
+        calls = mock_adversarial_chat.set_system_prompt.call_args_list
+        assert len(calls) == 2
+        actual = {(call.kwargs["conversation_id"], call.kwargs["system_prompt"]) for call in calls}
+        assert any(
+            context1.session.adversarial_chat_conversation_id == conversation_id and "Objective 1" in prompt
+            for conversation_id, prompt in actual
+        )
+        assert any(
+            context2.session.adversarial_chat_conversation_id == conversation_id and "Objective 2" in prompt
+            for conversation_id, prompt in actual
+        )
         # Most importantly, they should have different conversation IDs
         assert context1.session.conversation_id != context2.session.conversation_id
 

@@ -28,7 +28,7 @@
 # Non-LLM converters use deterministic algorithms to transform text. These include:
 # - **Encoding**: Base64, Binary, Morse, NATO phonetic, etc.
 # - **Obfuscation**: Leetspeak, Unicode manipulation, character swapping, ANSI escape codes
-# - **Text manipulation**: ROT13, Caesar cipher, Atbash, etc.
+# - **Text manipulation**: ROT13, Caesar cipher, Atbash, Vigenere cipher, etc.
 
 # %% [markdown]
 # ### 1.1 Basic Encoding Converters
@@ -57,6 +57,7 @@ from pyrit.converter import (
     NegationTrapConverter,
     ROT13Converter,
     TokenBijectionConverter,
+    VigenereConverter,
 )
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -77,6 +78,7 @@ print("Morse:", await MorseConverter().convert_async(prompt=prompt))  # type: ig
 print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: ignore
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
+print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("DigitBijectionConverter:", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
