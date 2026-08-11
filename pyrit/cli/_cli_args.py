@@ -14,7 +14,6 @@ argument parsing before the full runtime is initialised.
 from __future__ import annotations
 
 import argparse
-import copy
 import dataclasses
 import inspect
 import json
@@ -33,7 +32,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pyrit.models.parameter import Parameter
-    from pyrit.setup.configuration_loader import ScenarioConfig
 
 # ---------------------------------------------------------------------------
 # Database type constants
@@ -352,9 +350,9 @@ ARG_HELP = {
     "initialization_scripts": "Paths to custom Python initialization scripts to run before the scenario",
     "env_files": "Paths to environment files to load in order (e.g., .env.production .env.local). Later files "
     "override earlier ones.",
-    "scenario_strategies": "List of strategy names to run (e.g., base64 rot13). Append one or more "
+    "scenario_techniques": "List of technique names to run (e.g., base64 rot13). Append one or more "
     "registered converters to a technique with ':converter.<name>' (repeatable), e.g. "
-    "role_play:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
+    "role_play_movie_script:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
     "the technique's built-in converters. Use --list-converters to see registered converter names",
     "max_concurrency": "Maximum number of concurrent attack executions (must be >= 1)",
     "max_retries": "Maximum number of automatic retries on exception (must be >= 0)",
@@ -443,8 +441,8 @@ class _ArgSpec:
     constant, not editing any parsing logic.
 
     Attributes:
-        flags: CLI flag strings that trigger this argument (e.g., ``["--strategies", "-s"]``).
-        result_key: Key name in the returned dict (e.g., ``"scenario_strategies"``).
+        flags: CLI flag strings that trigger this argument (e.g., ``["--techniques", "-s"]``).
+        result_key: Key name in the returned dict (e.g., ``"scenario_techniques"``).
         multi_value: If True, collect values until the next flag.
             If False, consume exactly one value.
         parser: Optional callable to transform each raw string value.
@@ -469,9 +467,9 @@ _INIT_SCRIPTS_ARG = _ArgSpec(
     multi_value=True,
 )
 
-_STRATEGIES_ARG = _ArgSpec(
-    flags=["--strategies", "-s"],
-    result_key="scenario_strategies",
+_TECHNIQUES_ARG = _ArgSpec(
+    flags=["--techniques", "-t"],
+    result_key="scenario_techniques",
     multi_value=True,
 )
 _MAX_CONCURRENCY_ARG = _ArgSpec(
@@ -517,7 +515,7 @@ _TARGET_ARG = _ArgSpec(
 
 _RUN_ARG_SPECS: list[_ArgSpec] = [
     _INITIALIZERS_ARG,
-    _STRATEGIES_ARG,
+    _TECHNIQUES_ARG,
     _MAX_CONCURRENCY_ARG,
     _MAX_RETRIES_ARG,
     _MEMORY_LABELS_ARG,
@@ -613,7 +611,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
         always populated from the first positional token.
 
     Raises:
-        ValueError: Empty input, scenario-flag collision, or shell parser failure.
+        ValueError: Empty input or shell parser failure.
     """
     parts = shlex.split(args_string)
 
@@ -623,7 +621,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
     augmented_specs: list[_ArgSpec] = list(_RUN_ARG_SPECS)
     if declared_params:
         scenario_specs = [_arg_spec_from_parameter(param=p) for p in declared_params]
-        _validate_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
+        scenario_specs = _resolve_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
         augmented_specs.extend(scenario_specs)
 
     result = _parse_shell_arguments(parts=parts[1:], arg_specs=augmented_specs)
@@ -709,29 +707,35 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
     )
 
 
-def _validate_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> None:
+def _resolve_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> list[_ArgSpec]:
     """
-    Reject scenario-vs-built-in and scenario-vs-scenario flag collisions.
+    Drop scenario specs whose flag is already taken; first declaration wins.
 
-    Raises:
-        ValueError: If a scenario flag duplicates a built-in flag, or two
-            scenario parameters normalize to the same CLI flag.
+    A scenario's ``supported_parameters`` (fetched from the API) include the framework's common
+    parameters — e.g. ``memory_labels``, ``max_concurrency``, ``max_retries`` — which normalize to
+    flags already provided as built-ins. A scenario could also declare two params that normalize to
+    the same flag. In both cases the colliding spec is silently dropped and the earlier owner (the
+    built-in, or the first-declared scenario param) keeps the flag. This mirrors
+    ``pyrit_scan._add_scenario_params_from_api``, which skips any flag already registered on the
+    parser, so the two entry points accept the same inputs.
+
+    Args:
+        scenario_specs: Specs built from scenario-declared parameters.
+        base_specs: Built-in run argument specs.
+
+    Returns:
+        list[_ArgSpec]: The scenario specs whose flags do not collide with a built-in flag or an
+            earlier scenario spec.
     """
-    base_flags = {flag for spec in base_specs for flag in spec.flags}
-    seen: set[str] = set()
+    seen: set[str] = {flag for spec in base_specs for flag in spec.flags}
+    resolved: list[_ArgSpec] = []
     for spec in scenario_specs:
-        for flag in spec.flags:
-            if flag in base_flags:
-                raise ValueError(
-                    f"Scenario parameter flag {flag!r} collides with a built-in flag. "
-                    f"Rename the parameter to avoid the collision."
-                )
-            if flag in seen:
-                raise ValueError(
-                    f"Scenario declares two parameters that normalize to the same CLI flag {flag!r}. "
-                    f"Rename one of them."
-                )
-            seen.add(flag)
+        if any(flag in seen for flag in spec.flags):
+            # Flag already owned by a built-in or an earlier scenario param; first wins.
+            continue
+        seen.update(spec.flags)
+        resolved.append(spec)
+    return resolved
 
 
 def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
@@ -788,43 +792,3 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         default=logging.WARNING,
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)",
     )
-
-
-# Module-level logger (stdlib only — no heavy deps)
-_logger = logging.getLogger(__name__)
-
-
-def merge_config_scenario_args(
-    *,
-    config_scenario: ScenarioConfig | None,
-    effective_scenario_name: str,
-    cli_args: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Merge config-file scenario args with CLI scenario args (CLI wins per-key).
-
-    When ``config_scenario.name`` does not match ``effective_scenario_name``, the
-    config args are skipped with a warning so users are not silently surprised.
-    Mutable values are deep-copied so they don't leak across runs.
-
-    Args:
-        config_scenario (ScenarioConfig | None): The ``scenario:`` block from
-            the layered config, or ``None`` when not configured.
-        effective_scenario_name (str): The scenario about to run (CLI wins).
-        cli_args (dict[str, Any]): Scenario args supplied on the CLI.
-
-    Returns:
-        dict[str, Any]: The merged scenario-args dict to pass to ``set_params_from_args``.
-    """
-    merged: dict[str, Any] = {}
-    if config_scenario and config_scenario.args:
-        if config_scenario.name == effective_scenario_name:
-            merged.update(copy.deepcopy(config_scenario.args))
-        else:
-            _logger.warning(
-                "Config args for scenario '%s' not applied while running '%s'.",
-                config_scenario.name,
-                effective_scenario_name,
-            )
-    merged.update(cli_args)
-    return merged

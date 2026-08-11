@@ -53,6 +53,26 @@ describe("MessageList", () => {
     expect(screen.getByText("Can you help me?")).toBeInTheDocument();
   });
 
+  it("should not render system messages as transcript bubbles", () => {
+    const withSystem: Message[] = [
+      {
+        role: "system",
+        content: "You are a pirate.",
+        timestamp: new Date().toISOString(),
+      },
+      ...mockMessages,
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={withSystem} />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByText("You are a pirate.")).not.toBeInTheDocument();
+    expect(screen.getByText("Hello, how are you?")).toBeInTheDocument();
+  });
+
   it("should render user messages", () => {
     const userMessages: Message[] = [
       {
@@ -1254,6 +1274,44 @@ describe("MessageList", () => {
       expect(global.URL.revokeObjectURL).toHaveBeenCalledWith(mockObjectUrl);
 
       jest.restoreAllMocks();
+    });
+  });
+
+  describe("markdown rendering", () => {
+    const markdownMessages: Message[] = [
+      {
+        role: "user",
+        content: "Say **alpha**",
+        timestamp: new Date().toISOString(),
+      },
+      {
+        role: "assistant",
+        content: "Reply **bravo**",
+        timestamp: new Date().toISOString(),
+      },
+    ];
+
+    it("renders text literally when markdown is off (default)", () => {
+      render(
+        <TestWrapper>
+          <MessageList messages={markdownMessages} />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText("Say **alpha**")).toBeInTheDocument();
+      expect(document.querySelector("strong")).toBeNull();
+    });
+
+    it("renders every message as markdown when globalMarkdown is true", () => {
+      render(
+        <TestWrapper>
+          <MessageList messages={markdownMessages} globalMarkdown />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText("alpha").tagName).toBe("STRONG");
+      expect(screen.getByText("bravo").tagName).toBe("STRONG");
+      expect(screen.queryByText("Say **alpha**")).not.toBeInTheDocument();
     });
   });
 });

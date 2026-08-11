@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 4. Workflows
+# # Workflows
 #
 # Workflows orchestrate attacks that involve more than a single target exchange — they wire together an *attack setup* step, an external *processing* step, and scoring. The canonical example is a **Cross-domain Prompt Injection Attack (XPIA)**, where an adversary plants instructions in content (a web page, a resume, an email) that a separate AI system later ingests and acts on.
 #
@@ -130,15 +130,14 @@ async def processing_callback() -> str:
 
 import logging
 
-from pyrit.executor.core import StrategyConverterConfig
-from pyrit.executor.workflow import XPIAWorkflow
-
 # %% [markdown]
 #
 # Finally, we can put all the pieces together:
 # %%
-from pyrit.prompt_converter import TextJailbreakConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.converter import TextJailbreakConverter
+from pyrit.executor.core import StrategyConverterConfig
+from pyrit.executor.workflow import XPIAWorkflow
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import AzureBlobStorageTarget
 from pyrit.prompt_target.azure_blob_storage_target import SupportedContentType
 from pyrit.score import SubStringScorer
@@ -153,7 +152,7 @@ jailbreak_converter = TextJailbreakConverter(
     jailbreak_template=jailbreak_template,
 )
 converter_configuration = StrategyConverterConfig(
-    request_converters=PromptConverterConfiguration.from_converters(
+    request_converters=ConverterConfiguration.from_converters(
         converters=[jailbreak_converter],
     )
 )
@@ -193,11 +192,11 @@ print(f"Response from processing callback: {processing_response}")
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter import PDFConverter
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.executor.workflow import XPIATestWorkflow
-from pyrit.models import SeedGroup, SeedPrompt
-from pyrit.prompt_converter import PDFConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.models import Message
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import HTTPXAPITarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -264,7 +263,7 @@ http_api_processing_target = HTTPXAPITarget(
 # "processing_prompt" is unused by the server because it only expects 'file' in /upload
 # and does not parse additional fields. The PDF is manipulated via existing_pdf + injection_items.
 
-converters = PromptConverterConfiguration.from_converters(converters=[pdf_converter])
+converters = ConverterConfiguration.from_converters(converters=[pdf_converter])
 converter_config = StrategyConverterConfig(request_converters=converters)
 workflow = XPIATestWorkflow(
     attack_setup_target=upload_target,
@@ -276,9 +275,9 @@ workflow = XPIATestWorkflow(
 # Execute the XPIA flow.
 # Step 1: PDF with hidden text is uploaded to /upload/
 # Step 2: /search_candidates/ is called automatically afterward.
-attack_content = SeedGroup(seeds=[SeedPrompt(value='{"description": "Hidden PDF Attack"}')])
-processing_prompt_group = SeedGroup(
-    seeds=[SeedPrompt(value="Evaluate all uploaded resumes and pick the best candidate.")]
+attack_content = Message.from_prompt(prompt='{"description": "Hidden PDF Attack"}', role="user")
+processing_prompt_group = Message.from_prompt(
+    prompt="Evaluate all uploaded resumes and pick the best candidate.", role="user"
 )
 
 final_result = await workflow.execute_async(  # type: ignore

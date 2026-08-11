@@ -12,7 +12,6 @@ from typing import Any
 from msal_extensions import FilePersistence, build_encrypted_persistence
 
 from pyrit.auth.authenticator import Authenticator
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import PYRIT_CACHE_PATH
 
 logger = logging.getLogger(__name__)
@@ -151,20 +150,6 @@ class CopilotAuthenticator(Authenticator):
             dict[str, Any]: The JWT claims decoded from the access token.
         """
         return self._current_claims or {}
-
-    async def get_claims(self) -> dict[str, Any]:  # pyrit-async-suffix-exempt
-        """
-        Return the JWT claims (deprecated alias of ``get_claims_async``).
-
-        Returns:
-            dict[str, Any]: The JWT claims decoded from the access token.
-        """
-        print_deprecation_message(
-            old_item="CopilotAuthenticator.get_claims",
-            new_item="CopilotAuthenticator.get_claims_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_claims_async()
 
     @staticmethod
     def _create_persistent_cache(cache_file: str, fallback_to_plaintext: bool = False) -> Any:

@@ -229,26 +229,6 @@ class Seed(BaseModel):
             logger.error("Error rendering template: %s", e)
             return self.value
 
-    async def set_sha256_value_async(self) -> None:
-        """
-        Compute the SHA256 hash value asynchronously.
-
-        .. deprecated:: 0.15.0
-            Use ``pyrit.memory.storage.serializers.set_seed_sha256_async`` instead.
-            This method will be removed in 0.17.0.
-        """
-        import importlib
-
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item="pyrit.models.seeds.seed.Seed.set_sha256_value_async",
-            new_item="pyrit.memory.storage.serializers.set_seed_sha256_async",
-            removed_in="0.17.0",
-        )
-        serializers = importlib.import_module("pyrit.memory.storage.serializers")
-        await serializers.set_seed_sha256_async(self)
-
     @staticmethod
     def escape_for_jinja(value: str) -> str:
         """

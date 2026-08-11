@@ -54,10 +54,24 @@ jest.mock("../../utils/messageMapper", () => ({
 const mockedAttacksApi = attacksApi as jest.Mocked<typeof attacksApi>;
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>;
 const mockedMapper = messageMapper as jest.Mocked<typeof messageMapper>;
+const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
+
+function mockMatchMedia(matchesNarrowScreen: boolean): void {
+  (window.matchMedia as jest.Mock).mockImplementation((query: string) => ({
+    matches: matchesNarrowScreen && query === "(max-width: 600px)",
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  }));
+}
 
 const mockTarget: TargetInstance = makeTarget({
   target_registry_name: "openai_chat_1",
@@ -262,6 +276,8 @@ describe("ChatWindow Integration", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
+    mockMatchMedia(false);
     // Default: panel API returns empty conversations
     mockedAttacksApi.getConversations.mockResolvedValue({
       conversations: [],
@@ -278,6 +294,10 @@ describe("ChatWindow Integration", () => {
     });
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   // -----------------------------------------------------------------------
   // Basic rendering
   // -----------------------------------------------------------------------
@@ -291,10 +311,115 @@ describe("ChatWindow Integration", () => {
 
     // The ribbon no longer shows the "PyRIT Attack" prefix; the target
     // badge stands on its own as the leftmost element.
+    expect(screen.getByRole("heading", { level: 1, name: "Chat" })).toBeInTheDocument();
     expect(screen.queryByText("PyRIT Attack")).not.toBeInTheDocument();
     expect(screen.getByTestId("target-badge")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /new attack/i })).toBeInTheDocument();
     expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
+
+  it("defaults to raw mode when no Markdown preference is stored", () => {
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("switch", { name: /markdown/i })).not.toBeChecked();
+    expect(window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("persists explicit Markdown and raw choices across remounts", async () => {
+    const user = userEvent.setup();
+    const firstRender = render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    const toggle = screen.getByRole("switch", { name: /markdown/i });
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)).toBe("markdown");
+
+    firstRender.unmount();
+    const secondRender = render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+    const remountedToggle = screen.getByRole("switch", { name: /markdown/i });
+    expect(remountedToggle).toBeChecked();
+
+    await user.click(remountedToggle);
+    expect(remountedToggle).not.toBeChecked();
+    expect(window.localStorage.getItem(MARKDOWN_PREFERENCE_STORAGE_KEY)).toBe("raw");
+
+    secondRender.unmount();
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+    expect(screen.getByRole("switch", { name: /markdown/i })).not.toBeChecked();
+  });
+
+  it("initializes Markdown mode from stored preference", () => {
+    window.localStorage.setItem(MARKDOWN_PREFERENCE_STORAGE_KEY, "markdown");
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("switch", { name: /markdown/i })).toBeChecked();
+  });
+
+  it("falls back to raw mode for an invalid stored preference", () => {
+    window.localStorage.setItem(MARKDOWN_PREFERENCE_STORAGE_KEY, "invalid");
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("switch", { name: /markdown/i })).not.toBeChecked();
+  });
+
+  it("falls back to raw mode when localStorage is unavailable during initialization", () => {
+    jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("Access denied", "SecurityError");
+    });
+
+    expect(() => {
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} />
+        </TestWrapper>
+      );
+    }).not.toThrow();
+    expect(screen.getByRole("switch", { name: /markdown/i })).not.toBeChecked();
+  });
+
+  it("keeps the in-memory choice when localStorage is unavailable during persistence", async () => {
+    const user = userEvent.setup();
+    jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} />
+      </TestWrapper>
+    );
+
+    const toggle = screen.getByRole("switch", { name: /markdown/i });
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
   });
 
   it("should display existing messages", async () => {
@@ -466,6 +591,285 @@ describe("ChatWindow Integration", () => {
     // Messages should appear in the DOM
     await waitFor(() => {
       expect(screen.getByText("Hello back!")).toBeInTheDocument();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // System prompt (system_prompt) wiring
+  // -----------------------------------------------------------------------
+
+  describe("system prompt", () => {
+    const supportedTarget: TargetInstance = {
+      ...mockTarget,
+      capabilities: buildCapabilities({ supports_system_prompt: true }),
+    };
+
+    function primeSendMocks() {
+      mockedMapper.buildMessagePieces.mockResolvedValue([
+        { data_type: "text", original_value: "Hello" },
+      ]);
+      mockedAttacksApi.createAttack.mockResolvedValue({
+        attack_result_id: "ar-sys",
+        conversation_id: "conv-sys",
+        created_at: "2026-01-01T00:00:00Z",
+      });
+      mockedAttacksApi.addMessage.mockResolvedValue(
+        makeTextResponse("Hi") as never
+      );
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "assistant", content: "Hi", timestamp: "2026-01-01T00:00:01Z" },
+      ]);
+    }
+
+    it("renders the system prompt toggle for a new conversation", () => {
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedTarget} />
+        </TestWrapper>
+      );
+
+      expect(
+        screen.getByRole("button", { name: /system prompt/i })
+      ).toBeInTheDocument();
+    });
+
+    it("hides the system prompt toggle once an attack exists", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={supportedTarget}
+            attackResultId="ar-existing"
+            conversationId="conv-existing"
+            activeConversationId="conv-existing"
+          />
+        </TestWrapper>
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("loading-state")).not.toBeInTheDocument();
+      });
+      expect(
+        screen.queryByRole("button", { name: /system prompt/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders a system prompt banner when the loaded conversation has a system message", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "system", content: "You are a pirate.", timestamp: "2026-01-01T00:00:00Z" },
+        { role: "user", content: "Ahoy", timestamp: "2026-01-01T00:00:01Z" },
+      ]);
+
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={supportedTarget}
+            attackResultId="ar-existing"
+            conversationId="conv-existing"
+            activeConversationId="conv-existing"
+          />
+        </TestWrapper>
+      );
+
+      expect(await screen.findByTestId("system-prompt-banner")).toBeInTheDocument();
+      expect(screen.getByText("You are a pirate.")).toBeInTheDocument();
+    });
+
+    it("forwards the typed system prompt when the target supports it", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedTarget} />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+          expect.objectContaining({ system_prompt: "You are helpful" })
+        );
+      });
+    });
+
+    it("omits the system prompt when the target does not support it", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={mockTarget} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+      });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
+    });
+
+    it("disables the toggle and drops the prompt for an explicitly unsupported target", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      const unsupportedTarget: TargetInstance = {
+        ...mockTarget,
+        capabilities: buildCapabilities({ supports_system_prompt: false }),
+      };
+
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={unsupportedTarget} />
+        </TestWrapper>
+      );
+
+      expect(
+        screen.getByRole("button", { name: /system prompt/i })
+      ).toBeDisabled();
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+      });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
+    });
+
+    it("omits the system prompt when left blank on a supporting target", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedTarget} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+      });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
+    });
+
+    it("clears a retained system prompt when switching to an unsupported target", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      const supportedA: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_a",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+      const unsupportedB: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "no_support_b",
+        capabilities: buildCapabilities({ supports_system_prompt: false }),
+      };
+      const supportedC: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_c",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+
+      const { rerender } = render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedA} />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+
+      // Switch to an unsupported target (should clear), then to another
+      // supporting one so the cleared value is observable on send.
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={unsupportedB} />
+        </TestWrapper>
+      );
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedC} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalled();
+      });
+      const createArgs = mockedAttacksApi.createAttack.mock.calls[0][0];
+      expect(createArgs.system_prompt).toBeUndefined();
+    });
+
+    it("preserves the system prompt across supporting targets", async () => {
+      const user = userEvent.setup();
+      primeSendMocks();
+
+      const supportedA: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_a",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+      const supportedB: TargetInstance = {
+        ...mockTarget,
+        target_registry_name: "supports_b",
+        capabilities: buildCapabilities({ supports_system_prompt: true }),
+      };
+
+      const { rerender } = render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedA} />
+        </TestWrapper>
+      );
+
+      await user.click(screen.getByRole("button", { name: /system prompt/i }));
+      await user.type(
+        screen.getByRole("textbox", { name: /system prompt/i }),
+        "You are helpful"
+      );
+
+      rerender(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} activeTarget={supportedB} />
+        </TestWrapper>
+      );
+
+      await user.type(screen.getByPlaceholderText("Type prompt here"), "Hello");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
+          expect.objectContaining({ system_prompt: "You are helpful" })
+        );
+      });
     });
   });
 
@@ -1367,6 +1771,7 @@ describe("ChatWindow Integration", () => {
       target_type: "AzureOpenAIChatTarget",
       endpoint: "https://azure.openai.com",
       model_name: "gpt-4o",
+      identifier_hash: "different-target-hash",
     };
 
     render(
@@ -1388,6 +1793,7 @@ describe("ChatWindow Integration", () => {
       target_type: mockTarget.identifier.class_name,
       endpoint: mockTarget.identifier.endpoint,
       model_name: mockTarget.identifier.model_name,
+      identifier_hash: mockTarget.identifier.hash,
     };
 
     render(
@@ -1402,6 +1808,76 @@ describe("ChatWindow Integration", () => {
     );
 
     expect(screen.queryByTestId("cross-target-banner")).not.toBeInTheDocument();
+  });
+
+  it("should keep a historical Round Robin attack writable when the identifier hash matches", () => {
+    const roundRobinTarget = makeTarget({
+      target_registry_name: "round-robin",
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "round-robin-hash",
+      inner_targets: [
+        { target_registry_name: "inner-a", model_name: "e2e-dummy-model" },
+        { target_registry_name: "inner-b", model_name: "e2e-dummy-model" },
+      ],
+    });
+    const historicalTarget: TargetInfo = {
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "round-robin-hash",
+    };
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={roundRobinTarget}
+          attackResultId="ar-round-robin"
+          conversationId="conv-round-robin"
+          attackTarget={historicalTarget}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByTestId("cross-target-banner")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-input")).toBeEnabled();
+  });
+
+  it("should lock a historical Round Robin attack when the composite identifier hash differs", () => {
+    const roundRobinTarget = makeTarget({
+      target_registry_name: "round-robin",
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "active-round-robin-hash",
+      inner_targets: [
+        { target_registry_name: "inner-a", model_name: "e2e-dummy-model" },
+        { target_registry_name: "inner-b", model_name: "e2e-dummy-model" },
+      ],
+    });
+    const historicalTarget: TargetInfo = {
+      target_type: "RoundRobinTarget",
+      endpoint: null,
+      model_name: null,
+      identifier_hash: "different-round-robin-hash",
+    };
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={roundRobinTarget}
+          attackResultId="ar-round-robin"
+          conversationId="conv-round-robin"
+          attackTarget={historicalTarget}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("cross-target-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
   });
 
   it("should auto-open conversation panel when relatedConversationCount > 0", async () => {
@@ -1430,6 +1906,12 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
+    expect(
+      screen.getByRole("complementary", { name: "Attack Conversations" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Attack Conversations" })
+    ).not.toBeInTheDocument();
   });
 
   it("should not auto-open conversation panel when relatedConversationCount is 0", () => {
@@ -1489,6 +1971,61 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("conversation-panel")).toBeInTheDocument();
     });
+  });
+
+  it("should keep the mobile drawer closed until requested and restore focus after Escape", async () => {
+    const user = userEvent.setup();
+    mockMatchMedia(true);
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedAttacksApi.getConversations.mockResolvedValue({
+      main_conversation_id: "conv-mobile",
+      conversations: [
+        {
+          conversation_id: "conv-mobile",
+          is_main: true,
+          message_count: 1,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-mobile"
+          conversationId="conv-mobile"
+          activeConversationId="conv-mobile"
+          relatedConversationCount={1}
+        />
+      </TestWrapper>
+    );
+
+    const toggleButton = screen.getByRole("button", {
+      name: "Toggle conversations panel",
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "Attack Conversations" })
+    ).not.toBeInTheDocument();
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(toggleButton);
+
+    expect(
+      await screen.findByRole("dialog", { name: "Attack Conversations" })
+    ).toBeInTheDocument();
+    expect(toggleButton).toHaveAttribute("aria-expanded", "true");
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Attack Conversations" })
+      ).not.toBeInTheDocument();
+    });
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+    expect(toggleButton).toHaveFocus();
   });
 
   it("should open conversation panel when copying to new conversation", async () => {
@@ -2741,6 +3278,208 @@ describe("ChatWindow Integration", () => {
 
     await waitFor(() => {
       expect(screen.queryByTestId("converted-value-input")).not.toBeInTheDocument();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Conversation export
+  // -----------------------------------------------------------------------
+
+  describe("conversation export", () => {
+    function spyOnDownloadAnchor(): { clickSpy: jest.Mock; getDownloadAnchor: () => HTMLAnchorElement } {
+      const anchors: HTMLAnchorElement[] = [];
+      const clickSpy = jest.fn();
+      const origCreateElement = document.createElement.bind(document);
+      jest.spyOn(document, "createElement").mockImplementation((tag: string) => {
+        const el = origCreateElement(tag);
+        if (tag === "a") {
+          anchors.push(el as HTMLAnchorElement);
+          jest.spyOn(el as HTMLAnchorElement, "click").mockImplementation(clickSpy);
+        }
+        return el;
+      });
+      return { clickSpy, getDownloadAnchor: () => anchors.find((a) => a.download) as HTMLAnchorElement };
+    }
+
+    async function renderWithLoadedConversation(
+      props: Record<string, unknown> = {}
+    ): Promise<void> {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            attackResultId="ar-1"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+            {...props}
+          />
+        </TestWrapper>
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /export conversation/i })).toBeEnabled()
+      );
+    }
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it("shows an export button in the ribbon", () => {
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} />
+        </TestWrapper>
+      );
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeInTheDocument();
+    });
+
+    it("disables export when the conversation is empty", () => {
+      render(
+        <TestWrapper>
+          <ChatWindow {...defaultProps} />
+        </TestWrapper>
+      );
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled();
+    });
+
+    it("enables export once a conversation with messages loads", async () => {
+      await renderWithLoadedConversation();
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeEnabled();
+    });
+
+    it("keeps export disabled when every loaded message is a loading placeholder", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "assistant", content: "", timestamp: "2026-07-22T02:30:07.000Z", isLoading: true },
+      ]);
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            attackResultId="ar-1"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+          />
+        </TestWrapper>
+      );
+      await waitFor(() => {
+        expect(mockedMapper.backendMessagesToFrontend).toHaveBeenCalled();
+      });
+      // length > 0 but no non-loading message => export must stay disabled.
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled();
+    });
+
+    it("keeps export disabled when the only loaded message is a system prompt", async () => {
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([
+        { role: "system", content: "You are a pirate.", timestamp: "2026-07-22T02:30:07.000Z" },
+      ]);
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            attackResultId="ar-1"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+          />
+        </TestWrapper>
+      );
+      await waitFor(() => {
+        expect(mockedMapper.backendMessagesToFrontend).toHaveBeenCalled();
+      });
+      // A lone system prompt renders only in the banner, so export stays disabled.
+      expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled();
+    });
+
+    it("opens a menu with Markdown and JSON options", async () => {
+      const user = userEvent.setup();
+      await renderWithLoadedConversation();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+
+      expect(screen.getByRole("menuitem", { name: /export as markdown/i })).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: /export as json/i })).toBeInTheDocument();
+    });
+
+    it("downloads Markdown when the Markdown option is clicked", async () => {
+      const user = userEvent.setup();
+      await renderWithLoadedConversation();
+      const { clickSpy, getDownloadAnchor } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByRole("menuitem", { name: /export as markdown/i }));
+
+      const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
+      expect(blob.type).toBe("text/markdown;charset=utf-8");
+      expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.md$/);
+      expect(clickSpy).toHaveBeenCalled();
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    });
+
+    it("downloads JSON without re-fetching the conversation", async () => {
+      const user = userEvent.setup();
+      await renderWithLoadedConversation();
+      const callsBefore = mockedAttacksApi.getMessages.mock.calls.length;
+      const { getDownloadAnchor } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByRole("menuitem", { name: /export as json/i }));
+
+      const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
+      expect(blob.type).toBe("application/json;charset=utf-8");
+      expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.json$/);
+      // WYSIWYG: export serializes in-state messages and makes no extra API call.
+      expect(mockedAttacksApi.getMessages.mock.calls.length).toBe(callsBefore);
+    });
+
+    it("exports the displayed conversation id when it differs from the attack's main conversation", async () => {
+      const user = userEvent.setup();
+      // Viewing a branch: activeConversationId (displayed) differs from the
+      // attack's main conversationId. handleExport uses activeConversationId.
+      await renderWithLoadedConversation({
+        conversationId: "conv-main",
+        activeConversationId: "conv-branch",
+      });
+      const { getDownloadAnchor } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByRole("menuitem", { name: /export as markdown/i }));
+
+      expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-branch-.*\.md$/);
+    });
+
+    it("allows exporting a read-only historical conversation", async () => {
+      const user = userEvent.setup();
+      // Operator lock: the loaded attack belongs to a different operator.
+      await renderWithLoadedConversation({ attackLabels: { operator: "someone-else" } });
+      const { clickSpy } = spyOnDownloadAnchor();
+
+      const exportButton = screen.getByRole("button", { name: /export conversation/i });
+      expect(exportButton).toBeEnabled();
+
+      await user.click(exportButton);
+      await user.click(screen.getByRole("menuitem", { name: /export as markdown/i }));
+
+      expect(clickSpy).toHaveBeenCalled();
+    });
+
+    it("disables export while a message is being sent", async () => {
+      const user = userEvent.setup();
+      mockedMapper.buildMessagePieces.mockResolvedValue([
+        { data_type: "text", original_value: "hi" },
+      ]);
+      // addMessage never resolves, so the conversation stays in the sending state.
+      mockedAttacksApi.addMessage.mockImplementation(() => new Promise(() => {}));
+      await renderWithLoadedConversation();
+
+      await user.type(screen.getByRole("textbox"), "hi");
+      await user.click(screen.getByRole("button", { name: /send/i }));
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /export conversation/i })).toBeDisabled()
+      );
     });
   });
 });

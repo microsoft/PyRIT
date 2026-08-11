@@ -115,7 +115,7 @@ class AnecdoctorGenerator(
             processing_model (PromptTarget | None): The model used for knowledge graph extraction.
                 If provided, the generator will extract a knowledge graph from the examples before generation.
                 If None, the generator will use few-shot examples directly.
-            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            converter_config (StrategyConverterConfig | None): Configuration for converters.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
         """
         # Initialize base class
@@ -218,7 +218,6 @@ class AnecdoctorGenerator(
         self._objective_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=context.conversation_id,
-            labels=context.memory_labels,  # deprecated
         )
 
     async def _perform_async(self, *, context: AnecdoctorContext) -> AnecdoctorResult:
@@ -310,7 +309,6 @@ class AnecdoctorGenerator(
             conversation_id=context.conversation_id,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
-            labels=context.memory_labels,
         )
 
     def _load_prompt_from_yaml(self, *, yaml_filename: str) -> str:
@@ -379,7 +377,6 @@ class AnecdoctorGenerator(
         self._processing_model.set_system_prompt(
             system_prompt=kg_system_prompt,
             conversation_id=kg_conversation_id,
-            labels=self._memory_labels,  # deprecated
         )
 
         # Format examples for knowledge graph extraction using few-shot format
@@ -395,7 +392,6 @@ class AnecdoctorGenerator(
             conversation_id=kg_conversation_id,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
-            labels=self._memory_labels,
         )
 
         if not kg_response:

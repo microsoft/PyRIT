@@ -64,7 +64,14 @@ describe("Home", () => {
 
   it("renders the welcome hero", async () => {
     render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(screen.getByText(/welcome to co-pyrit/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: /welcome to co-pyrit/i })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Labels" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Target" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Recent operations" })
+    ).toBeInTheDocument();
     await waitFor(() => expect(mockListAttacks).toHaveBeenCalled());
   });
 

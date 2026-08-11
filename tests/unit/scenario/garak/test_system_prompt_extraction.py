@@ -15,7 +15,7 @@ from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
     DATASET_EXTRACTION_TEMPLATES,
     DATASET_TM_SYSTEM_PROMPTS,
     SystemPromptExtraction,
-    SystemPromptExtractionStrategy,
+    SystemPromptExtractionTechnique,
 )
 from pyrit.score import FloatScaleThresholdScorer, SystemPromptExtractionScorer, TrueFalseScorer
 
@@ -91,14 +91,14 @@ class TestSystemPromptExtractionInitialization:
         scenario = SystemPromptExtraction(objective_scorer=mock_objective_scorer)
         assert scenario._scorer_config.objective_scorer is mock_objective_scorer
 
-    def test_strategy_all_expands_to_every_category(self):
-        concrete = {s.value for s in SystemPromptExtractionStrategy if s != SystemPromptExtractionStrategy.ALL}
+    def test_technique_all_expands_to_every_category(self):
+        concrete = {s.value for s in SystemPromptExtractionTechnique if s != SystemPromptExtractionTechnique.ALL}
         assert concrete == CATEGORIES
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestSystemPromptExtractionAtomicAttacks:
-    async def _init(self, scenario, mock_objective_target, strategies=None):
+    async def _init(self, scenario, mock_objective_target, techniques=None):
         with (
             patch.object(SystemPromptExtraction, "_load_system_prompts", return_value=list(SYSTEM_PROMPTS)),
             patch.object(
@@ -107,12 +107,15 @@ class TestSystemPromptExtractionAtomicAttacks:
                 return_value={k: list(v) for k, v in TEMPLATES_BY_CATEGORY.items()},
             ),
         ):
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                scenario_strategies=strategies,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": techniques,
+                }
             )
+            await scenario.initialize_async()
 
-    async def test_all_strategies_produce_one_attack_per_category(self, mock_objective_target, mock_objective_scorer):
+    async def test_all_techniques_produce_one_attack_per_category(self, mock_objective_target, mock_objective_scorer):
         scenario = SystemPromptExtraction(objective_scorer=mock_objective_scorer)
         await self._init(scenario, mock_objective_target)
 
@@ -121,12 +124,12 @@ class TestSystemPromptExtractionAtomicAttacks:
         assert names == CATEGORIES
         assert all(isinstance(a.attack_technique.attack, PromptSendingAttack) for a in atomic_attacks)
 
-    async def test_single_strategy_produces_single_attack(self, mock_objective_target, mock_objective_scorer):
+    async def test_single_technique_produces_single_attack(self, mock_objective_target, mock_objective_scorer):
         scenario = SystemPromptExtraction(objective_scorer=mock_objective_scorer)
         await self._init(
             scenario,
             mock_objective_target,
-            strategies=[SystemPromptExtractionStrategy.DirectRequests],
+            techniques=[SystemPromptExtractionTechnique.DirectRequests],
         )
 
         atomic_attacks = scenario._atomic_attacks
@@ -141,7 +144,7 @@ class TestSystemPromptExtractionAtomicAttacks:
         await self._init(
             scenario,
             mock_objective_target,
-            strategies=[SystemPromptExtractionStrategy.ContinuationTricks],
+            techniques=[SystemPromptExtractionTechnique.ContinuationTricks],
         )
 
         attack = scenario._atomic_attacks[0]
@@ -159,7 +162,7 @@ class TestSystemPromptExtractionAtomicAttacks:
         await self._init(
             scenario,
             mock_objective_target,
-            strategies=[SystemPromptExtractionStrategy.DirectRequests],
+            techniques=[SystemPromptExtractionTechnique.DirectRequests],
         )
 
         attack = scenario._atomic_attacks[0]

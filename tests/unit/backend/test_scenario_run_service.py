@@ -16,15 +16,16 @@ from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
 )
-from pyrit.models import AttackOutcome, ScenarioRunState
+from pyrit.converter import Converter
+from pyrit.models import AttackOutcome, ScenarioResult, ScenarioRunState
 from pyrit.models.catalog.scenario import RunScenarioRequest
-from pyrit.prompt_converter import PromptConverter
 from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from unit.mocks import make_scenario_result
 
 
-class _StubStrategy(ScenarioStrategy):
-    """Minimal concrete ScenarioStrategy used to exercise converter-token parsing."""
+class _StubTechnique(ScenarioTechnique):
+    """Minimal concrete ScenarioTechnique used to exercise converter-token parsing."""
 
     ALL = ("all", {"all"})
     EASY = ("easy", {"easy"})
@@ -61,7 +62,7 @@ def _make_request(
     scenario_name: str = "foundry.red_team_agent",
     target_name: str = "my_target",
     initializers: list[str] | None = None,
-    strategies: list[str] | None = None,
+    techniques: list[str] | None = None,
     scenario_result_id: str | None = None,
     dataset_names: list[str] | None = None,
     max_dataset_size: int | None = None,
@@ -72,7 +73,7 @@ def _make_request(
         scenario_name=scenario_name,
         target_name=target_name,
         initializers=initializers,
-        strategies=strategies,
+        techniques=techniques,
         scenario_result_id=scenario_result_id,
         dataset_names=dataset_names,
         max_dataset_size=max_dataset_size,
@@ -84,16 +85,16 @@ def _make_db_scenario_result(
     *,
     result_id: str = "sr-uuid-1",
     scenario_name: str = "foundry.red_team_agent",
-    run_state: str = "IN_PROGRESS",
+    run_state: ScenarioRunState = ScenarioRunState.IN_PROGRESS,
     attack_results: dict | None = None,
 ) -> MagicMock:
     """Create a mock ScenarioResult as returned by CentralMemory."""
-    sr = MagicMock()
+    sr = MagicMock(spec=ScenarioResult)
     sr.id = result_id
     sr.scenario_name = scenario_name
     sr.scenario_version = 1
     sr.scenario_run_state = run_state
-    sr.get_strategies_used.return_value = []
+    sr.get_techniques_used.return_value = []
     sr.attack_results = attack_results or {}
     sr.number_tries = 1
     sr.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -128,7 +129,7 @@ def mock_all_registries(mock_memory):
     mock_scenario_instance._scenario_result_id = "sr-uuid-1"
 
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
-    mock_scenario_instance._strategy_class = MagicMock()
+    mock_scenario_instance._technique_class = MagicMock()
     mock_scenario_instance._default_dataset_config = MagicMock()
 
     mock_sr = MagicMock()
@@ -227,14 +228,14 @@ class TestScenarioRunServiceStartRun:
             with pytest.raises(ValueError, match="Initializer not found"):
                 await service.start_run_async(request=_make_request(initializers=["bad_init"]))
 
-    async def test_start_run_invalid_strategy_raises_value_error(self, mock_memory) -> None:
-        """Test that an invalid strategy name raises ValueError immediately."""
+    async def test_start_run_invalid_technique_raises_value_error(self, mock_memory) -> None:
+        """Test that an invalid technique name raises ValueError immediately."""
         service = ScenarioRunService()
 
-        mock_strategy_class = MagicMock(side_effect=ValueError("not a valid strategy"))
-        mock_strategy_class.__iter__ = MagicMock(return_value=iter([MagicMock(value="valid_strat")]))
+        mock_technique_class = MagicMock(side_effect=ValueError("not a valid technique"))
+        mock_technique_class.__iter__ = MagicMock(return_value=iter([MagicMock(value="valid_strat")]))
 
-        mock_instance = MagicMock(_strategy_class=mock_strategy_class)
+        mock_instance = MagicMock(_technique_class=mock_technique_class)
         mock_scenario_class = MagicMock(return_value=mock_instance)
 
         mock_sr = MagicMock()
@@ -248,8 +249,8 @@ class TestScenarioRunServiceStartRun:
             patch(f"{_REGISTRY_PATCH_BASE}.TargetRegistry.get_registry_singleton", return_value=mock_tr),
             patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton"),
         ):
-            with pytest.raises(ValueError, match="Strategy.*not found for scenario"):
-                await service.start_run_async(request=_make_request(strategies=["bad_strategy"]))
+            with pytest.raises(ValueError, match="Technique.*not found for scenario"):
+                await service.start_run_async(request=_make_request(techniques=["bad_technique"]))
 
     async def test_start_run_scenario_not_no_arg_instantiable_raises(self, mock_memory) -> None:
         """If introspection is required and ``scenario_class()`` fails, surface a ValueError."""
@@ -270,26 +271,26 @@ class TestScenarioRunServiceStartRun:
             patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton"),
         ):
             with pytest.raises(ValueError, match="not instantiable without arguments"):
-                # strategies forces the introspection path
-                await service.start_run_async(request=_make_request(strategies=["any"]))
+                # techniques forces the introspection path
+                await service.start_run_async(request=_make_request(techniques=["any"]))
 
-    async def test_start_run_passes_valid_strategies_through(self, mock_all_registries) -> None:
-        """A valid strategy list is converted to enum values and forwarded to initialize_async."""
-        strategy_a = MagicMock(value="strat_a")
-        strategy_b = MagicMock(value="strat_b")
+    async def test_start_run_passes_valid_techniques_through(self, mock_all_registries) -> None:
+        """A valid technique list is converted to enum values and forwarded to initialize_async."""
+        technique_a = MagicMock(value="strat_a")
+        technique_b = MagicMock(value="strat_b")
 
         def _lookup(name):
-            return {"strat_a": strategy_a, "strat_b": strategy_b}[name]
+            return {"strat_a": technique_a, "strat_b": technique_b}[name]
 
-        mock_strategy_class = MagicMock(side_effect=_lookup)
+        mock_technique_class = MagicMock(side_effect=_lookup)
         scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._strategy_class = mock_strategy_class
+        scenario_instance._technique_class = mock_technique_class
 
         service = ScenarioRunService()
-        await service.start_run_async(request=_make_request(strategies=["strat_a", "strat_b"]))
+        await service.start_run_async(request=_make_request(techniques=["strat_a", "strat_b"]))
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        assert init_call.kwargs["scenario_strategies"] == [strategy_a, strategy_b]
+        assert init_call.kwargs["scenario_techniques"] == [technique_a, technique_b]
 
     async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
         """``max_dataset_size`` with no ``dataset_names`` reuses the scenario's default config."""
@@ -553,7 +554,7 @@ class TestScenarioRunServiceGetRun:
 
     def test_get_run_returns_existing_run(self, mock_memory) -> None:
         """Test that get_run returns a run from the database."""
-        db_result = _make_db_scenario_result(result_id="sr-123", run_state="IN_PROGRESS")
+        db_result = _make_db_scenario_result(result_id="sr-123", run_state=ScenarioRunState.IN_PROGRESS)
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
@@ -564,6 +565,25 @@ class TestScenarioRunServiceGetRun:
         assert fetched.scenario_name == "foundry.red_team_agent"
         assert fetched.status == ScenarioRunState.IN_PROGRESS
 
+    def test_get_run_maps_typed_scenario_result_state(self, mock_memory) -> None:
+        """Test the service boundary with a real ScenarioResult domain model."""
+        db_result = make_scenario_result(
+            scenario_name="foundry.red_team_agent",
+            attack_results={},
+            scenario_run_state=ScenarioRunState.FAILED,
+            error_message="Scenario failed",
+            error_type="RuntimeError",
+        )
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id=str(db_result.id))
+
+        assert fetched is not None
+        assert fetched.status is ScenarioRunState.FAILED
+        assert fetched.error == "Scenario failed"
+        assert fetched.error_type == "RuntimeError"
+
     def test_get_run_falls_back_to_persisted_error(self, mock_memory) -> None:
         """Test that get_run extracts error from persisted error AttackResult when no active task.
 
@@ -572,7 +592,7 @@ class TestScenarioRunServiceGetRun:
         ``get_attack_results(scenario_result_id=..., outcome=ERROR)`` rather
         than via a per-scenario error_attack_result_ids manifest.
         """
-        db_result = _make_db_scenario_result(result_id="sr-fail", run_state="FAILED")
+        db_result = _make_db_scenario_result(result_id="sr-fail", run_state=ScenarioRunState.FAILED)
 
         # Mock the error AttackResult lookup
         error_ar = MagicMock()
@@ -607,8 +627,8 @@ class TestScenarioRunServiceListRuns:
     def test_list_runs_returns_all_runs(self, mock_memory) -> None:
         """Test that list_runs returns all runs from the database."""
         db_results = [
-            _make_db_scenario_result(result_id="sr-1", run_state="COMPLETED"),
-            _make_db_scenario_result(result_id="sr-2", run_state="IN_PROGRESS"),
+            _make_db_scenario_result(result_id="sr-1", run_state=ScenarioRunState.COMPLETED),
+            _make_db_scenario_result(result_id="sr-2", run_state=ScenarioRunState.IN_PROGRESS),
         ]
         mock_memory.get_scenario_results.return_value = db_results
 
@@ -643,14 +663,17 @@ class TestScenarioRunServiceCancelRun:
 
         # After update_scenario_run_state, the next DB query should return CANCELLED
         running_result = mock_all_registries["db_result"]
-        cancelled_result = _make_db_scenario_result(result_id=response.scenario_result_id, run_state="CANCELLED")
+        cancelled_result = _make_db_scenario_result(
+            result_id=response.scenario_result_id,
+            run_state=ScenarioRunState.CANCELLED,
+        )
         mock_memory.get_scenario_results.side_effect = [[running_result], [cancelled_result]]
 
         result = await service.cancel_run_async(scenario_result_id=response.scenario_result_id)
 
         mock_memory.update_scenario_run_state.assert_called_once_with(
             scenario_result_id=response.scenario_result_id,
-            scenario_run_state="CANCELLED",
+            scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",
         )
@@ -659,7 +682,7 @@ class TestScenarioRunServiceCancelRun:
 
     async def test_cancel_completed_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling a completed run raises ValueError."""
-        db_result = _make_db_scenario_result(result_id="sr-done", run_state="COMPLETED")
+        db_result = _make_db_scenario_result(result_id="sr-done", run_state=ScenarioRunState.COMPLETED)
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
@@ -668,7 +691,7 @@ class TestScenarioRunServiceCancelRun:
 
     async def test_cancel_already_cancelled_run_raises_value_error(self, mock_memory) -> None:
         """Test that cancelling an already-cancelled run raises ValueError."""
-        db_result = _make_db_scenario_result(result_id="sr-cancelled", run_state="CANCELLED")
+        db_result = _make_db_scenario_result(result_id="sr-cancelled", run_state=ScenarioRunState.CANCELLED)
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
@@ -688,7 +711,7 @@ class TestScenarioRunServiceExecution:
         mock_scenario_result = MagicMock()
         mock_scenario_result.id = "sr-uuid-1"
         mock_scenario_result.scenario_run_state = "COMPLETED"
-        mock_scenario_result.get_strategies_used.return_value = ["base64"]
+        mock_scenario_result.get_techniques_used.return_value = ["base64"]
         mock_scenario_result.attack_results = {"attack1": []}
         mock_scenario_result.number_tries = 1
         mock_scenario_result.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -748,7 +771,7 @@ class TestScenarioRunServiceGetResults:
 
     def test_get_results_raises_if_not_completed(self, mock_memory) -> None:
         """Test that get_run_results raises ValueError if run is not completed."""
-        db_result = _make_db_scenario_result(result_id="sr-running", run_state="IN_PROGRESS")
+        db_result = _make_db_scenario_result(result_id="sr-running", run_state=ScenarioRunState.IN_PROGRESS)
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
@@ -765,7 +788,7 @@ class TestScenarioRunServiceGetResults:
 
         db_result = _make_db_scenario_result(
             result_id="sr-123",
-            run_state="COMPLETED",
+            run_state=ScenarioRunState.COMPLETED,
             attack_results={"base64_attack": [mock_attack_result]},
         )
         db_result.objective_achieved_rate.return_value = 100
@@ -794,13 +817,13 @@ class TestScenarioRunServiceProgressReporting:
 
         db_result = _make_db_scenario_result(
             result_id="sr-running",
-            run_state="IN_PROGRESS",
+            run_state=ScenarioRunState.IN_PROGRESS,
             attack_results={
                 "attack_a": [mock_success, mock_failure],
                 "attack_b": [mock_undetermined],
             },
         )
-        db_result.get_strategies_used.return_value = ["attack_a", "attack_b"]
+        db_result.get_techniques_used.return_value = ["attack_a", "attack_b"]
         db_result.objective_achieved_rate.return_value = 33
         mock_memory.get_scenario_results.return_value = [db_result]
 
@@ -811,14 +834,14 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.status == ScenarioRunState.IN_PROGRESS
         assert fetched.total_attacks == 3
         assert fetched.completed_attacks == 3
-        assert fetched.strategies_used == ["attack_a", "attack_b"]
+        assert fetched.techniques_used == ["attack_a", "attack_b"]
         assert fetched.objective_achieved_rate == 33
 
     def test_created_run_shows_zero_counts(self, mock_memory) -> None:
         """Test that a CREATED run with no results shows zero counts."""
         db_result = _make_db_scenario_result(
             result_id="sr-new",
-            run_state="CREATED",
+            run_state=ScenarioRunState.CREATED,
             attack_results={},
         )
         mock_memory.get_scenario_results.return_value = [db_result]
@@ -830,7 +853,7 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.status == ScenarioRunState.CREATED
         assert fetched.total_attacks == 0
         assert fetched.completed_attacks == 0
-        assert fetched.strategies_used == []
+        assert fetched.techniques_used == []
 
     def test_completed_run_still_shows_full_counts(self, mock_memory) -> None:
         """Test that COMPLETED runs still show accurate counts after the fix."""
@@ -841,10 +864,10 @@ class TestScenarioRunServiceProgressReporting:
 
         db_result = _make_db_scenario_result(
             result_id="sr-done",
-            run_state="COMPLETED",
+            run_state=ScenarioRunState.COMPLETED,
             attack_results={"attack_a": [mock_success]},
         )
-        db_result.get_strategies_used.return_value = ["attack_a"]
+        db_result.get_techniques_used.return_value = ["attack_a"]
         db_result.objective_achieved_rate.return_value = 100
         mock_memory.get_scenario_results.return_value = [db_result]
 
@@ -855,64 +878,162 @@ class TestScenarioRunServiceProgressReporting:
         assert fetched.status == ScenarioRunState.COMPLETED
         assert fetched.total_attacks == 1
         assert fetched.completed_attacks == 1
-        assert fetched.strategies_used == ["attack_a"]
+        assert fetched.techniques_used == ["attack_a"]
         assert fetched.objective_achieved_rate == 100
 
 
-class TestResolveStrategiesAndConverters:
-    """Tests for per-technique converter resolution from ``--strategies`` tokens."""
+class TestScenarioRunServiceFailedAttackReporting:
+    """Tests that per-attack errors and retry pressure surface in the summary."""
 
-    def test_plain_strategy_no_converters(self, mock_memory) -> None:
+    def test_error_attacks_and_retries_are_surfaced(self, mock_memory) -> None:
+        from pyrit.models import AttackOutcome
+
+        success = MagicMock()
+        success.outcome = AttackOutcome.SUCCESS
+        success.total_retries = 2
+
+        errored = MagicMock()
+        errored.outcome = AttackOutcome.ERROR
+        errored.objective = "do the bad thing"
+        errored.error_type = "RateLimitError"
+        errored.error_message = "429 Too Many Requests"
+        errored.total_retries = 4
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-mixed",
+            run_state=ScenarioRunState.COMPLETED,
+            attack_results={"baseline_airt_hate": [success, errored]},
+        )
+        db_result.objective_achieved_rate.return_value = 50
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-mixed")
+
+        assert fetched is not None
+        assert fetched.total_retries == 6
+        assert len(fetched.failed_attacks) == 1
+        failed = fetched.failed_attacks[0]
+        assert failed.atomic_attack_name == "baseline_airt_hate"
+        assert failed.error_type == "RateLimitError"
+        assert failed.error_message == "429 Too Many Requests"
+        assert failed.total_retries == 4
+
+    def test_no_failed_attacks_when_all_succeed(self, mock_memory) -> None:
+        from pyrit.models import AttackOutcome
+
+        success = MagicMock()
+        success.outcome = AttackOutcome.SUCCESS
+        success.total_retries = 0
+        success.retry_events = []
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-clean",
+            run_state=ScenarioRunState.COMPLETED,
+            attack_results={"attack_a": [success]},
+        )
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-clean")
+
+        assert fetched is not None
+        assert fetched.failed_attacks == []
+        assert fetched.total_retries == 0
+        assert fetched.attack_retries == []
+
+    def test_retry_events_surface_per_attack(self, mock_memory) -> None:
+        from pyrit.models import AttackOutcome
+        from pyrit.models.retry_event import RetryEvent
+
+        attack = MagicMock()
+        attack.outcome = AttackOutcome.SUCCESS
+        attack.total_retries = 2
+        attack.attack_result_id = "ar-9"
+        attack.retry_events = [
+            RetryEvent(
+                attempt_number=1,
+                exception_type="RateLimitError",
+                exception_message="429",
+                component_role="objective_scorer",
+                component_name="TrueFalseScorer",
+                endpoint="https://ep/",
+            )
+        ]
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-retry",
+            run_state=ScenarioRunState.COMPLETED,
+            attack_results={"baseline_airt_hate": [attack]},
+        )
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        service = ScenarioRunService()
+        fetched = service.get_run(scenario_result_id="sr-retry")
+
+        assert fetched is not None
+        assert len(fetched.attack_retries) == 1
+        summary = fetched.attack_retries[0]
+        assert summary.attack_result_id == "ar-9"
+        assert summary.atomic_attack_name == "baseline_airt_hate"
+        assert summary.retries[0].endpoint == "https://ep/"
+        assert summary.retries[0].component_role == "objective_scorer"
+
+
+class TestResolveTechniquesAndConverters:
+    """Tests for per-technique converter resolution from ``--techniques`` tokens."""
+
+    def test_plain_technique_no_converters(self, mock_memory) -> None:
         service = ScenarioRunService()
         with _patch_converter_registry({}):
-            enums, converters = service._resolve_strategies_and_converters(
-                tokens=["role_play"], strategy_class=_StubStrategy, scenario_name="x"
+            enums, converters = service._resolve_techniques_and_converters(
+                tokens=["role_play"], technique_class=_StubTechnique, scenario_name="x"
             )
-        assert enums == [_StubStrategy.ROLE_PLAY]
+        assert enums == [_StubTechnique.ROLE_PLAY]
         assert converters == {}
 
     def test_single_converter_appended(self, mock_memory) -> None:
-        conv = MagicMock(spec=PromptConverter)
+        conv = MagicMock(spec=Converter)
         service = ScenarioRunService()
         with _patch_converter_registry({"translation_spanish": conv}):
-            enums, converters = service._resolve_strategies_and_converters(
+            enums, converters = service._resolve_techniques_and_converters(
                 tokens=["role_play:converter.translation_spanish"],
-                strategy_class=_StubStrategy,
+                technique_class=_StubTechnique,
                 scenario_name="x",
             )
-        assert enums == [_StubStrategy.ROLE_PLAY]
+        assert enums == [_StubTechnique.ROLE_PLAY]
         assert converters == {"role_play": [conv]}
 
     def test_aggregate_token_applies_converter_to_all_concrete(self, mock_memory) -> None:
-        conv = MagicMock(spec=PromptConverter)
+        conv = MagicMock(spec=Converter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": conv}):
-            enums, converters = service._resolve_strategies_and_converters(
-                tokens=["easy:converter.c1"], strategy_class=_StubStrategy, scenario_name="x"
+            enums, converters = service._resolve_techniques_and_converters(
+                tokens=["easy:converter.c1"], technique_class=_StubTechnique, scenario_name="x"
             )
-        assert enums == [_StubStrategy.EASY]
+        assert enums == [_StubTechnique.EASY]
         assert converters == {"role_play": [conv], "single_turn": [conv]}
 
     def test_multiple_converters_preserve_order(self, mock_memory) -> None:
-        c1 = MagicMock(spec=PromptConverter)
-        c2 = MagicMock(spec=PromptConverter)
+        c1 = MagicMock(spec=Converter)
+        c2 = MagicMock(spec=Converter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": c1, "c2": c2}):
-            _, converters = service._resolve_strategies_and_converters(
+            _, converters = service._resolve_techniques_and_converters(
                 tokens=["role_play:converter.c1:converter.c2"],
-                strategy_class=_StubStrategy,
+                technique_class=_StubTechnique,
                 scenario_name="x",
             )
         assert converters == {"role_play": [c1, c2]}
 
     def test_overlapping_tokens_append_in_order(self, mock_memory) -> None:
-        c1 = MagicMock(spec=PromptConverter)
-        c2 = MagicMock(spec=PromptConverter)
+        c1 = MagicMock(spec=Converter)
+        c2 = MagicMock(spec=Converter)
         service = ScenarioRunService()
         with _patch_converter_registry({"c1": c1, "c2": c2}):
-            _, converters = service._resolve_strategies_and_converters(
+            _, converters = service._resolve_techniques_and_converters(
                 tokens=["easy:converter.c1", "role_play:converter.c2"],
-                strategy_class=_StubStrategy,
+                technique_class=_StubTechnique,
                 scenario_name="x",
             )
         # role_play is targeted by both the aggregate token and the concrete token.
@@ -921,44 +1042,44 @@ class TestResolveStrategiesAndConverters:
 
     def test_unknown_converter_raises(self, mock_memory) -> None:
         service = ScenarioRunService()
-        with _patch_converter_registry({"known": MagicMock(spec=PromptConverter)}):
+        with _patch_converter_registry({"known": MagicMock(spec=Converter)}):
             with pytest.raises(ValueError, match="not a registered converter"):
-                service._resolve_strategies_and_converters(
+                service._resolve_techniques_and_converters(
                     tokens=["role_play:converter.missing"],
-                    strategy_class=_StubStrategy,
+                    technique_class=_StubTechnique,
                     scenario_name="x",
                 )
 
     def test_unknown_modifier_prefix_raises(self, mock_memory) -> None:
         service = ScenarioRunService()
         with _patch_converter_registry({}):
-            with pytest.raises(ValueError, match="Unknown strategy modifier"):
-                service._resolve_strategies_and_converters(
+            with pytest.raises(ValueError, match="Unknown technique modifier"):
+                service._resolve_techniques_and_converters(
                     tokens=["role_play:scorer.something"],
-                    strategy_class=_StubStrategy,
+                    technique_class=_StubTechnique,
                     scenario_name="x",
                 )
 
-    def test_unknown_base_strategy_raises(self, mock_memory) -> None:
+    def test_unknown_base_technique_raises(self, mock_memory) -> None:
         service = ScenarioRunService()
         with _patch_converter_registry({}):
             with pytest.raises(ValueError, match="not found for scenario"):
-                service._resolve_strategies_and_converters(
+                service._resolve_techniques_and_converters(
                     tokens=["nope:converter.c1"],
-                    strategy_class=_StubStrategy,
+                    technique_class=_StubTechnique,
                     scenario_name="x",
                 )
 
-    async def test_start_run_forwards_strategy_converters(self, mock_all_registries) -> None:
-        """A converter token is resolved and forwarded through the registry as ``strategy_converters``."""
-        conv = MagicMock(spec=PromptConverter)
+    async def test_start_run_forwards_technique_converters(self, mock_all_registries) -> None:
+        """A converter token is resolved and forwarded through the registry as ``technique_converters``."""
+        conv = MagicMock(spec=Converter)
         scenario_instance = mock_all_registries["scenario_instance"]
-        scenario_instance._strategy_class = _StubStrategy
+        scenario_instance._technique_class = _StubTechnique
 
         service = ScenarioRunService()
         with _patch_converter_registry({"translation_spanish": conv}):
-            await service.start_run_async(request=_make_request(strategies=["role_play:converter.translation_spanish"]))
+            await service.start_run_async(request=_make_request(techniques=["role_play:converter.translation_spanish"]))
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        assert init_call.kwargs["scenario_strategies"] == [_StubStrategy.ROLE_PLAY]
-        assert init_call.kwargs["strategy_converters"] == {"role_play": [conv]}
+        assert init_call.kwargs["scenario_techniques"] == [_StubTechnique.ROLE_PLAY]
+        assert init_call.kwargs["technique_converters"] == {"role_play": [conv]}

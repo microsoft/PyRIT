@@ -4,6 +4,7 @@ import { ACTIONS, LIFECYCLE, STATUS } from 'react-joyride'
 
 import { useTour } from './useTour'
 import { TOUR_STEPS } from '../components/Tour/tourSteps'
+import type { ViewName } from '../components/Sidebar/Navigation'
 
 // Minimal EventData shape — only fields our handler reads
 function makeEvent(overrides: Record<string, unknown> = {}) {
@@ -50,6 +51,121 @@ describe('useTour', () => {
 
     expect(result.current.tourProps.run).toBe(true)
     expect(result.current.tourProps.stepIndex).toBe(0)
+    expect(result.current.tourProps.floatingOptions).toEqual({
+      hideArrow: true,
+      shiftOptions: {
+        boundary: [],
+        crossAxis: true,
+        padding: 12,
+        rootBoundary: 'viewport',
+      },
+    })
+  })
+
+  it('uses visible setup guidance when no target is active', () => {
+    const { result } = renderHook(() => useTour(onNavigate, true, 'home', false))
+    const steps = result.current.tourProps.steps
+
+    expect(steps[2].content).toContain('target selection happens in Configuration')
+    expect(steps[2].content).toContain('choose Configure a target')
+    expect(steps[2].content).toContain('use Set Active there')
+    expect(steps[3].target).toBe('[data-tour="chat-prerequisite"]')
+    expect(steps[3].content).toContain('before the message composer is available')
+    expect(steps[3].content).toContain('converter control appear once a target is active')
+  })
+
+  it('uses the active target card and visible converter control when a target is active', () => {
+    const { result } = renderHook(() => useTour(onNavigate, true, 'home', true))
+    const steps = result.current.tourProps.steps
+
+    expect(steps[2].content).toContain('target currently active for Chat')
+    expect(steps[2].content).toContain('after the tour')
+    expect(steps[2].content).toContain('use Set Active in Configuration')
+    expect(steps[3].target).toBe('[data-tour="converter-toggle"]')
+    expect(steps[3].content).toContain('Chat shows the message composer')
+    expect(steps[3].content).toContain('Toggle converter panel')
+  })
+
+  it('keeps tour controls available after manual navigation away from the current step', () => {
+    const { result, rerender } = renderHook(
+      ({ currentView }: { currentView: ViewName }) => useTour(onNavigate, true, currentView),
+      { initialProps: { currentView: 'home' as ViewName } },
+    )
+
+    act(() => { result.current.startTour() })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 0 }))
+    })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 1 }))
+    })
+    expect(result.current.tourProps.stepIndex).toBe(2)
+
+    rerender({ currentView: 'config' })
+
+    expect(result.current.tourProps.run).toBe(true)
+    expect(result.current.tourProps.steps[2]).toMatchObject({
+      target: 'body',
+      placement: 'center',
+      hideOverlay: true,
+      disableFocusTrap: true,
+    })
+
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({
+        action: ACTIONS.PREV,
+        index: 2,
+      }))
+    })
+    expect(onNavigate).toHaveBeenCalledWith('home')
+
+    rerender({ currentView: 'home' })
+    expect(result.current.tourProps.stepIndex).toBe(1)
+    expect(result.current.tourProps.steps[1].target).toBe('[data-tour="labels-card"]')
+  })
+
+  it('adapts the next step when a target is activated from another view', () => {
+    interface HookProps {
+      currentView: ViewName
+      hasActiveTarget: boolean
+    }
+
+    const { result, rerender } = renderHook(
+      ({ currentView, hasActiveTarget }: HookProps) =>
+        useTour(onNavigate, true, currentView, hasActiveTarget),
+      {
+        initialProps: {
+          currentView: 'home' as ViewName,
+          hasActiveTarget: false,
+        },
+      },
+    )
+
+    act(() => { result.current.startTour() })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 0 }))
+    })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 1 }))
+    })
+
+    rerender({ currentView: 'config', hasActiveTarget: false })
+    expect(result.current.tourProps.steps[2].content).toContain('Configure a target')
+
+    rerender({ currentView: 'config', hasActiveTarget: true })
+    expect(result.current.tourProps.steps[2].target).toBe('body')
+    expect(result.current.tourProps.steps[2].content).toContain('target currently active for Chat')
+    expect(result.current.tourProps.steps[3].target).toBe('[data-tour="converter-toggle"]')
+
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 2 }))
+    })
+    expect(onNavigate).toHaveBeenCalledWith('chat')
+
+    rerender({ currentView: 'chat', hasActiveTarget: true })
+    expect(result.current.tourProps.stepIndex).toBe(3)
+    expect(result.current.tourProps.steps[3].target).toBe('[data-tour="converter-toggle"]')
+    expect(result.current.tourProps.steps[3].hideOverlay).toBeUndefined()
   })
 
   it('startTour navigates to home and defers step when on a different view', () => {

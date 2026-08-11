@@ -7,12 +7,21 @@ import pytest
 from unit.mocks import get_mock_scorer_identifier, make_scenario_result
 
 from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_models import (
+    ScenarioIdentifierEntry,
+    ScenarioResultEntry,
+    ScorerIdentifierEntry,
+    TargetIdentifierEntry,
+)
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
+    ScenarioRunState,
+    ScorerIdentifier,
+    TargetIdentifier,
 )
 
 
@@ -87,6 +96,47 @@ def test_add_and_retrieve_scenario_results(sqlite_instance: MemoryInterface, sam
     # Verify the data was stored correctly
     scenario_names = {scenario.scenario_name for scenario in all_scenarios}
     assert scenario_names == {"Scenario 1", "Scenario 2"}
+
+
+def test_add_scenario_results_persists_identifier_graph(sqlite_instance: MemoryInterface):
+    target = TargetIdentifier(
+        class_name="TestTarget",
+        class_module="tests.unit.memory",
+        model_name="test-model",
+    )
+    scorer = ScorerIdentifier(
+        class_name="TestScorer",
+        class_module="tests.unit.memory",
+        scorer_type="true_false",
+        prompt_target=target,
+    )
+    results = [
+        make_scenario_result(
+            scenario_name="PersistedScenario",
+            scenario_version=2,
+            techniques=["TechniqueA"],
+            datasets=["DatasetA"],
+            objective_target_identifier=target,
+            objective_scorer_identifier=scorer,
+            attack_results={},
+        )
+        for _ in range(2)
+    ]
+
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=results)
+
+    scenario_rows = sqlite_instance._query_entries(ScenarioIdentifierEntry)
+    result_rows = sqlite_instance._query_entries(ScenarioResultEntry)
+    assert len(scenario_rows) == 1
+    assert scenario_rows[0].hash == results[0].scenario_identifier.hash
+    assert scenario_rows[0].version == 2
+    assert scenario_rows[0].techniques == ["TechniqueA"]
+    assert scenario_rows[0].datasets == ["DatasetA"]
+    assert scenario_rows[0].objective_target_hash == target.hash
+    assert scenario_rows[0].objective_scorer_hash == scorer.hash
+    assert {row.scenario_identifier_hash for row in result_rows} == {scenario_rows[0].hash}
+    assert len(sqlite_instance._query_entries(TargetIdentifierEntry)) == 1
+    assert len(sqlite_instance._query_entries(ScorerIdentifierEntry)) == 1
 
 
 def test_filter_by_name(sqlite_instance: MemoryInterface, sample_attack_results):
@@ -700,13 +750,10 @@ def _make_attack_result_for_scenario(
 def test_get_scenario_results_loads_attack_results_via_foreign_key(
     sqlite_instance: MemoryInterface,
 ):
-    """When AttackResultEntry rows carry the attribution_parent_id foreign key,
-    hydration picks them up directly — without needing the legacy
-    attack_results_json manifest. This is the path that makes mid-AtomicAttack
-    interruption-recovery work."""
+    """Hydration loads AttackResults through the attribution_parent_id foreign key."""
     scenario_result = create_scenario_result(
         name="ForeignKey-only Scenario",
-        attack_results={},  # manifest intentionally empty
+        attack_results={},
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
 
@@ -798,31 +845,39 @@ def test_delete_scenario_sets_attack_result_foreign_key_to_null(
         assert entry.attribution_data == {"parent_collection": "a"}
 
 
-def test_update_scenario_run_state_targeted_update_preserves_manifest(
+def test_update_scenario_run_state_updates_state_and_error_fields(
     sqlite_instance: MemoryInterface,
 ):
-    """update_scenario_run_state must be a targeted UPDATE — it must not
-    re-serialize the whole row and clobber the manifest column during the
-    deprecation window."""
+    """update_scenario_run_state updates persisted state and error details."""
     scenario_result = create_scenario_result(
         name="Targeted Update",
-        attack_results={"a": []},  # baseline manifest
+        attack_results={"a": []},
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
     sid = str(scenario_result.id)
 
     sqlite_instance.update_scenario_run_state(
         scenario_result_id=sid,
-        scenario_run_state="FAILED",
+        scenario_run_state=ScenarioRunState.FAILED,
         error_message="boom",
         error_type="RuntimeError",
     )
 
     # State and error fields updated.
     [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
-    assert hydrated.scenario_run_state == "FAILED"
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
     assert hydrated.error_message == "boom"
     assert hydrated.error_type == "RuntimeError"
+
+    sqlite_instance.update_scenario_run_state(
+        scenario_result_id=sid,
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+
+    [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.COMPLETED
+    assert hydrated.error_message is None
+    assert hydrated.error_type is None
 
 
 def test_get_scenario_results_by_target_identifier_filter_hash(
@@ -956,3 +1011,22 @@ def test_get_scenario_results_by_target_identifier_filter_no_match(
         ],
     )
     assert len(results) == 0
+
+
+def test_add_scenario_result_without_objective_target_raises(sqlite_instance: MemoryInterface):
+    """Persisting a targetless scenario result fails loudly instead of writing an unqueryable row."""
+    attack_result = create_attack_result("conv_1", "Objective 1")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    scenario = make_scenario_result(
+        scenario_name="Targetless Scenario",
+        scenario_version=1,
+        objective_target_identifier=None,
+        attack_results={"Attack1": [attack_result]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+
+    with pytest.raises(ValueError, match="objective_target_identifier is required"):
+        sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+
+    assert sqlite_instance.get_scenario_results(scenario_name="Targetless Scenario") == []

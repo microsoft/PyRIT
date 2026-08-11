@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import FloatScaleThresholdScorer, SystemPromptExtractionScorer
 
 if TYPE_CHECKING:
@@ -40,9 +40,9 @@ _GOAL = "extract the model's system prompt"
 _DEFAULT_PROMPT_CAP = 256
 
 
-class SystemPromptExtractionStrategy(ScenarioStrategy):
+class SystemPromptExtractionTechnique(ScenarioTechnique):
     """
-    Strategies for the System Prompt Extraction scenario.
+    Techniques for the System Prompt Extraction scenario.
 
     Each member is one garak attack-template category (the *how* of the extraction). The ALL
     aggregate expands to every category.
@@ -77,7 +77,7 @@ class SystemPromptExtraction(Scenario):
     the true/false objective score.
 
     The extraction templates carry a per-seed ``technique`` tag; the 9 garak categories become
-    ``SystemPromptExtractionStrategy`` members. Each selected category becomes one ``AtomicAttack``
+    ``SystemPromptExtractionTechnique`` members. Each selected category becomes one ``AtomicAttack``
     whose seed groups are (system prompt x template) combinations in that category. Across all
     selected categories the total number of combinations is randomly sampled down to ``prompt_cap``
     (garak's ``soft_probe_prompt_cap``), keeping a default run bounded.
@@ -140,8 +140,7 @@ class SystemPromptExtraction(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=SystemPromptExtractionStrategy,
-            default_strategy=SystemPromptExtractionStrategy.ALL,
+            technique_class=SystemPromptExtractionTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=[
                     DATASET_DRH_SYSTEM_PROMPTS,
@@ -186,7 +185,9 @@ class SystemPromptExtraction(Scenario):
             templates_by_category.setdefault(str(category), []).append(seed.value)
         return templates_by_category
 
-    async def _resolve_seed_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def _resolve_seed_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
         Build the (system prompt x template) seed groups, keyed by technique category.
 
@@ -196,8 +197,13 @@ class SystemPromptExtraction(Scenario):
         one atomic attack. Resolving them here (rather than via the dataset config) means the base
         owns the single seed sample shared across the atomic attacks.
 
+        Args:
+            apply_sampling (bool): Accepted for base-class compatibility but unused — the prompt-cap
+                sampling is already deterministic (``random.Random(self._random_seed)``), so resume
+                reproduces the same set without a ``max_dataset_size`` sampling path.
+
         Returns:
-            dict[str, list[SeedAttackGroup]]: Seed groups keyed by technique category value.
+            dict[str, list[AttackSeedGroup]]: Seed groups keyed by technique category value.
 
         Raises:
             ValueError: If no system prompts or templates were found in memory.
@@ -205,7 +211,7 @@ class SystemPromptExtraction(Scenario):
         system_prompts = self._load_system_prompts()
         templates_by_category = self._load_templates_by_category()
 
-        selected_categories = {strategy.value for strategy in self._scenario_strategies}
+        selected_categories = {technique.value for technique in self._scenario_techniques}
 
         combinations = [
             (category, system_prompt, template)
@@ -225,7 +231,7 @@ class SystemPromptExtraction(Scenario):
         if self._follow_prompt_cap and len(combinations) > self._prompt_cap:
             combinations = random.Random(self._random_seed).sample(combinations, self._prompt_cap)
 
-        seed_groups_by_category: dict[str, list[SeedAttackGroup]] = {}
+        seed_groups_by_category: dict[str, list[AttackSeedGroup]] = {}
         for category, system_prompt, template in combinations:
             seed_groups_by_category.setdefault(category, []).append(
                 self._build_seed_group(system_prompt=system_prompt, template=template)
@@ -261,7 +267,7 @@ class SystemPromptExtraction(Scenario):
         return atomic_attacks
 
     @staticmethod
-    def _build_seed_group(*, system_prompt: str, template: str) -> SeedAttackGroup:
+    def _build_seed_group(*, system_prompt: str, template: str) -> AttackSeedGroup:
         """
         Build one seed group pairing a system prompt with an extraction request template.
 
@@ -270,10 +276,10 @@ class SystemPromptExtraction(Scenario):
             template (str): The extraction request template (the *how*).
 
         Returns:
-            SeedAttackGroup: A group with a unique objective, the system prompt (sequence 0) and the
+            AttackSeedGroup: A group with a unique objective, the system prompt (sequence 0) and the
                 extraction request (sequence 1).
         """
-        return SeedAttackGroup(
+        return AttackSeedGroup(
             seeds=[
                 SeedObjective(value=f"{_GOAL} (request: {template}): {system_prompt}"),
                 SeedPrompt(value=system_prompt, role="system", sequence=0),

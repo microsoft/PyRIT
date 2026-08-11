@@ -10,7 +10,6 @@ import pytest
 from pyrit.setup.configuration_loader import (
     ConfigurationLoader,
     InitializerConfig,
-    ScenarioConfig,
     ServerConfig,
     initialize_from_config_async,
 )
@@ -627,65 +626,190 @@ silent: true
         finally:
             config_path.unlink()
 
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_preserves_all_explicit_config_fields(self, mock_default_path, tmp_path):
+        mock_default_path.exists.return_value = False
+        config_path = tmp_path / "explicit.yaml"
+        config_path.write_text(
+            """
+max_concurrent_scenario_runs: 7
+allow_custom_initializers: true
+server:
+  url: http://localhost:8765/
+  startup_timeout: 45
+extensions:
+  feature_flag: enabled
+""",
+            encoding="utf-8",
+        )
 
-class TestScenarioConfig:
-    """Tests for the scenario YAML block normalization."""
+        config = ConfigurationLoader.load_with_overrides(config_file=config_path)
 
-    def test_no_scenario_block(self):
-        loader = ConfigurationLoader()
-        assert loader._scenario_config is None
+        assert config.max_concurrent_scenario_runs == 7
+        assert config.allow_custom_initializers is True
+        assert config.server == {"url": "http://localhost:8765/", "startup_timeout": 45}
+        assert config.server_config == ServerConfig(url="http://localhost:8765", startup_timeout=45.0)
+        assert config.extensions == {"feature_flag": "enabled"}
 
-    def test_string_form_normalized_to_snake_case(self):
-        loader = ConfigurationLoader.from_dict({"scenario": "ScamScenario"})
-        assert loader._scenario_config == ScenarioConfig(name="scam")
+    def test_load_with_overrides_uses_key_presence_when_merging_layers(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text(
+            """
+initializers:
+  - target
+initialization_scripts:
+  - default.py
+silent: true
+operator: default-operator
+operation: default-operation
+allow_custom_initializers: true
+server:
+  url: http://localhost:9000
+  startup_timeout: 180
+extensions:
+  default_extension: enabled
+""",
+            encoding="utf-8",
+        )
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text(
+            """
+initialization_scripts: []
+silent: false
+operator: ""
+operation: null
+allow_custom_initializers: false
+extensions: {}
+""",
+            encoding="utf-8",
+        )
 
-    def test_string_form_already_snake_case(self):
-        loader = ConfigurationLoader.from_dict({"scenario": "scam"})
-        assert loader._scenario_config == ScenarioConfig(name="scam")
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
 
-    def test_dict_form_with_args(self):
-        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": {"max_turns": 10}}})
-        assert loader._scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
+        assert config.initializers == ["target"]
+        assert config.initialization_scripts == []
+        assert config.silent is False
+        assert config.operator == ""
+        assert config.operation is None
+        assert config.allow_custom_initializers is False
+        assert config.server_config == ServerConfig(url="http://localhost:9000", startup_timeout=180.0)
+        assert config.extensions == {}
 
-    def test_dict_form_without_args(self):
-        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam"}})
-        assert loader._scenario_config == ScenarioConfig(name="scam", args=None)
+    def test_load_with_overrides_merges_explicit_extension_keys(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text("alpha: 1\nbeta: 2\n", encoding="utf-8")
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text("alpha: 3\n", encoding="utf-8")
 
-    def test_dict_form_missing_name_raises(self):
-        with pytest.raises(ValueError, match="must have a 'name' field"):
-            ConfigurationLoader.from_dict({"scenario": {"args": {"max_turns": 10}}})
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
 
-    def test_dict_form_non_string_name_raises(self):
-        with pytest.raises(ValueError, match="'name' must be a string"):
-            ConfigurationLoader.from_dict({"scenario": {"name": 123}})
+        assert config.extensions == {"alpha": 3, "beta": 2}
 
-    def test_dict_form_non_dict_args_raises(self):
-        with pytest.raises(ValueError, match="'args' must be a dict"):
-            ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": [1, 2]}})
+    def test_load_with_overrides_merges_server_fields(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text(
+            "server:\n  url: http://localhost:9000\n  startup_timeout: 180\n",
+            encoding="utf-8",
+        )
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text("server:\n  startup_timeout: 45\n", encoding="utf-8")
 
-    def test_invalid_top_level_type_raises(self):
-        with pytest.raises(ValueError, match="must be a string or dict"):
-            ConfigurationLoader.from_dict({"scenario": 123})
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
 
-    def test_scenario_config_property_returns_normalized_block(self):
-        """The public ``scenario_config`` property mirrors the private attribute."""
-        loader = ConfigurationLoader.from_dict({"scenario": {"name": "scam", "args": {"max_turns": 10}}})
-        assert loader.scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
+        assert config.server == {"url": "http://localhost:9000", "startup_timeout": 45}
+        assert config.server_config == ServerConfig(url="http://localhost:9000", startup_timeout=45.0)
 
-    def test_scenario_config_property_none_when_unset(self):
-        loader = ConfigurationLoader()
-        assert loader.scenario_config is None
+    def test_load_with_overrides_null_server_resets_inherited_block(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text(
+            "server:\n  url: http://localhost:9000\n  startup_timeout: 180\n",
+            encoding="utf-8",
+        )
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text("server: null\n", encoding="utf-8")
 
-    def test_load_with_overrides_passes_scenario_through_explicit_config(self):
-        yaml_content = "scenario:\n  name: scam\n  args:\n    max_turns: 10\n"
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(yaml_content)
-            config_path = pathlib.Path(f.name)
-        try:
-            config = ConfigurationLoader.load_with_overrides(config_file=config_path)
-            assert config._scenario_config == ScenarioConfig(name="scam", args={"max_turns": 10})
-        finally:
-            config_path.unlink()
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
+
+        assert config.server is None
+        assert config.server_config is None
+
+    def test_load_with_overrides_removes_null_top_level_extension(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text("alpha: 1\nbeta: 2\n", encoding="utf-8")
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text("alpha: null\n", encoding="utf-8")
+
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
+
+        assert config.extensions == {"beta": 2}
+
+    def test_load_with_overrides_preserves_extension_provenance(self, tmp_path):
+        default_path = tmp_path / ".pyrit_conf"
+        default_path.write_text("alpha: 1\nbeta: 2\n", encoding="utf-8")
+        overlay_path = tmp_path / "overlay.yaml"
+        overlay_path.write_text(
+            "alpha: top-level\nextensions:\n  alpha: nested\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path):
+            config = ConfigurationLoader.load_with_overrides(config_file=overlay_path)
+
+        assert config.extensions == {"alpha": "nested", "beta": 2}
+
+    def test_extensions_reject_non_string_keys(self):
+        with pytest.raises(ValueError, match="extensions keys must be strings"):
+            ConfigurationLoader.from_dict({"extensions": {1: "value"}})
+
+    @pytest.mark.parametrize(
+        ("yaml_content", "error"),
+        [
+            ("", "is empty"),
+            ("invalid: [", "Invalid YAML"),
+        ],
+    )
+    def test_load_with_overrides_rejects_invalid_explicit_yaml(self, tmp_path, yaml_content, error):
+        default_path = tmp_path / "missing-default.yaml"
+        config_path = tmp_path / "explicit.yaml"
+        config_path.write_text(yaml_content, encoding="utf-8")
+
+        with (
+            mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", default_path),
+            pytest.raises(ValueError, match=error),
+        ):
+            ConfigurationLoader.load_with_overrides(config_file=config_path)
+
+
+@pytest.mark.parametrize("scenario_config", [None, {"name": "scam"}])
+def test_scenario_config_block_is_rejected(scenario_config):
+    with pytest.raises(ValueError, match="'scenario' configuration block is no longer supported"):
+        ConfigurationLoader.from_dict({"scenario": scenario_config})
+
+
+def test_load_with_overrides_rejects_scenario_config_block():
+    yaml_content = "scenario:\n  name: scam\n  args:\n    max_turns: 10\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_content)
+        config_path = pathlib.Path(f.name)
+    try:
+        with pytest.raises(ValueError, match="'scenario' configuration block is no longer supported"):
+            ConfigurationLoader.load_with_overrides(config_file=config_path)
+    finally:
+        config_path.unlink()
+
+
+def test_load_with_overrides_rejects_scenario_block_in_default_config(tmp_path):
+    config_path = tmp_path / ".pyrit_conf"
+    config_path.write_text("scenario:\n  name: scam\n", encoding="utf-8")
+
+    with mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", config_path):
+        with pytest.raises(ValueError, match="'scenario' configuration block is no longer supported"):
+            ConfigurationLoader.load_with_overrides()
 
 
 class TestNormalizeServer:
@@ -702,6 +826,15 @@ class TestNormalizeServer:
     def test_server_dict_without_url_uses_default(self):
         config = ConfigurationLoader(server={})
         assert config.server_config == ServerConfig(url="http://localhost:8000")
+
+    def test_server_startup_timeout_normalizes(self):
+        config = ConfigurationLoader(server={"startup_timeout": 45})
+        assert config.server_config == ServerConfig(url="http://localhost:8000", startup_timeout=45.0)
+
+    @pytest.mark.parametrize("startup_timeout", [True, 0, -1, float("inf"), "slow"])
+    def test_server_invalid_startup_timeout_raises(self, startup_timeout):
+        with pytest.raises(ValueError, match="'startup_timeout' must be a finite number greater than 0"):
+            ConfigurationLoader(server={"startup_timeout": startup_timeout})
 
     def test_server_url_non_string_raises(self):
         with pytest.raises(ValueError, match="Server 'url' must be a string"):

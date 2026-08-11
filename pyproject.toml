@@ -1,6 +1,6 @@
 [project]
 name = "pyrit"
-version = "0.15.0.dev0"
+version = "1.1.0.dev0"
 description = "The Python Risk Identification Tool for LLMs (PyRIT) is a library used to assess the robustness of LLMs"
 authors = [
     { name = "Microsoft AI Red Team", email = "airedteam@microsoft.com" },
@@ -130,6 +130,19 @@ speech = [
     "azure-cognitiveservices-speech>=1.44.0",
 ]
 
+litellm = [
+    # Cap below 1.92.0: 1.92.0+ replaced the universal py3-none-any wheel with a
+    # Rust (PyO3) extension and only publishes manylinux_2_28 (x86_64/aarch64) and
+    # win_amd64 wheels. macOS (any arch), musl/Alpine, glibc <2.28, and Windows
+    # ARM64 have no matching wheel, so pip/uv falls back to building the Rust
+    # extension from the sdist, which fails without a Rust toolchain. Environment
+    # markers cannot express libc flavor or glibc version, so the affected
+    # platforms cannot be pinned back selectively. 1.91.x is the last line with a
+    # universal wheel that installs everywhere. Revisit once litellm ships macOS
+    # and musllinux wheels.
+    "litellm>=1.83.0,<1.92.0",
+]
+
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
     "accelerate>=1.7.0",
@@ -138,6 +151,7 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
+    "litellm>=1.83.0,<1.92.0",  # 1.92.0+ drops the universal wheel (no mac/musl/old-glibc/win-arm64); see litellm group
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
@@ -168,7 +182,7 @@ all = "error"
 # missing-type-argument is clean under numpy>=2.4 (Python 3.14) but flags 38
 # bare `np.ndarray` generics under numpy 2.2.6 -- the version the lock pins for
 # Python 3.10-3.13, i.e. CI's 3.11 -- across 5 files (analytics/conversation_analytics,
-# prompt_converter/transparency_attack_converter, score/scorer_evaluation/*).
+# converter/transparency_attack_converter, score/scorer_evaluation/*).
 # Annotating those generics is real code work, so keep the rule deferred until
 # that numpy-generics debt is addressed.
 missing-type-argument = "ignore"
@@ -202,7 +216,7 @@ replace-imports-with-any = [
 ]
 
 [tool.ty.src]
-exclude = ["doc/code/", "pyrit/auxiliary_attacks/"]
+exclude = ["doc/code/"]
 
 # Relax type checking for HuggingFace module
 [[tool.ty.overrides]]
@@ -388,6 +402,16 @@ extend-select = [
 [tool.ruff.lint.isort]
 known-first-party = ["pyrit"]
 
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic resolves model field annotations at runtime (the models use
+# ``from __future__ import annotations``), so imports used only as field types
+# must stay at module level. Ruff auto-detects direct ``pydantic.BaseModel``
+# subclasses, but not models whose base is an intermediate PyRIT class, so we
+# enumerate those bases here to keep their field imports runtime-evaluated.
+runtime-evaluated-base-classes = [
+    "pyrit.models.results.strategy_result.StrategyResult",
+]
+
 [tool.ruff.lint.flake8-copyright]
 min-file-size = 1
 notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under the MIT license"
@@ -406,8 +430,6 @@ notice-rgx = "Copyright \\(c\\) Microsoft Corporation\\.\\s*\\n.*Licensed under 
 "doc/**" = ["ANN", "CPY001", "TCH", "E402", "E501", "PGH003", "A", "ERA001", "LOG", "PLE1142"]
 # Backend API routes raise HTTPException handled by FastAPI, not true exceptions
 "pyrit/backend/**/*.py" = ["DOC501", "B008"]
-# Vendored GCG attack code — external project with its own style
-"pyrit/auxiliary_attacks/**/*.py" = ["A", "B905", "D", "DOC", "N", "PERF", "SIM101", "SIM108"]
 "pyrit/__init__.py" = ["D104"]
 # Allow broad pytest.raises(Exception) in tests
 "tests/**/*.py" = ["ANN", "B017"]

@@ -56,9 +56,9 @@ def _scenario_payload(*, scenario_name: str = "s1") -> dict:
         "scenario_name": scenario_name,
         "scenario_type": "RedTeamAgentScenario",
         "description": "test scenario",
-        "default_strategy": "single_turn",
-        "aggregate_strategies": [],
-        "all_strategies": ["single_turn"],
+        "default_technique": "single_turn",
+        "aggregate_techniques": [],
+        "all_techniques": ["single_turn"],
         "default_datasets": [],
         "supported_parameters": [],
     }
@@ -98,7 +98,7 @@ def _run_summary_payload(*, scenario_result_id: str = "abc", status: str = "CREA
         "updated_at": now,
         "error": None,
         "error_type": None,
-        "strategies_used": [],
+        "techniques_used": [],
         "total_attacks": 0,
         "completed_attacks": 0,
         "objective_achieved_rate": 0,
@@ -168,9 +168,20 @@ def test_get_client_raises_when_not_opened():
 
 
 async def test_health_check_returns_true_on_200(client, mock_httpx_client):
-    mock_httpx_client.get.return_value = _make_response(status_code=200)
+    mock_httpx_client.get.return_value = _make_response(
+        status_code=200,
+        json_data={"status": "healthy", "service": "pyrit-backend"},
+    )
     assert await client.health_check_async() is True
     mock_httpx_client.get.assert_awaited_once_with("/api/health")
+
+
+async def test_health_check_returns_false_for_unrelated_service(client, mock_httpx_client):
+    mock_httpx_client.get.return_value = _make_response(
+        status_code=200,
+        json_data={"status": "ok", "service": "another-service"},
+    )
+    assert await client.health_check_async() is False
 
 
 async def test_health_check_returns_false_on_non_200(client, mock_httpx_client):

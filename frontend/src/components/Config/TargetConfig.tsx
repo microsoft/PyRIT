@@ -73,16 +73,17 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
   }, [fetchTargets])
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Text size={600} weight="semibold">Target Configuration</Text>
+          <Text as="h1" size={600} weight="semibold">Target Configuration</Text>
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
             Manage targets for attack sessions. Select a target to use in the chat view.
           </Text>
         </div>
         <div className={styles.headerActions}>
           <Button
+            className={styles.headerAction}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={fetchTargets}
@@ -91,6 +92,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             Refresh
           </Button>
           <Button
+            className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
@@ -118,14 +120,20 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
             Add a target manually, or configure an initializer in your <code>~/.pyrit/.pyrit_conf</code> file
             to auto-populate targets from your <code>.env</code> and <code>.env.local</code> files.
-            For example, add <code>airt</code> to the <code>initializers</code> list to register
-            Azure OpenAI targets automatically. See the{' '}
-            <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
+            For example, add <code>target</code> to the <code>initializers</code> list to register
+            available prompt targets automatically. See the{' '}
+            <Link
+              href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+              target="_blank"
+              rel="noopener noreferrer"
+              inline
+            >
               .pyrit_conf_example
             </Link>{' '}
             for details.
           </Text>
           <Button
+            className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}

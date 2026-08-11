@@ -52,6 +52,9 @@ The main components of PyRIT are seeds, scenarios, attack techniques, executors 
 
 The diagram below shows how the pieces fit together: entry points run **scenarios**, which package **datasets** with **attack techniques**; each technique drives an **attack/executor** that orchestrates **converters**, **targets**, and **scorers**; and a shared library layer (**memory**, **registry**, **models**, **output**, and more) supports all of them.
 
+:::{div}
+:class: col-page-right
+
 ```mermaid
 flowchart TB
     subgraph entry [Entry points]
@@ -105,6 +108,7 @@ flowchart TB
     class SCEN,TECH,ATK flow;
     class MEM,REG,MODEL,OUT libnode;
 ```
+:::
 
 The orchestration layers **nest from broadest to narrowest** — each owns less than the layer above it:
 
@@ -140,7 +144,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - New Datasets can be added in the dataset module.
 - Datasets should never be retrieved from SeedDatasetProviders; SeedDatasetProviders should load into memory, and then components retrieve from memory
 - Most components should always work with seeds passed directly in (except scenarios which may package them from memory). Never use SeedDatasetProviders, file paths, etc. Either pass the seed as an argument or retrieve from memory.
-- There is a Seed hierarchy and the right types should be used (SeedObjective, SeedPrompt, SimulatedSeedPrompt, SeedAttackGroup, ...)
+- There is a Seed hierarchy and the right types should be used (SeedObjective, SeedPrompt, SimulatedSeedPrompt, AttackSeedGroup, ...)
 - **Does not own**: a dataset defines and holds seeds; it doesn't package them for an attack. Specifically not:
   - selecting or combining which seeds an attack uses (that's a scenario / attack technique)
   - rendering or parameterizing prompts at send time (converters / normalizers)
@@ -172,15 +176,19 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 ## [Attack Techniques](./scenarios/0_attack_techniques)
 
-**Responsibility**: An attack technique packages an executor, converters, datasets, and strategies into a single attack. The goal is that any attack (something trying to achieve an objective) can be defined as an attack technique.
+**Responsibility**: An attack technique packages an executor, converters, datasets, and strategies into a single named attack. The goal is that any attack (something trying to achieve an objective) can be defined as an attack technique.
 
+- Techniques are self-describing `AttackTechniqueFactory` instances (a `name`, `attack_class`, `attack_kwargs`, and `technique_tags`). They read like configuration even though they are code, so adding one — or bringing your own — is easy. The canonical catalog lives under `pyrit/setup/initializers/techniques/`: `core.py` (a small, curated standard set, auto-loaded on a bare `initialize_pyrit_async`), `extra.py` (the broader collection, opt-in), and per-source modules like `airt.py` (owned by a source/scenario but reusable, tagged with their owner and kept out of the default pool).
+- `core` stays deliberately small so a default run doesn't print 200 techniques or take forever; the wider catalog lives in `extra` and is selected on demand. Users pick subsets by passing initializer tags (e.g. `core`, `extra`, `all`) or writing their own initializer, so different runs — including from the CLI — can register different technique sets without changing the catalog.
+- A technique tied to one scenario is fine; if it's pinned and non-reusable it can stay local to that scenario, but if another scenario could reuse it, promote it to a catalog module and tag it.
+- Tags describe a technique (behavioral tags like `single_turn`/`multi_turn`, owner tags like `airt`); they don't decide what a scenario runs. There is deliberately **no global `default` tag** — a default is scenario-relative, declared per scenario via `build_technique_class_from_factories` (the `factories` list is the pool, catalog tags become named aggregate presets, and `default_tags` / `default_names` set what runs when nothing is chosen).
 - **Does not own**: the conversation algorithm itself. Branching, turn management, and scoring decisions live in the executor it wraps — a technique only selects and configures existing components, and shouldn't implement new sending, scoring, or branching logic.
 
 **Framework Plans**:
 
-- Managing these better, so scenarios can more easily select or build the attack techniques to use
+- Growing `extra` toward hundreds of techniques while keeping `core` small and curated, and making it easier to select technique subsets (via tags, initializers, or the CLI) without slow, noisy default runs.
 
-**Contributing (difficulty easy)**: Simply add the attack technique to one of the initializers.
+**Contributing (difficulty easy)**: Add an `AttackTechniqueFactory` to `extra.py` (the default home for new general-purpose techniques), or to a source-owned module (like `airt.py`) if it belongs to a specific scenario but could be reused. `core` is reserved for the curated standard set. Tag it with its behavioral tags; don't tag it `default`.
 
 ## [Executors and Attacks](./executor/0_executor)
 
@@ -193,12 +201,12 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
 - Compound attacks are possible, combining different attacks in different ways.
 - **Does not own**: packaging the attack. Those are passed in as configuration by the **attack technique**, not assembled here:
-  - prepended / system prompts, role-play framing, the converter stack, or dataset selection (e.g. `RolePlayAttack` building its own prompt scaffolding is attack-technique work bleeding into the executor)
+  - prepended / system prompts, role-play framing, the converter stack, or dataset selection (e.g. if an executor assembles its own prompt scaffolding for a simulated conversation, that is attack-technique work bleeding into the executor)
   - branching on raw responses (use a scorer), constructing its own components (use the registry), or formatting / persisting results (output / memory)
 
 **Framework Plans**:
 
-- We need to move some older attacks that don't belong here. Many (FlipAttack) should just be attack techniques
+- We need to move some older attacks that don't belong here. Many should just be attack techniques
 - There are potential ways we could combine different algorithms. Are Crescendo and TAP ultimately the same?
 - We need to support target capabilities more implicitly
 - Other executors, like benchmarks, need better end-to-end support; potentially including an `ExpectedResult` seed and associated scorers.
@@ -227,7 +235,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Targets should use message_normalizer along with TargetConfiguration to transform `Messages` into formats that target supports.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
-- **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), or apply attack logic. Its retries stay at the target layer (e.g. `RateLimitException`).
+- **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
 
 **Framework Plans**:
 
@@ -306,7 +314,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 
 **Responsibility**: Reshape prompts and conversations so components and targets can interoperate. There are two distinct modules:
 
-- **`prompt_normalizer`** applies converters and dispatches individual prompts to a `PromptTarget` (handling batching and memory persistence). `NormalizerRequest` and `PromptConverterConfiguration` describe what to send and which converters to apply.
+- **`prompt_normalizer`** applies converters and dispatches individual prompts to a `PromptTarget` (handling batching and memory persistence). It is the single component that writes each request and response to memory; targets never persist on their own. `NormalizerRequest` and `ConverterConfiguration` describe what to send and which converters to apply.
 - **`message_normalizer`** reshapes multi-message conversation payloads into the structure a given model expects — for example, handling system-message behavior (keep / squash / ignore), history squashing, and tokenizer chat templates.
 
 ## [Output](./output/0_output)

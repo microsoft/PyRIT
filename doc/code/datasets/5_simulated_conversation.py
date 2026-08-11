@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 5. Simulated Conversations
+# # Simulated Conversations
 #
 # Multi-turn attacks like Crescendo [@russinovich2024crescendo] are powerful but slow — each turn
 # requires a round-trip to the target. If you've already generated a successful multi-turn prefix
@@ -74,7 +74,6 @@ print(f"Generated {len(simulated_conversation_prompts)} messages")
 simulated_conversation = SeedGroup(seeds=simulated_conversation_prompts)
 
 # View the conversation prefix (N-1 turns)
-# Note: print_messages_async was deprecated. Using output_attack_async instead.
 # For direct message printing, use: from pyrit.output import output_conversation_async
 
 print(f"\nPrepended conversation messages: {len(simulated_conversation.prepended_conversation)}")

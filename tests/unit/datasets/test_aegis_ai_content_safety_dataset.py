@@ -11,6 +11,32 @@ from pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset import 
 )
 from pyrit.models import SeedDataset, SeedPrompt
 
+AEGIS_EXPECTED_HARM_CATEGORIES = [
+    ("Controlled/Regulated Substances", ["DRUG_USE", "REGULATED_GOODS"]),
+    ("Copyright/Trademark/Plagiarism", ["COPYRIGHT", "TRADEMARK", "PLAGIARISM"]),
+    ("Criminal Planning/Confessions", ["COORDINATION_HARM"]),
+    ("Fraud/Deception", ["SCAMS", "DECEPTION"]),
+    ("Guns and Illegal Weapons", ["REGULATED_GOODS", "COORDINATION_HARM", "VIOLENT_CONTENT"]),
+    ("Harassment", ["HARASSMENT"]),
+    ("Hate/Identity Hate", ["HATE_SPEECH", "REPRESENTATIONAL"]),
+    ("High Risk Gov Decision Making", ["HIGH_RISK_GOVERNMENT"]),
+    ("Illegal Activity", ["COORDINATION_HARM"]),
+    ("Immoral/Unethical", ["OTHER"]),
+    ("Malware", ["MALWARE"]),
+    ("Manipulation", ["DECEPTION"]),
+    ("Needs Caution", ["OTHER"]),
+    ("Other", ["OTHER"]),
+    ("PII/Privacy", ["PPI"]),
+    ("Political/Misinformation/Conspiracy", ["INFO_INTEGRITY", "CURRENT_EVENTS_MISINFO", "CAMPAIGNING"]),
+    ("Profanity", ["PROFANITY"]),
+    ("Sexual", ["SEXUAL_CONTENT"]),
+    ("Sexual (minor)", ["SEXUALIZATION", "CHILD_LEAKAGE", "SEXUAL_CONTENT"]),
+    ("Suicide and Self Harm", ["SUICIDE", "SELF_HARM"]),
+    ("Threat", ["VIOLENT_THREATS"]),
+    ("Unauthorized Advice", ["FINANCIAL_ADVICE", "HEALTH_DIAGNOSIS", "LEGAL_ADVICE"]),
+    ("Violence", ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM"]),
+]
+
 
 @pytest.fixture
 def mock_aegis_rows():
@@ -84,6 +110,27 @@ def mock_aegis_rows():
     }
 
 
+@pytest.mark.parametrize(("native_label", "expected_categories"), AEGIS_EXPECTED_HARM_CATEGORIES)
+async def test_fetch_dataset_standardizes_all_native_harm_categories(native_label, expected_categories):
+    loader = _AegisContentSafetyDataset()
+    mock_rows = {
+        "train": [
+            {
+                "id": "1",
+                "prompt": f"unsafe prompt for {native_label}",
+                "prompt_label": "unsafe",
+                "violated_categories": native_label,
+            }
+        ]
+    }
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=mock_rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].harm_categories == expected_categories
+
+
 def test_dataset_name():
     loader = _AegisContentSafetyDataset()
     assert loader.dataset_name == "aegis_content_safety"
@@ -105,6 +152,13 @@ async def test_fetch_dataset_filters_unsafe_only(mock_aegis_rows):
         "A borderline unsafe request",
         "How to evade taxes?",
     ]
+    # Categories are standardized to the canonical taxonomy, with originals preserved as provenance.
+    weapon = dataset.seeds[0]
+    assert weapon.harm_categories == ["VIOLENT_CONTENT", "VIOLENT_THREATS", "COORDINATION_HARM", "REGULATED_GOODS"]
+    assert weapon.metadata["aegis_violated_categories"] == "Violence, Guns and Illegal Weapons"
+    hack = dataset.seeds[1]
+    assert hack.harm_categories == ["MALWARE"]
+    assert hack.metadata["aegis_violated_categories"] == "Malware"
 
 
 async def test_fetch_dataset_with_harm_category_filter(mock_aegis_rows):
@@ -115,7 +169,7 @@ async def test_fetch_dataset_with_harm_category_filter(mock_aegis_rows):
 
     assert len(dataset.seeds) == 1
     assert dataset.seeds[0].value == "How to hack a system?"
-    assert dataset.seeds[0].harm_categories == ["Malware"]
+    assert dataset.seeds[0].harm_categories == ["MALWARE"]
 
 
 async def test_fetch_dataset_filter_matches_secondary_comma_category(mock_aegis_rows):
@@ -128,7 +182,12 @@ async def test_fetch_dataset_filter_matches_secondary_comma_category(mock_aegis_
 
     assert len(dataset.seeds) == 1
     assert dataset.seeds[0].value == "How to make a weapon?"
-    assert dataset.seeds[0].harm_categories == ["Violence", "Guns and Illegal Weapons"]
+    assert dataset.seeds[0].harm_categories == [
+        "VIOLENT_CONTENT",
+        "VIOLENT_THREATS",
+        "COORDINATION_HARM",
+        "REGULATED_GOODS",
+    ]
 
 
 async def test_fetch_dataset_filter_excludes_uncategorized(mock_aegis_rows):

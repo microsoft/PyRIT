@@ -54,9 +54,9 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
     """
     Loader for the Toxicity perspective of the DecodingTrust benchmark.
 
-    DecodingTrust [1] evaluates LLM trustworthiness across eight perspectives;
+    DecodingTrust evaluates LLM trustworthiness across eight perspectives;
     the Toxicity perspective publishes ~2.4k prompts sampled from
-    RealToxicityPrompts [2] and re-scored with the Perspective API. Each record
+    RealToxicityPrompts and re-scored with the Perspective API. Each record
     contains a plain-text prompt fragment, eight Perspective-API scores
     (toxicity, severe_toxicity, profanity, sexually_explicit, identity_attack,
     threat, insult, flirtation) and a ``challenging`` flag for the
@@ -73,15 +73,12 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
     ``>= toxicity_threshold`` adds the corresponding category. This avoids
     guessing where the source provides no label.
 
-    References:
-        [@wang2023decodingtrust; @gehman2020realtoxicityprompts]
-        https://github.com/AI-secure/DecodingTrust
+    Reference: [@wang2023decodingtrust]
+    Source: https://github.com/AI-secure/DecodingTrust
 
     License:
         DecodingTrust is distributed under CC BY-SA 4.0. PyRIT fetches the
-        prompts at runtime and does not redistribute them. Full attribution to
-        the DecodingTrust and RealToxicityPrompts authors is recorded on every
-        ``SeedPrompt`` produced.
+        prompts at runtime and does not redistribute them.
 
     Warning:
         The toxic subset contains profanity, sexual content, identity attacks
@@ -122,28 +119,20 @@ class _DecodingTrustToxicityDataset(_RemoteDatasetLoader):
         "Sanmi Koyejo",
         "Dawn Song",
         "Bo Li",
-        # RealToxicityPrompts authors (DecodingTrust subsamples from RTP)
-        "Samuel Gehman",
-        "Suchin Gururangan",
-        "Maarten Sap",
-        "Yejin Choi",
-        "Noah A. Smith",
     )
 
     _GROUPS: tuple[str, ...] = (
-        "University of Illinois Urbana-Champaign",
+        "University of Illinois at Urbana-Champaign",
         "Stanford University",
         "University of California, Berkeley",
         "Center for AI Safety",
-        "Microsoft Research",
-        "Allen Institute for Artificial Intelligence",
-        "University of Washington",
-        "Paul G. Allen School of Computer Science & Engineering",
+        "Microsoft Corporation",
+        "The Chinese University of Hong Kong",
     )
 
     _DESCRIPTION = (
         "Toxicity perspective of the DecodingTrust benchmark (Wang et al., 2023). "
-        "Prompts are sampled from RealToxicityPrompts (Gehman et al., 2020) and "
+        "Prompts are sampled from RealToxicityPrompts and "
         "re-scored with the Perspective API. Each record carries eight Perspective "
         "scores (toxicity, severe_toxicity, profanity, sexually_explicit, "
         "identity_attack, threat, insult, flirtation) and a `challenging` flag. "

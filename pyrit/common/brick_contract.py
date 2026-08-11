@@ -4,37 +4,63 @@
 """
 Constructor contract enforcement for PyRIT's pluggable brick base classes.
 
-Several PyRIT base classes (``PromptConverter``, ``Scorer``, ``PromptTarget``,
+Several PyRIT base classes (``Converter``, ``Scorer``, ``PromptTarget``,
 ``Scenario``, ``AttackStrategy``, ``SeedDatasetProvider``) are extension
 points that users routinely swap in and out. To make those swaps predictable,
 every subclass must use the keyword-only constructor shape mandated by the
 style guide: ``def __init__(self, *, ...)``.
 
-This module provides one shared helper, ``enforce_keyword_only_init``,
-that bases invoke from their own ``__init_subclass__`` hook. The helper
-inspects the subclass's directly-defined ``__init__`` (not inherited) and
-classifies it as compliant or non-compliant. Non-compliant subclasses either
-raise ``TypeError`` at class definition time, or, if they opt in via the
-``_brick_legacy_init`` class attribute, emit a ``DeprecationWarning``
-via ``print_deprecation_message`` and continue.
-The opt-out is intended to be removed in ``0.16.0``.
+``enforce_keyword_only_init`` validates subclass signatures.
+``forward_init_parameters`` explicitly marks constructors that pass their
+``**kwargs`` to the next constructor in the MRO, allowing registries to derive
+the complete strict build contract without interpreting arbitrary keyword bags.
 """
 
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from inspect import Parameter
+from typing import TypeVar
 
-from pyrit.common.deprecation import print_deprecation_message
+_InitMethodT = TypeVar("_InitMethodT", bound=Callable[..., None])
+_FORWARD_INIT_PARAMETERS_ATTRIBUTE = "__pyrit_forward_init_parameters__"
 
-#: Class attribute name that opts a subclass into the legacy-init grace period.
-#: When ``True`` on a class, ``enforce_keyword_only_init`` downgrades the
-#: ``TypeError`` to a ``DeprecationWarning`` until ``_LEGACY_REMOVED_IN``.
-LEGACY_INIT_OPT_OUT_ATTR = "_brick_legacy_init"
 
-#: Version in which the legacy-init opt-out is removed; non-conforming
-#: subclasses will hard-fail at that point.
-_LEGACY_REMOVED_IN = "0.16.0"
+def forward_init_parameters(init: _InitMethodT) -> _InitMethodT:
+    """
+    Declare that a constructor forwards ``**kwargs`` to the next MRO constructor.
+
+    The registry uses this explicit declaration to merge parent constructor
+    parameters into the class's build contract without treating every variadic
+    keyword bag as parent arguments.
+
+    Args:
+        init (_InitMethodT): The forwarding constructor.
+
+    Returns:
+        _InitMethodT: The unchanged constructor with registry metadata attached.
+
+    Raises:
+        TypeError: If the constructor does not accept ``**kwargs``.
+    """
+    if not any(param.kind is Parameter.VAR_KEYWORD for param in inspect.signature(init).parameters.values()):
+        raise TypeError("forward_init_parameters requires a constructor that accepts **kwargs.")
+    setattr(init, _FORWARD_INIT_PARAMETERS_ATTRIBUTE, True)
+    return init
+
+
+def init_parameters_are_forwarded(init: Callable[..., object]) -> bool:
+    """
+    Return whether a constructor declares that it forwards ``**kwargs``.
+
+    Args:
+        init (Callable[..., object]): The constructor to inspect.
+
+    Returns:
+        bool: True when ``forward_init_parameters`` marked the constructor.
+    """
+    return bool(getattr(init, _FORWARD_INIT_PARAMETERS_ATTRIBUTE, False))
 
 
 def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:
@@ -58,12 +84,7 @@ def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:
 
     Raises:
         TypeError: If ``cls.__init__`` accepts any positional or
-            positional-or-keyword parameters after ``self``, and ``cls`` does
-            not opt into the legacy-init grace period via the
-            ``_brick_legacy_init`` class attribute. The opt-out is only
-            honored when set directly on ``cls`` (it is not inherited from a
-            base class), so new subclasses always get the hard check by
-            default.
+            positional-or-keyword parameters after ``self``.
     """
     if "__init__" not in cls.__dict__:
         # Subclass inherits __init__ from its parent; the parent has already
@@ -78,22 +99,9 @@ def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:
     if not offenders:
         return
 
-    if cls.__dict__.get(LEGACY_INIT_OPT_OUT_ATTR, False):
-        # Opt-in legacy period: warn rather than break, so existing users
-        # whose code calls these constructors positionally have one release
-        # cycle to migrate.
-        print_deprecation_message(
-            old_item=(f"{cls.__module__}.{cls.__qualname__}.__init__ with positional parameters {offenders!r}"),
-            new_item=(f"keyword-only parameters per the {base_name} contract (insert ``*`` after ``self``)"),
-            removed_in=_LEGACY_REMOVED_IN,
-        )
-        return
-
     raise TypeError(
         f"{cls.__name__}.__init__ violates the {base_name} contract: "
         f"all parameters after ``self`` must be keyword-only, but the "
         f"following are positional: {offenders!r}. Insert ``*,`` after "
-        f"``self`` to fix, or set ``{LEGACY_INIT_OPT_OUT_ATTR} = True`` on "
-        f"the class to opt into a temporary deprecation period (removed in "
-        f"{_LEGACY_REMOVED_IN})."
+        f"``self`` to fix."
     )

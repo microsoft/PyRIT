@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { makeTarget, type FlatTarget } from "./_targets";
 
 // ---------------------------------------------------------------------------
@@ -32,11 +32,145 @@ const SAMPLE_TARGETS = [
   },
 ];
 
+const LONG_REGISTRY_NAME_A =
+  "openai-production-eastus2-red-team-evaluation-primary-deployment";
+const LONG_REGISTRY_NAME_B =
+  "openai-production-eastus2-red-team-evaluation-secondary-deployment";
+
+const LONG_NAME_TARGETS: FlatTarget[] = [
+  {
+    target_registry_name: LONG_REGISTRY_NAME_A,
+    target_type: "OpenAIChatTarget",
+    endpoint: "https://primary.openai.azure.com",
+    model_name: "gpt-4o-responsive",
+  },
+  {
+    target_registry_name: LONG_REGISTRY_NAME_B,
+    target_type: "OpenAIChatTarget",
+    endpoint: "https://secondary.openai.azure.com",
+    model_name: "gpt-4o-responsive",
+  },
+];
+
+const RESPONSIVE_VIEWPORTS = [
+  { name: "mobile", width: 390, height: 844 },
+  { name: "desktop", width: 1280, height: 800 },
+] as const;
+
+const TARGET_PICKER_CHOICES = [
+  {
+    targetType: "AzureMLChatTarget",
+    displayName: "Azure Machine Learning chat",
+    description: "A prompt target for Azure Machine Learning chat endpoints.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAIChatTarget",
+    displayName: "OpenAI chat",
+    description: "Facilitates multimodal (image and text) input and text output generation.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAICompletionTarget",
+    displayName: "OpenAI text completion",
+    description: "A prompt target for OpenAI completion endpoints.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAIImageTarget",
+    displayName: "OpenAI image",
+    description: "A target for image generation or editing using OpenAI's image models.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAIResponseTarget",
+    displayName: "OpenAI Responses API",
+    description: "Enables communication with endpoints that support the OpenAI Response API.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAITTSTarget",
+    displayName: "OpenAI text to speech",
+    description: "A prompt target for OpenAI Text-to-Speech (TTS) endpoints.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "OpenAIVideoTarget",
+    displayName: "OpenAI video",
+    description: "OpenAI Video Target using the OpenAI SDK for video generation.",
+    authModes: ["api_key", "identity"],
+  },
+  {
+    targetType: "RoundRobinTarget",
+    displayName: "Weighted round robin",
+    description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
+    authModes: ["api_key"],
+  },
+] as const;
+
+async function routeResponsiveTargetData(
+  page: Page,
+  targets: FlatTarget[]
+): Promise<void> {
+  await page.route(/\/api\/targets\/catalog(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [
+          {
+            target_type: "OpenAIChatTarget",
+            parameters: [],
+            supported_auth_modes: ["api_key", "identity"],
+          },
+          {
+            target_type: "RoundRobinTarget",
+            parameters: [],
+            supported_auth_modes: ["api_key"],
+          },
+        ],
+      }),
+    });
+  });
+  await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
+    await route.fulfill(mockTargetsList(targets));
+  });
+}
+
+async function expectWithin(
+  child: Locator,
+  container: Locator
+): Promise<void> {
+  const childBox = await child.boundingBox();
+  const containerBox = await container.boundingBox();
+  if (!childBox || !containerBox) {
+    throw new Error("Expected visible child and container bounds");
+  }
+
+  expect(childBox.x).toBeGreaterThanOrEqual(containerBox.x);
+  expect(childBox.x + childBox.width).toBeLessThanOrEqual(
+    containerBox.x + containerBox.width
+  );
+}
+
 /** Navigate to the config view. */
 async function goToConfig(page: Page) {
   await page.goto("/");
   await page.getByTitle("Configuration").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
+}
+
+async function selectTargetType(
+  page: Page,
+  dialog: Locator,
+  targetType: string
+): Promise<void> {
+  const picker = dialog.getByRole("combobox", { name: "Target Type" });
+  await expect(picker).toBeEnabled();
+  await picker.click();
+  await page.getByRole("option", {
+    name: new RegExp(`Implementation: ${targetType}`),
+  }).click();
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +272,66 @@ test.describe("Target Configuration Page", () => {
 });
 
 test.describe("Create Target Dialog", () => {
+  test("should make all target choices distinguishable and keyboard navigable", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route(/\/api\/targets\/catalog(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: TARGET_PICKER_CHOICES.map((choice) => ({
+            target_type: choice.targetType,
+            parameters: [],
+            supported_auth_modes: choice.authModes,
+            description: choice.description,
+          })),
+        }),
+      });
+    });
+    await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
+      await route.fulfill(mockTargetsList([]));
+    });
+
+    await goToConfig(page);
+    await page.getByRole("button", { name: /new target/i }).click();
+
+    const dialog = page.getByRole("dialog");
+    const picker = dialog.getByRole("combobox", { name: "Target Type" });
+    await expect(picker).toBeEnabled();
+    await picker.focus();
+    await page.keyboard.press("Enter");
+
+    const listbox = page.getByRole("listbox");
+    await expect(listbox).toBeVisible();
+    await expect(listbox.getByRole("option")).toHaveCount(8);
+    for (const choice of TARGET_PICKER_CHOICES) {
+      const option = listbox.getByRole("option", {
+        name: new RegExp(`Implementation: ${choice.targetType}`),
+      });
+      await expect(option).toContainText(choice.displayName);
+      await expect(option).toContainText(choice.targetType);
+      await expect(option).toContainText(choice.description);
+    }
+
+    const listboxWidths = await listbox.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(listboxWidths.scrollWidth).toBeLessThanOrEqual(listboxWidths.clientWidth);
+
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await expect(picker).toContainText("Weighted round robin");
+    const selectedDetails = dialog.getByRole("region", {
+      name: "Selected target details",
+    });
+    await expect(selectedDetails).toContainText("RoundRobinTarget");
+    await expect(selectedDetails).toContainText("weighted round-robin selection");
+    await expect(selectedDetails).toContainText("Supported authentication: API key");
+  });
+
   test("should create a target through the dialog", async ({ page }) => {
     let createdTarget: FlatTarget | null = null;
 
@@ -172,10 +366,15 @@ test.describe("Create Target Dialog", () => {
     const dialog = page.locator('[role="dialog"]');
 
     // Select target type
-    await dialog.locator("select").selectOption("OpenAIChatTarget");
+    await selectTargetType(page, dialog, "OpenAIChatTarget");
 
     // Fill endpoint
     await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://my-endpoint.openai.azure.com/");
+
+    // The picker must keep showing the selection once focus moves to another field
+    await expect(dialog.getByRole("combobox", { name: "Target Type" })).toContainText(
+      "OpenAI chat"
+    );
 
     // Fill model name
     await dialog.getByPlaceholder("e.g. gpt-4o, my-deployment").fill("gpt-4o-test");
@@ -210,13 +409,112 @@ test.describe("Create Target Dialog", () => {
 
     // Clear endpoint, select type — button should still be disabled
     await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("");
-    await page.locator('[role="dialog"]').locator("select").selectOption("OpenAIChatTarget");
+    await selectTargetType(
+      page,
+      page.locator('[role="dialog"]'),
+      "OpenAIChatTarget"
+    );
     await expect(createBtn).toBeDisabled();
 
     // Fill both — button should be enabled
     await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://test.com");
     await expect(createBtn).toBeEnabled();
   });
+});
+
+test.describe("Responsive Target Configuration", () => {
+  for (const viewport of RESPONSIVE_VIEWPORTS) {
+    test(`should contain configuration actions at ${viewport.name} width`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({
+        width: viewport.width,
+        height: viewport.height,
+      });
+      await routeResponsiveTargetData(page, LONG_NAME_TARGETS);
+      await goToConfig(page);
+      await expect(page.getByText("gpt-4o-responsive").first()).toBeVisible();
+
+      const config = page.getByTestId("target-config");
+      const newTargetButton = page.getByRole("button", { name: /new target/i });
+      await expect(newTargetButton).toBeVisible();
+      await expectWithin(newTargetButton, config);
+
+      const configWidth = await config.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }));
+      expect(configWidth.scrollWidth).toBeLessThanOrEqual(
+        configWidth.clientWidth
+      );
+
+      await newTargetButton.click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+    });
+
+    test(`should contain long Round Robin selections at ${viewport.name} width`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({
+        width: viewport.width,
+        height: viewport.height,
+      });
+      await routeResponsiveTargetData(page, LONG_NAME_TARGETS);
+      await goToConfig(page);
+      await expect(page.getByText("gpt-4o-responsive").first()).toBeVisible();
+
+      await page.getByRole("button", { name: /new target/i }).click();
+      const dialog = page.getByRole("dialog");
+      const dialogBox = await dialog.boundingBox();
+      if (!dialogBox) {
+        throw new Error("Expected the Create Target dialog to be visible");
+      }
+      if (viewport.name === "desktop") {
+        expect(dialogBox.width).toBeLessThanOrEqual(640);
+      }
+      await selectTargetType(page, dialog, "RoundRobinTarget");
+
+      const addTargetSelect = dialog.locator("select");
+      await addTargetSelect.selectOption(LONG_REGISTRY_NAME_A);
+      await addTargetSelect.selectOption(LONG_REGISTRY_NAME_B);
+
+      const firstTargetName = dialog.getByLabel(
+        `Selected target: ${LONG_REGISTRY_NAME_A} (gpt-4o-responsive)`
+      );
+      await expect(firstTargetName).toBeVisible();
+      await firstTargetName.focus();
+      await expect(page.getByRole("tooltip")).toContainText(
+        LONG_REGISTRY_NAME_A
+      );
+
+      const form = page.getByTestId("create-target-form");
+      const formWidths = await form.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }));
+      expect(formWidths.scrollWidth).toBeLessThanOrEqual(
+        formWidths.clientWidth
+      );
+      const dialogWidths = await dialog.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }));
+      expect(dialogWidths.scrollWidth).toBeLessThanOrEqual(
+        dialogWidths.clientWidth
+      );
+
+      await expectWithin(
+        dialog.getByLabel(`Weight for ${LONG_REGISTRY_NAME_A}`),
+        dialog
+      );
+      await expectWithin(
+        dialog.getByRole("button", {
+          name: `Remove ${LONG_REGISTRY_NAME_B}`,
+        }),
+        dialog
+      );
+    });
+  }
 });
 
 test.describe("Target Config ↔ Chat Navigation", () => {

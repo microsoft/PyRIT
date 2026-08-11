@@ -6,15 +6,15 @@ from typing import Any
 
 from colorama import Back, Fore, Style
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
+from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.attack_result.base import AttackResultPrinterBase
 from pyrit.output.conversation.pretty import PrettyConversationPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.sink import Sink
 
 
-class PrettyAttackResultPrinter(AttackResultPrinterBase):
+class PrettyAttackResultPrinter(_PrettyPrinterMixin, AttackResultPrinterBase):
     """
     Pretty printer for attack results with ANSI-colored formatting.
 
@@ -69,22 +69,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             blur_radius=blur_radius,
         )
 
-    def _format_colored(self, text: str, *colors: str) -> str:
-        """
-        Format text with color codes if colors are enabled.
-
-        Args:
-            text (str): The text to format.
-            *colors: Variable number of colorama color constants to apply.
-
-        Returns:
-            str: The formatted line with trailing newline.
-        """
-        if self._enable_colors and colors:
-            color_prefix = "".join(colors)
-            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
-        return f"{text}\n"
-
     async def render_async(
         self,
         result: AttackResult,
@@ -92,6 +76,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         include_auxiliary_scores: bool = False,
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> str:
         """
         Render the complete attack result and return it as a string.
@@ -102,6 +87,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
             include_adversarial_conversation (bool): Whether to include the adversarial conversation.
                 Defaults to False.
+            include_reasoning_summaries (bool): Whether to include the reasoning summary. Defaults to False.
 
         Returns:
             str: The rendered attack result text.
@@ -110,35 +96,34 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         lines.append(self._render_header(result))
         lines.append(await self._render_summary_async(result))
         lines.append(self._render_section_header("Conversation History with Objective Target"))
-        lines.append(await self._render_conversation_async(result, include_scores=include_auxiliary_scores))
+        lines.append(
+            await self._render_conversation_async(
+                result,
+                include_scores=include_auxiliary_scores,
+                include_reasoning_summaries=include_reasoning_summaries,
+            )
+        )
         if include_pruned_conversations:
-            lines.append(await self._render_pruned_conversations_async(result))
+            lines.append(
+                await self._render_pruned_conversations_async(
+                    result,
+                    include_reasoning_summaries=include_reasoning_summaries,
+                )
+            )
         if include_adversarial_conversation:
-            lines.append(await self._render_adversarial_conversation_async(result))
+            lines.append(
+                await self._render_adversarial_conversation_async(
+                    result,
+                    include_reasoning_summaries=include_reasoning_summaries,
+                )
+            )
         if result.metadata:
             lines.append(self._render_metadata(result.metadata))
         lines.append(self._render_footer())
         return "".join(lines)
 
-    async def print_result_async(
-        self,
-        result: AttackResult,
-        *,
-        include_auxiliary_scores: bool = False,
-        include_pruned_conversations: bool = False,
-        include_adversarial_conversation: bool = False,
-    ) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_result_async", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(
-            result,
-            include_auxiliary_scores=include_auxiliary_scores,
-            include_pruned_conversations=include_pruned_conversations,
-            include_adversarial_conversation=include_adversarial_conversation,
-        )
-
     async def _render_conversation_async(
-        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
+        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_summaries: bool = False
     ) -> str:
         """
         Render the conversation history as a formatted string.
@@ -146,7 +131,7 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         Args:
             result (AttackResult): The attack result containing the conversation_id.
             include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include model reasoning trace. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include model reasoning summary. Defaults to False.
 
         Returns:
             str: The rendered conversation text.
@@ -164,42 +149,8 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         return await self._conversation_printer.render_async(
             messages,
             include_scores=include_scores,
-            include_reasoning_trace=include_reasoning_trace,
+            include_reasoning_summaries=include_reasoning_summaries,
         )
-
-    async def print_conversation_async(
-        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
-    ) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_conversation_async", new_item="write_async", removed_in="0.16.0")
-        content = await self._render_conversation_async(
-            result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
-        )
-        await self._write_async(content)
-
-    async def output_conversation_async(
-        self, result: AttackResult, *, include_scores: bool = False, include_reasoning_trace: bool = False
-    ) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="output_conversation_async", new_item="write_async", removed_in="0.16.0")
-        content = await self._render_conversation_async(
-            result, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
-        )
-        await self._write_async(content)
-
-    async def print_messages_async(
-        self,
-        messages: list[Message],
-        *,
-        include_scores: bool = False,
-        include_reasoning_trace: bool = False,
-    ) -> None:
-        """Use the conversation printer's ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_messages_async", new_item="write_async", removed_in="0.16.0")
-        content = await self._conversation_printer.render_async(
-            messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
-        )
-        await self._write_async(content)
 
     async def _render_summary_async(self, result: AttackResult) -> str:
         """
@@ -253,12 +204,6 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             lines.append(self._score_printer._render_score(result.last_score, indent_level=2))
 
         return "".join(lines)
-
-    async def print_summary_async(self, result: AttackResult) -> None:
-        """Use ``write_async`` instead. This method is deprecated."""
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
-        content = await self._render_summary_async(result)
-        await self._write_async(content)
 
     def _render_header(self, result: AttackResult) -> str:
         """
@@ -328,12 +273,18 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
             lines.append(self._format_colored(f"{self._indent}• {key}: {value}", Fore.CYAN))
         return "".join(lines)
 
-    async def _render_pruned_conversations_async(self, result: AttackResult) -> str:
+    async def _render_pruned_conversations_async(
+        self,
+        result: AttackResult,
+        *,
+        include_reasoning_summaries: bool = False,
+    ) -> str:
         """
         Render pruned conversations showing only the last message and score for each.
 
         Args:
             result (AttackResult): The attack result containing related conversations.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             str: The rendered pruned conversations text.
@@ -366,10 +317,32 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                 continue
 
             last_message = messages[-1]
+            pieces = self._conversation_printer._get_renderable_pieces(
+                message=last_message,
+                include_reasoning_summaries=include_reasoning_summaries,
+            )
+            if not pieces:
+                continue
+
             role_label = last_message.api_role.upper()
             lines.append(self._format_colored(f"{self._indent}Last Message ({role_label}):", Style.BRIGHT, Fore.WHITE))
 
-            for piece in last_message.message_pieces:
+            reasoning_rendered = False
+            response_heading_rendered = False
+            for piece in pieces:
+                if self._conversation_printer._is_reasoning_piece(piece=piece):
+                    rendered = self._conversation_printer._render_reasoning_summary(
+                        self._conversation_printer._get_reasoning_value(piece=piece)
+                    )
+                    if rendered:
+                        lines.append(rendered)
+                        reasoning_rendered = True
+                    continue
+
+                if reasoning_rendered and not response_heading_rendered and last_message.api_role == "assistant":
+                    lines.append(self._conversation_printer._render_response_heading())
+                    response_heading_rendered = True
+
                 lines.append(self._conversation_printer._render_wrapped_text(piece.converted_value, Fore.WHITE))
 
                 scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
@@ -382,12 +355,18 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
         lines.append(self._format_colored("─" * self._width, Fore.RED))
         return "".join(lines)
 
-    async def _render_adversarial_conversation_async(self, result: AttackResult) -> str:
+    async def _render_adversarial_conversation_async(
+        self,
+        result: AttackResult,
+        *,
+        include_reasoning_summaries: bool = False,
+    ) -> str:
         """
         Render the adversarial conversation for the best-scoring attack branch.
 
         Args:
             result (AttackResult): The attack result containing related conversations.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
 
         Returns:
             str: The rendered adversarial conversation text.
@@ -426,7 +405,13 @@ class PrettyAttackResultPrinter(AttackResultPrinterBase):
                 )
                 continue
 
-            lines.append(await self._conversation_printer.render_async(messages, include_scores=False))
+            lines.append(
+                await self._conversation_printer.render_async(
+                    messages,
+                    include_scores=False,
+                    include_reasoning_summaries=include_reasoning_summaries,
+                )
+            )
 
         return "".join(lines)
 
@@ -510,6 +495,7 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
         include_auxiliary_scores: bool = False,
         include_pruned_conversations: bool = False,
         include_adversarial_conversation: bool = False,
+        include_reasoning_summaries: bool = False,
     ) -> str:
         """
         Render the complete attack result and return it as a string.
@@ -520,6 +506,7 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
             include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
             include_adversarial_conversation (bool): Whether to include the adversarial conversation.
                 Defaults to False.
+            include_reasoning_summaries (bool): Whether to include the reasoning summaries. Defaults to False.
 
         Returns:
             str: The rendered attack result text.
@@ -529,6 +516,7 @@ class PrettyAttackResultMemoryPrinter(PrettyAttackResultPrinter):
             include_auxiliary_scores=include_auxiliary_scores,
             include_pruned_conversations=include_pruned_conversations,
             include_adversarial_conversation=include_adversarial_conversation,
+            include_reasoning_summaries=include_reasoning_summaries,
         )
 
     async def _get_conversation_async(self, conversation_id: str) -> list[Message]:

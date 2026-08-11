@@ -13,38 +13,40 @@
 #
 # Sometimes a scenario needs a custom parameter that a user can set without
 # editing source code (`max_turns`, dataset names, feature flags, etc.).
-# Scenarios can declare typed parameters that flow from CLI flags or YAML
-# config into `self.params`.
+# Scenarios can declare typed parameters that flow from CLI flags into
+# `self.params`.
 #
 # This is different from [Common Scenario Parameters](./1_common_scenario_parameters.ipynb),
-# which covers the framework-level configuration surface (datasets, strategies,
+# which covers the framework-level configuration surface (datasets, techniques,
 # scorers, baseline). This guide is about parameters that scenario authors add
 # on their own classes.
 #
 # ## Declaring a parameter
 #
 # `Parameter` is the unified declaration shared by initializers and scenarios.
-# To declare one on a scenario, override the `supported_parameters()` classmethod
-# and return a list. Here's the actual declaration on
-# [`Scam`](../../../pyrit/scenario/scenarios/airt/scam.py):
+# To declare one on a scenario, override the `additional_parameters()` classmethod
+# and return a list of just your extras — the base composes these with the common
+# run inputs, so you never repeat (or accidentally drop) them. Here's the actual
+# declaration on [`Scam`](../../../pyrit/scenario/scenarios/airt/scam.py):
 #
 # ```python
 # @classmethod
-# def supported_parameters(cls) -> list[Parameter]:
-#     """Declare custom parameters this scenario accepts from the CLI / config file."""
+# def additional_parameters(cls) -> list[Parameter]:
+#     """Declare custom parameters this scenario accepts from the CLI."""
 #     return [
 #         Parameter(
 #             name="max_turns",
-#             description="Maximum conversation turns for the persuasive_rta strategy.",
+#             description="Maximum conversation turns for the persuasive_rta technique.",
 #             param_type=int,
 #             default=5,
 #         ),
 #     ]
 # ```
 #
-# At runtime the framework calls `supported_parameters()` to inspect declarations.
-# It's a classmethod, so this works without instantiating the scenario (which
-# would wire up memory and scorers):
+# At runtime the framework calls `supported_parameters()` to inspect declarations
+# (the common inputs plus your `additional_parameters()`). It's a classmethod, so
+# this works without instantiating the scenario (which would wire up memory and
+# scorers):
 
 # %%
 from pyrit.scenario.airt.scam import Scam
@@ -59,8 +61,8 @@ for param in Scam.supported_parameters():
 
 # %% [markdown]
 # Each declaration lives inside the scenario class body, in the
-# `supported_parameters()` classmethod. End users don't construct `Parameter`
-# objects themselves; they pass values via CLI flags or YAML config.
+# `additional_parameters()` classmethod. End users don't construct `Parameter`
+# objects themselves; they pass values via CLI flags.
 #
 # Each `Parameter` carries:
 #
@@ -78,7 +80,7 @@ from typing import Literal
 
 from pyrit.models import Parameter
 
-# What a scenario author would return from supported_parameters():
+# What a scenario author would return from additional_parameters():
 example_declarations = [
     # Scalar with no default — author must guard against None at run time
     Parameter(name="objective", description="Goal the attack pursues", param_type=str),
@@ -108,7 +110,7 @@ for p in example_declarations:
 # deep-copied on each run, so changes in one scenario instance don't leak
 # into another.
 #
-# Here's how Scam reads the parameter, in `_get_atomic_attack_from_strategy`:
+# Here's how Scam reads the parameter, in `_get_atomic_attack_from_technique`:
 #
 # ```python
 # attack_strategy = RedTeamingAttack(
@@ -153,39 +155,11 @@ for p in example_declarations:
 # # ...
 # #   --max-turns MAX_TURNS  Conversation turn cap
 # ```
-
-# %% [markdown]
-# ## Setting a parameter from a YAML config file
-#
-# A `scenario:` block names the scenario and supplies parameter values. CLI
-# flags override matching keys; absent keys fall back to YAML, then to the
-# declared default. See [.pyrit_conf_example](../../../.pyrit_conf_example)
-# for a complete config file with this and other supported sections.
-#
-# ```yaml
-# # ~/.pyrit/.pyrit_conf
-# scenario:
-#   name: airt.scam
-#   args:
-#     max_turns: 10
-# ```
-
-# %% [markdown]
-# A few invocation shapes from the CLI:
-#
-# ```bash
-# pyrit_scan --config-file my_config.yaml                          # config provides scenario name
-# pyrit_scan airt.scam --config-file my_config.yaml                # CLI confirms the name
-# pyrit_scan airt.scam --config-file my_config.yaml --max-turns 7  # CLI args win per-key
-# ```
-#
-# `pyrit_shell` supports the YAML form when the scenario name is supplied
-# explicitly (`run airt.scam ...`).
 #
 # ## Discovering parameters via --list-scenarios
 #
 # `--list-scenarios` prints declared parameters alongside each scenario's
-# other metadata (description, strategies, datasets). The same formatter the
+# other metadata (description, techniques, datasets). The same formatter the
 # CLI uses is callable programmatically:
 
 # %%
@@ -196,7 +170,7 @@ from pyrit.cli._output import print_scenario_list
 # Supported Parameters section is visible in one and absent in the other.
 demo_names = {"airt.scam", "foundry.red_team_agent"}
 response = await get_scenario_service().list_scenarios_async(limit=200)  # type: ignore
-print_scenario_list(items=[s.model_dump() for s in response.items if s.scenario_name in demo_names])
+print_scenario_list(items=[s for s in response.items if s.scenario_name in demo_names])
 
 # %% [markdown]
 # Notice the `Supported Parameters:` section under `airt.scam`. It's absent
@@ -234,6 +208,6 @@ print_scenario_list(items=[s.model_dump() for s in response.items if s.scenario_
 
 # %% [markdown]
 # `Scam.max_turns` was previously hardcoded to `5` in
-# `_get_atomic_attack_from_strategy`. Replacing it with a `Parameter` of
+# `_get_atomic_attack_from_technique`. Replacing it with a `Parameter` of
 # `default=5` keeps the original behavior (no new flag is required to run
 # Scam as before) while making the value overridable for users who need it.

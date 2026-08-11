@@ -11,9 +11,50 @@ Follow the instructions according to the order provided.
 
 Before starting the release process, verify the codebase is in a healthy state.
 
+### Customer-Facing Review
+
+Use an existing release work item, or create one if none exists, to track release
+readiness. The release owner reviews the customer-facing release materials: draft
+GitHub release notes, changed public documentation, and changed CoPyRIT UI content.
+Review the changed documentation and UI content for technical accuracy, security and
+compatibility disclosures, content clarity, and usability. Ensure the release notes
+include:
+
+- A summary of the important bug fixes and features being shipped.
+- Security fixes and known high-priority security issues, including affected versions
+  and recommended actions. If there are none, write
+  `No known high-priority security issues.`
+- Breaking changes and backward-compatibility issues, including clear migration or
+  mitigation steps. If there are none, write
+  `No known breaking changes or backward-compatibility issues.`
+
+Link the draft release notes in the release work item. Record
+`Initial review completed by @owner on YYYY-MM-DD: no findings` or link the issues or
+pull requests that resolved the findings.
+
+#### Before Publishing
+
+A PyRIT maintainer other than the release owner reviews the final materials and:
+
+1. Compares the final release notes with the changes included in the release and
+   confirms that the required content is complete and accurate.
+2. Opens the changed documentation and applicable CoPyRIT UI to confirm that the
+   content is clear, security information is accessible, and the final materials match
+   the release notes.
+3. Confirms that high-priority security bugs and technical-review findings from the
+   initial review are resolved.
+4. Records either
+   `Approved by @reviewer on YYYY-MM-DD for development, security, content, and UX`
+   or the remaining changes required before approval in the release work item.
+
+Do not include details about security vulnerabilities that have not yet been publicly
+disclosed in the release work item. Follow [the security policy](../../SECURITY.md)
+for private vulnerability reporting.
+
 - **Check for pending changes.** Ask other PyRIT maintainers whether they have any in-flight changes that should land before the release.
 - **Verify build pipelines.** Confirm that all integration tests and end-to-end tests are passing in the CI pipelines. If any tests are failing, fix them before proceeding.
   - **Partner integration tests.** Ensure the partner integration tests are also passing. These tests validate that we are not breaking contracts with partner teams (e.g., Foundry). If any are failing, coordinate with the affected partner teams before proceeding with the release.
+  - **Azure key-based auth is disabled in our tenant.** Our Azure subscription has API-key (local) auth turned off, so Azure target integration tests authenticate with Microsoft Entra ID. Tests that run notebooks requiring Azure API keys are deliberately skipped; otherwise they fail with HTTP 403 `AuthenticationTypeDisabled` ("Key based authentication is disabled for this resource"). Do not re-enable key auth for our tenant. When validating a release manually, authenticate Azure targets with Entra (`az login`) rather than API keys.
 - **Update scorer metrics.** Run `python .\build_scripts\evaluate_scorers.py` and commit the results so that scorer evaluation metrics are up to date.
 
 ## 2. Decide the Next Version
@@ -103,35 +144,7 @@ git push --tags
 
 After pushing the branch to remote, check the release branch to make sure it looks as intended (e.g. check the links in the README work properly).
 
-## 6. Update the documentation site versions
-
-Add the new release as a version on the [documentation site](https://microsoft.github.io/PyRIT/).
-Edit `.github/docs-versions.yml` on `main`:
-
-- Append the new release under `versions:` with `slug: "x.y.z"`, `name: "x.y.z"`, and `ref: releases/vx.y.z`.
-- Update `stable:` and `default:` at the top of the file to point at the new version (so the
-  root URL `microsoft.github.io/PyRIT/` and the `/stable/` alias redirect to it).
-
-Open a small PR to `main` with just this change. Once merged, the docs workflow rebuilds the
-site and the new version appears in the version picker on every page of every version.
-
-For example, releasing `0.14.0` would change:
-
-```yaml
-default: "0.13.0"
-stable: "0.13.0"
-```
-
-to:
-
-```yaml
-default: "0.14.0"
-stable: "0.14.0"
-```
-
-and add an entry under `versions:` for `0.14.0` pointing at `releases/v0.14.0`.
-
-## 7. Build Package
+## 6. Build Package
 
 You'll need the build package to build the project. If it’s not already installed, install it `pip install build`.
 
@@ -162,7 +175,7 @@ This should print
 
 > Successfully built pyrit-x.y.z.tar.gz and pyrit-x.y.z-py3-none-any.whl
 
-## 8. Test Built Package
+## 7. Test Built Package
 
 This step is crucial to ensure that the new package works out of the box.
 
@@ -179,6 +192,8 @@ Before running the demos, execute `az login` or `az login --use-device-code`, as
 Additionally, verify that your environment file includes all the test secrets needed to run the demos. If not, update your .env file using the secrets from the key vault.
 
 In the new location, run all notebooks that are currently skipped by integration tests (there are less than 10) in VS Code. These are listed in `skipped_files` in each `tests/integration/<folder>/test_notebooks_*.py` file and are located in the doc folder that you copied into your new `releases\releasevx.y.z` folder. Note that some of these notebooks have known issues and it may make sense to skip testing them until those are fixed. Check with the last person to deploy or look for the relevant release work item for more information. In running the notebooks, you may also see exceptions. If this happens, make sure to look for existing bugs open on the ADO board or create a new one if it does not exist! If it is easy to fix, we prefer to fix the issue before the release continues.
+
+Some notebooks that use Azure targets with API-key (local) auth are skipped by the integration tests for a separate reason: key-based auth is disabled in our Azure subscription (see the note under *Release Readiness* above). These are tracked in the `_azure_key_auth_notebooks` set in `tests/integration/targets/test_notebooks_targets.py` (distinct from the long-standing `skipped_files` list). Validate them with Entra auth (`az login`) rather than API keys, or rely on the equivalent Entra-auth integration tests; running them with API keys fails with HTTP 403 `AuthenticationTypeDisabled`.
 
 A reminder that you should ensure that the integration tests pass in the version you are releasing in addition to the skipped files.
 
@@ -204,7 +219,7 @@ Note: You may need to build the package again if those changes modify any depend
 Lastly, **Verify pyrit-internal is up to date.** Follow the instructions at [aka.ms/internal-release](https://aka.ms/internal-release) to ensure the internal package is current.
 
 
-## 9. Migrate Production Database Schema
+## 8. Migrate Production Database Schema
 
 Apply any pending Alembic migrations to the production database. This is the **only**
 sanctioned path for modifying the production schema — normal startup only validates,
@@ -252,7 +267,16 @@ Still run it as confirmation.
 since `downgrade()` risks data loss.
 
 
-## 10. Publish to PyPI
+## 9. Publish to PyPI
+
+Complete this checklist in the release work item:
+
+- [ ] The initial review is recorded, and the draft release notes are linked.
+- [ ] High-priority security bugs and technical-review findings are resolved.
+- [ ] A maintainer other than the release owner has recorded final approval for development, security, content, and UX.
+- [ ] Release notes contain the required security and compatibility disclosures.
+
+Do not publish the package until every item is complete.
 
 Create an account on pypi.org if you don't have one yet.
 Ask one of the other maintainers to add you to the `pyrit` project on PyPI.
@@ -269,32 +293,58 @@ If successful, it will print
 > View at:
 > https://pypi.org/project/pyrit/x.y.z/
 
-## 11. Update main
+## 10. Update main
 
 After the release is on PyPI, make sure to create a PR for the `main` branch
-where the only changes are:
+where the changes are:
 
 - the version increase in `__init__.py` (while keeping suffix `.dev0`).
 - Search for the previous release version in the codebase and replace any occurrences with the new version
   (without `.dev0`). For example, some installation pages refer to the latest release.
+- Update the documentation site versions in `.github/docs-versions.yml` (see below).
 
 The PR should be made from your fork and should be a different branch than the releases branch you created earlier.
 This should be something like `x.y.z+1.dev0`.
 
-## 12. Create GitHub Release
+### Update the documentation site versions
 
-Finally, go to the [releases page](https://github.com/microsoft/PyRIT/releases), select "Draft a new release" and the "tag"
-for which you want to create the release notes. It should match the version that you just released
-to PyPI. Hit "Generate release notes". This will pre-populate the text field with all changes.
-Make sure that it starts where the last release left off.
-Sometimes this tool adds too many changes, or leaves a few out, so it's best to check.
-Be sure to check and update the new contributors as well.
-Add a header "## Full list of changes" below "## What's changed?".
-In addition to the full notes, we also want a shorter section with just the relevant
-changes that users should be aware of. The shorter section will be under "## What's changed"
-while the full list of changes will be right below.
-Maintenance changes, build pipeline updates, and documentation fixes are not really important for users.
-However, important bug fixes, new features, and breaking changes are good candidates to include.
+Add the new release as a version on the [documentation site](https://microsoft.github.io/PyRIT/) by
+editing `.github/docs-versions.yml`:
+
+- Append the new release under `versions:` with `slug: "x.y.z"`, `name: "x.y.z"`, and `ref: releases/vx.y.z`.
+- Update `stable:` and `default:` at the top of the file to point at the new version (so the
+  root URL `microsoft.github.io/PyRIT/` and the `/stable/` alias redirect to it).
+
+Once merged, the docs workflow rebuilds the site and the new version appears in the version picker on
+every page of every version.
+
+For example, releasing `0.14.0` would change:
+
+```yaml
+default: "0.13.0"
+stable: "0.13.0"
+```
+
+to:
+
+```yaml
+default: "0.14.0"
+stable: "0.14.0"
+```
+
+and add an entry under `versions:` for `0.14.0` pointing at `releases/v0.14.0`.
+
+## 11. Create GitHub Release
+
+Finally, go to the [releases page](https://github.com/microsoft/PyRIT/releases), select
+"Draft a new release", and choose the tag that matches the version published to PyPI.
+Generate the release notes to produce the full change list. Verify that the list starts
+where the previous release ended and that the new-contributor list is accurate. Add
+"## Full list of changes" below "## What's changed" and place the generated list
+there. Use the approved release notes linked from the release work item for
+"## What's changed". Maintenance changes, build pipeline updates, and routine
+documentation fixes can remain in the full list only.
+
 If you are unsure about whether to include certain changes please consult with your fellow
 maintainers.
 When you're done, hit "Publish release" and mark it as the latest release.
@@ -363,15 +413,15 @@ git push origin vx.y.z
 
 **5. Follow the regular release process from step 6 onward:**
 
-- Update the docs site versions (step 6) — add the new patch version to
-  `.github/docs-versions.yml` and bump `stable:`/`default:` if appropriate.
-- Build the package (step 7)
-- Test the built package in a clean environment (step 8)
-- Run integration tests (step 8)
+- Build the package (step 6)
+- Test the built package in a clean environment (step 7)
+- Run integration tests (step 7)
 - Publish to PyPI (step 9)
 - Update `main` with the next dev version (step 10) — for a patch release after `x.y.z`,
   the next version on `main` may be either `x.y.(z+1).dev0` or `x.(y+1).0.dev0`
-  depending on what the next planned release is.
+  depending on what the next planned release is. This is also where you update the docs
+  site versions in `.github/docs-versions.yml` (add the new patch version and bump
+  `stable:`/`default:` if appropriate).
 - Create the GitHub release (step 11) — for patch releases the release notes should
   clearly state the reason for the patch (e.g., "Security fix for …" or "Critical bug fix
   for …"). Because a patch release contains only cherry-picked changes, the "What's

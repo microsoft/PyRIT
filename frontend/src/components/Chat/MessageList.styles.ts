@@ -1,8 +1,10 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { NARROW_VIEWPORT_QUERY, mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useMessageListStyles = makeStyles({
   root: {
     flex: 1,
+    minWidth: 0,
     overflowY: 'auto',
     padding: tokens.spacingVerticalXXL,
     display: 'flex',
@@ -12,7 +14,8 @@ export const useMessageListStyles = makeStyles({
   message: {
     display: 'flex',
     gap: tokens.spacingHorizontalM,
-    maxWidth: '800px',
+    minWidth: 0,
+    maxWidth: 'min(800px, 100%)',
     alignSelf: 'flex-start',
   },
   userMessage: {
@@ -25,6 +28,8 @@ export const useMessageListStyles = makeStyles({
     padding: tokens.spacingVerticalM,
     borderRadius: tokens.borderRadiusMedium,
     flex: 1,
+    minWidth: 0,
+    maxWidth: '100%',
   },
   userMessageContent: {
     backgroundColor: tokens.colorBrandBackground2,
@@ -80,13 +85,20 @@ export const useMessageListStyles = makeStyles({
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalS,
     marginTop: tokens.spacingVerticalS,
+    minWidth: 0,
+    maxWidth: '100%',
+  },
+  attachmentItem: {
+    minWidth: 0,
+    maxWidth: '100%',
   },
   imageContainer: {
     position: 'relative' as const,
     display: 'inline-block',
-    maxWidth: '400px',
+    width: 'fit-content',
+    maxWidth: 'min(400px, 100%)',
     maxHeight: '400px',
-    minWidth: '100px',
+    minWidth: 'min(100px, 100%)',
     minHeight: '60px',
   },
   imageSpinner: {
@@ -96,14 +108,17 @@ export const useMessageListStyles = makeStyles({
     transform: 'translate(-50%, -50%)',
   },
   attachmentPreview: {
-    maxWidth: '400px',
+    display: 'block',
+    width: 'auto',
+    height: 'auto',
+    maxWidth: '100%',
     maxHeight: '400px',
     borderRadius: tokens.borderRadiusMedium,
     objectFit: 'contain',
     border: `1px solid ${tokens.colorNeutralStroke1}`,
   },
   attachmentPreviewHidden: {
-    maxWidth: '400px',
+    maxWidth: '100%',
     maxHeight: '400px',
     borderRadius: tokens.borderRadiusMedium,
     objectFit: 'contain',
@@ -113,10 +128,17 @@ export const useMessageListStyles = makeStyles({
     height: 0,
   },
   videoPreview: {
-    maxWidth: '400px',
+    display: 'block',
+    width: 'auto',
+    height: 'auto',
+    maxWidth: 'min(400px, 100%)',
     maxHeight: '300px',
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
+  },
+  audioPreview: {
+    width: '300px',
+    maxWidth: '100%',
   },
   attachmentFile: {
     display: 'flex',
@@ -126,6 +148,8 @@ export const useMessageListStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
+    minWidth: 0,
+    maxWidth: '100%',
   },
   attachmentFileName: {
     flex: 1,
@@ -146,6 +170,7 @@ export const useMessageListStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold as unknown as string,
     textDecoration: 'none',
     flexShrink: 0,
+    ...mobileTouchTarget,
     ':hover': {
       backgroundColor: tokens.colorBrandBackgroundHover,
       color: tokens.colorNeutralForegroundOnBrand,
@@ -172,6 +197,14 @@ export const useMessageListStyles = makeStyles({
     justifyContent: 'flex-end',
     gap: tokens.spacingHorizontalXXS,
     marginTop: tokens.spacingVerticalS,
+    [NARROW_VIEWPORT_QUERY]: {
+      flexWrap: 'wrap',
+    },
+  },
+  messageActionButton: {
+    minWidth: 'auto',
+    padding: '2px',
+    ...mobileTouchTarget,
   },
   reasoningContainer: {
     backgroundColor: tokens.colorNeutralBackground1,

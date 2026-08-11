@@ -17,6 +17,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
+    flatten_to_message_pieces,
 )
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
 
@@ -225,7 +226,6 @@ class MockPromptTarget(PromptTarget):
                     original_value=system_prompt,
                     converted_value=system_prompt,
                     conversation_id=conversation_id,
-                    labels=labels or {},
                 ).to_message()
             )
 
@@ -239,7 +239,6 @@ class MockPromptTarget(PromptTarget):
                 role="assistant",
                 original_value="default",
                 conversation_id=message.message_pieces[0].conversation_id,
-                labels=message.message_pieces[0].labels,
             ).to_message()
         ]
 
@@ -359,7 +358,7 @@ def get_sample_conversations() -> MutableSequence[Message]:
 
 def get_sample_conversation_entries() -> Sequence[PromptMemoryEntry]:
     conversations = get_sample_conversations()
-    pieces = Message.flatten_to_message_pieces(conversations)
+    pieces = flatten_to_message_pieces(conversations)
     return [PromptMemoryEntry(entry=piece) for piece in pieces]
 
 

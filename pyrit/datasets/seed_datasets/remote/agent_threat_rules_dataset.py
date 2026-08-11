@@ -111,21 +111,23 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
     upstream metadata fields (``original_rule_id``, ``technique``,
     ``detection_field``, ``variation_type``) are preserved on
     ``SeedPrompt.metadata`` so downstream consumers can route, filter, or
-    score by them. ``harm_categories`` is set to the rule's ATR category
-    (single-element list).
+    score by them. ATR categories are agent-security technique labels rather
+    than content-harm labels, so ``harm_categories`` is intentionally empty.
 
     The optional ``categories``, ``techniques``, ``detection_fields``, and
     ``variation_types`` arguments narrow the dataset client-side after fetch.
     Passing an empty list is rejected — pass ``None`` to disable a filter.
     """
 
-    # Class-attribute metadata picked up by SeedDatasetMetadata. Derived from
-    # _RULE_ID_TO_CATEGORY so the categories the loader claims to cover always
-    # match the categories it actually produces — same single-source-of-truth
-    # rationale as the enum-typed dict above.
-    harm_categories: list[str] = sorted({c.value for c in _RULE_ID_TO_CATEGORY.values()})
+    # ATR categories are agent-security technique labels, not content-harm
+    # labels, so this loader intentionally leaves harm categories empty.
+    harm_categories: list[str] = []
     modalities: list[str] = ["text"]
     size: str = "large"  # 1,054 seeds
+    # ATR's upstream corpus grows over time, but this loader pins to a specific commit
+    # by default (see ``source`` below) so a default fetch returns a static, reproducible
+    # snapshot. It is therefore intentionally NOT tagged as a "feed"; unpin the source
+    # (pass ``main`` or a newer ref) to track upstream additions.
     tags: set[str] = {"safety", "agent_security", "prompt_injection"}
 
     def __init__(
@@ -275,6 +277,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                 "detection_field": example["detection_field"],
                 "variation_type": example["variation_type"],
                 "atr_id": example["id"],
+                "atr_category": category_value,
             }
 
             # Per-rule description so downstream consumers reading metadata see
@@ -291,7 +294,7 @@ class _AgentThreatRulesDataset(_RemoteDatasetLoader):
                     data_type="text",
                     name=rule_id,
                     dataset_name=self.dataset_name,
-                    harm_categories=[category_value],
+                    harm_categories=[],
                     description=description,
                     authors=authors,
                     groups=groups,

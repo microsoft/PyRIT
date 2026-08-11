@@ -4,7 +4,7 @@
 """
 RapidResponse scenario — technique-based rapid content-harms testing.
 
-Strategies select **attack techniques** (PromptSending, RolePlay,
+Techniques select **attack techniques** (PromptSending, RolePlay,
 ManyShot, TAP). Datasets select **harm categories** (hate, fairness,
 violence, …). Use ``--dataset-names`` to narrow which harm categories
 to test.
@@ -24,37 +24,33 @@ from pyrit.scenario.core.scenario import Scenario
 if TYPE_CHECKING:
     from pyrit.scenario.core.atomic_attack import AtomicAttack
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
 
 @cache
-def _build_rapid_response_strategy() -> type[ScenarioStrategy]:
+def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     """
-    Build the RapidResponse strategy class dynamically from the registered factories.
+    Build the RapidResponse technique class dynamically from the registered factories.
 
-    Reads the singleton ``AttackTechniqueRegistry`` and filters to factories
-    tagged ``core``.
+    Reads every technique registered in the singleton ``AttackTechniqueRegistry``
+    and exposes all of them. Which techniques are available is decided by the
+    active initializer (the registration gate), not narrowed again here.
 
     Returns:
-        type[ScenarioStrategy]: The dynamically generated strategy enum class.
+        type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-    from pyrit.registry.tag_query import TagQuery
 
     registry = AttackTechniqueRegistry.get_registry_singleton()
     factories = list(registry.get_factories_or_raise().values())
 
-    return AttackTechniqueRegistry.build_strategy_class_from_factories(  # type: ignore[ty:invalid-return-type]
-        class_name="RapidResponseStrategy",
-        factories=TagQuery.all("core").filter(factories),
-        aggregate_tags={
-            "default": TagQuery.any_of("default"),
-            "single_turn": TagQuery.any_of("single_turn"),
-            "multi_turn": TagQuery.any_of("multi_turn"),
-        },
+    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+        class_name="RapidResponseTechnique",
+        factories=factories,
+        default_tags={"light"},
     )
 
 
@@ -66,7 +62,10 @@ class RapidResponse(Scenario):
     techniques.
     """
 
-    VERSION: int = 2
+    #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
+    #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
+    #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
+    VERSION: int = 3
 
     @apply_defaults
     def __init__(
@@ -89,13 +88,12 @@ class RapidResponse(Scenario):
             objective_scorer if objective_scorer else self._get_default_objective_scorer()
         )
 
-        strategy_class = _build_rapid_response_strategy()
+        technique_class = _build_rapid_response_technique()
 
         super().__init__(
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
-            strategy_class=strategy_class,
-            default_strategy=strategy_class("default"),
+            technique_class=technique_class,
             default_dataset_config=CompoundDatasetAttackConfiguration.per_dataset(
                 dataset_names=[
                     "airt_hate",
@@ -116,8 +114,9 @@ class RapidResponse(Scenario):
         Build the technique × harm-category atomic attacks, grouped by harm category.
 
         Results group by harm category (the dataset name) rather than technique so per-category
-        ASR rolls up naturally. The baseline is emitted centrally by the base
-        ``initialize_async``, so this override never prepends one.
+        ASR rolls up naturally. The baseline is emitted by ``build_matrix_atomic_attacks`` when
+        ``context.include_baseline`` is set (the base no longer emits one centrally), so this
+        override never prepends one itself.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
@@ -129,5 +128,5 @@ class RapidResponse(Scenario):
             context=context,
             objective_scorer=self._objective_scorer,
             display_group_fn=lambda combo: combo.dataset_name,
-            strategy_converters=self._strategy_converters,
+            technique_converters=self._technique_converters,
         )
