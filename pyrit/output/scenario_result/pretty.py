@@ -6,12 +6,13 @@ import textwrap
 from colorama import Fore, Style
 
 from pyrit.models import AttackOutcome, ScenarioResult
+from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink
 
 
-class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
+class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase):
     """
     Pretty printer for scenario results with ANSI-colored formatting.
 
@@ -50,22 +51,6 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         self._enable_colors = enable_colors
         self._scorer_printer = scorer_printer
         self._sort_groups_by_success_rate = sort_groups_by_success_rate
-
-    def _format_colored(self, text: str, *colors: str) -> str:
-        """
-        Format text with color codes if colors are enabled.
-
-        Args:
-            text (str): The text to format.
-            *colors: Variable number of colorama color constants to apply.
-
-        Returns:
-            str: The formatted line with trailing newline.
-        """
-        if self._enable_colors and colors:
-            color_prefix = "".join(colors)
-            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
-        return f"{text}\n"
 
     def _render_section_header(self, title: str) -> str:
         """
@@ -154,6 +139,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines.append(self._render_section_header("Scenario Information"))
         lines.append(self._format_colored(f"{self._indent}📋 Scenario Details", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_name}", Fore.CYAN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Result ID: {result.id}", Fore.CYAN))
         lines.append(
             self._format_colored(f"{self._indent * 2}• Scenario Version: {result.scenario_version}", Fore.CYAN)
         )

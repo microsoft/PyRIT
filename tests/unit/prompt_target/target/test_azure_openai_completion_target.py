@@ -110,3 +110,11 @@ def test_azure_invalid_endpoint_raises():
                     endpoint="",
                     api_key="xxxxx",
                 )
+
+
+async def test_completion_target_does_not_detect_truncation(azure_completion_target: OpenAICompletionTarget):
+    """A target that does not implement truncation detection inherits the base opt-out."""
+    response = MagicMock()
+    response.choices = [MagicMock(finish_reason="length")]
+
+    assert azure_completion_target._is_truncated_response(response) is False

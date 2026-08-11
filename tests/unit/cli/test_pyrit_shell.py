@@ -218,7 +218,32 @@ class TestPyRITShell:
         ):
             s.do_stop_server("")
         captured = capsys.readouterr()
-        assert "No server found" in captured.out
+        assert "could not be stopped" in captured.out
+
+    def test_do_stop_server_reports_owned_launcher_failure(self, shell, capsys):
+        s, _ = shell
+        s._launcher = MagicMock()
+        s._launcher.stop.return_value = False
+
+        s.do_stop_server("")
+
+        assert "could not be stopped" in capsys.readouterr().out
+
+    def test_do_stop_server_refuses_remote_url(self, shell, capsys):
+        s, _ = shell
+        s._base_url = "http://remote:8765"
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+            ) as probe_mock,
+            patch("pyrit.cli._server_launcher.stop_server_on_port") as stop_mock,
+        ):
+            s.do_stop_server("")
+
+        probe_mock.assert_not_called()
+        stop_mock.assert_not_called()
+        assert "Cannot stop non-local server" in capsys.readouterr().out
 
     def test_ensure_client_already_connected(self, shell):
         s, _ = shell
