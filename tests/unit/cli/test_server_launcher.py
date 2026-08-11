@@ -312,6 +312,46 @@ async def test_start_async_cancellation_cleans_up_spawned_process():
     assert not _server_launcher._pid_file_path(port=8000).exists()
 
 
+async def test_start_async_cancellation_waits_for_pid_write_before_cleanup():
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.pid = 99
+    fake_proc.poll.return_value = None
+    write_started = threading.Event()
+    release_write = threading.Event()
+    write_finished = threading.Event()
+
+    def delayed_write(*, host: str, port: int, pid: int) -> None:
+        write_started.set()
+        release_write.wait(timeout=5)
+        _server_launcher._pid_file_path(port=port).parent.mkdir(parents=True, exist_ok=True)
+        _server_launcher._pid_file_path(port=port).write_text(
+            json.dumps({"host": host, "port": port, "pid": pid}),
+            encoding="utf-8",
+        )
+        write_finished.set()
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=AsyncMock(return_value=False)),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch.object(_server_launcher, "_write_pid_record", side_effect=delayed_write),
+        patch.object(_server_launcher, "_terminate_process_tree", return_value=True) as stop_tree_mock,
+    ):
+        startup_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
+        assert await asyncio.to_thread(write_started.wait, 5)
+        startup_task.cancel()
+        await asyncio.sleep(0)
+        assert not startup_task.done()
+        release_write.set()
+        with pytest.raises(asyncio.CancelledError):
+            await startup_task
+
+    assert write_finished.is_set()
+    stop_tree_mock.assert_called_once_with(process=fake_proc)
+    assert launcher.pid is None
+    assert not _server_launcher._pid_file_path(port=8000).exists()
+
+
 async def test_start_async_timeout_caps_hanging_health_probe():
     launcher = ServerLauncher()
     fake_proc = MagicMock()

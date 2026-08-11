@@ -400,6 +400,28 @@ async def _spawn_backend_process_async(
         raise
 
 
+async def _write_pid_record_async(*, host: str, port: int, pid: int) -> None:
+    """
+    Persist process state before allowing cancellation to unwind startup.
+
+    Raises:
+        asyncio.CancelledError: After the in-flight record write completes.
+    """
+    write_task = asyncio.create_task(
+        asyncio.to_thread(
+            _write_pid_record,
+            host=host,
+            port=port,
+            pid=pid,
+        )
+    )
+    try:
+        await asyncio.shield(write_task)
+    except asyncio.CancelledError:
+        await write_task
+        raise
+
+
 class ServerLauncher:
     """
     Launch and manage a local ``pyrit_backend`` server.
@@ -530,7 +552,7 @@ class ServerLauncher:
         startup_succeeded = False
         cleanup_attempted = False
         try:
-            await asyncio.to_thread(_write_pid_record, host=host, port=port, pid=launcher_pid)
+            await _write_pid_record_async(host=host, port=port, pid=launcher_pid)
             _logger.info("Backend launcher PID: %d (logs: %s)", launcher_pid, self._log_path)
             deadline = time.monotonic() + startup_timeout
             while True:
@@ -557,7 +579,7 @@ class ServerLauncher:
                     listener_pid = await asyncio.to_thread(_find_pid_on_port, port=port)
                     if listener_pid is not None:
                         self._listener_pid = listener_pid
-                        await asyncio.to_thread(_write_pid_record, host=host, port=port, pid=listener_pid)
+                        await _write_pid_record_async(host=host, port=port, pid=listener_pid)
                     print(f"Server ready (PID {self._listener_pid}). Logs: {self._log_path}")
                     startup_succeeded = True
                     return base_url
