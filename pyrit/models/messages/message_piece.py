@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
 from pydantic import (
@@ -42,6 +42,9 @@ class MessagePiece(BaseModel):
     as a list of ``MessagePiece`` instances grouped under one
     ``Message``.
     """
+
+    STRUCTURED_REFUSAL_METADATA_KEY: ClassVar[str] = "structured_refusal"
+    TRUNCATED_METADATA_KEY: ClassVar[str] = "truncated"
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -165,6 +168,45 @@ class MessagePiece(BaseModel):
             ``True`` if the response was blocked by the target / content filter.
         """
         return self.response_error == "blocked"
+
+    def mark_as_structured_refusal(self, *, refusal: str) -> None:
+        """
+        Record an SDK-provided model refusal on this blocked response piece.
+
+        Args:
+            refusal: The model's refusal explanation.
+
+        Raises:
+            ValueError: If the piece is not a blocked assistant response or the refusal
+                explanation is empty.
+        """
+        if not self.is_blocked() or self.api_role != "assistant":
+            raise ValueError("Structured refusals must be recorded on blocked assistant response pieces.")
+        if not refusal:
+            raise ValueError("Structured refusal text cannot be empty.")
+        self.prompt_metadata[self.STRUCTURED_REFUSAL_METADATA_KEY] = refusal
+
+    @property
+    def structured_refusal(self) -> str | None:
+        """The SDK-provided refusal explanation for this blocked response, if present."""
+        if not self.is_blocked():
+            return None
+        refusal = self.prompt_metadata.get(self.STRUCTURED_REFUSAL_METADATA_KEY)
+        return refusal if isinstance(refusal, str) and refusal else None
+
+    def mark_as_truncated(self) -> None:
+        """
+        Record that the target cut this response off at its output-token limit.
+
+        A truncated piece may still carry a partial answer with ``response_error == "none"``, so
+        without this flag a consumer cannot tell a complete answer from a clipped one.
+        """
+        self.prompt_metadata[self.TRUNCATED_METADATA_KEY] = True
+
+    @property
+    def is_truncated(self) -> bool:
+        """Whether the target cut this response off at its output-token limit."""
+        return bool(self.prompt_metadata.get(self.TRUNCATED_METADATA_KEY))
 
     # ------------------------------------------------------------------ #
     # Adversarial placeholder support

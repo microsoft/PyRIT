@@ -187,12 +187,12 @@ export default function Home({
             </div>
             <div className={styles.cardFooter}>
               <Button
+                className={styles.touchTarget}
                 appearance="primary"
                 icon={<ArrowRightRegular />}
                 iconPosition="after"
                 onClick={() => onNavigate('config')}
                 data-testid="home-configure-target-btn"
-                className={styles.mobilePrimaryAction}
               >
                 {activeTarget ? 'Manage targets' : 'Configure a target'}
               </Button>
@@ -204,6 +204,7 @@ export default function Home({
           <div className={styles.sectionHeader}>
             <Text as="h2" size={500} weight="semibold">Recent operations</Text>
             <Button
+              className={styles.touchTarget}
               appearance="subtle"
               icon={<ArrowRightRegular />}
               iconPosition="after"
@@ -229,6 +230,7 @@ export default function Home({
                 Configure a target and start a new attack from the Chat tab.
               </Text>
               <Button
+                className={styles.touchTarget}
                 appearance="primary"
                 onClick={() => onNavigate('chat')}
                 data-testid="home-start-attack-btn"

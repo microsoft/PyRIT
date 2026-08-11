@@ -13,8 +13,9 @@ shared across every target that speaks that format.
 import base64
 import json
 import logging
-from collections.abc import Mapping
 from typing import Any
+
+from openai.types.chat import ChatCompletion
 
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -27,6 +28,8 @@ from pyrit.models import (
     MessagePiece,
     TokenUsage,
     construct_response_from_request,
+    read_usage_int,
+    read_usage_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,21 @@ logger = logging.getLogger(__name__)
 DEFAULT_VALID_FINISH_REASONS: frozenset[str] = frozenset({"stop", "length", "content_filter", "tool_calls"})
 
 
+def get_finish_reason(*, response: ChatCompletion) -> str | None:
+    """
+    Extract the first choice's ``finish_reason`` from a Chat Completions response.
+
+    Args:
+        response (ChatCompletion): The Chat Completions response object.
+
+    Returns:
+        str | None: The first choice's ``finish_reason``, or None when there are no choices.
+    """
+    if not response.choices:
+        return None
+    return response.choices[0].finish_reason
+
+
 def detect_response_content(message: Any) -> tuple[bool, bool, bool]:
     """
     Detect which content types are present in a Chat Completions ``message``.
@@ -45,9 +63,11 @@ def detect_response_content(message: Any) -> tuple[bool, bool, bool]:
         message (Any): The ``response.choices[0].message`` object.
 
     Returns:
-        tuple[bool, bool, bool]: ``(has_content, has_audio, has_tool_calls)``.
+        tuple[bool, bool, bool]: ``(has_content, has_audio, has_tool_calls)``. Structured
+            refusals count as content because they produce a valid blocked response.
     """
-    has_content = bool(getattr(message, "content", None))
+    refusal = getattr(message, "refusal", None)
+    has_content = bool(getattr(message, "content", None)) or (isinstance(refusal, str) and bool(refusal))
     has_audio = getattr(message, "audio", None) is not None
     has_tool_calls = bool(getattr(message, "tool_calls", None))
     return has_content, has_audio, has_tool_calls
@@ -224,9 +244,10 @@ async def build_response_pieces_async(
     *, response: Any, request: MessagePiece, audio_format: str = "wav"
 ) -> list[MessagePiece]:
     """
-    Build all response pieces (text, audio, and tool calls) from a Chat Completions response.
+    Build all response pieces (refusal, text, audio, and tool calls) from a Chat Completions response.
 
-    Pieces are ordered text, then audio (transcript + file), then tool calls.
+    A structured refusal produces one blocked error piece. Otherwise, pieces are ordered text,
+    then audio (transcript + file), then tool calls.
 
     Args:
         response (Any): The Chat Completions response object.
@@ -240,6 +261,18 @@ async def build_response_pieces_async(
     pieces: list[MessagePiece] = []
 
     content = getattr(message, "content", None)
+    refusal = getattr(message, "refusal", None)
+    if isinstance(refusal, str) and refusal:
+        partial_content = content if isinstance(content, str) and content else None
+        refusal_message = build_content_filter_message(
+            response=refusal,
+            request=request,
+            partial_content=partial_content,
+        )
+        for piece in refusal_message.message_pieces:
+            piece.mark_as_structured_refusal(refusal=refusal)
+        return refusal_message.message_pieces
+
     if content:
         pieces.append(_build_text_piece(content=content, request=request))
 
@@ -269,44 +302,6 @@ def capture_token_usage(*, pieces: list[MessagePiece], response: Any) -> None:
     pieces[0].prompt_metadata.update(token_usage.to_metadata())
 
 
-def _read(source: Any, name: str) -> Any:
-    """
-    Read ``name`` from ``source``, which may be a mapping or an attribute object.
-
-    Args:
-        source (Any): The usage object (may be None).
-        name (str): The field name to read.
-
-    Returns:
-        Any: The field value, or None when absent.
-    """
-    if isinstance(source, Mapping):
-        return source.get(name)
-    return getattr(source, name, None)
-
-
-def _usage_field(source: Any, *names: str) -> int | None:
-    """
-    Return the first int-valued field among ``names`` on ``source``, else None.
-
-    ``source`` may be either a mapping (for example, a ``model_dump``'d usage payload) or an
-    attribute object (the OpenAI/LiteLLM SDK ``Usage`` type), so both access styles are supported.
-    Booleans are rejected even though ``bool`` is a subclass of ``int``.
-
-    Args:
-        source (Any): The usage object or nested details object (may be None).
-        names (str): Candidate field names, tried in order.
-
-    Returns:
-        int | None: The first integer value found, or None.
-    """
-    for name in names:
-        value = _read(source, name)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    return None
-
-
 def token_usage_from_chat_completion(usage: Any) -> TokenUsage:
     """
     Build a ``TokenUsage`` from a Chat Completions ``usage`` payload (OpenAI or LiteLLM).
@@ -320,7 +315,8 @@ def token_usage_from_chat_completion(usage: Any) -> TokenUsage:
 
     This parser is specific to the Chat Completions wire format. The Responses API reports usage
     under different names (``input_tokens`` / ``output_tokens``); a target that speaks that format
-    should parse it in its own module rather than overloading this function.
+    should parse it in its own module rather than overloading this function, reusing the shared
+    ``read_usage_value`` / ``read_usage_int`` reads.
 
     Args:
         usage (Any): The Chat Completions usage object (attribute object or mapping).
@@ -328,26 +324,34 @@ def token_usage_from_chat_completion(usage: Any) -> TokenUsage:
     Returns:
         TokenUsage: The parsed token usage.
     """
-    input_tokens = _usage_field(usage, "prompt_tokens")
-    output_tokens = _usage_field(usage, "completion_tokens")
-    total_tokens = _usage_field(usage, "total_tokens")
+    input_tokens = read_usage_int(source=usage, name="prompt_tokens")
+    output_tokens = read_usage_int(source=usage, name="completion_tokens")
+    total_tokens = read_usage_int(source=usage, name="total_tokens")
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
 
-    prompt_details = _read(usage, "prompt_tokens_details")
-    completion_details = _read(usage, "completion_tokens_details")
+    prompt_details = read_usage_value(source=usage, name="prompt_tokens_details")
+    completion_details = read_usage_value(source=usage, name="completion_tokens_details")
 
-    cached_tokens = _usage_field(prompt_details, "cached_tokens")
+    cached_tokens = read_usage_int(source=prompt_details, name="cached_tokens")
     if cached_tokens is None:
-        cached_tokens = _usage_field(usage, "cache_read_input_tokens")
-    reasoning_tokens = _usage_field(completion_details, "reasoning_tokens")
+        cached_tokens = read_usage_int(source=usage, name="cache_read_input_tokens")
+    reasoning_tokens = read_usage_int(source=completion_details, name="reasoning_tokens")
 
     extra: dict[str, int] = {}
-    _add_extra(extra, "input_audio_tokens", _usage_field(prompt_details, "audio_tokens"))
-    _add_extra(extra, "cache_write_tokens", _usage_field(usage, "cache_creation_input_tokens"))
-    _add_extra(extra, "output_audio_tokens", _usage_field(completion_details, "audio_tokens"))
-    _add_extra(extra, "accepted_prediction_tokens", _usage_field(completion_details, "accepted_prediction_tokens"))
-    _add_extra(extra, "rejected_prediction_tokens", _usage_field(completion_details, "rejected_prediction_tokens"))
+    _add_extra(extra, "input_audio_tokens", read_usage_int(source=prompt_details, name="audio_tokens"))
+    _add_extra(extra, "cache_write_tokens", read_usage_int(source=usage, name="cache_creation_input_tokens"))
+    _add_extra(extra, "output_audio_tokens", read_usage_int(source=completion_details, name="audio_tokens"))
+    _add_extra(
+        extra,
+        "accepted_prediction_tokens",
+        read_usage_int(source=completion_details, name="accepted_prediction_tokens"),
+    )
+    _add_extra(
+        extra,
+        "rejected_prediction_tokens",
+        read_usage_int(source=completion_details, name="rejected_prediction_tokens"),
+    )
 
     return TokenUsage(
         input_tokens=input_tokens,

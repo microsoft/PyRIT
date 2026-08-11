@@ -14,6 +14,7 @@ transformation pipelines for testing AI system robustness.
 import importlib
 from typing import TYPE_CHECKING
 
+from pyrit.converter.acrostic_converter import AcrosticConverter
 from pyrit.converter.add_image_text_converter import AddImageTextConverter
 from pyrit.converter.add_image_to_video_converter import AddImageVideoConverter
 from pyrit.converter.add_text_image_converter import AddTextImageConverter
@@ -111,6 +112,7 @@ from pyrit.converter.unicode_replacement_converter import UnicodeReplacementConv
 from pyrit.converter.unicode_sub_converter import UnicodeSubstitutionConverter
 from pyrit.converter.url_converter import UrlConverter
 from pyrit.converter.variation_converter import VariationConverter
+from pyrit.converter.vigenere_converter import VigenereConverter
 from pyrit.converter.word_doc_converter import WordDocConverter
 from pyrit.converter.zalgo_converter import ZalgoConverter
 from pyrit.converter.zero_width_converter import ZeroWidthConverter
@@ -146,6 +148,7 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
+    "AcrosticConverter",
     "AddImageTextConverter",
     "AddImageVideoConverter",
     "AddTextImageConverter",
@@ -241,6 +244,7 @@ __all__ = [
     "UrlConverter",
     "VariationConverter",
     "VariationSelectorSmugglerConverter",
+    "VigenereConverter",
     "WordDocConverter",
     "WordIndexSelectionStrategy",
     "WordKeywordSelectionStrategy",

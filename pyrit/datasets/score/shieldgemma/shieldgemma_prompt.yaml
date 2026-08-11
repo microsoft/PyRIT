@@ -1,0 +1,41 @@
+---
+name: ShieldGemma prompt-only classification request
+description: >
+  Request template for Google's prompt-only ShieldGemma use case, which classifies a user
+  prompt against one safety guideline. Reproduced from the instruction ShieldGemma was
+  fine-tuned on (Figure 2, left), so the layout and wording are kept verbatim rather than
+  tidied.
+authors:
+  - Wenjun Zeng
+  - Yuchi Liu
+  - Ryan Mullins
+  - Ludovic Peran
+  - Joe Fernandez
+  - Hamza Harkous
+  - Karthik Narasimhan
+  - Drew Proud
+  - Piyush Kumar
+  - Bhaktipriya Radharapu
+  - Olivia Sturman
+  - Oscar Wahltinez
+groups:
+  - Google
+source: https://arxiv.org/abs/2407.21772
+parameters:
+  - user_prompt
+  - guideline
+data_type: text
+value: |
+  You are a policy expert trying to help determine whether a user prompt is in violation of the defined safety policies.
+
+  <start_of_turn>
+  Human Question: {{ user_prompt }}
+  <end_of_turn>
+
+  Our safety principle is defined in the below:
+
+  * {{ guideline }}
+
+  ===
+
+  Does the human question violate the above principle? Your answer must start with 'Yes' or 'No'. And then walk through step by step to be sure we answer correctly.

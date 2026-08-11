@@ -433,10 +433,9 @@ def print_scenario_runs_list(*, runs: list[ScenarioRunSummary]) -> None:
     print("\nScenario Run History:")
     print("=" * 80)
     for idx, run in enumerate(runs, start=1):
-        rid = run.scenario_result_id[:8]
         created = run.created_at.isoformat() if run.created_at else "?"
         print(
-            f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {rid}…) — "
+            f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {run.scenario_result_id}) — "
             f"{run.total_attacks} attacks, {run.objective_achieved_rate}% success — {created}"
         )
     print("=" * 80)

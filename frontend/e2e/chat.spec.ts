@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 import { makeTarget } from "./_targets";
 
@@ -892,5 +893,67 @@ test.describe("Target type scenarios", () => {
     await expect(badge).toBeVisible();
     await expect(badge).toContainText("OpenAIImageTarget");
     await expect(badge).toContainText(/dall-e-3/);
+  });
+});
+
+test.describe("Conversation export", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockBackendAPIs(page);
+    await page.goto("/");
+    await activateMockTarget(page);
+
+    // A viewable conversation must be on screen before export is enabled.
+    await page.getByRole("textbox").fill("Export me please");
+    await page.getByRole("button", { name: /send/i }).click();
+    await expect(
+      page.getByText("Mock response for: Export me please"),
+    ).toBeVisible({ timeout: 10000 });
+  });
+
+  // Trigger the export menu, pick a format, and return the real downloaded file.
+  // Exercises the browser download path (Blob -> object URL -> anchor click)
+  // that jsdom mocks out in the unit tests.
+  async function triggerExport(
+    page: Page,
+    itemTestId: string,
+  ): Promise<{ filename: string; content: string }> {
+    const exportButton = page.getByTestId("export-conversation-btn");
+    await expect(exportButton).toBeEnabled();
+
+    const downloadPromise = page.waitForEvent("download");
+    await exportButton.click();
+    await page.getByTestId(itemTestId).click();
+
+    const download = await downloadPromise;
+    const filePath = await download.path();
+    expect(filePath).not.toBeNull();
+    return {
+      filename: download.suggestedFilename(),
+      content: readFileSync(filePath, "utf-8"),
+    };
+  }
+
+  test("downloads the displayed conversation as Markdown", async ({ page }) => {
+    const { filename, content } = await triggerExport(page, "export-markdown-item");
+
+    expect(filename).toMatch(/^copyrit-conversation-e2e-conv-001-.*\.md$/);
+    expect(content).toContain("# CoPyRIT conversation export");
+    expect(content).toContain("Export me please");
+    expect(content).toContain("Mock response for: Export me please");
+  });
+
+  test("downloads the displayed conversation as JSON", async ({ page }) => {
+    const { filename, content } = await triggerExport(page, "export-json-item");
+
+    expect(filename).toMatch(/^copyrit-conversation-e2e-conv-001-.*\.json$/);
+
+    const parsed = JSON.parse(content) as {
+      conversation_id: string;
+      messages: unknown[];
+    };
+    expect(parsed.conversation_id).toBe("e2e-conv-001");
+    expect(parsed.messages.length).toBeGreaterThanOrEqual(2);
+    expect(content).toContain("Export me please");
+    expect(content).toContain("Mock response for: Export me please");
   });
 });

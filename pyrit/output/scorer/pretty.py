@@ -6,11 +6,12 @@ from typing import Any
 from colorama import Fore, Style
 
 from pyrit.models import ComponentIdentifier
+from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink
 
 
-class PrettyScorerPrinter(ScorerPrinterBase):
+class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
     """
     Pretty printer for scorer information with ANSI-colored formatting.
 
@@ -38,22 +39,6 @@ class PrettyScorerPrinter(ScorerPrinterBase):
             raise ValueError("indent_size must be non-negative")
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
-
-    def _format_colored(self, text: str, *colors: str) -> str:
-        """
-        Format text with color codes if colors are enabled.
-
-        Args:
-            text (str): The text to format.
-            *colors: Variable number of colorama color constants to apply.
-
-        Returns:
-            str: The formatted line with trailing newline.
-        """
-        if self._enable_colors and colors:
-            color_prefix = "".join(colors)
-            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
-        return f"{text}\n"
 
     def _get_quality_color(
         self, value: float, *, higher_is_better: bool, good_threshold: float, bad_threshold: float

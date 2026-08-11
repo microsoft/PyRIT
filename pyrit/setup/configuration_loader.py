@@ -8,12 +8,17 @@ This module provides the ConfigurationLoader class that loads PyRIT configuratio
 from YAML files and initializes PyRIT accordingly.
 """
 
+import copy
+import math
 import pathlib
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import yaml
+
 from pyrit.common.path import DEFAULT_CONFIG_PATH
+from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
 from pyrit.setup.initialization import (
@@ -58,9 +63,22 @@ class ServerConfig:
 
     Attributes:
         url: Base URL of the backend (e.g. ``http://localhost:8000``).
+        startup_timeout: Seconds to wait for a locally launched backend to become healthy.
     """
 
     url: str = "http://localhost:8000"
+    startup_timeout: float = 120.0
+
+
+@dataclass(frozen=True)
+class _ConfigurationLayer:
+    """A parsed configuration value and the YAML key provenance needed for merging."""
+
+    configuration: "ConfigurationLoader"
+    present_fields: frozenset[str]
+    top_level_extension_fields: frozenset[str]
+    nested_extension_fields: frozenset[str]
+    reset_extensions: bool
 
 
 @dataclass
@@ -193,10 +211,11 @@ class ConfigurationLoader(YamlLoadable):
         """
         Normalize the optional ``server`` block to a ``ServerConfig``.
 
-        Accepts ``None`` (no server configured) or ``{"url": "..."}`` form.
+        Accepts ``None`` (no server configured) or a mapping with ``url`` and
+        ``startup_timeout`` fields.
 
         Raises:
-            ValueError: If ``server`` is not ``None`` or a dict, or if ``url`` is not a string.
+            ValueError: If ``server`` is invalid.
         """
         if self.server is None:
             self._server_config: ServerConfig | None = None
@@ -206,7 +225,18 @@ class ConfigurationLoader(YamlLoadable):
             url = self.server.get("url", "http://localhost:8000")
             if not isinstance(url, str):
                 raise ValueError(f"Server 'url' must be a string. Got: {type(url).__name__}")
-            self._server_config = ServerConfig(url=url.rstrip("/"))
+            startup_timeout = self.server.get("startup_timeout", 120.0)
+            if (
+                isinstance(startup_timeout, bool)
+                or not isinstance(startup_timeout, int | float)
+                or not math.isfinite(startup_timeout)
+                or startup_timeout <= 0
+            ):
+                raise ValueError("Server 'startup_timeout' must be a finite number greater than 0.")
+            self._server_config = ServerConfig(
+                url=url.rstrip("/"),
+                startup_timeout=float(startup_timeout),
+            )
             return
 
         raise ValueError(f"Server entry must be a dict, got: {type(self.server).__name__}")
@@ -215,6 +245,11 @@ class ConfigurationLoader(YamlLoadable):
     def server_config(self) -> ServerConfig | None:
         """The normalized ``server:`` block, or ``None`` when not configured."""
         return self._server_config
+
+    @property
+    def initializer_configs(self) -> Sequence[InitializerConfig]:
+        """The ordered initializer configurations with registry names normalized to snake case."""
+        return self._initializer_configs
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ConfigurationLoader":
@@ -231,25 +266,134 @@ class ConfigurationLoader(YamlLoadable):
             _RemovedConfigurationOptionError: If the removed ``scenario`` block is present.
             ValueError: If ``extensions`` is present but not a dict.
         """
+        return cls._parse_layer(data=data).configuration
+
+    @classmethod
+    def _parse_layer(cls, *, data: dict[str, Any]) -> _ConfigurationLayer:
+        """
+        Parse a configuration layer while retaining its YAML key provenance.
+
+        Args:
+            data: Dictionary containing one configuration layer.
+
+        Returns:
+            _ConfigurationLayer: The validated value and its merge provenance.
+
+        Raises:
+            _RemovedConfigurationOptionError: If the removed ``scenario`` block is present.
+            ValueError: If ``extensions`` is present but invalid.
+        """
         if "scenario" in data:
             raise _RemovedConfigurationOptionError(
                 "The 'scenario' configuration block is no longer supported. "
                 "Pass the scenario name positionally and its parameters as CLI flags."
             )
+        present_fields = frozenset(data)
         # Filter out None values only - empty lists are meaningful ("load nothing")
         filtered_data = {k: v for k, v in data.items() if v is not None}
-        known_fields = set(cls.__dataclass_fields__.keys())
+        known_fields = {config_field.name for config_field in fields(cls) if config_field.init}
+        top_level_extension_fields = frozenset(data.keys() - known_fields)
         known_data = {k: v for k, v in filtered_data.items() if k in known_fields and k != "extensions"}
         extra_data = {k: v for k, v in filtered_data.items() if k not in known_fields}
+        nested_extension_fields: frozenset[str] = frozenset()
+        reset_extensions = False
+        if "extensions" in data:
+            raw_extensions = data["extensions"]
+            reset_extensions = raw_extensions is None or raw_extensions == {}
+            if isinstance(raw_extensions, dict):
+                if not all(isinstance(key, str) for key in raw_extensions):
+                    raise ValueError("ConfigurationLoader.extensions keys must be strings.")
+                nested_extension_fields = frozenset(key for key in raw_extensions if isinstance(key, str))
         if "extensions" in filtered_data:
             extensions = filtered_data["extensions"]
             if not isinstance(extensions, dict):
                 raise ValueError(f"ConfigurationLoader.extensions must be a dict. Got: {type(extensions).__name__}")
             extra_data = {**extra_data, **extensions}
-        return cls(**known_data, extensions=extra_data)
+        config = cls(**known_data, extensions=extra_data)
+        return _ConfigurationLayer(
+            configuration=config,
+            present_fields=present_fields,
+            top_level_extension_fields=top_level_extension_fields,
+            nested_extension_fields=nested_extension_fields,
+            reset_extensions=reset_extensions,
+        )
+
+    @classmethod
+    def _load_layer_from_yaml_file(cls, *, file: pathlib.Path | str) -> _ConfigurationLayer:
+        """
+        Load a configuration layer from YAML without attaching merge state to its value.
+
+        Args:
+            file: YAML configuration file path.
+
+        Returns:
+            _ConfigurationLayer: The validated value and its merge provenance.
+
+        Raises:
+            ValueError: If the YAML is invalid or empty.
+        """
+        file_path = verify_and_resolve_path(file)
+        try:
+            yaml_data = yaml.safe_load(file_path.read_text("utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML file '{file_path}': {exc}") from exc
+        if yaml_data is None:
+            raise ValueError(f"YAML file '{file_path}' is empty.")
+        return cls._parse_layer(data=yaml_data)
 
     @staticmethod
+    def _merge_server_blocks(
+        *,
+        inherited: dict[str, Any] | None,
+        overlay: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """
+        Merge server fields while preserving an explicit null reset.
+
+        Args:
+            inherited: Server fields inherited from earlier layers.
+            overlay: Server fields from the current layer.
+
+        Returns:
+            dict[str, Any] | None: The merged server block, or ``None`` for an explicit reset.
+        """
+        if overlay is None:
+            return None
+        inherited_fields = inherited if isinstance(inherited, dict) else {}
+        return {**copy.deepcopy(inherited_fields), **copy.deepcopy(overlay)}
+
+    @classmethod
+    def _apply_layer(
+        cls,
+        *,
+        config_data: dict[str, Any],
+        layer: _ConfigurationLayer,
+        init_fields: set[str],
+    ) -> None:
+        """Apply a parsed layer to mutable merged configuration data."""
+        explicit_data = {name: copy.deepcopy(getattr(layer.configuration, name)) for name in init_fields}
+        for field_name in layer.present_fields & (init_fields - {"extensions"}):
+            if field_name == "server":
+                config_data["server"] = cls._merge_server_blocks(
+                    inherited=config_data["server"],
+                    overlay=layer.configuration.server,
+                )
+            else:
+                config_data[field_name] = explicit_data[field_name]
+
+        if layer.reset_extensions:
+            config_data["extensions"] = {}
+        for field_name in layer.top_level_extension_fields:
+            if field_name in layer.configuration.extensions:
+                config_data["extensions"][field_name] = layer.configuration.extensions[field_name]
+            else:
+                config_data["extensions"].pop(field_name, None)
+        for field_name in layer.nested_extension_fields:
+            config_data["extensions"][field_name] = layer.configuration.extensions[field_name]
+
+    @classmethod
     def load_with_overrides(
+        cls,
         config_file: pathlib.Path | None = None,
         *,
         memory_db_type: str | None = None,
@@ -265,10 +409,6 @@ class ConfigurationLoader(YamlLoadable):
         1. Default config file (~/.pyrit/.pyrit_conf) if it exists
         2. Explicit config_file argument if provided
         3. Individual override arguments (non-None values take precedence)
-
-        This is a staticmethod (not classmethod) because it's a pure factory function
-        that doesn't need access to class state and can be reused by multiple interfaces
-        (CLI, shell, programmatic API).
 
         Args:
             config_file: Optional path to a YAML-formatted configuration file.
@@ -290,37 +430,19 @@ class ConfigurationLoader(YamlLoadable):
 
         logger = logging.getLogger(__name__)
 
-        # Start with defaults - None means "use defaults", [] means "load nothing"
-        config_data: dict[str, Any] = {
-            "memory_db_type": "sqlite",
-            "initializers": [],
-            "initialization_scripts": None,  # None = use defaults
-            "env_files": None,  # None = use defaults
-            "env_akv_ref": None,
-            "silent": False,
-        }
+        init_fields = {config_field.name for config_field in fields(cls) if config_field.init}
+
+        def to_init_data(config: ConfigurationLoader) -> dict[str, Any]:
+            return {name: copy.deepcopy(getattr(config, name)) for name in init_fields}
 
         # 1. Try loading default config file if it exists
+        config_data = to_init_data(cls())
         default_config_path = DEFAULT_CONFIG_PATH
         if default_config_path.exists():
             try:
                 logger.info(f"Loading default configuration file: {default_config_path}")
                 print(f"Loading default configuration file: {default_config_path}")
-                default_config = ConfigurationLoader.from_yaml_file(default_config_path)
-                config_data["memory_db_type"] = default_config.memory_db_type
-                config_data["initializers"] = [
-                    {"name": ic.name, "args": ic.args} if ic.args else ic.name
-                    for ic in default_config._initializer_configs
-                ]
-                # Preserve None vs [] distinction from config file
-                config_data["initialization_scripts"] = default_config.initialization_scripts
-                config_data["env_files"] = default_config.env_files
-                config_data["env_akv_ref"] = default_config.env_akv_ref
-                config_data["silent"] = default_config.silent
-                if default_config.operator:
-                    config_data["operator"] = default_config.operator
-                if default_config.operation:
-                    config_data["operation"] = default_config.operation
+                config_data = to_init_data(cls.from_yaml_file(default_config_path))
             except _RemovedConfigurationOptionError:
                 raise
             except Exception as e:
@@ -332,21 +454,8 @@ class ConfigurationLoader(YamlLoadable):
                 raise FileNotFoundError(f"Configuration file not found: {config_file}")
             logger.info(f"Loading configuration file: {config_file}")
             print(f"Loading configuration file: {config_file}")
-            explicit_config = ConfigurationLoader.from_yaml_file(config_file)
-            config_data["memory_db_type"] = explicit_config.memory_db_type
-            config_data["initializers"] = [
-                {"name": ic.name, "args": ic.args} if ic.args else ic.name
-                for ic in explicit_config._initializer_configs
-            ]
-            # Preserve None vs [] distinction from config file
-            config_data["initialization_scripts"] = explicit_config.initialization_scripts
-            config_data["env_files"] = explicit_config.env_files
-            config_data["env_akv_ref"] = explicit_config.env_akv_ref
-            config_data["silent"] = explicit_config.silent
-            if explicit_config.operator:
-                config_data["operator"] = explicit_config.operator
-            if explicit_config.operation:
-                config_data["operation"] = explicit_config.operation
+            explicit_layer = cls._load_layer_from_yaml_file(file=config_file)
+            cls._apply_layer(config_data=config_data, layer=explicit_layer, init_fields=init_fields)
         # 3. Apply overrides (non-None values take precedence)
         # Convert Sequence to list to match dataclass field types
         if memory_db_type is not None:
@@ -370,7 +479,7 @@ class ConfigurationLoader(YamlLoadable):
         if env_akv_ref is not None:
             config_data["env_akv_ref"] = list(env_akv_ref)
 
-        return ConfigurationLoader.from_dict(config_data)
+        return cls.from_dict(config_data)
 
     @classmethod
     def get_default_config_path(cls) -> pathlib.Path:
@@ -399,15 +508,16 @@ class ConfigurationLoader(YamlLoadable):
 
         from pyrit.registry import InitializerRegistry
 
-        if not self._initializer_configs:
+        configs = self._initializer_configs
+        if not configs:
             return []
 
         registry = InitializerRegistry()
         resolved: list[PyRITInitializer] = []
 
-        logging.getLogger(__name__).info("Running %d initializer(s)...", len(self._initializer_configs))
+        logging.getLogger(__name__).info("Running %d initializer(s)...", len(configs))
 
-        for config in self._initializer_configs:
+        for config in configs:
             try:
                 instance = registry.create_and_configure(config.name, initializer_params=config.args)
             except KeyError as exc:
@@ -483,8 +593,10 @@ class ConfigurationLoader(YamlLoadable):
         """
         Initialize PyRIT with the loaded configuration.
 
-        This method resolves all initializer names to instances and calls
-        the core initialize_pyrit_async function.
+        Resolves the ``.pyrit_conf`` baseline initializers to instances and calls the core
+        ``initialize_pyrit_async`` function. This method is intentionally unaware of any
+        persisted additional initializers: consumers such as ``pyrit.backend.main.lifespan``
+        run those after the baseline.
 
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.

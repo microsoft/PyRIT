@@ -30,6 +30,10 @@ class TestLifespan:
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
+            patch(
+                "pyrit.backend.main.get_initializer_service",
+                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+            ),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
@@ -46,6 +50,10 @@ class TestLifespan:
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch(
+                "pyrit.backend.main.get_initializer_service",
+                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+            ),
             patch("pyrit.backend.main.setup_frontend"),
             patch.object(logging.getLogger("pyrit.backend.main"), "warning") as mock_warning,
         ):
@@ -60,6 +68,10 @@ class TestLifespan:
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch(
+                "pyrit.backend.main.get_initializer_service",
+                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+            ),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
@@ -74,6 +86,10 @@ class TestLifespan:
             patch.dict(os.environ, {"PYRIT_CONFIG_FILE": "/tmp/foo.yaml"}, clear=False),
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config) as load_mock,
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch(
+                "pyrit.backend.main.get_initializer_service",
+                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+            ),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):

@@ -2,28 +2,23 @@
 # Licensed under the MIT license.
 
 """
-Entra ID JWT validation middleware for FastAPI.
+Microsoft Graph-backed authentication middleware for FastAPI.
 
-Validates Bearer tokens from the Authorization header against Entra ID JWKS.
-Uses PKCE (public client) flow — no client secrets needed.
-
-The middleware:
-- Skips auth for health check and auth config endpoints
-- Validates JWT signature against Entra ID's JWKS endpoint
-- Verifies issuer, audience, and expiration
-- Optionally checks group membership (resolves via Graph API if user is in >200 groups)
-- Attaches user info to request.state for use by route handlers
+The frontend acquires a delegated Graph access token using PKCE. This middleware
+forwards that opaque token only to trusted Microsoft Graph endpoints to retrieve
+the current user's identity and group memberships, then applies local group-based
+authorization.
 """
 
 import logging
 import os
+from collections import OrderedDict
 from dataclasses import dataclass
+from hashlib import sha256
+from time import monotonic
 from typing import Any, ClassVar
-from urllib.parse import urlparse
 
 import httpx
-import jwt
-from jwt import PyJWKClient
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -32,9 +27,19 @@ from starlette.types import ASGIApp
 logger = logging.getLogger(__name__)
 
 
+class AuthenticationError(Exception):
+    """Expected authentication or authorization failure."""
+
+    def __init__(self, *, status_code: int, detail: str) -> None:
+        """Initialize an authentication failure with its HTTP representation."""
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
 @dataclass
 class AuthenticatedUser:
-    """User identity extracted from a validated JWT."""
+    """User identity returned by Microsoft Graph."""
 
     oid: str
     name: str
@@ -43,7 +48,7 @@ class AuthenticatedUser:
 
 
 class EntraAuthMiddleware(BaseHTTPMiddleware):
-    """Validate Entra ID JWTs on every request (except public paths)."""
+    """Authenticate API requests through Microsoft Graph."""
 
     # Paths that bypass authentication
     _PUBLIC_PATHS: ClassVar[set[str]] = {
@@ -52,32 +57,39 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         "/api/media",
     }
 
-    # Hosts the user's Bearer token may be forwarded to
-    _GRAPH_HOSTS: ClassVar[set[str]] = {"graph.microsoft.com"}
-
-    # Trusted URL for resolving group membership; built from a constant (not the
-    # token-supplied endpoint) so token data cannot control the request destination.
-    _GRAPH_MEMBER_OBJECTS_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me/getMemberObjects"
+    _GRAPH_ME_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me?$select=id,displayName,mail,userPrincipalName"
+    _GRAPH_CHECK_MEMBER_GROUPS_URL: ClassVar[str] = "https://graph.microsoft.com/v1.0/me/checkMemberGroups"
+    _GRAPH_TIMEOUT_SECONDS: ClassVar[float] = 10.0
+    _GRAPH_MAX_GROUP_IDS_PER_REQUEST: ClassVar[int] = 20
+    _AUTH_CACHE_TTL_SECONDS: ClassVar[float] = 60.0
+    _AUTH_CACHE_MAX_ENTRIES: ClassVar[int] = 256
 
     def __init__(self, app: ASGIApp) -> None:
         """Initialize the middleware with Entra ID configuration from environment variables."""
         super().__init__(app)
-        self._tenant_id = os.getenv("ENTRA_TENANT_ID", "")
-        # _client_id is used as the expected JWT audience in _validate_token
-        self._client_id = os.getenv("ENTRA_CLIENT_ID", "")
+        tenant_raw = os.getenv("ENTRA_TENANT_ID", "")
+        client_raw = os.getenv("ENTRA_CLIENT_ID", "")
         groups_raw = os.getenv("ENTRA_ALLOWED_GROUP_IDS", "")
+        self._tenant_id = tenant_raw.strip()
+        self._client_id = client_raw.strip()
         self._allowed_group_ids: set[str] = {g.strip() for g in groups_raw.split(",") if g.strip()}
-        self._enabled = bool(self._tenant_id and self._client_id)
+        self._enabled = any((tenant_raw, client_raw, groups_raw))
+        self._auth_cache: OrderedDict[str, tuple[float, AuthenticatedUser]] = OrderedDict()
 
-        self._jwks_client: PyJWKClient | None
         if self._enabled:
-            jwks_url = f"https://login.microsoftonline.com/{self._tenant_id}/discovery/v2.0/keys"
-            self._jwks_client = PyJWKClient(jwks_url, cache_keys=True)
-            self._issuer = f"https://login.microsoftonline.com/{self._tenant_id}/v2.0"
+            missing_settings = [
+                name
+                for name, value in (
+                    ("ENTRA_TENANT_ID", self._tenant_id),
+                    ("ENTRA_CLIENT_ID", self._client_id),
+                    ("ENTRA_ALLOWED_GROUP_IDS", self._allowed_group_ids),
+                )
+                if not value
+            ]
+            if missing_settings:
+                raise ValueError(f"Incomplete Entra ID configuration: {', '.join(missing_settings)} must be set")
             logger.info("Entra ID auth middleware enabled (tenant=%s)", self._tenant_id)
         else:
-            self._jwks_client = None
-            self._issuer = ""
             logger.warning(
                 "Entra ID auth middleware DISABLED — ENTRA_TENANT_ID or ENTRA_CLIENT_ID not set. "
                 "All requests will be allowed without authentication."
@@ -99,46 +111,39 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         if not self._enabled or path in self._PUBLIC_PATHS or not path.startswith("/api"):
             return await call_next(request)
 
-        result = await self._authenticate_request_async(request)
-        if isinstance(result, JSONResponse):
-            return result  # Authentication failed with 401 or 403
+        try:
+            user = await self._authenticate_request_async(request)
+        except AuthenticationError as error:
+            return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
 
-        request.state.user = result
+        request.state.user = user
         return await call_next(request)
 
-    async def _authenticate_request_async(self, request: Request) -> AuthenticatedUser | JSONResponse:
+    async def _authenticate_request_async(self, request: Request) -> AuthenticatedUser:
         """
         Extract, validate, and authorize the Bearer token from the request.
 
         Returns:
-            AuthenticatedUser if validation and authorization succeed,
-            JSONResponse with 401 or 403 if they fail.
+            AuthenticatedUser: The authenticated and authorized user.
+
+        Raises:
+            AuthenticationError: If authentication or authorization fails.
         """
-        # Extract Bearer token from Authorization header
         auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
+        auth_parts = auth_header.split()
+        if len(auth_parts) != 2 or auth_parts[0].casefold() != "bearer" or not auth_parts[1]:
+            raise AuthenticationError(
                 status_code=401,
-                content={"detail": "Missing or invalid Authorization header"},
+                detail="Missing or invalid Authorization header",
             )
 
-        token = auth_header.removeprefix("Bearer ")
+        token = auth_parts[1]
+        cache_key = sha256(token.encode("utf-8")).hexdigest()
+        cached_user = self._get_cached_user(cache_key=cache_key)
+        if cached_user is not None:
+            return cached_user
 
-        # Validate the token and extract user info and claims
-        user, claims = self._validate_token(token)
-        if user is None:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid or expired token"},
-            )
-
-        # NOTE: This fallback is currently non-functional. The access token's
-        # audience is this app's client ID, but Graph requires tokens with
-        # aud=https://graph.microsoft.com. The call will return 401 and the
-        # user will be denied. This will be resolved when the frontend
-        # migrates from the custom `access` scope to Graph's User.Read scope.
-        if not user.groups and self._allowed_group_ids and "_claim_sources" in claims:
-            user.groups = await self._resolve_excess_groups_async(claims, token)
+        user = await self._authenticate_with_graph_async(token=token)
 
         # Authorize the user based on group membership
         if not self._is_authorized(user):
@@ -149,154 +154,178 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
                 user.groups,
                 self._allowed_group_ids,
             )
-            return JSONResponse(
+            raise AuthenticationError(
                 status_code=403,
-                content={"detail": "You are not authorized to access this application"},
+                detail="You are not authorized to access this application",
             )
 
+        self._cache_user(cache_key=cache_key, user=user)
         return user
+
+    def _get_cached_user(self, *, cache_key: str) -> AuthenticatedUser | None:
+        cached = self._auth_cache.get(cache_key)
+        if cached is None:
+            return None
+
+        expires_at, user = cached
+        if expires_at <= monotonic():
+            del self._auth_cache[cache_key]
+            return None
+
+        self._auth_cache.move_to_end(cache_key)
+        return AuthenticatedUser(oid=user.oid, name=user.name, email=user.email, groups=list(user.groups))
+
+    def _cache_user(self, *, cache_key: str, user: AuthenticatedUser) -> None:
+        cached_user = AuthenticatedUser(oid=user.oid, name=user.name, email=user.email, groups=list(user.groups))
+        self._auth_cache[cache_key] = (monotonic() + self._AUTH_CACHE_TTL_SECONDS, cached_user)
+        self._auth_cache.move_to_end(cache_key)
+        while len(self._auth_cache) > self._AUTH_CACHE_MAX_ENTRIES:
+            self._auth_cache.popitem(last=False)
+
+    async def _authenticate_with_graph_async(self, *, token: str) -> AuthenticatedUser:
+        """
+        Authenticate a delegated access token and retrieve the current user.
+
+        Args:
+            token (str): The opaque Microsoft Graph access token.
+
+        Returns:
+            AuthenticatedUser: The user returned by Graph.
+
+        Raises:
+            AuthenticationError: If Graph rejects the token or cannot authenticate the user.
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                profile_response = await client.get(
+                    self._GRAPH_ME_URL,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=self._GRAPH_TIMEOUT_SECONDS,
+                )
+                if profile_response.status_code != 200:
+                    raise self._graph_error(
+                        status_code=profile_response.status_code,
+                        operation="user profile lookup",
+                    )
+
+                profile = profile_response.json()
+                if not isinstance(profile, dict):
+                    raise ValueError("Microsoft Graph returned invalid user profile data")
+                user = self._user_from_graph_profile(profile)
+                if user is None:
+                    logger.warning("Microsoft Graph returned an invalid user profile")
+                    raise self._graph_unavailable_error()
+
+                groups = await self._check_group_memberships_async(client=client, token=token)
+                user.groups = groups
+
+                return user
+        except (httpx.RequestError, ValueError) as error:
+            logger.warning("Microsoft Graph authentication failed: %s", type(error).__name__)
+            raise self._graph_unavailable_error() from error
 
     def _is_authorized(self, user: AuthenticatedUser) -> bool:
         """
         Check if the user is authorized via group membership.
 
-        Authorization passes if:
-        - No group restrictions are configured (open to all authenticated users)
-        - The user's groups intersect with the allowed group IDs
-
         Returns:
-            True if the user is authorized, False otherwise.
+            True if the user's groups intersect with the allowed group IDs, False otherwise.
         """
-        if not self._allowed_group_ids:
-            return True
         return bool(self._allowed_group_ids & set(user.groups))
 
-    async def _resolve_excess_groups_async(self, claims: dict[str, Any], token: str) -> list[str]:
+    async def _check_group_memberships_async(self, *, client: httpx.AsyncClient, token: str) -> list[str]:
         """
-        Resolve group membership via Microsoft Graph when user is in >200 groups.
-
-        When a user is in >200 groups, Entra ID replaces the `groups` claim with a
-        `_claim_names` / `_claim_sources` overage pointer. This method confirms the
-        overage is present, then calls the Microsoft Graph `getMemberObjects` endpoint
-        to retrieve transitive group memberships, using the user's access token.
-
-        The Graph URL is built from a trusted constant (``_GRAPH_MEMBER_OBJECTS_URL``)
-        rather than the token-supplied endpoint, so token data cannot control the
-        request host, path, or port. Pagination links from the Graph response are
-        additionally checked against the Graph allowlist (see ``_is_trusted_graph_url``).
+        Check which allowed groups contain the current user through Graph.
 
         Args:
-            claims: The decoded JWT claims containing the group overage pointer.
-            token: The raw Bearer token to forward to Graph API.
+            client (httpx.AsyncClient): The asynchronous Graph HTTP client.
+            token (str): The opaque Graph access token.
 
         Returns:
-            List of group IDs the user belongs to, or empty list on failure or
-            when no group overage is present.
+            list[str]: The allowed group IDs containing the current user.
+
+        Raises:
+            AuthenticationError: If Graph rejects or cannot complete the lookup.
         """
-        try:
-            # Entra signals a groups overage via `_claim_names` -> source key -> `_claim_sources`.
-            # We only confirm the overage is present; the endpoint it supplies is intentionally
-            # ignored in favor of a trusted constant so token data cannot control the request.
-            claim_source_key = claims.get("_claim_names", {}).get("groups")
-            if not claim_source_key or claim_source_key not in claims.get("_claim_sources", {}):
-                logger.debug("No group overage claim source found")
-                return []
-
-            endpoint = self._GRAPH_MEMBER_OBJECTS_URL
-
-            all_group_ids: list[str] = []
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    endpoint,
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"securityEnabledOnly": True},
-                    timeout=10.0,
+        matched_group_ids: list[str] = []
+        allowed_group_ids = sorted(self._allowed_group_ids)
+        for offset in range(0, len(allowed_group_ids), self._GRAPH_MAX_GROUP_IDS_PER_REQUEST):
+            group_ids = allowed_group_ids[offset : offset + self._GRAPH_MAX_GROUP_IDS_PER_REQUEST]
+            response = await client.post(
+                self._GRAPH_CHECK_MEMBER_GROUPS_URL,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={"groupIds": group_ids},
+                timeout=self._GRAPH_TIMEOUT_SECONDS,
+            )
+            if response.status_code != 200:
+                raise self._graph_error(
+                    status_code=response.status_code,
+                    operation="group membership check",
                 )
 
-                if response.status_code != 200:
-                    logger.warning(
-                        "Group resolution endpoint returned %d: %s",
-                        response.status_code,
-                        response.text[:200],
-                    )
-                    return []
+            data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError("Microsoft Graph returned invalid group membership data")
+            values = data.get("value")
+            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+                raise ValueError("Microsoft Graph returned invalid group membership data")
+            matched_group_ids.extend(values)
 
-                data = response.json()
-                all_group_ids.extend(data.get("value", []))
+        logger.debug("Group membership check matched %d allowed groups", len(matched_group_ids))
+        return matched_group_ids
 
-                # Handle pagination — Graph may return @odata.nextLink for large results
-                next_link = data.get("@odata.nextLink")
-                while next_link:
-                    if not self._is_trusted_graph_url(next_link):
-                        logger.warning("Refusing to follow untrusted pagination link: %s", next_link)
-                        break
-                    response = await client.get(
-                        next_link,
-                        headers={"Authorization": f"Bearer {token}"},
-                        timeout=10.0,
-                    )
-                    if response.status_code != 200:
-                        logger.warning("Group resolution pagination failed at %s: %d", next_link, response.status_code)
-                        break
-                    data = response.json()
-                    all_group_ids.extend(data.get("value", []))
-                    next_link = data.get("@odata.nextLink")
-
-            logger.debug("Group resolution returned %d group memberships", len(all_group_ids))
-            return all_group_ids
-
-        except Exception as e:
-            logger.warning("Failed to resolve group memberships: %s", e)
-            return []
-
-    def _is_trusted_graph_url(self, url: str) -> bool:
+    def _user_from_graph_profile(self, profile: dict[str, Any]) -> AuthenticatedUser | None:
         """
-        Whether *url* is an HTTPS Microsoft Graph URL safe to forward the token to.
-
-        Returns:
-            True if *url* uses HTTPS and its host is in the Graph allowlist, False otherwise.
-        """
-        parsed = urlparse(url)
-        return parsed.scheme == "https" and parsed.hostname in self._GRAPH_HOSTS
-
-    def _validate_token(self, token: str) -> tuple[AuthenticatedUser | None, dict[str, Any]]:
-        """
-        Validate a JWT against Entra ID JWKS.
+        Convert a Microsoft Graph profile into an authenticated user.
 
         Args:
-            token: The raw JWT string.
+            profile (dict[str, Any]): The response from the Graph ``/me`` endpoint.
 
         Returns:
-            Tuple of (AuthenticatedUser, claims) if valid, (None, {}) if validation fails.
+            AuthenticatedUser | None: The authenticated user, or None for invalid data.
         """
-        try:
-            if self._jwks_client is None:
-                raise RuntimeError("JWKS client not initialized")
-            signing_key = self._jwks_client.get_signing_key_from_jwt(token)
-            claims = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["RS256"],
-                audience=self._client_id,
-                issuer=self._issuer,
-                options={"require": ["exp", "iss", "aud", "sub"]},
+        oid = profile.get("id")
+        if not isinstance(oid, str) or not oid:
+            return None
+
+        display_name = profile.get("displayName")
+        mail = profile.get("mail")
+        principal_name = profile.get("userPrincipalName")
+        return AuthenticatedUser(
+            oid=oid,
+            name=display_name if isinstance(display_name, str) else "",
+            email=mail if isinstance(mail, str) and mail else principal_name if isinstance(principal_name, str) else "",
+            groups=[],
+        )
+
+    def _graph_error(self, *, status_code: int, operation: str) -> AuthenticationError:
+        """
+        Map a Microsoft Graph failure to an authentication error.
+
+        Returns:
+            AuthenticationError: The mapped authentication or service availability error.
+        """
+        logger.warning("Microsoft Graph %s returned status %d", operation, status_code)
+        if status_code == 401:
+            return AuthenticationError(status_code=401, detail="Invalid or expired token")
+        if status_code == 403:
+            return AuthenticationError(
+                status_code=403,
+                detail="Required Microsoft Graph permission has not been granted",
             )
-            user = AuthenticatedUser(
-                oid=claims.get("oid", claims.get("sub", "")),
-                name=claims.get("name", ""),
-                email=claims.get("preferred_username", claims.get("email", "")),
-                groups=claims.get("groups", []),
-            )
-            return user, claims
-        except jwt.ExpiredSignatureError:
-            logger.debug("Token expired")
-            return None, {}
-        except jwt.InvalidTokenError as e:
-            logger.debug("Token validation failed: %s", e)
-            return None, {}
-        except Exception as e:
-            logger.warning("Unexpected error during token validation: %s", e)
-            return None, {}
+        return self._graph_unavailable_error()
+
+    def _graph_unavailable_error(self) -> AuthenticationError:
+        """
+        Build an error for an unavailable or malformed Graph service.
+
+        Returns:
+            AuthenticationError: A service unavailable error.
+        """
+        return AuthenticationError(
+            status_code=503,
+            detail="Microsoft Graph is temporarily unavailable",
+        )

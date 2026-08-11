@@ -33,17 +33,20 @@ interface StatusBannerProps {
   className: string
   textClassName: string
   buttonTestId?: string
+  buttonClassName?: string
+  tourTarget?: string
 }
 
-function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId }: StatusBannerProps) {
+function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId, buttonClassName, tourTarget }: StatusBannerProps) {
   return (
-    <div className={className} data-testid={testId}>
+    <div className={className} data-testid={testId} data-tour={tourTarget}>
       {icon}
       <Text className={textClassName} size={300}>
         {text}
       </Text>
       {onButtonClick && buttonText && (
         <Button
+          className={buttonClassName}
           appearance="primary"
           icon={buttonIcon}
           onClick={onButtonClick}
@@ -504,6 +507,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onButtonClick={onConfigureTarget}
             testId="no-target-banner"
             buttonTestId="configure-target-input-btn"
+            buttonClassName={styles.touchTarget}
+            tourTarget="chat-prerequisite"
           />
         ) : operatorLocked ? (
           <StatusBanner
@@ -516,6 +521,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onButtonClick={onUseAsTemplate}
             testId="operator-locked-banner"
             buttonTestId="use-as-template-btn"
+            buttonClassName={styles.touchTarget}
           />
         ) : crossTargetLocked ? (
           <StatusBanner
@@ -528,6 +534,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onButtonClick={onUseAsTemplate}
             testId="cross-target-banner"
             buttonTestId="use-as-template-btn"
+            buttonClassName={styles.touchTarget}
           />
         ) : singleTurnLimitReached ? (
           <StatusBanner
@@ -540,6 +547,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             onButtonClick={onNewConversation}
             testId="single-turn-banner"
             buttonTestId="new-conversation-btn"
+            buttonClassName={styles.touchTarget}
           />
         ) : (
         <>
@@ -579,6 +587,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                   onClick={onToggleConverterPanel}
                   disabled={disabled}
                   data-testid="toggle-converter-panel-btn"
+                  data-tour="converter-toggle"
                   aria-label="Toggle converter panel"
                 />
               </Tooltip>

@@ -538,11 +538,16 @@ def _render_type_name(param_type: Any) -> str:
         return type(args[0]).__name__ if args else "str"
     if get_origin(param_type) is list:
         type_args = get_args(param_type)
-        element_type = type_args[0] if type_args else str
+        element_type = _unwrap_optional(type_args[0]) if type_args else str
         if get_origin(element_type) is Literal:
             element_args = get_args(element_type)
             element_name = type(element_args[0]).__name__ if element_args else "str"
             return f"list[{element_name}]"
+        if isinstance(element_type, type) and issubclass(element_type, Enum):
+            member = next(iter(element_type), None)
+            return f"list[{type(member.value).__name__ if member is not None else 'str'}]"
+        if _is_scalar_param_type(element_type):
+            return f"list[{element_type.__name__}]"
     # Detect parameterized generics (list[str], dict[str, int], ...) reliably across Python
     # versions: get_origin returns the unparameterized type for GenericAlias, None otherwise.
     if get_origin(param_type) is not None:
@@ -564,11 +569,19 @@ def display_choices(param_type: Any) -> tuple[Any, ...] | None:
     Args:
         param_type (Any): The parameter's type annotation.
 
+    A ``list[...]`` parameter is unwrapped to its element type first, so a
+    constrained list (``list[Literal[...]]`` / ``list[Enum]``) surfaces its
+    element's allowed set — the ``is_list`` + ``choices`` projection a multi-select
+    consumer needs.
+
     Returns:
         tuple[Any, ...] | None: The allowed members for a constrained scalar
         (``Literal`` args or ``Enum`` member values), or None when unconstrained.
     """
     unwrapped = _unwrap_optional(param_type)
+    if get_origin(unwrapped) is list:
+        type_args = get_args(unwrapped)
+        unwrapped = _unwrap_optional(type_args[0]) if type_args else str
     if get_origin(unwrapped) is Literal:
         return get_args(unwrapped)
     if isinstance(unwrapped, type) and issubclass(unwrapped, Enum):
