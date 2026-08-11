@@ -325,6 +325,18 @@ async def test_get_data_filename_does_not_duplicate_extension(sqlite_instance):
     assert Path(filename).name == "photo.png"
 
 
+async def test_get_data_filename_preserves_dotted_basename(sqlite_instance):
+    serializer = data_serializer_factory(
+        category="prompt-memory-entries",
+        data_type="binary_path",
+        extension="pdf",
+    )
+
+    filename = await serializer.get_data_filename_async(file_name="2024.10.15_report")
+
+    assert Path(filename).name == "2024.10.15_report.pdf"
+
+
 async def test_save_data_supports_legacy_storage_io_write_signature():
     storage = LegacyStorageIO()
     mock_memory = MagicMock()
@@ -370,6 +382,23 @@ async def test_binary_path_save_data(sqlite_instance):
     assert os.path.isabs(serializer_value)
     assert os.path.exists(serializer_value)
     assert os.path.isfile(serializer_value)
+
+
+async def test_binary_path_default_extension_sets_azure_content_type():
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    mock_container_client = AsyncMock()
+    storage._client_async = mock_container_client
+    mock_memory = MagicMock()
+    mock_memory.results_path = "https://account.blob.core.windows.net/container/results"
+    mock_memory.results_storage_io = storage
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="binary_path")
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        await serializer.save_data_async(b"\x00\x01", output_filename="payload")
+
+    upload_kwargs = mock_container_client.upload_blob.await_args.kwargs
+    assert upload_kwargs["name"] == "results/prompt-memory-entries/binaries/payload.bin"
+    assert upload_kwargs["content_settings"].content_type == "application/octet-stream"
 
 
 async def test_binary_path_read_data(sqlite_instance):

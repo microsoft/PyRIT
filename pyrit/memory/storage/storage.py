@@ -190,6 +190,7 @@ class AzureBlobStorageIO(StorageIO):
         ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ".rtf": "application/rtf",
         ".zip": "application/zip",
+        ".bin": "application/octet-stream",
     }
 
     def __init__(
