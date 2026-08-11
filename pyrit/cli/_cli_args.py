@@ -611,7 +611,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
         always populated from the first positional token.
 
     Raises:
-        ValueError: Empty input, scenario-flag collision, or shell parser failure.
+        ValueError: Empty input or shell parser failure.
     """
     parts = shlex.split(args_string)
 
@@ -621,7 +621,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
     augmented_specs: list[_ArgSpec] = list(_RUN_ARG_SPECS)
     if declared_params:
         scenario_specs = [_arg_spec_from_parameter(param=p) for p in declared_params]
-        _validate_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
+        scenario_specs = _resolve_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
         augmented_specs.extend(scenario_specs)
 
     result = _parse_shell_arguments(parts=parts[1:], arg_specs=augmented_specs)
@@ -707,29 +707,35 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
     )
 
 
-def _validate_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> None:
+def _resolve_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> list[_ArgSpec]:
     """
-    Reject scenario-vs-built-in and scenario-vs-scenario flag collisions.
+    Drop scenario specs whose flag is already taken; first declaration wins.
 
-    Raises:
-        ValueError: If a scenario flag duplicates a built-in flag, or two
-            scenario parameters normalize to the same CLI flag.
+    A scenario's ``supported_parameters`` (fetched from the API) include the framework's common
+    parameters — e.g. ``memory_labels``, ``max_concurrency``, ``max_retries`` — which normalize to
+    flags already provided as built-ins. A scenario could also declare two params that normalize to
+    the same flag. In both cases the colliding spec is silently dropped and the earlier owner (the
+    built-in, or the first-declared scenario param) keeps the flag. This mirrors
+    ``pyrit_scan._add_scenario_params_from_api``, which skips any flag already registered on the
+    parser, so the two entry points accept the same inputs.
+
+    Args:
+        scenario_specs: Specs built from scenario-declared parameters.
+        base_specs: Built-in run argument specs.
+
+    Returns:
+        list[_ArgSpec]: The scenario specs whose flags do not collide with a built-in flag or an
+            earlier scenario spec.
     """
-    base_flags = {flag for spec in base_specs for flag in spec.flags}
-    seen: set[str] = set()
+    seen: set[str] = {flag for spec in base_specs for flag in spec.flags}
+    resolved: list[_ArgSpec] = []
     for spec in scenario_specs:
-        for flag in spec.flags:
-            if flag in base_flags:
-                raise ValueError(
-                    f"Scenario parameter flag {flag!r} collides with a built-in flag. "
-                    f"Rename the parameter to avoid the collision."
-                )
-            if flag in seen:
-                raise ValueError(
-                    f"Scenario declares two parameters that normalize to the same CLI flag {flag!r}. "
-                    f"Rename one of them."
-                )
-            seen.add(flag)
+        if any(flag in seen for flag in spec.flags):
+            # Flag already owned by a built-in or an earlier scenario param; first wins.
+            continue
+        seen.update(spec.flags)
+        resolved.append(spec)
+    return resolved
 
 
 def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:

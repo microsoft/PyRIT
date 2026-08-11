@@ -29,6 +29,7 @@ async def output_attack_async(
     include_auxiliary_scores: bool = False,
     include_pruned_conversations: bool = False,
     include_adversarial_conversation: bool = False,
+    include_reasoning_summaries: bool = False,
     blur_images: bool = False,
     blur_radius: int = 20,
     blurred_dir: str | os.PathLike[str] | None = None,
@@ -45,6 +46,7 @@ async def output_attack_async(
         include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
         include_adversarial_conversation (bool): Whether to include the adversarial conversation.
             Defaults to False.
+        include_reasoning_summaries (bool): Whether to include the reasoning summaries. Defaults to False.
         blur_images (bool): If True, apply a Gaussian blur to image outputs before
             rendering them. For "pretty" output, image bytes are blurred in-memory before
             display. For "markdown" output, a blurred file is written to disk and the
@@ -80,6 +82,7 @@ async def output_attack_async(
         include_auxiliary_scores=include_auxiliary_scores,
         include_pruned_conversations=include_pruned_conversations,
         include_adversarial_conversation=include_adversarial_conversation,
+        include_reasoning_summaries=include_reasoning_summaries,
     )
 
 
@@ -149,7 +152,7 @@ async def output_conversation_async(
     format: OutputFormat = "pretty",  # noqa: A002
     sink: Sink | None = None,
     include_scores: bool = False,
-    include_reasoning_trace: bool = False,
+    include_reasoning_summaries: bool = False,
     blur_images: bool = False,
     blur_radius: int = 20,
 ) -> None:
@@ -162,7 +165,7 @@ async def output_conversation_async(
         sink (Sink | None): Output sink. Defaults to StdoutSink for "pretty", IPythonMarkdownSink
             for "markdown".
         include_scores (bool): Whether to include scores. Defaults to False.
-        include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+        include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
         blur_images (bool): If True, apply a Gaussian blur to image outputs before
             rendering them. For "pretty" output (the only format supported here),
             image bytes are blurred in-memory before display. The original image file
@@ -187,7 +190,7 @@ async def output_conversation_async(
     await printer.write_async(
         messages,
         include_scores=include_scores,
-        include_reasoning_trace=include_reasoning_trace,
+        include_reasoning_summaries=include_reasoning_summaries,
     )
 
 

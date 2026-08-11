@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 import pytest
 from openai.types.chat import ChatCompletion
+from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import Message, MessagePiece
@@ -188,11 +189,21 @@ async def test_openai_response_target_calls_normalize_async():
     mock_response = MagicMock()
     mock_response.error = None
     mock_response.status = "completed"
-    mock_response.output = [MagicMock()]
-    mock_response.output[0].type = "message"
-    mock_response.output[0].content = [MagicMock()]
-    mock_response.output[0].content[0].type = "output_text"
-    mock_response.output[0].content[0].text = "world"
+    mock_response.output = [
+        ResponseOutputMessage(
+            id="response-message",
+            content=[
+                ResponseOutputText(
+                    annotations=[],
+                    text="world",
+                    type="output_text",
+                )
+            ],
+            role="assistant",
+            status="completed",
+            type="message",
+        )
+    ]
     mock_response.model_dump_json.return_value = json.dumps(
         {"output": [{"type": "message", "content": [{"type": "output_text", "text": "world"}]}]}
     )

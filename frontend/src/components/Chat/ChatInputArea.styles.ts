@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
 export const useChatInputAreaStyles = makeStyles({
   root: {
@@ -109,6 +110,7 @@ export const useChatInputAreaStyles = makeStyles({
     minHeight: '24px',
     maxHeight: '60vh',
     overflowY: 'auto',
+    ...mobileTouchTargetHeight,
     '::placeholder': {
       color: tokens.colorNeutralForeground4,
     },
@@ -133,12 +135,14 @@ export const useChatInputAreaStyles = makeStyles({
     padding: 0,
     borderRadius: '50%',
     border: `1px solid ${tokens.colorNeutralStroke1}`,
+    ...mobileTouchTarget,
   },
   dismissBtn: {
     minWidth: '24px',
     width: '24px',
     height: '24px',
     padding: 0,
+    ...mobileTouchTarget,
   },
   sendButton: {
     minWidth: '32px',
@@ -146,6 +150,7 @@ export const useChatInputAreaStyles = makeStyles({
     height: '32px',
     padding: 0,
     borderRadius: '50%',
+    ...mobileTouchTarget,
   },
   clearConversionButton: {
     minWidth: '32px',
@@ -156,6 +161,7 @@ export const useChatInputAreaStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke1}`,
     backgroundColor: tokens.colorNeutralBackground1,
     color: tokens.colorNeutralForeground2,
+    ...mobileTouchTarget,
     ':hover': {
       backgroundColor: tokens.colorNeutralBackground1Hover,
       color: tokens.colorNeutralForeground1,
@@ -227,6 +233,7 @@ export const useChatInputAreaStyles = makeStyles({
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
     padding: 0,
+    ...mobileTouchTargetHeight,
     '::-webkit-scrollbar': {
       width: '8px',
     },
@@ -288,6 +295,7 @@ export const useChatInputAreaStyles = makeStyles({
     textDecoration: 'none',
     flexShrink: 0,
     height: '20px',
+    ...mobileTouchTarget,
     ':hover': {
       backgroundColor: tokens.colorBrandBackgroundHover,
       color: tokens.colorNeutralForegroundOnBrand,
@@ -299,6 +307,9 @@ export const useChatInputAreaStyles = makeStyles({
     gap: tokens.spacingHorizontalXXS,
     color: tokens.colorPaletteYellowForeground2,
     fontSize: tokens.fontSizeBase200,
+  },
+  touchTarget: {
+    ...mobileTouchTarget,
   },
   originalBadge: {
     display: 'inline-block',

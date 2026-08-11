@@ -556,6 +556,7 @@ def _try_instantiate_converter(converter_name: str):
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
+        "VigenereConverter": {"key": "testvalue"},
     }
 
     converter_cls = getattr(converter, converter_name, None)

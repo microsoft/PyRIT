@@ -28,7 +28,7 @@
 # Non-LLM converters use deterministic algorithms to transform text. These include:
 # - **Encoding**: Base64, Binary, Morse, NATO phonetic, etc.
 # - **Obfuscation**: Leetspeak, Unicode manipulation, character swapping, ANSI escape codes
-# - **Text manipulation**: ROT13, Caesar cipher, Atbash, etc.
+# - **Text manipulation**: ROT13, Caesar cipher, Atbash, Vigenere cipher, etc.
 
 # %% [markdown]
 # ### 1.1 Basic Encoding Converters
@@ -51,6 +51,7 @@ from pyrit.converter import (
     NatoConverter,
     NegationTrapConverter,
     ROT13Converter,
+    VigenereConverter,
 )
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -67,6 +68,7 @@ print("Morse:", await MorseConverter().convert_async(prompt=prompt))  # type: ig
 print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: ignore
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
+print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("ASCII Art:", await AsciiArtConverter().convert_async(prompt=prompt))  # type: ignore
 print("Ecoji:", await EcojiConverter().convert_async(prompt=prompt))  # type: ignore
@@ -86,6 +88,7 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 
 # %%
 from pyrit.converter import (
+    AcrosticConverter,
     AnsiAttackConverter,
     ArabicPresentationFormConverter,
     ArabiziConverter,
@@ -123,6 +126,8 @@ print("Unicode Substitution:", await UnicodeSubstitutionConverter().convert_asyn
 print("Unicode Replacement:", await UnicodeReplacementConverter().convert_async(prompt=prompt))  # type: ignore
 print("Emoji:", await EmojiConverter().convert_async(prompt=prompt))  # type: ignore
 print("First Letter:", await FirstLetterConverter().convert_async(prompt=prompt))  # type: ignore
+# Acrostic hides the prompt in the first letter of each line; a short prompt keeps the output readable
+print("Acrostic:", await AcrosticConverter().convert_async(prompt="cut a tree"))  # type: ignore
 print("String Join:", await StringJoinConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zero Width:", await ZeroWidthConverter().convert_async(prompt=prompt))  # type: ignore
 print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: ignore

@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useCreateTargetDialogStyles = makeStyles({
   dialogSurface: {
@@ -33,6 +34,58 @@ export const useCreateTargetDialogStyles = makeStyles({
       minWidth: 0,
       maxWidth: '100%',
     },
+  },
+  targetTypeListbox: {
+    maxHeight: 'min(28rem, 60vh)',
+    overflowY: 'auto',
+  },
+  targetTypeOption: {
+    display: 'flex',
+    flexDirection: 'column',
+    width: '100%',
+    minWidth: 0,
+    gap: tokens.spacingVerticalXXS,
+    whiteSpace: 'normal',
+  },
+  targetTypeOptionHeader: {
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    minWidth: 0,
+    gap: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+  },
+  targetTypeIdentifier: {
+    maxWidth: '100%',
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+    overflowWrap: 'anywhere',
+    color: tokens.colorNeutralForeground3,
+    backgroundColor: tokens.colorNeutralBackground3,
+    borderRadius: tokens.borderRadiusSmall,
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase200,
+  },
+  targetTypeDescription: {
+    display: 'block',
+    minWidth: 0,
+    color: tokens.colorNeutralForeground2,
+    overflowWrap: 'anywhere',
+    whiteSpace: 'normal',
+  },
+  targetTypeAuth: {
+    display: 'block',
+    color: tokens.colorNeutralForeground3,
+    whiteSpace: 'normal',
+  },
+  selectedTargetDetails: {
+    display: 'flex',
+    flexDirection: 'column',
+    minWidth: 0,
+    gap: tokens.spacingVerticalXS,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
   },
   warningMessage: {
     width: '100%',
@@ -111,6 +164,9 @@ export const useCreateTargetDialogStyles = makeStyles({
   weightInput: {
     width: '5rem',
     minWidth: '5rem',
+  },
+  touchTarget: {
+    ...mobileTouchTarget,
   },
   weightError: {
     alignSelf: 'flex-end',

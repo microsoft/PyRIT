@@ -38,6 +38,7 @@ import pyrit
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
+    AdditionalInitializer,
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -417,6 +418,50 @@ class DomainBackedEntry(Base, Generic[TDomain]):
                 "from_domain_model(...); every concrete entry must define how its "
                 "domain model is converted into a row."
             )
+
+
+class AdditionalInitializerEntry(DomainBackedEntry[AdditionalInitializer]):
+    """Persistence row for an ``AdditionalInitializer``."""
+
+    __tablename__ = "AdditionalInitializers"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    initializer_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    parameters: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    order_index: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+
+    @classmethod
+    def from_domain_model(cls, domain_model: AdditionalInitializer) -> Self:
+        """
+        Build an unsaved additional-initializer row from its domain model.
+
+        Args:
+            domain_model (AdditionalInitializer): The domain model this entry persists.
+
+        Returns:
+            Self: A new, unsaved row.
+        """
+        return cls(
+            id=domain_model.id,
+            initializer_name=domain_model.initializer_name,
+            parameters=domain_model.parameters,
+            order_index=domain_model.order_index,
+        )
+
+    def to_domain_model(self) -> AdditionalInitializer:
+        """
+        Convert this row back into its domain model.
+
+        Returns:
+            AdditionalInitializer: The reconstructed additional initializer.
+        """
+        return AdditionalInitializer(
+            id=self.id,
+            initializer_name=self.initializer_name,
+            parameters=self.parameters,
+            order_index=self.order_index,
+        )
 
 
 T = TypeVar("T", bound=ComponentIdentifier)
@@ -1504,9 +1549,15 @@ class AttackResultEntry(Base):
     """
 
     __tablename__ = "AttackResultEntries"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        # Serves the PARTITION BY conversation_id dedup window in _query_paginated_attack_results.
+        Index("ix_AttackResultEntries_conversation_id", "conversation_id"),
+        # Serves the History recency ORDER BY timestamp DESC, id DESC and its keyset seek.
+        Index("ix_AttackResultEntries_timestamp_id", "timestamp", "id"),
+        {"extend_existing": True},
+    )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    conversation_id = mapped_column(String, nullable=False)
+    conversation_id = mapped_column(String(36), nullable=False)
     objective = mapped_column(Unicode, nullable=False)
     atomic_attack_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
@@ -1765,6 +1816,8 @@ class ScenarioResultEntry(Base):
         scenario_identifier (dict): Canonical scenario identity (class name, version,
             techniques, datasets, resolved params, objective target / scorer children).
         objective_target_identifier (dict): Identifier for the target being evaluated in the scenario.
+            Required: this is the denormalized filter key that target-based queries match on, so a
+            scenario result without one could never be retrieved by target.
         objective_scorer_identifier (dict): Optional identifier for the scorer used to evaluate results.
         scenario_run_state (str): Current execution state of the scenario
             (one of CREATED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED).
@@ -1824,6 +1877,11 @@ class ScenarioResultEntry(Base):
 
         Args:
             entry (ScenarioResult): The scenario result object to convert into a database entry.
+
+        Raises:
+            ValueError: If ``entry`` has no ``objective_target_identifier``. The denormalized target
+                column is the key that target-based queries filter on, so a result without one would
+                be persisted as a row those queries could never return.
         """
         self.id = entry.id
         self.scenario_name = entry.scenario_name
@@ -1840,11 +1898,17 @@ class ScenarioResultEntry(Base):
         self.scenario_identifier = scenario_identifier.model_dump()
         self.scenario_identifier_hash = scenario_identifier.hash
 
-        # Convert ComponentIdentifier to dict for JSON storage
+        # Convert ComponentIdentifier to dict for JSON storage. The target is required: it is the
+        # denormalized key that target-based queries filter on, so persisting a result without one
+        # would write a row that those queries can never return.
         target_identifier = entry.objective_target_identifier
-        self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
-            target_identifier.model_dump() if target_identifier else None
-        )
+        if target_identifier is None:
+            raise ValueError(
+                "objective_target_identifier is required to persist a ScenarioResult. "
+                f"Scenario '{entry.scenario_name}' produced a result with no objective target; "
+                "a scenario must declare and resolve objective_target before its result is stored."
+            )
+        self.objective_target_identifier = target_identifier.model_dump()
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
         scorer_identifier = entry.objective_scorer_identifier

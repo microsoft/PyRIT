@@ -3,14 +3,43 @@
 
 """Tests for the RedTeamAgent class."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from pyrit.converter import Base64Converter
+from pyrit.converter import (
+    AnsiAttackConverter,
+    AsciiArtConverter,
+    AtbashConverter,
+    Base64Converter,
+    CaesarConverter,
+    CharacterSpaceConverter,
+    CharSwapConverter,
+    Converter,
+    DiacriticConverter,
+    FlipConverter,
+    LeetspeakConverter,
+    MorseConverter,
+    ROT13Converter,
+    StringJoinConverter,
+    SuffixAppendConverter,
+    TenseConverter,
+    TextJailbreakConverter,
+    UnicodeConfusableConverter,
+    UnicodeSubstitutionConverter,
+    UrlConverter,
+)
+from pyrit.converter.binary_converter import BinaryConverter
+from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmugglerConverter
+from pyrit.executor.attack import (
+    CrescendoAttack,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    TreeOfAttacksWithPruningAttack,
+)
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
@@ -36,6 +65,53 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
         class_name=name,
         class_module="test",
     )
+
+
+def _converter_technique_cases() -> list[tuple[FoundryTechnique, type[Converter]]]:
+    """Return every supported Foundry converter mapping."""
+    return [
+        (FoundryTechnique.AnsiAttack, AnsiAttackConverter),
+        (FoundryTechnique.AsciiArt, AsciiArtConverter),
+        (FoundryTechnique.AsciiSmuggler, AsciiSmugglerConverter),
+        (FoundryTechnique.Atbash, AtbashConverter),
+        (FoundryTechnique.Base64, Base64Converter),
+        (FoundryTechnique.Binary, BinaryConverter),
+        (FoundryTechnique.Caesar, CaesarConverter),
+        (FoundryTechnique.CharacterSpace, CharacterSpaceConverter),
+        (FoundryTechnique.CharSwap, CharSwapConverter),
+        (FoundryTechnique.Diacritic, DiacriticConverter),
+        (FoundryTechnique.Flip, FlipConverter),
+        (FoundryTechnique.Leetspeak, LeetspeakConverter),
+        (FoundryTechnique.Morse, MorseConverter),
+        (FoundryTechnique.ROT13, ROT13Converter),
+        (FoundryTechnique.SuffixAppend, SuffixAppendConverter),
+        (FoundryTechnique.StringJoin, StringJoinConverter),
+        (FoundryTechnique.Tense, TenseConverter),
+        (FoundryTechnique.UnicodeConfusable, UnicodeConfusableConverter),
+        (FoundryTechnique.UnicodeSubstitution, UnicodeSubstitutionConverter),
+        (FoundryTechnique.Url, UrlConverter),
+        (FoundryTechnique.Jailbreak, TextJailbreakConverter),
+    ]
+
+
+def _attack_technique_cases() -> list[tuple[FoundryTechnique | None, type[AttackStrategy[Any, Any]], int | None]]:
+    """Return every supported Foundry attack mapping plus the baseline."""
+    return [
+        (None, PromptSendingAttack, None),
+        (FoundryTechnique.Crescendo, CrescendoAttack, None),
+        (FoundryTechnique.MultiTurn, RedTeamingAttack, None),
+        (FoundryTechnique.Pair, TreeOfAttacksWithPruningAttack, 1),
+        (FoundryTechnique.Tap, TreeOfAttacksWithPruningAttack, 3),
+    ]
+
+
+def _get_request_converters(atomic_attack: AtomicAttack) -> list[Converter]:
+    """Return request converters from an atomic attack in execution order."""
+    return [
+        converter
+        for configuration in atomic_attack.attack_technique.attack.get_request_converters()
+        for converter in configuration.converters
+    ]
 
 
 @pytest.fixture
@@ -90,6 +166,21 @@ def mock_float_threshold_scorer():
     mock.get_identifier.return_value = _mock_scorer_id("MockFloatScaleThresholdScorer")
     mock.threshold = 0.7
     return mock
+
+
+@pytest.fixture
+def configured_scenario(
+    mock_objective_target: PromptTarget,
+    mock_adversarial_target: PromptTarget,
+    mock_float_threshold_scorer: FloatScaleThresholdScorer,
+) -> RedTeamAgent:
+    """Create a scenario ready for direct technique materialization."""
+    scenario = RedTeamAgent(
+        adversarial_chat=mock_adversarial_target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=mock_float_threshold_scorer),
+    )
+    scenario._objective_target = mock_objective_target
+    return scenario
 
 
 @pytest.fixture
@@ -543,107 +634,177 @@ class TestFoundryGetAttack:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestFoundryAllTechniques:
-    """Tests that all techniques can be instantiated."""
+    """Tests for the complete declarative Foundry technique mapping."""
 
-    @pytest.mark.parametrize(
-        "technique",
-        [
-            FoundryTechnique.AnsiAttack,
-            FoundryTechnique.AsciiArt,
-            FoundryTechnique.AsciiSmuggler,
-            FoundryTechnique.Atbash,
-            FoundryTechnique.Base64,
-            FoundryTechnique.Binary,
-            FoundryTechnique.Caesar,
-            FoundryTechnique.CharacterSpace,
-            FoundryTechnique.CharSwap,
-            FoundryTechnique.Diacritic,
-            FoundryTechnique.Flip,
-            FoundryTechnique.Leetspeak,
-            FoundryTechnique.Morse,
-            FoundryTechnique.ROT13,
-            FoundryTechnique.SuffixAppend,
-            FoundryTechnique.StringJoin,
-            FoundryTechnique.Tense,
-            FoundryTechnique.UnicodeConfusable,
-            FoundryTechnique.UnicodeSubstitution,
-            FoundryTechnique.Url,
-            FoundryTechnique.Jailbreak,
-        ],
-    )
-    async def test_all_single_turn_techniques_create_attack_runs(
-        self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups, mock_dataset_config, technique
-    ):
-        """Test that all single-turn techniques can create attack runs."""
-        with patch.object(
-            RedTeamAgent,
-            "_resolve_seed_groups_by_dataset_async",
-            new_callable=AsyncMock,
-            return_value={"memory": mock_memory_seed_groups},
-        ):
-            scenario = RedTeamAgent(
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
-            )
-
-            scenario.set_params_from_args(
-                args={
-                    "objective_target": mock_objective_target,
-                    "scenario_techniques": [technique],
-                    "dataset_config": mock_dataset_config,
-                }
-            )
-            await scenario.initialize_async()
-
-            # Get the composite technique that was created during initialization
-            composite_technique = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_technique(
-                composite=composite_technique, seed_groups=mock_memory_seed_groups
-            )
-            assert isinstance(atomic_attack, AtomicAttack)
-
-    @pytest.mark.parametrize(
-        "technique",
-        [
-            FoundryTechnique.MultiTurn,
-            FoundryTechnique.Crescendo,
-        ],
-    )
-    async def test_all_multi_turn_techniques_create_attack_runs(
+    @pytest.mark.parametrize(("technique", "expected_converter_type"), _converter_technique_cases())
+    def test_converter_technique_maps_to_expected_type(
         self,
-        mock_objective_target,
-        mock_adversarial_target,
-        mock_objective_scorer,
-        mock_memory_seed_groups,
-        mock_dataset_config,
-        technique,
-    ):
-        """Test that all multi-turn techniques can create attack runs."""
-        with patch.object(
-            RedTeamAgent,
-            "_resolve_seed_groups_by_dataset_async",
-            new_callable=AsyncMock,
-            return_value={"memory": mock_memory_seed_groups},
-        ):
-            scenario = RedTeamAgent(
-                adversarial_chat=mock_adversarial_target,
-                attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        configured_scenario: RedTeamAgent,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+        technique: FoundryTechnique,
+        expected_converter_type: type[Converter],
+    ) -> None:
+        """Each converter technique creates its declared concrete converter."""
+        atomic_attack = configured_scenario._get_attack_from_technique(
+            composite=FoundryComposite(attack=None, converters=[technique]),
+            seed_groups=mock_memory_seed_groups,
+        )
+
+        converters = _get_request_converters(atomic_attack)
+        assert len(converters) == 1
+        assert type(converters[0]) is expected_converter_type
+
+    @pytest.mark.parametrize(("technique", "expected_attack_type", "expected_tree_width"), _attack_technique_cases())
+    def test_attack_technique_maps_to_expected_type_and_configuration(
+        self,
+        configured_scenario: RedTeamAgent,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+        mock_float_threshold_scorer: FloatScaleThresholdScorer,
+        technique: FoundryTechnique | None,
+        expected_attack_type: type[AttackStrategy[Any, Any]],
+        expected_tree_width: int | None,
+    ) -> None:
+        """Each attack technique keeps its class, tree width, and supplied scorer."""
+        atomic_attack = configured_scenario._get_attack_from_technique(
+            composite=FoundryComposite(attack=technique),
+            seed_groups=mock_memory_seed_groups,
+        )
+
+        attack = atomic_attack.attack_technique.attack
+        assert type(attack) is expected_attack_type
+        if expected_tree_width is not None:
+            assert attack._configuration.tree_width == expected_tree_width
+            assert attack._objective_scorer is mock_float_threshold_scorer
+
+    def test_mapping_cases_cover_all_concrete_foundry_techniques(self) -> None:
+        """The mapping cases stay exhaustive as the Foundry enum evolves."""
+        converter_techniques = {technique for technique, _ in _converter_technique_cases()}
+        attack_techniques = {technique for technique, _, _ in _attack_technique_cases() if technique is not None}
+
+        assert converter_techniques == set(FoundryTechnique.get_techniques_by_tag("converter"))
+        assert attack_techniques == set(FoundryTechnique.get_techniques_by_tag("attack"))
+
+    @pytest.mark.parametrize(
+        ("technique", "attribute", "expected_value"),
+        [
+            (FoundryTechnique.Caesar, "caesar_offset", 3),
+            (FoundryTechnique.SuffixAppend, "_suffix", "!!!"),
+        ],
+    )
+    def test_converter_technique_preserves_special_arguments(
+        self,
+        configured_scenario: RedTeamAgent,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+        technique: FoundryTechnique,
+        attribute: str,
+        expected_value: object,
+    ) -> None:
+        """Converters with fixed Foundry arguments retain those exact values."""
+        atomic_attack = configured_scenario._get_attack_from_technique(
+            composite=FoundryComposite(attack=None, converters=[technique]),
+            seed_groups=mock_memory_seed_groups,
+        )
+
+        converter = _get_request_converters(atomic_attack)[0]
+        assert getattr(converter, attribute) == expected_value
+
+    def test_tense_converter_preserves_tense_and_adversarial_target(
+        self,
+        configured_scenario: RedTeamAgent,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+        mock_adversarial_target: PromptTarget,
+    ) -> None:
+        """Tense keeps the past-tense setting and exact adversarial target."""
+        atomic_attack = configured_scenario._get_attack_from_technique(
+            composite=FoundryComposite(attack=None, converters=[FoundryTechnique.Tense]),
+            seed_groups=mock_memory_seed_groups,
+        )
+
+        converter = _get_request_converters(atomic_attack)[0]
+        assert isinstance(converter, TenseConverter)
+        assert converter._tense == "past"
+        assert converter._converter_target is mock_adversarial_target
+
+    def test_jailbreak_converter_builds_fresh_random_template(
+        self,
+        configured_scenario: RedTeamAgent,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        """Every Jailbreak materialization gets a newly selected random template."""
+        templates = [MagicMock(), MagicMock()]
+        with patch(
+            "pyrit.scenario.scenarios.foundry.red_team_agent.TextJailBreak",
+            side_effect=templates,
+        ) as template_constructor:
+            atomic_attacks = [
+                configured_scenario._get_attack_from_technique(
+                    composite=FoundryComposite(attack=None, converters=[FoundryTechnique.Jailbreak]),
+                    seed_groups=mock_memory_seed_groups,
+                )
+                for _ in range(2)
+            ]
+
+        converters = [_get_request_converters(atomic_attack)[0] for atomic_attack in atomic_attacks]
+        assert template_constructor.call_args_list == [call(random_template=True), call(random_template=True)]
+        assert isinstance(converters[0], TextJailbreakConverter)
+        assert isinstance(converters[1], TextJailbreakConverter)
+        assert converters[0].jail_break_template is templates[0]
+        assert converters[1].jail_break_template is templates[1]
+
+    def test_composite_preserves_converter_order(
+        self,
+        configured_scenario: RedTeamAgent,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        """Composite converters remain in caller-specified execution order."""
+        atomic_attack = configured_scenario._get_attack_from_technique(
+            composite=FoundryComposite(
+                attack=None,
+                converters=[
+                    FoundryTechnique.Url,
+                    FoundryTechnique.Base64,
+                    FoundryTechnique.ROT13,
+                ],
+            ),
+            seed_groups=mock_memory_seed_groups,
+        )
+
+        converters = _get_request_converters(atomic_attack)
+        assert [type(converter) for converter in converters] == [UrlConverter, Base64Converter, ROT13Converter]
+
+    def test_unknown_converter_technique_raises_existing_error(
+        self,
+        configured_scenario: RedTeamAgent,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        """Unsupported converter names retain the existing ValueError."""
+        composite = FoundryComposite(attack=None)
+        composite.converters.append(cast("FoundryTechnique", "unsupported"))
+
+        with pytest.raises(ValueError) as exc_info:
+            configured_scenario._get_attack_from_technique(
+                composite=composite,
+                seed_groups=mock_memory_seed_groups,
             )
 
-            scenario.set_params_from_args(
-                args={
-                    "objective_target": mock_objective_target,
-                    "scenario_techniques": [technique],
-                    "dataset_config": mock_dataset_config,
-                }
-            )
-            await scenario.initialize_async()
+        assert str(exc_info.value) == "Unknown technique: unsupported"
 
-            # Get the composite technique that was created during initialization
-            composite_technique = scenario._scenario_composites[0]
-            atomic_attack = scenario._get_attack_from_technique(
-                composite=composite_technique, seed_groups=mock_memory_seed_groups
-            )
-            assert isinstance(atomic_attack, AtomicAttack)
+    def test_unknown_attack_technique_retains_baseline_fallback(
+        self,
+        configured_scenario: RedTeamAgent,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        """An unknown attack-tagged value still falls back to PromptSendingAttack."""
+        unknown_attack = MagicMock()
+        unknown_attack.tags = {"attack"}
+        unknown_attack.value = "unsupported"
+
+        atomic_attack = configured_scenario._get_attack_from_technique(
+            composite=FoundryComposite(attack=cast("FoundryTechnique", unknown_attack)),
+            seed_groups=mock_memory_seed_groups,
+        )
+
+        assert type(atomic_attack.attack_technique.attack) is PromptSendingAttack
 
 
 @pytest.mark.usefixtures(*FIXTURES)

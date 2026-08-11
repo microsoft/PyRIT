@@ -1,12 +1,14 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useTourTooltipStyles = makeStyles({
-  // Outer wrapper: provides space for the mascot to overflow below the card
+  // Include the mascot's overhang in the floating bounds so Joyride can keep it in the viewport.
   wrapper: {
     display: 'flex',
     flexDirection: 'column',
     width: '420px',
     maxWidth: `calc(100vw - ${tokens.spacingHorizontalM} - ${tokens.spacingHorizontalM})`,
+    paddingBottom: `calc(${tokens.spacingVerticalXXL} + ${tokens.spacingVerticalL})`,
     position: 'relative',
   },
   container: {
@@ -24,7 +26,7 @@ export const useTourTooltipStyles = makeStyles({
   // Mascot positioned at bottom-left, overlapping the card edge
   mascot: {
     position: 'absolute',
-    bottom: '-40px',
+    bottom: 0,
     left: '-20px',
     width: '90px',
     height: '90px',
@@ -42,10 +44,7 @@ export const useTourTooltipStyles = makeStyles({
     marginTop: '-4px',
   },
   closeButton: {
-    '@media (max-width: 600px)': {
-      minWidth: '44px',
-      minHeight: '44px',
-    },
+    ...mobileTouchTarget,
   },
   content: {
     color: tokens.colorNeutralForeground1,
@@ -72,9 +71,6 @@ export const useTourTooltipStyles = makeStyles({
     justifyContent: 'flex-end',
   },
   actionButton: {
-    '@media (max-width: 600px)': {
-      minWidth: '44px',
-      minHeight: '44px',
-    },
+    ...mobileTouchTarget,
   },
 })
