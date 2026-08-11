@@ -88,8 +88,9 @@ export default function Initializers() {
       await refetchSettingsOnly()
       return true
     } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
-      return false
+      const detail = toApiError(error).detail
+      setStatusMessage({ intent: 'error', text: detail })
+      throw error
     } finally {
       setCreating(false)
     }

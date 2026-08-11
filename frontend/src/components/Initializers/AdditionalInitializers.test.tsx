@@ -342,4 +342,35 @@ describe('AdditionalInitializers', () => {
 
     expect(defaultProps.onAdd).toHaveBeenCalledWith('load_default_datasets', null)
   })
+
+  it('should show a server error inside the add dialog when onAdd fails', async () => {
+    const user = userEvent.setup()
+
+    const props = {
+      ...defaultProps,
+      registeredInitializers: [refreshInitializer],
+      onAdd: jest.fn().mockRejectedValue(new Error('Invalid days value.')),
+    }
+
+    render(
+      <TestWrapper>
+        <AdditionalInitializers {...props} />
+      </TestWrapper>,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Initializer to add' }), {
+      target: { value: 'refresh_datasets' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Add refresh_datasets initializer')
+    fireEvent.change(within(dialog).getByTestId('param-days'), { target: { value: '12' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
+
+    expect(await within(dialog).findByRole('alert', { hidden: true })).toHaveTextContent(
+      'Invalid days value.',
+    )
+    expect(dialog).toBeInTheDocument()
+  })
 })
