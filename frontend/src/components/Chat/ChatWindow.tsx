@@ -224,15 +224,18 @@ export default function ChatWindow({
   )
   const currentOperator = labels?.operator
   const attackOperator = attackLabels?.operator
+  // Existing attacks are operator-locked when their operator differs from the current one.
   const isOperatorLocked = Boolean(
     attackResultId && attackLabels && attackOperator && currentOperator && attackOperator !== currentOperator,
   )
+  // They are cross-target locked when the selected target's canonical hash differs from the persisted target.
   const isCrossTargetLocked = Boolean(
     attackResultId
     && attackTarget
     && activeTarget
     && !targetInfoMatchesTarget(attackTarget, activeTarget),
   )
+  // Any failed invariant keeps all mutation controls and handlers read-only.
   const isMutationLocked = isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked
 
   // Clear internal messages when attack state is reset (e.g. New Attack).
