@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { makeTarget } from "@/test-utils/targetFixtures";
@@ -313,7 +313,7 @@ describe("CreateTargetDialog", () => {
     expect(picker).not.toHaveTextContent("Select a target type");
   });
 
-  it("should disable target selection while catalog details are loading", () => {
+  it("should expose fallback target choices while catalog details are loading", async () => {
     mockedTargetsApi.listTargetCatalog.mockReturnValue(
       new Promise<TargetCatalogResponse>(() => {}),
     );
@@ -325,7 +325,38 @@ describe("CreateTargetDialog", () => {
     );
 
     expect(screen.getByText("Loading target details...")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: /target type/i })).toBeDisabled();
+    await openTargetTypePicker();
+    expect(screen.getAllByRole("option")).toHaveLength(8);
+  });
+
+  it("should preserve a fallback selection when catalog details arrive", async () => {
+    let resolveCatalog: ((catalog: TargetCatalogResponse) => void) | null = null;
+    mockedTargetsApi.listTargetCatalog.mockReturnValue(
+      new Promise<TargetCatalogResponse>((resolve) => {
+        resolveCatalog = resolve;
+      }),
+    );
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent("OpenAI chat");
+
+    if (resolveCatalog === null) {
+      throw new Error("Catalog resolver was not initialized");
+    }
+    await act(async () => {
+      resolveCatalog(TARGET_CATALOG);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading target details...")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent("OpenAI chat");
   });
 
   it("should keep all target types selectable and explain when catalog details fail to load", async () => {

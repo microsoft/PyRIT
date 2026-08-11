@@ -11,7 +11,9 @@ accessors, and the filter wiring. These tests drive a minimal subclass that keep
 every base default.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from threading import Event
 from types import ModuleType
 from unittest.mock import MagicMock
 
@@ -43,6 +45,13 @@ class UnregisteredWidget:
         self.size = size
 
 
+class PluginWidget:
+    """A widget registered after discovery."""
+
+    def __init__(self, *, size: int = 1) -> None:
+        self.size = size
+
+
 class WidgetRegistry(Registry[object, RegistryMetadata]):
     """Minimal Registry subclass that keeps every base default."""
 
@@ -57,6 +66,24 @@ class WidgetRegistry(Registry[object, RegistryMetadata]):
 
     def _metadata_class(self) -> type[RegistryMetadata]:
         return RegistryMetadata
+
+
+class CoordinatedWidgetRegistry(WidgetRegistry):
+    """Widget registry whose first metadata build can be held for concurrency tests."""
+
+    def __init__(self) -> None:
+        self.metadata_started = Event()
+        self.metadata_release = Event()
+        self.metadata_build_calls = 0
+        super().__init__()
+
+    def _build_metadata(self, name: str, cls: type[object]) -> RegistryMetadata:
+        self.metadata_build_calls += 1
+        if self.metadata_build_calls == 1:
+            self.metadata_started.set()
+            if not self.metadata_release.wait(timeout=5):
+                raise TimeoutError("Metadata test release was not signaled.")
+        return super()._build_metadata(name, cls)
 
 
 @dataclass(frozen=True)
@@ -168,6 +195,51 @@ def test_get_all_metadata_no_filters_returns_all():
     all_meta = registry.get_all_registered_class_metadata()
 
     assert {m.registry_name for m in all_meta} == {"SampleWidget", "UndocumentedWidget"}
+
+
+def test_concurrent_metadata_callers_share_one_cache_build() -> None:
+    registry = CoordinatedWidgetRegistry()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(registry.get_all_registered_class_metadata)
+        assert registry.metadata_started.wait(timeout=5)
+        second = executor.submit(registry.get_all_registered_class_metadata)
+        registry.metadata_release.set()
+
+        assert first.result(timeout=5) == second.result(timeout=5)
+
+    assert registry.metadata_build_calls == 2
+
+
+def test_class_registration_waits_for_metadata_build_and_invalidates_cache() -> None:
+    registry = CoordinatedWidgetRegistry()
+    registration_started = Event()
+
+    def _register_plugin() -> None:
+        registration_started.set()
+        registry.register_class(PluginWidget)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        initial_metadata = executor.submit(registry.get_all_registered_class_metadata)
+        assert registry.metadata_started.wait(timeout=5)
+        registration = executor.submit(_register_plugin)
+        assert registration_started.wait(timeout=5)
+        assert not registration.done()
+
+        registry.metadata_release.set()
+        assert {item.class_name for item in initial_metadata.result(timeout=5)} == {
+            "SampleWidget",
+            "UndocumentedWidget",
+        }
+        registration.result(timeout=5)
+
+    refreshed = registry.get_all_registered_class_metadata()
+    assert {item.class_name for item in refreshed} == {
+        "PluginWidget",
+        "SampleWidget",
+        "UndocumentedWidget",
+    }
+    assert registry.metadata_build_calls == 5
 
 
 def test_get_all_metadata_include_filter_matches_subset():

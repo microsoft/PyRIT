@@ -106,7 +106,7 @@ def mock_create_task():
 @pytest.fixture(autouse=True)
 def mock_download_specific_files_async():
     with patch(
-        "pyrit.prompt_target.hugging_face.hugging_face_chat_target.download_specific_files_async",
+        "pyrit.common.download_hf_model.download_specific_files_async",
         new_callable=AsyncMock,
     ) as mock:
         yield mock

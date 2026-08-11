@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
@@ -170,6 +171,7 @@ class Registry(ABC, Generic[T, MetadataT]):
 
     # Class-level singleton instances, keyed by registry class.
     _singletons: dict[type, Registry[Any, Any]] = {}
+    _singletons_lock = threading.RLock()
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
@@ -179,6 +181,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             lazy_discovery (bool): If True, discovery is deferred until first access.
                 If False, discovery runs immediately in the constructor.
         """
+        self._catalog_lock = threading.RLock()
         self._classes: dict[str, type[T]] = {}
         self._metadata_cache: dict[str, MetadataT] | None = None
         self._discovered = False
@@ -198,9 +201,10 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             The singleton instance of this registry class.
         """
-        if cls not in cls._singletons:
-            cls._singletons[cls] = cls()
-        return cls._singletons[cls]  # type: ignore[ty:invalid-return-type]
+        with cls._singletons_lock:
+            if cls not in cls._singletons:
+                cls._singletons[cls] = cls()
+            return cls._singletons[cls]  # type: ignore[ty:invalid-return-type]
 
     @classmethod
     def reset_registry_singleton(cls) -> None:
@@ -209,14 +213,16 @@ class Registry(ABC, Generic[T, MetadataT]):
 
         Useful for testing or when re-discovery is needed.
         """
-        if cls in cls._singletons:
-            del cls._singletons[cls]
+        with cls._singletons_lock:
+            if cls in cls._singletons:
+                del cls._singletons[cls]
 
     def _ensure_discovered(self) -> None:
         """Ensure discovery has been performed. Runs discovery on first access."""
-        if not self._discovered:
-            self._discover()
-            self._discovered = True
+        with self._catalog_lock:
+            if not self._discovered:
+                self._discover()
+                self._discovered = True
 
     def _base_type(self) -> type[T]:
         """
@@ -490,11 +496,12 @@ class Registry(ABC, Generic[T, MetadataT]):
         Raises:
             ValueError: If the class fails validation.
         """
-        if name is None:
-            name = self._get_registry_name(cls)
-        self._validate_class(cls)
-        self._classes[name] = cls
-        self._metadata_cache = None
+        with self._catalog_lock:
+            if name is None:
+                name = self._get_registry_name(cls)
+            self._validate_class(cls)
+            self._classes[name] = cls
+            self._metadata_cache = None
 
     def get_class(self, name: str) -> type[T]:
         """
@@ -509,12 +516,13 @@ class Registry(ABC, Generic[T, MetadataT]):
         Raises:
             KeyError: If the name is not registered.
         """
-        self._ensure_discovered()
-        cls = self._classes.get(name)
-        if cls is None:
-            available = ", ".join(self.get_class_names())
-            raise KeyError(f"'{name}' not found in registry. Available: {available}")
-        return cls
+        with self._catalog_lock:
+            self._ensure_discovered()
+            cls = self._classes.get(name)
+            if cls is None:
+                available = ", ".join(self.get_class_names())
+                raise KeyError(f"'{name}' not found in registry. Available: {available}")
+            return cls
 
     def get_class_names(self) -> list[str]:
         """
@@ -523,8 +531,9 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             list[str]: Sorted catalog names.
         """
-        self._ensure_discovered()
-        return sorted(self._classes.keys())
+        with self._catalog_lock:
+            self._ensure_discovered()
+            return sorted(self._classes.keys())
 
     def _ensure_metadata(self) -> dict[str, MetadataT]:
         """
@@ -533,12 +542,13 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             dict[str, MetadataT]: Metadata for every registered class, keyed by name.
         """
-        self._ensure_discovered()
-        if self._metadata_cache is None:
-            self._metadata_cache = {
-                name: self._build_metadata(name, cls) for name, cls in sorted(self._classes.items())
-            }
-        return self._metadata_cache
+        with self._catalog_lock:
+            self._ensure_discovered()
+            if self._metadata_cache is None:
+                self._metadata_cache = {
+                    name: self._build_metadata(name, cls) for name, cls in sorted(self._classes.items())
+                }
+            return self._metadata_cache
 
     def get_all_registered_class_metadata(
         self,
@@ -634,8 +644,9 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             bool: True if the name is registered, False otherwise.
         """
-        self._ensure_discovered()
-        return name in self._classes
+        with self._catalog_lock:
+            self._ensure_discovered()
+            return name in self._classes
 
     def __len__(self) -> int:
         """
@@ -644,8 +655,9 @@ class Registry(ABC, Generic[T, MetadataT]):
         Returns:
             int: The number of registered classes.
         """
-        self._ensure_discovered()
-        return len(self._classes)
+        with self._catalog_lock:
+            self._ensure_discovered()
+            return len(self._classes)
 
     def __iter__(self) -> Iterator[str]:
         """
