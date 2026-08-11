@@ -3,6 +3,8 @@
 
 from pathlib import Path
 
+from build_scripts import example_index as example_index_module
+from build_scripts import gen_api_md as gen_api_md_module
 from build_scripts.gen_api_md import (
     ExampleReference,
     SymbolEntry,
@@ -21,6 +23,10 @@ from build_scripts.gen_api_md import (
     render_function,
     render_module,
 )
+
+
+def test_docs_scripts_share_validate_docs_module() -> None:
+    assert example_index_module.validate_docs is gen_api_md_module.validate_docs
 
 
 def _fake_class(name: str, methods: list[str] | None = None) -> dict:

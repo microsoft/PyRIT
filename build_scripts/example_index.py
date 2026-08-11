@@ -6,16 +6,15 @@
 import ast
 import json
 import re
+import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-try:
-    from build_scripts import validate_docs
-except ImportError:  # pragma: no cover - supports direct script execution
-    import validate_docs
+sys.path.insert(0, str(Path(__file__).parent))
+import validate_docs
 
 
 @dataclass(frozen=True)
