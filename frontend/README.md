@@ -91,20 +91,20 @@ E2E flow tests run in two modes controlled by Playwright projects and an environ
 
 - **Seeded** (`--project seeded`, default for CI): Messages are stored directly in the database with `send: false` using dummy credentials. No real API keys needed. Tests cover the full UI flow (display, branching, conversation switching, promoting) without calling any external service.
 
-- **Live** (`--project live`, requires `E2E_LIVE_MODE=true`): Messages are sent to real OpenAI endpoints with `send: true`. Each target variant requires its own set of environment variables (e.g., `OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_KEY`, `OPENAI_CHAT_MODEL`). Variants whose env vars are missing are automatically skipped. Tests verify that real target responses render correctly.
+- **Live** (`--project live`, requires `E2E_LIVE_MODE=true`): Messages are sent to real OpenAI endpoints with `send: true`. Each target variant requires endpoint and model environment variables plus either an API key or an Azure endpoint accessible through the current Entra identity. Variants without a usable configuration are automatically skipped. Tests verify that real target responses render correctly.
 
 ```bash
-# CI (seeded only — no credentials needed)
+# Seeded integration (no credentials needed)
 npx playwright test --project seeded
 
-# Live integration (requires real API keys)
+# Live integration (uses API keys when present, otherwise Entra authentication)
 E2E_LIVE_MODE=true npx playwright test --project live
 
 # Run both
 E2E_LIVE_MODE=true npx playwright test
 ```
 
-The seeded project runs in the **GitHub Actions** workflow. The live project is intended for an **Azure DevOps pipeline** that has the required secret API keys.
+The mock and seeded projects run in the **GitHub Actions** pull-request workflow. The live project is intended for a protected pipeline with an Entra identity or API keys.
 
 E2E tests use `dev.py` to automatically start both frontend and backend servers. If servers are already running, they will be reused.
 

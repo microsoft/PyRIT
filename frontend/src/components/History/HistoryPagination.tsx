@@ -21,6 +21,7 @@ export default function HistoryPagination({ page, isLastPage, onPrevPage, onNext
   return (
     <div className={styles.pagination}>
       <Button
+        className={styles.touchTargetHeight}
         appearance="subtle"
         icon={<ChevronLeftRegular />}
         disabled={page === 0}
@@ -31,6 +32,7 @@ export default function HistoryPagination({ page, isLastPage, onPrevPage, onNext
       </Button>
       <Text size={200}>Page {page + 1}</Text>
       <Button
+        className={styles.touchTargetHeight}
         appearance="subtle"
         icon={<ChevronRightRegular />}
         iconPosition="after"

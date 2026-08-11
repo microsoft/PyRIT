@@ -1,4 +1,4 @@
-# 3. Writing Your Own Datasets
+# Writing Your Own Datasets
 
 When conducting AI red teaming, you will often need to write your own datasets. These datasets can be included in PyRIT or stored in your database. This guide provides best practices that have proven effective in creating high-quality datasets.
 

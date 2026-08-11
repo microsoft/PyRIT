@@ -6,8 +6,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
 # # Combining & Stacking Scorers
 # %% [markdown]
@@ -18,6 +19,69 @@
 # These wrappers are themselves scorers, so they plug into attacks and the batch scorer
 # exactly like the leaf scorers on the [True/False](1_true_false_scorers.ipynb) and
 # [Float-scale](2_float_scale_scorers.ipynb) pages.
+#
+# The [class hierarchy](0_scoring.ipynb#the-class-hierarchy) explains what each wrapper
+# *is*. This diagram instead shows runtime composition: what each wrapper may contain.
+# Solid arrows pass a scorer through `scorer=` or `scorers=`, while dashed arrows show
+# the scorer base implemented by the resulting wrapper. An "any" input can therefore be
+# a leaf scorer or an already composed wrapper with that base, which enables stacking.
+
+# %% [markdown] class="col-page-right"
+#
+# ```mermaid
+# flowchart LR
+#     subgraph inputs["Supported inputs"]
+#         direction TB
+#         TF["Any TrueFalseScorer<br/>(leaf or previously wrapped)"]
+#         FS["Any FloatScaleScorer<br/>(leaf or previously wrapped)"]
+#     end
+#
+#     subgraph wrappers["Composition wrappers"]
+#         direction TB
+#         COMP["TrueFalseCompositeScorer<br/>AND · OR · MAJORITY"]
+#         INV["TrueFalseInverterScorer<br/>negates one result"]
+#         CONV["create_conversation_scorer()<br/>scores concatenated history"]
+#         THRESH["FloatScaleThresholdScorer<br/>score ≥ threshold"]
+#         CONV ~~~ THRESH
+#     end
+#
+#     subgraph outputs["Resulting scorer kind"]
+#         direction TB
+#         TFOUT["TrueFalseScorer<br/>can be stacked again"]
+#         FSOUT["FloatScaleScorer<br/>can be stacked again"]
+#     end
+#
+#     TF -->|"1+ via scorers="| COMP
+#     TF -->|"1 via scorer="| INV
+#     FS -->|"1 via scorer="| THRESH
+#     TF -->|"1 via scorer="| CONV
+#     FS -->|"1 via scorer="| CONV
+#
+#     COMP -. is a .-> TFOUT
+#     INV -. is a .-> TFOUT
+#     THRESH -. is a .-> TFOUT
+#     CONV -. "for true/false input" .-> TFOUT
+#     CONV -. "for float-scale input" .-> FSOUT
+#
+#     classDef input fill:#e8f0fe,stroke:#4285f4,color:#15233a;
+#     classDef wrapper fill:#fff4e5,stroke:#f29900,color:#3d2600;
+#     classDef output fill:#e6f4ea,stroke:#34a853,color:#17351f;
+#     class TF,FS input;
+#     class COMP,INV,THRESH,CONV wrapper;
+#     class TFOUT,FSOUT output;
+# ```
+
+# %% [markdown]
+#
+# `TrueFalseCompositeScorer` requires at least one `TrueFalseScorer` and combines their
+# single results with `AND`, `OR`, or `MAJORITY`; `TrueFalseInverterScorer` accepts one
+# `TrueFalseScorer`. `FloatScaleThresholdScorer` is the cross-kind adapter: it accepts one
+# `FloatScaleScorer` and produces a `TrueFalseScorer`. `create_conversation_scorer()`
+# accepts only those two base types and returns a dynamic wrapper that remains the same
+# scorer kind as its input.
+#
+# For example, float-scale → conversation → threshold →
+# inversion is supported; a generic `Scorer` outside those base types is not.
 # %%
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -131,7 +195,7 @@ print(f"[conversation] persona breach across turns -> {score.get_value()}")
 # own system prompt and JSON schema instead of writing a new class:
 #
 # - `SelfAskGeneralTrueFalseScorer` for boolean questions.
-# - `SelfAskGeneralFloatScaleScorer` for custom numeric scales (`min_value`/`max_value`).
+# - `SelfAskGeneralFloatScaleScorer` with a `NumericRange` for custom numeric ranges.
 #
 # Both accept a `system_prompt_format_string` with `{objective}` placeholders and a
 # `rationale_output_key`, so you can shape the scoring criteria without leaving Python.

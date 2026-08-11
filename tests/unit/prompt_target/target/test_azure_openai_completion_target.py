@@ -9,7 +9,7 @@ import pytest
 from unit.mocks import get_image_message_piece, get_sample_conversations
 
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import OpenAICompletionTarget
 
 
@@ -42,7 +42,7 @@ def azure_completion_target(patch_central_database) -> OpenAICompletionTarget:
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 async def test_azure_completion_validate_request_length(azure_completion_target: OpenAICompletionTarget):
@@ -110,3 +110,11 @@ def test_azure_invalid_endpoint_raises():
                     endpoint="",
                     api_key="xxxxx",
                 )
+
+
+async def test_completion_target_does_not_detect_truncation(azure_completion_target: OpenAICompletionTarget):
+    """A target that does not implement truncation detection inherits the base opt-out."""
+    response = MagicMock()
+    response.choices = [MagicMock(finish_reason="length")]
+
+    assert azure_completion_target._is_truncated_response(response) is False

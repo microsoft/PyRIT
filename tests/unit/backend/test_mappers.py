@@ -50,24 +50,23 @@ def _make_attack_result(
     *,
     conversation_id: str = "attack-1",
     has_target: bool = True,
+    target_identifier: ComponentIdentifier | None = None,
     name: str = "Test Attack",
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED,
 ) -> AttackResult:
     """Create an AttackResult for mapper tests."""
     now = datetime.now(timezone.utc)
 
-    target_identifier = (
-        ComponentIdentifier(
+    effective_target_identifier = None
+    if has_target:
+        effective_target_identifier = target_identifier or ComponentIdentifier(
             class_name="TextTarget",
             class_module="pyrit.prompt_target",
         )
-        if has_target
-        else None
-    )
 
     children = {}
-    if target_identifier:
-        children["objective_target"] = target_identifier
+    if effective_target_identifier:
+        children["objective_target"] = effective_target_identifier
 
     return AttackResult(
         conversation_id=conversation_id,
@@ -156,6 +155,36 @@ class TestAttackResultToSummary:
         assert summary.attack_type == "My Attack"
         assert summary.target is not None
         assert summary.target.target_type == "TextTarget"
+
+    async def test_round_robin_target_includes_canonical_identifier_hash(self) -> None:
+        """Composite targets retain their full identity even when root display fields are absent."""
+        target_identifier = ComponentIdentifier(
+            class_name="RoundRobinTarget",
+            class_module="pyrit.prompt_target.round_robin_target",
+            params={"weights": [1, 1]},
+            children={
+                "targets": [
+                    ComponentIdentifier(
+                        class_name="TextTarget",
+                        class_module="pyrit.prompt_target",
+                        params={"model_name": "e2e-dummy-model"},
+                    ),
+                    ComponentIdentifier(
+                        class_name="TextTarget",
+                        class_module="pyrit.prompt_target",
+                        params={"model_name": "e2e-dummy-model"},
+                    ),
+                ]
+            },
+        )
+        ar = _make_attack_result(target_identifier=target_identifier)
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.target is not None
+        assert summary.target.target_type == "RoundRobinTarget"
+        assert summary.target.model_name is None
+        assert summary.target.identifier_hash == target_identifier.hash
 
     async def test_empty_pieces_gives_zero_messages(self) -> None:
         """Test mapping with no message pieces."""
@@ -386,6 +415,22 @@ class TestAttackResultToSummary:
         summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.created_at == metadata_ts
+
+    async def test_updated_at_uses_ar_timestamp_ignoring_metadata_updated_at(self) -> None:
+        """``updated_at`` is the persisted ``ar.timestamp``; a stale ``metadata['updated_at']`` is ignored."""
+        ar_ts = datetime(2026, 4, 17, 12, 0, 0, tzinfo=timezone.utc)
+        stale = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        ar = AttackResult(
+            conversation_id="attack-1",
+            objective="test",
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=ar_ts,
+            metadata={"created_at": stale.isoformat(), "updated_at": stale.isoformat()},
+        )
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.updated_at == ar_ts
+        assert summary.created_at == stale
 
     async def test_created_at_falls_back_to_now_when_both_absent(self) -> None:
         """When neither metadata nor ar.timestamp is set, fall back to datetime.now()."""
@@ -820,6 +865,11 @@ class TestIsAzureBlobUrl:
     def test_local_path_not_detected(self) -> None:
         assert _is_azure_blob_url("/tmp/test.png") is False
 
+    def test_userinfo_spoofed_host_not_detected(self) -> None:
+        # The real host is 127.0.0.1; the blob-looking segment is userinfo and must
+        # not be treated as the host (SSRF bypass regression test).
+        assert _is_azure_blob_url("https://a.blob.core.windows.net:80@127.0.0.1:6666") is False
+
 
 class TestSignBlobUrlAsync:
     """Tests for _sign_blob_url_async helper."""
@@ -955,52 +1005,6 @@ class TestRequestToPyritMessage:
         assert result.message_pieces[0].conversation_id == "conv-1"
         assert result.message_pieces[0].sequence == 0
 
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning through mapper helper."""
-        request = MagicMock()
-        request.role = "user"
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.prompt_metadata = None
-        piece.mime_type = None
-        piece.original_prompt_id = None
-        request.pieces = [piece]
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_to_pyrit_message(
-                request=request,
-                conversation_id="conv-1",
-                sequence=0,
-                labels={"env": "prod"},
-            )
-
-        assert mock_deprecation.call_count == 2
-
-    def test_empty_labels_no_deprecation_warning(self) -> None:
-        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
-        request = MagicMock()
-        request.role = "user"
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.prompt_metadata = None
-        piece.mime_type = None
-        piece.original_prompt_id = None
-        request.pieces = [piece]
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_to_pyrit_message(
-                request=request,
-                conversation_id="conv-1",
-                sequence=0,
-                labels={},
-            )
-
-        mock_deprecation.assert_not_called()
-
 
 class TestRequestPieceToPyritMessagePiece:
     """Tests for request_piece_to_pyrit_message_piece function."""
@@ -1100,87 +1104,6 @@ class TestRequestPieceToPyritMessagePiece:
         )
 
         assert result.prompt_metadata == {}
-
-    def test_labels_are_stamped_on_piece(self) -> None:
-        """Test that labels are passed through to the MessagePiece."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        result = request_piece_to_pyrit_message_piece(
-            piece=piece,
-            role="user",
-            conversation_id="conv-1",
-            sequence=0,
-            labels={"env": "prod"},
-        )
-
-        assert result.labels == {"env": "prod"}
-
-    def test_labels_emit_deprecation_warning(self) -> None:
-        """Test that passing labels emits deprecation warning."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_piece_to_pyrit_message_piece(
-                piece=piece,
-                role="user",
-                conversation_id="conv-1",
-                sequence=0,
-                labels={"env": "prod"},
-            )
-
-        mock_deprecation.assert_called_once()
-
-    def test_empty_labels_no_deprecation_warning(self) -> None:
-        """An explicit empty ``labels={}`` (forwarded on the happy path) must not warn."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        with patch("pyrit.backend.mappers.attack_mappers.print_deprecation_message") as mock_deprecation:
-            request_piece_to_pyrit_message_piece(
-                piece=piece,
-                role="user",
-                conversation_id="conv-1",
-                sequence=0,
-                labels={},
-            )
-
-        mock_deprecation.assert_not_called()
-
-    def test_labels_default_to_empty_dict(self) -> None:
-        """Test that labels default to empty dict when not provided."""
-        piece = MagicMock()
-        piece.data_type = "text"
-        piece.original_value = "hello"
-        piece.converted_value = None
-        piece.mime_type = None
-        piece.prompt_metadata = None
-        piece.original_prompt_id = None
-
-        result = request_piece_to_pyrit_message_piece(
-            piece=piece,
-            role="user",
-            conversation_id="conv-1",
-            sequence=0,
-        )
-
-        assert result.labels == {}
 
     def test_original_prompt_id_forwarded_when_provided(self) -> None:
         """Test that original_prompt_id is passed through for lineage tracking."""

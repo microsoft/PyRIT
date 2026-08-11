@@ -2,6 +2,7 @@ import { makeTarget } from '../test-utils/targetFixtures'
 import {
   targetEndpoint,
   targetIdentifierHash,
+  targetInfoMatchesTarget,
   targetModelName,
   targetType,
   targetUnderlyingModelName,
@@ -31,6 +32,61 @@ describe('targetIdentity', () => {
     it('returns the identifier hash', () => {
       const target = makeTarget({ target_registry_name: 'text_1', identifier_hash: 'abc123' })
       expect(targetIdentifierHash(target)).toBe('abc123')
+    })
+  })
+
+  describe('targetInfoMatchesTarget', () => {
+    it('matches a historical Round Robin target by its identifier hash', () => {
+      const target = makeTarget({
+        target_registry_name: 'round_robin_1',
+        target_type: 'RoundRobinTarget',
+        endpoint: null,
+        model_name: null,
+        identifier_hash: 'round-robin-hash',
+        inner_targets: [
+          { target_registry_name: 'inner_a', model_name: 'e2e-dummy-model' },
+          { target_registry_name: 'inner_b', model_name: 'e2e-dummy-model' },
+        ],
+      })
+
+      expect(targetModelName(target)).toBe('e2e-dummy-model')
+      expect(
+        targetInfoMatchesTarget(
+          {
+            target_type: 'RoundRobinTarget',
+            endpoint: null,
+            model_name: null,
+            identifier_hash: 'round-robin-hash',
+          },
+          target,
+        ),
+      ).toBe(true)
+    })
+
+    it('rejects a different composite with the same root projection', () => {
+      const target = makeTarget({
+        target_registry_name: 'round_robin_1',
+        target_type: 'RoundRobinTarget',
+        endpoint: null,
+        model_name: null,
+        identifier_hash: 'active-round-robin-hash',
+        inner_targets: [
+          { target_registry_name: 'inner_a', model_name: 'e2e-dummy-model' },
+          { target_registry_name: 'inner_b', model_name: 'e2e-dummy-model' },
+        ],
+      })
+
+      expect(
+        targetInfoMatchesTarget(
+          {
+            target_type: 'RoundRobinTarget',
+            endpoint: null,
+            model_name: null,
+            identifier_hash: 'different-round-robin-hash',
+          },
+          target,
+        ),
+      ).toBe(false)
     })
   })
 

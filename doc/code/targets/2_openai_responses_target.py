@@ -5,10 +5,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.5
 # ---
+
 # %% [markdown]
-# # 2. OpenAI Responses Target
+# # OpenAI Responses Target
 #
 # In this demo, we show an example of the `OpenAIResponseTarget`. [Responses](https://platform.openai.com/docs/api-reference/responses) is a newer protocol than chat completions and provides additional functionality with a somewhat modified API. The allowed input types include text, image, web search, file search, functions, reasoning, and computer use.
 #
@@ -74,7 +75,10 @@ target = OpenAIResponseTarget(
 
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What are the most dangerous items in a household?")  # type: ignore
-await output_attack_async(result)
+
+# Argument `include_reasoning_summaries` shows the model's intermediate reasoning summaries.
+# Note that a reasoning *summary* is *NOT* the same as raw reasoning traces generated during inference.
+await output_attack_async(result, include_reasoning_summaries=True)
 
 # %% [markdown]
 # ## JSON Generation
@@ -131,7 +135,10 @@ target = OpenAIResponseTarget(
 response = await target.send_prompt_async(message=message)  # type: ignore
 
 # Validate and print the response
-response_json = json.loads(response[0].message_pieces[1].converted_value)
+# Reasoning models return an extra "reasoning" piece, so select the text piece explicitly
+# instead of relying on the position of the pieces.
+text_piece = response[0].get_piece_by_type(data_type="text")
+response_json = json.loads(text_piece.converted_value)
 print(json.dumps(response_json, indent=2))
 jsonschema.validate(instance=response_json, schema=person_schema)
 

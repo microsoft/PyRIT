@@ -200,6 +200,7 @@ async def initialize_pyrit_async(
     *,
     initialization_scripts: Sequence[str | pathlib.Path] | None = None,
     initializers: Sequence["PyRITInitializer"] | None = None,
+    load_defaults: bool = True,
     env_files: Sequence[pathlib.Path] | None = None,
     env_akv_ref: Sequence[str] | None = None,
     silent: bool = False,
@@ -216,6 +217,15 @@ async def initialize_pyrit_async(
             loaded and executed. Loading is handled by the InitializerRegistry.
         initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
+        load_defaults (bool): If True (default) AND the caller supplies neither ``initializers`` nor
+            ``initialization_scripts``, a default initializer set is run so a bare
+            ``initialize_pyrit_async(...)`` yields a usable environment: the core attack-technique catalog
+            (``TechniqueInitializer``, populating the AttackTechniqueRegistry) plus the available default
+            targets (``TargetInitializer``, registering whatever endpoints are configured via env vars).
+            Supplying any initializer or script means the caller owns setup, so the defaults are skipped;
+            set this to False to also skip them on a bare call (e.g. to start from an empty state). Only the
+            ``core`` techniques and ``default`` targets are loaded — ``extra`` / per-source technique groups
+            and ``scorer`` target variants remain opt-in.
         env_files (Sequence[pathlib.Path] | None): Optional sequence of environment file paths to load
             in order. If not provided, will load default .env and .env.local files from PyRIT home if they exist.
             All paths must be valid pathlib.Path objects.
@@ -259,8 +269,8 @@ async def initialize_pyrit_async(
 
     CentralMemory.set_memory_instance(memory)
 
-    # Combine directly provided initializers with those loaded from scripts
-    all_initializers = list(initializers) if initializers else []
+    # Combine directly provided initializers with those loaded from scripts.
+    all_initializers: list[PyRITInitializer] = list(initializers) if initializers else []
 
     # Load additional initializers from scripts — the registry owns turning
     # external script files into initializer instances.
@@ -270,6 +280,16 @@ async def initialize_pyrit_async(
         registry = InitializerRegistry.get_registry_singleton()
         script_initializers = registry.create_from_script_paths(script_paths=initialization_scripts)
         all_initializers.extend(script_initializers)
+
+    # When the caller supplies nothing, fall back to the default initializer set so a
+    # bare initialize_pyrit_async(...) yields a usable environment (core techniques +
+    # available default targets). Supplying any initializer/script means the caller owns
+    # setup, so defaults are skipped; load_defaults=False skips them even on a bare call.
+    if load_defaults and not all_initializers:
+        from pyrit.setup.initializers.targets import TargetInitializer
+        from pyrit.setup.initializers.techniques import TechniqueInitializer
+
+        all_initializers = [TechniqueInitializer(), TargetInitializer()]
 
     # Execute all initializers in order
     if all_initializers:

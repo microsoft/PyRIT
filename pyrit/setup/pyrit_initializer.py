@@ -15,19 +15,7 @@ from contextlib import contextmanager, suppress
 from typing import Any
 
 from pyrit.common.apply_defaults import get_global_default_values
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.parameter import Parameter
-
-
-def __getattr__(name: str) -> type:
-    if name == "InitializerParameter":
-        print_deprecation_message(
-            old_item="pyrit.setup.pyrit_initializer.InitializerParameter",
-            new_item=Parameter,
-            removed_in="0.16.0",
-        )
-        return Parameter
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class PyRITInitializer(ABC):
@@ -60,23 +48,6 @@ class PyRITInitializer(ABC):
         self.params = {k: [str(i) for i in v] if isinstance(v, list) else [str(v)] for k, v in args.items()}
 
     @property
-    def name(self) -> str:
-        """
-        Deprecated. Use the class docstring for description instead.
-
-        Returns:
-            str: The class name.
-        """
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item="PyRITInitializer.name",
-            new_item="class docstring (used automatically for description)",
-            removed_in="0.16.0",
-        )
-        return type(self).__name__
-
-    @property
     def description(self) -> str:
         """
         A description of what this initializer configures.
@@ -103,23 +74,6 @@ class PyRITInitializer(ABC):
             list[str]: List of required environment variable names. Defaults to empty list.
         """
         return []
-
-    @property
-    def execution_order(self) -> int:
-        """
-        Deprecated. Initializers now execute in the order they are listed.
-
-        Returns:
-            int: Always returns 1.
-        """
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item="PyRITInitializer.execution_order",
-            new_item="list ordering in configuration (initializers execute in listed order)",
-            removed_in="0.16.0",
-        )
-        return 1
 
     @property
     def supported_parameters(self) -> list[Parameter]:

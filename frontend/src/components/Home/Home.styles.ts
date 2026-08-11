@@ -1,4 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
+import { mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
 export const useHomeStyles = makeStyles({
   root: {
@@ -13,6 +14,9 @@ export const useHomeStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalXXL,
+    '@media (max-width: 600px)': {
+      padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
+    },
   },
   hero: {
     display: 'flex',
@@ -29,6 +33,9 @@ export const useHomeStyles = makeStyles({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
     gap: tokens.spacingHorizontalL,
+    '@media (max-width: 600px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)',
+    },
   },
   card: {
     backgroundColor: tokens.colorNeutralBackground1,
@@ -65,6 +72,9 @@ export const useHomeStyles = makeStyles({
     justifyContent: 'flex-end',
     gap: tokens.spacingHorizontalS,
   },
+  touchTarget: {
+    ...mobileTouchTarget,
+  },
   targetSummary: {
     display: 'flex',
     flexDirection: 'column',
@@ -90,6 +100,9 @@ export const useHomeStyles = makeStyles({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
     gap: tokens.spacingHorizontalL,
+    '@media (max-width: 600px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)',
+    },
   },
   operationCard: {
     backgroundColor: tokens.colorNeutralBackground1,
@@ -133,6 +146,7 @@ export const useHomeStyles = makeStyles({
     width: '100%',
     textAlign: 'left',
     color: 'inherit',
+    ...mobileTouchTargetHeight,
     ':hover': {
       backgroundColor: tokens.colorNeutralBackground1Hover,
     },

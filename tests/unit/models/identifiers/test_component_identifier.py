@@ -195,7 +195,7 @@ class TestComponentIdentifierToDict:
             class_name="TestClass",
             class_module="test.module",
         )
-        result = identifier.to_dict()
+        result = identifier.model_dump()
         assert result["class_name"] == "TestClass"
         assert result["class_module"] == "test.module"
         assert result["hash"] == identifier.hash
@@ -208,7 +208,7 @@ class TestComponentIdentifierToDict:
             class_module="mod",
             params={"endpoint": "https://api.example.com", "model_name": "gpt-4o"},
         )
-        result = identifier.to_dict()
+        result = identifier.model_dump()
         assert result["endpoint"] == "https://api.example.com"
         assert result["model_name"] == "gpt-4o"
         # params themselves should NOT appear as a nested dict
@@ -222,7 +222,7 @@ class TestComponentIdentifierToDict:
             class_module="mod.parent",
             children={"target": child},
         )
-        result = identifier.to_dict()
+        result = identifier.model_dump()
         assert "children" in result
         assert "target" in result["children"]
         assert result["children"]["target"]["class_name"] == "Child"
@@ -236,14 +236,14 @@ class TestComponentIdentifierToDict:
             class_module="m",
             children={"converters": [c1, c2]},
         )
-        result = identifier.to_dict()
+        result = identifier.model_dump()
         assert len(result["children"]["converters"]) == 2
         assert result["children"]["converters"][0]["class_name"] == "Conv1"
 
     def test_to_dict_no_children_key_when_empty(self):
         """Test that 'children' key is absent when there are no children."""
         identifier = ComponentIdentifier(class_name="C", class_module="m")
-        result = identifier.to_dict()
+        result = identifier.model_dump()
         assert "children" not in result
 
     def test_to_dict_no_truncation_by_default(self):
@@ -254,7 +254,7 @@ class TestComponentIdentifierToDict:
             class_module="mod",
             params={"system_prompt": long_value},
         )
-        result = identifier.to_dict()
+        result = identifier.model_dump()
         assert result["system_prompt"] == long_value
 
     def test_to_dict_does_not_truncate_non_string_params(self):
@@ -264,7 +264,7 @@ class TestComponentIdentifierToDict:
             class_module="mod",
             params={"count": 999999, "flag": True},
         )
-        result = identifier.to_dict()
+        result = identifier.model_dump()
         assert result["count"] == 999999
         assert result["flag"] is True
 
@@ -275,7 +275,7 @@ class TestComponentIdentifierToDict:
             class_name="VeryLongClassNameForTesting",
             class_module=long_module,
         )
-        result = identifier.to_dict()
+        result = identifier.model_dump()
         assert result["class_name"] == "VeryLongClassNameForTesting"
         assert result["class_module"] == long_module
         assert result["hash"] == identifier.hash
@@ -294,7 +294,7 @@ class TestComponentIdentifierToDict:
             class_module="mod.parent",
             children={"target": child},
         )
-        result = parent.to_dict()
+        result = parent.model_dump()
         child_result = result["children"]["target"]
         assert child_result["endpoint"] == long_value
 
@@ -308,7 +308,7 @@ class TestComponentIdentifierToDict:
             class_module="m",
             children={"converters": [c1, c2]},
         )
-        result = parent.to_dict()
+        result = parent.model_dump()
         assert result["children"]["converters"][0]["data"] == long_value
         assert result["children"]["converters"][1]["data"] == "short"
 
@@ -326,7 +326,7 @@ class TestComponentIdentifierFromDict:
         # Pad to a valid 64-char hex string
         stored_hash = "a1b2c3d4e5f6" * 5 + "a1b2a1b2"
         data["hash"] = stored_hash
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         assert identifier.class_name == "TestClass"
         assert identifier.class_module == "test.module"
         # The stored hash is ignored; the content hash is always recomputed.
@@ -342,7 +342,7 @@ class TestComponentIdentifierFromDict:
             "endpoint": "https://api.example.com",
             "model_name": "gpt-4o",
         }
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         assert identifier.params["endpoint"] == "https://api.example.com"
         assert identifier.params["model_name"] == "gpt-4o"
 
@@ -358,7 +358,7 @@ class TestComponentIdentifierFromDict:
                 },
             },
         }
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         assert "target" in identifier.children
         child = identifier.children["target"]
         assert isinstance(child, ComponentIdentifier)
@@ -376,7 +376,7 @@ class TestComponentIdentifierFromDict:
                 ],
             },
         }
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         converters = identifier.children["converters"]
         assert isinstance(converters, list)
         assert len(converters) == 2
@@ -388,7 +388,7 @@ class TestComponentIdentifierFromDict:
             "__type__": "LegacyClass",
             "__module__": "legacy.module",
         }
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         assert identifier.class_name == "LegacyClass"
         assert identifier.class_module == "legacy.module"
 
@@ -399,13 +399,13 @@ class TestComponentIdentifierFromDict:
             "class_module": "mod",
             "custom_field": "custom_value",
         }
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         assert identifier.params["custom_field"] == "custom_value"
 
     def test_from_dict_provides_defaults_for_missing_fields(self):
         """Test that from_dict defaults missing class_name/class_module."""
         data = {}
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         assert identifier.class_name == "Unknown"
         assert identifier.class_module == "unknown"
 
@@ -417,7 +417,7 @@ class TestComponentIdentifierFromDict:
             "key": "value",
         }
         original = dict(data)
-        ComponentIdentifier.from_dict(data)
+        ComponentIdentifier.model_validate(data)
         assert data == original
 
     def test_from_dict_recomputes_hash_from_full_params(self):
@@ -430,10 +430,10 @@ class TestComponentIdentifierFromDict:
         original_hash = original.hash
 
         # Full values are stored (no truncation), so the recomputed hash matches.
-        stored_dict = original.to_dict()
+        stored_dict = original.model_dump()
         assert stored_dict["hash"] == original_hash
 
-        reconstructed = ComponentIdentifier.from_dict(stored_dict)
+        reconstructed = ComponentIdentifier.model_validate(stored_dict)
         assert reconstructed.hash == original_hash
 
     def test_from_dict_recomputes_hash_with_children(self):
@@ -451,8 +451,8 @@ class TestComponentIdentifierFromDict:
         original_parent_hash = parent.hash
         original_child_hash = child.hash
 
-        stored_dict = parent.to_dict()
-        reconstructed = ComponentIdentifier.from_dict(stored_dict)
+        stored_dict = parent.model_dump()
+        reconstructed = ComponentIdentifier.model_validate(stored_dict)
 
         assert reconstructed.hash == original_parent_hash
         child_recon = reconstructed.children["target"]
@@ -468,7 +468,7 @@ class TestComponentIdentifierFromDict:
             "hash": known_hash,
             "param": "value",
         }
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         fresh = ComponentIdentifier(class_name="Test", class_module="mod", params={"param": "value"})
         assert identifier.hash == fresh.hash
         assert identifier.hash != known_hash
@@ -480,7 +480,7 @@ class TestComponentIdentifierFromDict:
             "class_module": "mod",
             "param": "value",
         }
-        identifier = ComponentIdentifier.from_dict(data)
+        identifier = ComponentIdentifier.model_validate(data)
         # Should have a valid computed hash
         assert len(identifier.hash) == 64
         # And it should match a freshly constructed identifier
@@ -498,7 +498,7 @@ class TestComponentIdentifierRoundtrip:
             class_module="pyrit.score",
             params={"system_prompt": "Score 1-10"},
         )
-        reconstructed = ComponentIdentifier.from_dict(original.to_dict())
+        reconstructed = ComponentIdentifier.model_validate(original.model_dump())
         assert reconstructed.class_name == original.class_name
         assert reconstructed.class_module == original.class_module
         assert reconstructed.params == original.params
@@ -516,7 +516,7 @@ class TestComponentIdentifierRoundtrip:
             class_module="pyrit.executor",
             children={"objective_target": child},
         )
-        reconstructed = ComponentIdentifier.from_dict(original.to_dict())
+        reconstructed = ComponentIdentifier.model_validate(original.model_dump())
         assert reconstructed.hash == original.hash
         child_recon = reconstructed.children["objective_target"]
         assert isinstance(child_recon, ComponentIdentifier)
@@ -532,7 +532,7 @@ class TestComponentIdentifierRoundtrip:
             class_module="m",
             children={"converters": [c1, c2]},
         )
-        reconstructed = ComponentIdentifier.from_dict(original.to_dict())
+        reconstructed = ComponentIdentifier.model_validate(original.model_dump())
         assert reconstructed.hash == original.hash
         recon_converters = reconstructed.children["converters"]
         assert isinstance(recon_converters, list)
@@ -546,10 +546,10 @@ class TestComponentIdentifierRoundtrip:
             class_module="pyrit.score",
             params={"system_prompt": "Score the response"},
         ).with_eval_hash(expected_eval_hash)
-        d = original.to_dict()
+        d = original.model_dump()
         assert d["eval_hash"] == expected_eval_hash
 
-        reconstructed = ComponentIdentifier.from_dict(d)
+        reconstructed = ComponentIdentifier.model_validate(d)
         assert reconstructed.eval_hash == expected_eval_hash
 
     def test_roundtrip_eval_hash_survives_full_value_roundtrip(self):
@@ -562,12 +562,12 @@ class TestComponentIdentifierRoundtrip:
             params={"system_prompt_template": long_prompt},
         ).with_eval_hash(stored_eval_hash)
 
-        stored_dict = original.to_dict()
+        stored_dict = original.model_dump()
         # Full params are stored (no truncation).
         assert stored_dict["system_prompt_template"] == long_prompt
         assert stored_dict["eval_hash"] == stored_eval_hash
 
-        reconstructed = ComponentIdentifier.from_dict(stored_dict)
+        reconstructed = ComponentIdentifier.model_validate(stored_dict)
         assert reconstructed.eval_hash == stored_eval_hash
         # eval_hash is not part of params (popped as a reserved key).
         assert "eval_hash" not in reconstructed.params
@@ -579,10 +579,10 @@ class TestComponentIdentifierRoundtrip:
             class_module="mod",
             params={"key": "value"},
         )
-        d = original.to_dict()
+        d = original.model_dump()
         assert "eval_hash" not in d
 
-        reconstructed = ComponentIdentifier.from_dict(d)
+        reconstructed = ComponentIdentifier.model_validate(d)
         assert reconstructed.eval_hash is None
 
     def test_to_dict_includes_eval_hash_from_prior_roundtrip(self):
@@ -592,11 +592,11 @@ class TestComponentIdentifierRoundtrip:
             class_name="Test",
             class_module="mod",
         ).with_eval_hash(eval_hash)
-        d1 = original.to_dict()
-        reconstructed = ComponentIdentifier.from_dict(d1)
+        d1 = original.model_dump()
+        reconstructed = ComponentIdentifier.model_validate(d1)
 
         # Re-serialize — eval_hash should be emitted
-        d2 = reconstructed.to_dict()
+        d2 = reconstructed.model_dump()
         assert d2["eval_hash"] == eval_hash
 
     def test_double_roundtrip_preserves_eval_hash_and_identity_hash(self):
@@ -612,14 +612,14 @@ class TestComponentIdentifierRoundtrip:
         original = original.with_eval_hash(eval_hash)
 
         # First round-trip
-        d1 = original.to_dict()
-        r1 = ComponentIdentifier.from_dict(d1)
+        d1 = original.model_dump()
+        r1 = ComponentIdentifier.model_validate(d1)
         assert r1.hash == original_hash
         assert r1.eval_hash == eval_hash
 
         # Second round-trip (simulating retrieve → use → re-store)
-        d2 = r1.to_dict()
-        r2 = ComponentIdentifier.from_dict(d2)
+        d2 = r1.model_dump()
+        r2 = ComponentIdentifier.model_validate(d2)
         assert r2.hash == original_hash
         assert r2.eval_hash == eval_hash
 
@@ -1319,22 +1319,6 @@ class TestComponentIdentifierPydanticMethods:
         child = ComponentIdentifier(class_name="Child", class_module="m", params={"k": "v"})
         return ComponentIdentifier(class_name="Parent", class_module="m", params={"x": 1}, children={"c": child})
 
-    def test_model_dump_matches_to_dict_simple(self):
-        ident = self._simple()
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            assert ident.model_dump() == ident.to_dict()
-
-    def test_model_dump_matches_to_dict_nested(self):
-        ident = self._nested()
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            assert ident.model_dump() == ident.to_dict()
-
     def test_model_dump_stores_full_value(self):
         ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"v": "x" * 200})
         dumped = ident.model_dump()
@@ -1445,21 +1429,6 @@ class TestComponentIdentifierParamsTyping:
 
 
 class TestComponentIdentifierDeprecationWarnings:
-    def test_to_dict_warns(self):
-        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
-        with pytest.warns(DeprecationWarning, match="to_dict"):
-            ident.to_dict()
-
-    def test_from_dict_warns(self):
-        ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            flat = ident.to_dict()
-        with pytest.warns(DeprecationWarning, match="from_dict"):
-            ComponentIdentifier.from_dict(flat)
-
     def test_with_eval_hash_does_not_warn(self):
         ident = ComponentIdentifier(class_name="Foo", class_module="m", params={"a": 1})
         import warnings

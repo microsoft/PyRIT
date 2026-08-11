@@ -16,11 +16,12 @@ from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
+from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
-from pyrit.models import Conversation, MessagePiece
-from pyrit.prompt_converter.base64_converter import Base64Converter
+from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.models import Conversation, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target.text_target import TextTarget
 from unit.mocks import get_sample_conversation_entries
 
@@ -54,7 +55,6 @@ def test_conversation_data_schema(sqlite_instance):
         "conversation_id",
         "sequence",
         "timestamp",
-        "labels",
         "prompt_metadata",
         "converter_identifiers",
         "original_value_data_type",
@@ -92,7 +92,6 @@ def test_conversation_data_column_types(sqlite_instance):
         "conversation_id": String,
         "sequence": Integer,
         "timestamp": DateTime,
-        "labels": (String, JSON),
         "prompt_metadata": (String, JSON),
         "converter_identifiers": (String, JSON),
         "response_error": String,
@@ -106,18 +105,17 @@ def test_conversation_data_column_types(sqlite_instance):
     }
 
     for column, expected_type in expected_column_types.items():
-        if column != "labels":
-            assert column in column_types, f"{column} not found in PromptMemoryEntries schema."
+        assert column in column_types, f"{column} not found in PromptMemoryEntries schema."
 
-            # Handle columns that can have multiple types depending on database
-            if isinstance(expected_type, tuple):
-                assert any(issubclass(column_types[column], t) for t in expected_type), (
-                    f"Expected {column} to be a subclass of any of {expected_type}, got {column_types[column]} instead."
-                )
-            else:
-                assert issubclass(column_types[column], expected_type), (
-                    f"Expected {column} to be a subclass of {expected_type}, got {column_types[column]} instead."
-                )
+        # Handle columns that can have multiple types depending on database
+        if isinstance(expected_type, tuple):
+            assert any(issubclass(column_types[column], t) for t in expected_type), (
+                f"Expected {column} to be a subclass of any of {expected_type}, got {column_types[column]} instead."
+            )
+        else:
+            assert issubclass(column_types[column], expected_type), (
+                f"Expected {column} to be a subclass of {expected_type}, got {column_types[column]} instead."
+            )
 
 
 def test_embedding_data_column_types(sqlite_instance):
@@ -343,7 +341,7 @@ async def test_insert_entry(sqlite_instance):
         original_value="Hello",
         converted_value="Hello after conversion",
     )
-    await message_piece_entry.set_sha256_values_async()
+    await set_message_piece_sha256_async(message_piece_entry)
 
     message_piece_entry.original_value = "Hello"
     message_piece_entry.converted_value = "Hello after conversion"
@@ -524,7 +522,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
         sequence=1,
         original_value="Test content",
         converted_value="Test content",
-        labels={"normalizer_id": "id1"},
+        prompt_metadata={"normalizer_id": "id1"},
         converter_identifiers=converter_identifiers,
     )
 
@@ -554,8 +552,7 @@ def test_get_memories_with_json_properties(sqlite_instance):
     assert metadata is not None
     assert metadata.target_identifier.class_name == "TextTarget"
 
-    labels = retrieved_entry.labels
-    assert labels["normalizer_id"] == "id1"
+    assert retrieved_entry.prompt_metadata["normalizer_id"] == "id1"
 
 
 def test_register_conversation_none_target_does_not_clobber(sqlite_instance):
@@ -687,43 +684,6 @@ def test_update_entries_by_conversation_id(sqlite_instance, sample_conversation_
         assert other_entry.original_value == original_content  # Content should remain unchanged
 
 
-def test_update_labels_by_conversation_id(sqlite_instance, sample_conversation_entries):
-    # Define a specific conversation_id to update
-    specific_conversation_id = "update_test_id"
-
-    sample_conversation_entries[0].conversation_id = specific_conversation_id
-    sample_conversation_entries[2].conversation_id = specific_conversation_id
-
-    sample_conversation_entries[1].conversation_id = "other_id"
-    original_labels = sample_conversation_entries[1].labels
-
-    # Insert the ConversationData entries using the insert_entries method within a session
-    with sqlite_instance.get_session() as session:
-        sqlite_instance._insert_entries(entries=sample_conversation_entries)
-        session.commit()  # Ensure all entries are committed to the database
-
-        # Define the fields to update for entries with the specific conversation_id
-        update_fields = {"labels": {"new_label": "new_value"}}
-
-        # Use the update_prompt_entries_by_conversation_id method to update the entries
-        update_result = sqlite_instance.update_prompt_entries_by_conversation_id(
-            conversation_id=specific_conversation_id, update_fields=update_fields
-        )
-
-        assert update_result is True  # Ensure the update operation was reported as successful
-
-        # Verify that the entries with the specific conversation_id were updated
-        updated_entries = sqlite_instance._query_entries(
-            PromptMemoryEntry, conditions=PromptMemoryEntry.conversation_id == specific_conversation_id
-        )
-        for entry in updated_entries:
-            assert entry.labels == {"new_label": "new_value"}
-
-        # Verify that the entry with a different conversation_id was not updated
-        other_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="other_id").first()
-        assert other_entry.labels == original_labels  # Labels should remain unchanged
-
-
 def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample_conversation_entries):
     # Define a specific conversation_id to update
     specific_conversation_id = "update_test_id"
@@ -775,11 +735,10 @@ def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_instance):
 def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
     """Test that message_count reflects distinct sequence numbers, not raw rows."""
     # Extract conversation IDs and sequences before inserting (entries get detached after commit)
-    from pyrit.models import Message
     from unit.mocks import get_sample_conversations
 
     conversations = get_sample_conversations()
-    pieces = Message.flatten_to_message_pieces(conversations)
+    pieces = flatten_to_message_pieces(conversations)
     expected: dict[str, set[int]] = {}
     for p in pieces:
         expected.setdefault(p.conversation_id, set()).add(p.sequence)
@@ -796,8 +755,8 @@ def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sampl
             )
 
 
-def test_get_conversation_stats_returns_labels(sqlite_instance):
-    """Test that labels from the first piece with non-empty labels are returned."""
+def test_get_conversation_stats_does_not_read_labels_from_prompt_entries(sqlite_instance):
+    """Test that conversation stats leave AttackResult-owned labels empty."""
     import uuid
 
     from pyrit.models import MessagePiece
@@ -811,14 +770,13 @@ def test_get_conversation_stats_returns_labels(sqlite_instance):
         converted_value_data_type="text",
         conversation_id=conv_id,
         sequence=0,
-        labels={"env": "prod", "source": "gui"},
     )
     entry = PromptMemoryEntry(entry=piece)
     sqlite_instance._insert_entry(entry)
 
     result = sqlite_instance.get_conversation_stats(conversation_ids=[conv_id])
     assert conv_id in result
-    assert result[conv_id].labels == {"env": "prod", "source": "gui"}
+    assert result[conv_id].labels == {}
 
 
 def test_get_conversation_stats_preview_caps_raw_value_at_fetch_limit(sqlite_instance):

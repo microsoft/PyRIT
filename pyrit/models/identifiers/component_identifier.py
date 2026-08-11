@@ -37,7 +37,6 @@ from pydantic import (
 from typing_extensions import Self, TypeAliasType
 
 import pyrit
-from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from pyrit.models.parameter import ComponentType
@@ -347,6 +346,35 @@ class ComponentIdentifier(BaseModel):
         return tuple(n for n in cls._promoted_fields() if cls._is_child_field(cls.model_fields[n].annotation))
 
     @classmethod
+    def promoted_scalar_field_names(cls) -> tuple[str, ...]:
+        """
+        Get names of this identifier's promoted scalar (param) fields — the DB-column projection.
+
+        Returns:
+            tuple[str, ...]: Promoted scalar field names.
+        """
+        return cls._promoted_param_fields()
+
+    @classmethod
+    def promoted_child_field_names(cls) -> tuple[str, ...]:
+        """
+        Get names of this identifier's promoted child fields.
+
+        Returns:
+            tuple[str, ...]: Promoted child field names.
+        """
+        return cls._promoted_child_fields()
+
+    def promoted_scalar_values(self) -> dict[str, Any]:
+        """
+        Get this identifier's promoted scalar fields as ``{name: value}`` (children/targets excluded).
+
+        Returns:
+            dict[str, Any]: Promoted scalar field names and values.
+        """
+        return {name: getattr(self, name) for name in self._promoted_param_fields()}
+
+    @classmethod
     def get_reference_component_types(cls) -> dict[str, ComponentType]:
         """
         Map constructor-arg names to the component family each reference resolves to.
@@ -499,7 +527,7 @@ class ComponentIdentifier(BaseModel):
 
         params_dict = data.get("params")
         if isinstance(params_dict, dict):
-            collisions = set(params_dict) & RESERVED_PARAM_NAMES
+            collisions: set[str] = {str(name) for name in params_dict} & RESERVED_PARAM_NAMES
             if collisions:
                 raise ValueError(f"ComponentIdentifier params must not use reserved names: {sorted(collisions)}")
 
@@ -855,42 +883,6 @@ class ComponentIdentifier(BaseModel):
                     hashes.add(child.eval_hash)
                 hashes.update(child._collect_child_eval_hashes())
         return hashes
-
-    # ------------------------------------------------------------------
-    # Deprecated shims — kept for one release cycle
-    # ------------------------------------------------------------------
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Return the flat storage dict (deprecated; use ``model_dump`` instead).
-
-        Returns:
-            The flat dict representation.
-        """
-        print_deprecation_message(
-            old_item="ComponentIdentifier.to_dict",
-            new_item="ComponentIdentifier.model_dump",
-            removed_in="0.16.0",
-        )
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ComponentIdentifier:
-        """
-        Reconstruct from a flat dict (deprecated; use ``model_validate`` instead).
-
-        Args:
-            data: The flat storage dict.
-
-        Returns:
-            A new ComponentIdentifier.
-        """
-        print_deprecation_message(
-            old_item="ComponentIdentifier.from_dict",
-            new_item="ComponentIdentifier.model_validate",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
 
 
 class Identifiable(ABC):

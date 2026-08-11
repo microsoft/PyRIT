@@ -31,9 +31,6 @@ class SingleTurnAttackContext(AttackContext[AttackParamsT]):
     # Unique identifier of the main conversation between the attacker and model
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    # System prompt for chat-based targets
-    system_prompt: str | None = None
-
     # Arbitrary metadata that downstream attacks or scorers may attach
     metadata: dict[str, str | int] | None = None
 

@@ -11,6 +11,8 @@ import pytest
 from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import (
+    CopilotType,
+    PlaywrightCopilotTarget,
     PromptTarget,
     RoundRobinTarget,
     TargetCapabilities,
@@ -53,6 +55,13 @@ class MockPromptChatTarget(PromptTarget):
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         pass
+
+
+class _PageStub:
+    """Minimal page object for constructing a Playwright Copilot target."""
+
+    def __init__(self, *, url: str) -> None:
+        self.url = url
 
 
 @pytest.fixture
@@ -272,6 +281,34 @@ class TestCreateInstance:
         with pytest.raises(ValueError, match="expected a list"):
             registry.create_instance("RoundRobinTarget", targets="t1")
 
+    def test_build_playwright_copilot_coerces_type_string(self, registry: TargetRegistry) -> None:
+        target = registry.create_instance(
+            "PlaywrightCopilotTarget",
+            page=_PageStub(url="https://m365.microsoft.com/copilot"),
+            copilot_type="m365",
+        )
+
+        assert isinstance(target, PlaywrightCopilotTarget)
+        assert target._type is CopilotType.M365
+        assert target.get_identifier().params["copilot_type"] == "m365"
+
+    def test_build_openai_chat_accepts_forwarded_base_parameters(self, registry: TargetRegistry) -> None:
+        target = registry.create_instance(
+            "OpenAIChatTarget",
+            endpoint="https://test.openai.azure.com/",
+            model_name="gpt-4o",
+            api_key="test-key",
+            max_requests_per_minute="12",
+        )
+
+        assert target._endpoint == "https://test.openai.azure.com/"
+        assert target._model_name == "gpt-4o"
+        assert target._max_requests_per_minute == 12
+
+    def test_build_openai_chat_rejects_unknown_parameter(self, registry: TargetRegistry) -> None:
+        with pytest.raises(ValueError, match="Unknown parameter 'unknown'"):
+            registry.create_instance("OpenAIChatTarget", unknown="value")
+
     def test_unknown_type_raises(self, registry: TargetRegistry):
         with pytest.raises(KeyError, match="not found"):
             registry.create_instance("NotARealTarget")
@@ -309,6 +346,13 @@ class TestClassMetadata:
         meta = self._metadata_for(registry, "OpenAIChatTarget")
         assert "supported_auth_modes" in meta.class_attributes
         assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity")
+
+    def test_openai_metadata_includes_forwarded_base_parameters(self, registry: TargetRegistry) -> None:
+        params = {param.name: param for param in self._metadata_for(registry, "OpenAIChatTarget").parameters}
+
+        assert params["endpoint"].param_type is str
+        assert params["model_name"].param_type is str
+        assert "api_key" in params
 
 
 class TestRegistrationGate:

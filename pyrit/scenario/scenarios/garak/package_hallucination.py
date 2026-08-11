@@ -12,12 +12,12 @@ from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.memory import CentralMemory
-from pyrit.models import SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_strategy import ScenarioStrategy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score.true_false.regex.package_hallucination_scorer import (
     PackageEcosystem,
     PackageHallucinationScorer,
@@ -59,7 +59,7 @@ class _LanguageSpec:
     ecosystem: PackageEcosystem
 
 
-# Keyed by strategy value. garak fully supports these four languages (extractor + registry).
+# Keyed by technique value. garak fully supports these four languages (extractor + registry).
 _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
     "python": _LanguageSpec(
         language_name="Python3", dataset_name="garak_pypi_packages", ecosystem=PackageEcosystem.PYTHON
@@ -74,9 +74,9 @@ _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
 }
 
 
-class PackageHallucinationStrategy(ScenarioStrategy):
+class PackageHallucinationTechnique(ScenarioTechnique):
     """
-    Strategies for the PackageHallucination scenario.
+    Techniques for the PackageHallucination scenario.
 
     Each concrete member targets one programming-language ecosystem. The scenario asks
     the model to write code for that language and scores the response for imports of
@@ -87,7 +87,7 @@ class PackageHallucinationStrategy(ScenarioStrategy):
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
 
-    # Concrete per-language strategies (values match ``_LANGUAGE_SPECS`` keys).
+    # Concrete per-language techniques (values match ``_LANGUAGE_SPECS`` keys).
     Python = ("python", {"default"})
     JavaScript = ("javascript", {"default"})
     Ruby = ("ruby", {"default"})
@@ -95,8 +95,13 @@ class PackageHallucinationStrategy(ScenarioStrategy):
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
-        """Return the aggregate tags for the PackageHallucination scenario."""
-        return super().get_aggregate_tags() | {"default"}
+        """Return the tags that represent aggregate categories."""
+        return {"all", "default"}
+
+    @classmethod
+    def default(cls) -> PackageHallucinationTechnique:
+        """Return the default technique (``DEFAULT``) used when the caller selects nothing."""
+        return cls.DEFAULT
 
 
 class PackageHallucination(Scenario):
@@ -160,8 +165,7 @@ class PackageHallucination(Scenario):
 
         super().__init__(
             version=self.VERSION,
-            strategy_class=PackageHallucinationStrategy,
-            default_strategy=PackageHallucinationStrategy.DEFAULT,
+            technique_class=PackageHallucinationTechnique,
             # Declared so both the package registries (consumed by the scorers) and the
             # prompt-corpus datasets (stub templates + code tasks) are auto-fetched into
             # memory. The raw package names are NEVER flowed as prompts:
@@ -221,19 +225,19 @@ class PackageHallucination(Scenario):
             prompts = rng.sample(prompts, self._max_prompts_per_language)
         return prompts
 
-    def _build_seed_groups(self, *, spec: _LanguageSpec, prompts: list[str]) -> list[SeedAttackGroup]:
+    def _build_seed_groups(self, *, spec: _LanguageSpec, prompts: list[str]) -> list[AttackSeedGroup]:
         """
-        Wrap each rendered prompt in a SeedAttackGroup pairing the objective and the prompt.
+        Wrap each rendered prompt in an AttackSeedGroup pairing the objective and the prompt.
 
         Args:
             spec (_LanguageSpec): The language being built (used for the objective text).
             prompts (list[str]): The rendered code-request prompts.
 
         Returns:
-            list[SeedAttackGroup]: One SeedAttackGroup per prompt.
+            list[AttackSeedGroup]: One AttackSeedGroup per prompt.
         """
         return [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(
                         value=(
@@ -247,27 +251,34 @@ class PackageHallucination(Scenario):
             for prompt in prompts
         ]
 
-    async def _resolve_seed_groups_by_dataset_async(self) -> dict[str, list[SeedAttackGroup]]:
+    async def _resolve_seed_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
         """
-        Synthesize the code-request prompts for each selected language, keyed by strategy value.
+        Synthesize the code-request prompts for each selected language, keyed by technique value.
 
         PackageHallucination synthesizes its seeds by combining garak's stub templates with
         the real/unreal code tasks (both loaded from the corpus datasets in memory) rather than
         flowing dataset rows directly as prompts. The package registries are consumed only by
         the scorers, never sent as prompts.
 
+        Args:
+            apply_sampling (bool): Accepted for base-class compatibility but unused — the
+                synthesized seeds are already deterministic (``random.Random(self._random_seed)``),
+                so resume reproduces the same set without a ``max_dataset_size`` sampling path.
+
         Returns:
-            dict[str, list[SeedAttackGroup]]: Seed groups keyed by strategy value (language).
+            dict[str, list[AttackSeedGroup]]: Seed groups keyed by technique value (language).
         """
         rng = random.Random(self._random_seed)
         stubs, tasks = self._load_corpus()
-        strategies = cast("list[PackageHallucinationStrategy]", self._scenario_strategies)
+        techniques = cast("list[PackageHallucinationTechnique]", self._scenario_techniques)
 
-        seed_groups_by_language: dict[str, list[SeedAttackGroup]] = {}
-        for strategy in strategies:
-            spec = _LANGUAGE_SPECS[strategy.value]
+        seed_groups_by_language: dict[str, list[AttackSeedGroup]] = {}
+        for technique in techniques:
+            spec = _LANGUAGE_SPECS[technique.value]
             prompts = self._build_prompts_for_language(spec=spec, stubs=stubs, tasks=tasks, rng=rng)
-            seed_groups_by_language[strategy.value] = self._build_seed_groups(spec=spec, prompts=prompts)
+            seed_groups_by_language[technique.value] = self._build_seed_groups(spec=spec, prompts=prompts)
 
         return seed_groups_by_language
 

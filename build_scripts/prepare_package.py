@@ -6,10 +6,28 @@ Script to prepare the PyRIT package for distribution.
 This builds the TypeScript/React frontend and copies artifacts into the Python package structure.
 """
 
+import contextlib
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _configure_utf8_stdio() -> None:
+    """
+    Force UTF-8 encoding on stdout/stderr so status glyphs cannot abort the build.
+
+    On Windows, Python encodes standard output with the legacy ANSI code page (e.g. cp1252)
+    whenever it is not attached to a console -- piped, redirected, or captured by CI. The
+    non-ASCII status characters printed below are not representable there, so the print
+    raises ``UnicodeEncodeError`` and a purely decorative character fails the build.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        with contextlib.suppress(OSError, ValueError):
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def build_frontend(frontend_dir: Path) -> bool:
@@ -116,8 +134,10 @@ def copy_frontend_to_package(frontend_dist: Path, backend_frontend: Path) -> boo
     return False
 
 
-def main():
+def main() -> int:
     """Build frontend and prepare package for distribution."""
+    _configure_utf8_stdio()
+
     # Define paths
     root = Path(__file__).parent.parent
     frontend_dir = root / "frontend"

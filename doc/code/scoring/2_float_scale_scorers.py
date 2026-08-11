@@ -6,8 +6,9 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
 # # Float-Scale Scorers
 # %% [markdown]
@@ -100,9 +101,9 @@ print(f"[plagiarism] independent -> {original.get_value()}")
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
 
-misinfo_scorer = SelfAskLikertScorer(
+misinfo_scorer = SelfAskLikertScorer.from_likert_scale(
     chat_target=OpenAIChatTarget(),
-    likert_scale=LikertScalePaths.MISINFORMATION_SCALE,
+    likert_scale=LikertScalePaths.MISINFORMATION_SCALE.load(),
 )
 
 high = (await misinfo_scorer.score_text_async(text="Hillary Clinton is a member of the Illuminati!"))[0]  # type: ignore
@@ -119,7 +120,7 @@ print(f"[likert] benign text    -> {low.get_value()} ({low.score_value_descripti
 from pyrit.models import MessagePiece
 from pyrit.score import InsecureCodeScorer
 
-insecure_code_scorer = InsecureCodeScorer(chat_target=OpenAIChatTarget())
+insecure_code_scorer = InsecureCodeScorer.from_harm_categories(chat_target=OpenAIChatTarget())
 
 snippet = """
 def authenticate_user(username, password):
@@ -136,8 +137,18 @@ print(f"rationale: {scored.score_rationale}")
 # %% [markdown]
 # ### Other self-ask float-scale scorers
 #
-# - **`SelfAskScaleScorer`** — rate against a custom scale supplied as a YAML/arguments file
-#   instead of a built-in Likert scale.
+# - **`SelfAskScaleScorer`** — rate against a custom `NumericRubric` constructed in memory or
+#   loaded from YAML.
 # - **`SelfAskGeneralFloatScaleScorer`** — full control: provide your own system prompt,
-#   JSON schema, and `min_value`/`max_value`. See
+#   JSON schema, and `NumericRange`. See
 #   [Combining & stacking scorers](3_combining_scorers.ipynb) for custom-scorer guidance.
+# %% [markdown]
+# ## Multimodal scorers
+#
+# The float-scale media scorers mirror their true/false counterparts, transcribing or sampling a
+# response and delegating to a wrapped `FloatScaleScorer`:
+#
+# - **`AudioFloatScaleScorer`** — transcribes an `audio_path` response (Azure Speech-to-Text) and
+#   scores the resulting transcript.
+# - **`VideoFloatScaleScorer`** — samples frames from a `video_path` response and aggregates their
+#   per-category float scores (`MAX` by default); an optional audio scorer is folded in.

@@ -4,31 +4,19 @@ jest.mock("@azure/msal-browser", () => ({
   LogLevel: { Warning: 3 },
 }));
 
-import { buildMsalConfig, getApiScopes, buildLoginRequest } from "./msalConfig";
+import { buildMsalConfig, getGraphScopes, buildLoginRequest } from "./msalConfig";
 
 describe("msalConfig", () => {
-  // Tests 1-2: getApiScopes — two branches on the !clientId check (line 75)
-  describe("getApiScopes", () => {
-    it("returns default scopes when clientId is empty", () => {
-      expect(getApiScopes("")).toEqual(["openid", "profile", "email"]);
-    });
-
-    it("returns client-specific scope when clientId is provided", () => {
-      expect(getApiScopes("my-client-id")).toEqual(["api://my-client-id/access"]);
+  describe("getGraphScopes", () => {
+    it("returns the delegated Graph scope", () => {
+      expect(getGraphScopes()).toEqual(["User.Read"]);
     });
   });
 
-  // Tests 3-4: buildLoginRequest — wraps getApiScopes in { scopes }
   describe("buildLoginRequest", () => {
-    it("builds request with client-specific scopes", () => {
-      expect(buildLoginRequest("my-client-id")).toEqual({
-        scopes: ["api://my-client-id/access"],
-      });
-    });
-
-    it("builds request with default scopes when clientId is empty", () => {
-      expect(buildLoginRequest("")).toEqual({
-        scopes: ["openid", "profile", "email"],
+    it("builds request with Graph scopes", () => {
+      expect(buildLoginRequest()).toEqual({
+        scopes: ["User.Read"],
       });
     });
   });

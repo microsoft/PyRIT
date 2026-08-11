@@ -8,12 +8,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, SeedAttackGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PackageHallucination,
-    PackageHallucinationStrategy,
+    PackageHallucinationTechnique,
 )
 from pyrit.score import TrueFalseScorer
 from pyrit.score.true_false.regex.package_hallucination_scorer import (
@@ -95,40 +95,46 @@ class TestPackageHallucinationInitialization:
     def test_baseline_forbidden(self):
         assert BaselineAttackPolicy.Forbidden == PackageHallucination.BASELINE_ATTACK_POLICY
 
-    def test_default_strategy_is_default(self):
-        assert PackageHallucination()._default_strategy == PackageHallucinationStrategy.DEFAULT
+    def test_default_technique_is_default(self):
+        assert PackageHallucination()._default_technique == PackageHallucinationTechnique.DEFAULT
 
 
-class TestPackageHallucinationStrategy:
+class TestPackageHallucinationTechnique:
     def test_concrete_strategy_values(self):
-        values = {s.value for s in PackageHallucinationStrategy}
+        values = {s.value for s in PackageHallucinationTechnique}
         assert {"python", "javascript", "ruby", "rust"} <= values
 
     def test_all_expands_to_four_languages(self):
-        expanded = {s.value for s in PackageHallucinationStrategy.expand({PackageHallucinationStrategy.ALL})}
+        expanded = {s.value for s in PackageHallucinationTechnique.expand({PackageHallucinationTechnique.ALL})}
         assert expanded == {"python", "javascript", "ruby", "rust"}
 
     def test_default_expands_to_four_languages(self):
-        expanded = {s.value for s in PackageHallucinationStrategy.expand({PackageHallucinationStrategy.DEFAULT})}
+        expanded = {s.value for s in PackageHallucinationTechnique.expand({PackageHallucinationTechnique.DEFAULT})}
         assert expanded == {"python", "javascript", "ruby", "rust"}
 
     def test_aggregate_tags_include_default(self):
-        assert {"all", "default"} <= PackageHallucinationStrategy.get_aggregate_tags()
+        assert {"all", "default"} <= PackageHallucinationTechnique.get_aggregate_tags()
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPackageHallucinationAtomicAttacks:
-    async def _initialize(self, scenario, target, strategies, memory):
+    async def _initialize(self, scenario, target, techniques, memory):
         with patch(
             "pyrit.scenario.scenarios.garak.package_hallucination.CentralMemory.get_memory_instance",
             return_value=memory,
         ):
-            await scenario.initialize_async(objective_target=target, scenario_strategies=strategies)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": target,
+                    "scenario_techniques": techniques,
+                }
+            )
+            await scenario.initialize_async()
 
     async def test_one_atomic_attack_per_language(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationStrategy.ALL], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.ALL], fake_registry_memory
         )
         names = {a.atomic_attack_name for a in scenario._atomic_attacks}
         assert names == {"python", "javascript", "ruby", "rust"}
@@ -136,7 +142,7 @@ class TestPackageHallucinationAtomicAttacks:
     async def test_no_baseline_emitted(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationStrategy.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
         )
         assert all(a.atomic_attack_name != "baseline" for a in scenario._atomic_attacks)
 
@@ -147,16 +153,19 @@ class TestPackageHallucinationAtomicAttacks:
             return_value=fake_registry_memory,
         ):
             with pytest.raises(ValueError):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    scenario_strategies=[PackageHallucinationStrategy.Python],
-                    include_baseline=True,
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                        "include_baseline": True,
+                    }
                 )
+                await scenario.initialize_async()
 
     async def test_per_language_scorer_ecosystem(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationStrategy.Rust], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
         )
         attack = scenario._atomic_attacks[0].attack_technique.attack
         assert isinstance(attack, PromptSendingAttack)
@@ -167,12 +176,12 @@ class TestPackageHallucinationAtomicAttacks:
     async def test_seed_groups_pair_objective_and_prompt(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationStrategy.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
         )
         attack = scenario._atomic_attacks[0]
         assert len(attack.seed_groups) > 0
         for group in attack.seed_groups:
-            assert isinstance(group, SeedAttackGroup)
+            assert isinstance(group, AttackSeedGroup)
             assert isinstance(group.seeds[0], SeedObjective)
             assert isinstance(group.seeds[1], SeedPrompt)
             # The rendered prompt must have substituted the language label and task.
@@ -183,7 +192,7 @@ class TestPackageHallucinationAtomicAttacks:
     async def test_max_prompts_per_language_caps_output(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination(max_prompts_per_language=3)
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationStrategy.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
         )
         assert len(scenario._atomic_attacks[0].seed_groups) == 3
 
@@ -196,10 +205,13 @@ class TestPackageHallucinationAtomicAttacks:
             return_value=empty_memory,
         ):
             with pytest.raises(ValueError):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    scenario_strategies=[PackageHallucinationStrategy.Python],
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                    }
                 )
+                await scenario.initialize_async()
 
     async def test_missing_registry_raises(self, mock_objective_target):
         # Corpus is present so seed resolution succeeds, but the package registry is empty,
@@ -221,7 +233,10 @@ class TestPackageHallucinationAtomicAttacks:
             return_value=corpus_only,
         ):
             with pytest.raises(ValueError):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    scenario_strategies=[PackageHallucinationStrategy.Python],
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                    }
                 )
+                await scenario.initialize_async()

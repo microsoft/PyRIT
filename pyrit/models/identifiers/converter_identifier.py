@@ -21,7 +21,7 @@ from pyrit.models.parameter import ComponentType
 
 class ConverterIdentifier(ComponentIdentifier):
     """
-    Strongly-typed projection of a ``PromptConverter``'s ``ComponentIdentifier``.
+    Strongly-typed projection of a ``Converter``'s ``ComponentIdentifier``.
 
     Promotes the supported input/output data types; any converter-specific params
     stay in ``params``. The converter's own child slots — ``converter_target``

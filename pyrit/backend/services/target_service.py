@@ -34,10 +34,9 @@ class TargetService:
     """
     Service for managing target instances.
 
-    Uses TargetRegistry as the sole source of truth. Class discovery,
-    construction (incl. param coercion and reference resolution), and endpoint
-    validation are all owned by the registry and the target classes; this
-    service only orchestrates the request → registry hand-off.
+    Uses TargetRegistry as the sole source of truth for class discovery,
+    parameter coercion, reference resolution, and construction. Endpoint
+    validation remains owned by the target classes.
     """
 
     def __init__(self) -> None:
@@ -153,18 +152,13 @@ class TargetService:
         """
         Create a new target instance from API request.
 
-        Class discovery is owned by the ``TargetRegistry``. Targets whose build
-        contract references other registry instances (e.g. ``RoundRobinTarget``'s
-        ``targets``) are constructed via ``registry.create_instance`` so the
-        resolver turns registry names into live objects; all other targets carry
-        their base configuration (``endpoint`` / ``model_name`` / ``api_key``)
-        through ``**kwargs``, which is not part of the registry's derived
-        parameter contract, so they are constructed directly from the registry
-        class. Endpoint trust and identity token minting are owned by the target
-        classes themselves. This service only enforces the request-level auth
-        contract: for ``identity`` it confirms the target supports it and omits
-        the api_key so the target validates its own endpoint and authenticates
-        itself.
+        Class discovery, strict parameter validation, scalar coercion, registry
+        reference resolution, and construction are owned by the
+        ``TargetRegistry``. Endpoint trust and identity token minting are owned
+        by the target classes themselves. This service only enforces the
+        request-level auth contract: for ``identity`` it confirms the target
+        supports it and omits the api_key so the target validates its own
+        endpoint and authenticates itself.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -192,33 +186,12 @@ class TargetService:
             # Omit any api_key so the target validates its own endpoint and authenticates itself.
             params.pop("api_key", None)
 
-        if self._has_reference_params(target_type=request.type):
-            # e.g. RoundRobinTarget: `targets` is a list of registry names the
-            # resolver turns into live target objects.
-            target_obj = self._registry.create_instance(request.type, **params)
-        else:
-            target_obj = target_cls(**params)
+        target_obj = self._registry.create_instance(request.type, **params)
 
         self._registry.instances.register(target_obj)
 
         target_registry_name = target_obj.get_identifier().unique_name
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
-
-    def _has_reference_params(self, *, target_type: str) -> bool:
-        """
-        Return True if the target type's build contract references other registry
-        instances (so construction must go through the resolver).
-
-        Args:
-            target_type (str): The registered target class name.
-
-        Returns:
-            bool: True if any derived parameter is a registry reference.
-        """
-        metadata = self._registry.get_registered_class_metadata(target_type)
-        if metadata is None:
-            return False
-        return any(param.reference is not None for param in metadata.parameters)
 
 
 @lru_cache(maxsize=1)

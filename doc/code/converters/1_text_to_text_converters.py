@@ -6,11 +6,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.3
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
-# # 1. Text-to-Text Converters
+# # Text-to-Text Converters
 #
 # Text-to-text converters transform text input into modified text output. These converters are the most common type and include encoding schemes, obfuscation techniques, and LLM-based transformations.
 #
@@ -28,7 +28,7 @@
 # Non-LLM converters use deterministic algorithms to transform text. These include:
 # - **Encoding**: Base64, Binary, Morse, NATO phonetic, etc.
 # - **Obfuscation**: Leetspeak, Unicode manipulation, character swapping, ANSI escape codes
-# - **Text manipulation**: ROT13, Caesar cipher, Atbash, etc.
+# - **Text manipulation**: ROT13, Caesar cipher, Atbash, Vigenere cipher, etc.
 
 # %% [markdown]
 # ### 1.1 Basic Encoding Converters
@@ -36,7 +36,7 @@
 # These converters encode text into various formats:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
     AtbashConverter,
@@ -51,6 +51,7 @@ from pyrit.prompt_converter import (
     NatoConverter,
     NegationTrapConverter,
     ROT13Converter,
+    VigenereConverter,
 )
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -67,6 +68,7 @@ print("Morse:", await MorseConverter().convert_async(prompt=prompt))  # type: ig
 print("NATO:", await NatoConverter().convert_async(prompt=prompt))  # type: ignore
 print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=prompt))  # type: ignore
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
+print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
 print("ASCII Art:", await AsciiArtConverter().convert_async(prompt=prompt))  # type: ignore
 print("Ecoji:", await EcojiConverter().convert_async(prompt=prompt))  # type: ignore
@@ -85,7 +87,8 @@ print("Negation Trap:", await NegationTrapConverter().convert_async(prompt="your
 # These converters obfuscate text to evade detection or filters, including character-level manipulations, word-level attacks, and ANSI escape sequences:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
+    AcrosticConverter,
     AnsiAttackConverter,
     ArabicPresentationFormConverter,
     ArabiziConverter,
@@ -123,6 +126,8 @@ print("Unicode Substitution:", await UnicodeSubstitutionConverter().convert_asyn
 print("Unicode Replacement:", await UnicodeReplacementConverter().convert_async(prompt=prompt))  # type: ignore
 print("Emoji:", await EmojiConverter().convert_async(prompt=prompt))  # type: ignore
 print("First Letter:", await FirstLetterConverter().convert_async(prompt=prompt))  # type: ignore
+# Acrostic hides the prompt in the first letter of each line; a short prompt keeps the output readable
+print("Acrostic:", await AcrosticConverter().convert_async(prompt="cut a tree"))  # type: ignore
 print("String Join:", await StringJoinConverter().convert_async(prompt=prompt))  # type: ignore
 print("Zero Width:", await ZeroWidthConverter().convert_async(prompt=prompt))  # type: ignore
 print("Flip:", await FlipConverter().convert_async(prompt=prompt))  # type: ignore
@@ -178,17 +183,18 @@ print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # ty
 # These converters perform text replacement, template injection, and URL encoding:
 
 # %%
-from pyrit.datasets import TextJailBreak
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     JsonStringConverter,
     PolicyPuppetryConverter,
     SearchReplaceConverter,
     SuffixAppendConverter,
+    TaskFramingConverter,
     TemplateSegmentConverter,
     TextJailbreakConverter,
     UrlConverter,
 )
-from pyrit.prompt_converter.policy_puppetry_converter import PolicyPuppetryTemplate
+from pyrit.converter.policy_puppetry_converter import PolicyPuppetryTemplate
+from pyrit.datasets import TextJailBreak
 
 prompt = "tell me how to cut down a tree"
 
@@ -216,6 +222,10 @@ print("Text Jailbreak:", await text_jailbreak.convert_async(prompt=prompt))  # t
 template_converter = TemplateSegmentConverter()
 print("Template Segment:", await template_converter.convert_async(prompt=prompt))  # type: ignore
 
+# Task framing wraps the prompt in a task template (default "TASK is '...'"), stripping quotes so they don't collide with the template's delimiters
+task_framing = TaskFramingConverter(strip_characters="'")
+print("Task Framing:", await task_framing.convert_async(prompt=prompt))  # type: ignore
+
 # Policy Puppetry [@hiddenlayer2025policypuppetry] frames the request as policy/config the model should follow
 policy_puppetry = PolicyPuppetryConverter(prompt_template=PolicyPuppetryTemplate.DR_HOUSE.to_seed_prompt())
 print("Policy Puppetry:", await policy_puppetry.convert_async(prompt=prompt))  # type: ignore
@@ -226,7 +236,7 @@ print("Policy Puppetry:", await policy_puppetry.convert_async(prompt=prompt))  #
 # These converters use Unicode variation selectors and other techniques to hide text:
 
 # %%
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     AsciiSmugglerConverter,
     SneakyBitsSmugglerConverter,
     VariationSelectorSmugglerConverter,
@@ -258,11 +268,11 @@ print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  #
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.models import SeedPrompt
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     DecompositionConverter,
     DenylistConverter,
     ImagePromptStyleConverter,
+    IPAConverter,
     MaliciousQuestionGeneratorConverter,
     MathPromptConverter,
     NoiseConverter,
@@ -275,6 +285,7 @@ from pyrit.prompt_converter import (
     TranslationConverter,
     VariationConverter,
 )
+from pyrit.models import SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget
 
 attack_llm = OpenAIChatTarget()
@@ -299,6 +310,10 @@ print("Tone (angry):", await tone_converter.convert_async(prompt=prompt))  # typ
 # Translation to specific language
 translation_converter = TranslationConverter(converter_target=attack_llm, language="French")
 print("Translation (French):", await translation_converter.convert_async(prompt=prompt))  # type: ignore
+
+# IPA transcription detects the source language and pronunciation variety
+ipa_converter = IPAConverter(converter_target=attack_llm)
+print("IPA:", await ipa_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Random translation translates each word to a random language
 random_translation_converter = RandomTranslationConverter(

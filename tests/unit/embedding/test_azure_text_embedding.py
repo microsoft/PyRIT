@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 import os
-from unittest.mock import MagicMock, patch
+from collections.abc import Awaitable, Callable
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from openai import OpenAIError
 
 from pyrit.embedding import OpenAITextEmbedding
 
@@ -27,12 +27,12 @@ def test_valid_init_env():
 
 
 def test_invalid_key_raises():
-    """Test that an empty API key is rejected by the underlying OpenAI client."""
+    """An empty API key on a non-Azure endpoint raises ValueError (no Entra fallback)."""
     os.environ[OpenAITextEmbedding.API_KEY_ENVIRONMENT_VARIABLE] = ""
-    with pytest.raises(OpenAIError, match="Missing credentials"):
+    with pytest.raises(ValueError, match="required for non-Azure endpoints"):
         OpenAITextEmbedding(
             api_key="",
-            endpoint="https://mock.azure.com/",
+            endpoint="https://api.openai.com/v1",
             model_name="gpt-4",
         )
 
@@ -100,3 +100,60 @@ def test_callable_api_key_is_passed_to_client(mock_async_openai):
     assert async_call_args.kwargs["base_url"] == "https://mock.azure.com/"
 
     assert embedding._async_client == mock_async_client
+
+
+_AZURE_ENDPOINT = "https://foo.openai.azure.com/openai/v1"
+_NON_AZURE_ENDPOINT = "https://api.openai.com/v1"
+
+
+def _build_embedding(
+    *,
+    endpoint: str = _AZURE_ENDPOINT,
+    api_key: str | Callable[[], str | Awaitable[str]] | None = "test-key",
+    model_name: str = "text-embedding-3-small",
+) -> OpenAITextEmbedding:
+    """Build an OpenAITextEmbedding with a cleared environment so env vars don't leak in."""
+    with patch.dict(os.environ, {}, clear=True):
+        return OpenAITextEmbedding(api_key=api_key, endpoint=endpoint, model_name=model_name)
+
+
+@patch("pyrit.embedding.openai_text_embedding.AsyncOpenAI")
+def test_explicit_string_api_key_used_directly(mock_async_openai):
+    """An explicit string api_key is passed to the async client as-is."""
+    mock_async_openai.return_value = MagicMock()
+
+    _build_embedding(api_key="my-secret-key")
+
+    assert mock_async_openai.call_args.kwargs["api_key"] == "my-secret-key"
+
+
+@patch("pyrit.embedding.openai_text_embedding.AsyncOpenAI")
+def test_callable_token_provider_used_as_is(mock_async_openai):
+    """An async token provider is used directly and not overwritten by env resolution."""
+    mock_async_openai.return_value = MagicMock()
+
+    async def async_provider() -> str:
+        return "async-token"
+
+    _build_embedding(api_key=async_provider)
+
+    assert mock_async_openai.call_args.kwargs["api_key"] is async_provider
+
+
+@patch("pyrit.embedding.openai_text_embedding.AsyncOpenAI")
+def test_no_key_azure_endpoint_falls_back_to_entra(mock_async_openai):
+    """A recognized Azure endpoint with no key mints an Entra token provider."""
+    mock_async_openai.return_value = MagicMock()
+    mock_auth = AsyncMock(return_value="entra-token")
+
+    with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth) as mock_get_auth:
+        _build_embedding(api_key=None, endpoint=_AZURE_ENDPOINT)
+
+    mock_get_auth.assert_called_once_with(_AZURE_ENDPOINT)
+    assert mock_async_openai.call_args.kwargs["api_key"] is mock_auth
+
+
+def test_no_key_non_azure_endpoint_raises():
+    """A non-Azure endpoint with no key raises ValueError (no Entra fallback)."""
+    with pytest.raises(ValueError, match="required for non-Azure endpoints"):
+        _build_embedding(api_key=None, endpoint=_NON_AZURE_ENDPOINT)

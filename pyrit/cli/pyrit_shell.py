@@ -192,7 +192,10 @@ class PyRITShell(cmd.Cmd):
         if not healthy and self._start_server:
             self._launcher = ServerLauncher()
             try:
-                base_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
+                base_url = self._run_async(
+                    self._launcher.start_async(config_file=self._config_file),
+                    timeout=None,
+                )
                 healthy = True
             except RuntimeError as exc:
                 print(f"Error starting server: {exc}")
@@ -344,10 +347,10 @@ class PyRITShell(cmd.Cmd):
         Options:
             --target <name>                 Target name (required)
             --initializers <name> ...       Initializer names (supports name:key=val syntax)
-            --strategies, -s <s1> <s2> ...  Strategy names. Append registered
+            --techniques, -t <t1> <t2> ...  Technique names. Append registered
                                             converters to a technique with
                                             ':converter.<name>' (repeatable), e.g.
-                                            role_play:converter.translation_spanish.
+                                            role_play_movie_script:converter.translation_spanish.
                                             Use list-converters to see names.
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
@@ -427,8 +430,8 @@ class PyRITShell(cmd.Cmd):
             if init_args:
                 request_kwargs["initializer_args"] = init_args
 
-        if args.get("scenario_strategies"):
-            request_kwargs["strategies"] = args["scenario_strategies"]
+        if args.get("scenario_techniques"):
+            request_kwargs["techniques"] = args["scenario_techniques"]
         if args.get("max_concurrency") is not None:
             request_kwargs["max_concurrency"] = args["max_concurrency"]
         if args.get("max_retries") is not None:
@@ -449,7 +452,7 @@ class PyRITShell(cmd.Cmd):
         request = RunScenarioRequest(**request_kwargs)
 
         # Start run
-        total_strategies = len(request.strategies or [])
+        total_techniques = len(request.techniques or [])
         print(f"\nRunning scenario: {scenario_name}")
         sys.stdout.flush()
 
@@ -467,7 +470,7 @@ class PyRITShell(cmd.Cmd):
         try:
             while True:
                 run = self._run_async(self._api_client.get_scenario_run_async(scenario_result_id=scenario_result_id))
-                print_scenario_run_progress(run=run, total_strategies=total_strategies)
+                print_scenario_run_progress(run=run, total_techniques=total_techniques)
                 if run.status in {
                     ScenarioRunState.COMPLETED,
                     ScenarioRunState.FAILED,
@@ -584,7 +587,10 @@ class PyRITShell(cmd.Cmd):
 
         self._launcher = ServerLauncher()
         try:
-            new_url = self._run_async(self._launcher.start_async(config_file=self._config_file))
+            new_url = self._run_async(
+                self._launcher.start_async(config_file=self._config_file),
+                timeout=None,
+            )
             self._base_url = new_url
             # Create new client for the started server
             if self._api_client is not None:
@@ -599,26 +605,30 @@ class PyRITShell(cmd.Cmd):
         if arg.strip():
             print(f"Error: stop-server does not accept arguments, got: {arg.strip()}")
             return
-        from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
+        from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address, stop_server_on_port
 
         # If we own the launcher, use it directly
         if self._launcher is not None:
-            self._launcher.stop()
+            if not self._launcher.stop():
+                print("Server could not be stopped.")
+                return
             print("Server stopped.")
         else:
             # Find and kill by port. Probe first so we don't SIGTERM a non-pyrit
             # process that happens to be listening on this port.
-            from urllib.parse import urlparse
-
             base_url = self._base_url or self._resolve_base_url()
-            port = urlparse(base_url).port or 8000
+            local_address = parse_local_server_address(base_url=base_url)
+            if local_address is None:
+                print(f"Cannot stop non-local server {base_url}. Stop it on its host instead.")
+                return
+            _, port = local_address
             if not self._run_async(ServerLauncher.probe_health_async(base_url=base_url)):
                 print(f"No pyrit backend responding at {base_url}; not stopping anything.")
                 return
             if stop_server_on_port(port=port):
                 print(f"Server on port {port} stopped.")
             else:
-                print(f"No server found on port {port}.")
+                print(f"Server on port {port} could not be stopped.")
                 return
 
         # Close the API client since the server is gone
@@ -743,11 +753,10 @@ def main() -> int:
 
     logging.basicConfig(level=getattr(logging, args.log_level))
 
-    # Surface a deprecation if the layered config has blocks the CLI ignores.
-    from pyrit.cli._config_reader import ConfigError, warn_on_client_ignored_blocks
+    from pyrit.cli._config_reader import ConfigError, validate_client_config
 
     try:
-        warn_on_client_ignored_blocks(config_file=args.config_file)
+        validate_client_config(config_file=args.config_file)
     except ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

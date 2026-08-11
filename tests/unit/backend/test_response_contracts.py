@@ -8,8 +8,8 @@ These guard the serialized wire shape of the canonical-model-backed response
 DTOs (``ScoreView``/``MessagePieceView``/``MessageView``/``AttackSummary``):
 canonical fields plus presentation computed fields must appear in
 ``model_dump(mode="json")``, ``related_conversations`` must serialize in a
-stable (sorted) order, and the deprecated wire aliases (``score_id``,
-``scored_at``, ``piece_id``, ``pieces``) must stay populated for back-compat.
+stable (sorted) order, and the removed wire aliases (``score_id``,
+``scored_at``, ``piece_id``, ``pieces``) must no longer appear.
 """
 
 import uuid
@@ -191,39 +191,39 @@ class TestAttackSummaryContract:
         assert dumped["retry_events"][0]["exception_type"] == "RateLimitError"
 
 
-class TestDeprecatedWireAliases:
-    """Old wire field names stay populated (as deprecated aliases) for backward compat."""
+class TestRemovedWireAliases:
+    """Old wire field names were removed for 1.0.0 and must no longer be emitted."""
 
-    def test_score_view_emits_deprecated_aliases(self) -> None:
-        """Test that ScoreView still emits score_id/scored_at mirroring id/timestamp."""
+    def test_score_view_omits_removed_aliases(self) -> None:
+        """Test that ScoreView no longer emits score_id/scored_at."""
         view = ScoreView.from_domain(_make_score())
         dumped = view.model_dump(mode="json")
 
-        assert dumped["score_id"] == str(view.id)
-        assert dumped["scored_at"] == dumped["timestamp"]
+        assert "score_id" not in dumped
+        assert "scored_at" not in dumped
 
-    def test_message_piece_view_emits_deprecated_alias(self) -> None:
-        """Test that MessagePieceView still emits piece_id mirroring id."""
+    def test_message_piece_view_omits_removed_alias(self) -> None:
+        """Test that MessagePieceView no longer emits piece_id."""
         view = MessagePieceView.from_domain(_make_piece())
         dumped = view.model_dump(mode="json")
 
-        assert dumped["piece_id"] == str(view.id)
+        assert "piece_id" not in dumped
 
     def test_message_view_does_not_emit_pieces_alias(self) -> None:
-        """The deprecated ``pieces`` alias was dropped; only ``message_pieces`` is emitted."""
+        """The ``pieces`` alias was dropped; only ``message_pieces`` is emitted."""
         piece = MessagePieceView.from_domain(_make_piece())
         dumped = MessageView.model_construct(message_pieces=[piece]).model_dump(mode="json")
 
         assert "pieces" not in dumped
         assert "message_pieces" in dumped
 
-    def test_aliases_marked_deprecated_in_schema(self) -> None:
-        """Test that the deprecated aliases are flagged deprecated in the OpenAPI schema."""
+    def test_removed_aliases_absent_from_schema(self) -> None:
+        """Test that the removed aliases no longer appear in the OpenAPI schema."""
         score_props = ScoreView.model_json_schema(mode="serialization")["properties"]
         piece_props = MessagePieceView.model_json_schema(mode="serialization")["properties"]
         message_props = MessageView.model_json_schema(mode="serialization")["properties"]
 
-        assert score_props["score_id"]["deprecated"] is True
-        assert score_props["scored_at"]["deprecated"] is True
-        assert piece_props["piece_id"]["deprecated"] is True
+        assert "score_id" not in score_props
+        assert "scored_at" not in score_props
+        assert "piece_id" not in piece_props
         assert "pieces" not in message_props

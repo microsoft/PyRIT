@@ -146,3 +146,46 @@ async def test_send_prompt_async_validation(patch_central_database):
     # Creating a Message with no pieces raises immediately
     with pytest.raises(ValueError, match="must have at least one message piece"):
         Message(message_pieces=[])
+
+
+def test_default_configuration_supports_file_path_input_modalities():
+    # A file-upload target must accept text plus every file-path data type a converter can emit
+    # (e.g. PDFConverter emits "binary_path"), otherwise real converter output is rejected.
+    modalities = HTTPXAPITarget._DEFAULT_CONFIGURATION.capabilities.input_modalities
+    supported_types = {data_type for combo in modalities for data_type in combo}
+    assert {"text", "image_path", "audio_path", "video_path", "binary_path"} <= supported_types
+
+
+@patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_binary_path_upload(mock_request, patch_central_database):
+    # Mirrors the real converter path: PDFConverter output arrives as a "binary_path" piece.
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(b"%PDF-1.4 mock binary content")
+        tmp.flush()
+        file_path = tmp.name
+
+    message_piece = MessagePiece(
+        role="user",
+        original_value=file_path,
+        original_value_data_type="binary_path",
+        converted_value=file_path,
+        converted_value_data_type="binary_path",
+    )
+    message = Message(message_pieces=[message_piece])
+
+    mock_response = MagicMock()
+    mock_response.content = b'{"message": "File uploaded successfully", "filename": "mock.pdf"}'
+    mock_request.return_value = mock_response
+
+    target = HTTPXAPITarget(http_url="http://example.com/upload/", method="POST", timeout=180)
+
+    # Must not raise "This target supports only the following data types: ..."
+    response = await target.send_prompt_async(message=message)
+
+    assert len(response) == 1
+    mock_request.assert_called_once()
+    # The multipart upload path was taken with the file's basename.
+    files = mock_request.call_args.kwargs["files"]
+    assert files["file"][0] == os.path.basename(file_path)
+
+    os.unlink(file_path)

@@ -14,16 +14,18 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.models import COMMON_JSON_SCHEMAS, Message, MessagePiece
-from pyrit.models.json_schema_definition import JSON_SCHEMA_METADATA_KEY
+from pyrit.models import COMMON_JSON_SCHEMAS, JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
 from pyrit.score import (
+    ContentClassifier,
     ContentClassifierPaths,
     InsecureCodeScorer,
     LikertScalePaths,
+    NumericRubric,
     SelfAskCategoryScorer,
     SelfAskLikertScorer,
     SelfAskScaleScorer,
     SelfAskTrueFalseScorer,
+    TrueFalseQuestion,
     TrueFalseQuestionPaths,
 )
 
@@ -42,31 +44,46 @@ def _mock_target(json_response: str) -> MagicMock:
 def _make_scorer(scorer_id: str):
     if scorer_id == "true_false":
         target = _mock_target('{"score_value": "True", "description": "d", "rationale": "r", "metadata": "m"}')
-        scorer = SelfAskTrueFalseScorer(
-            chat_target=target, true_false_question_path=TrueFalseQuestionPaths.GROUNDED.value
+        scorer = SelfAskTrueFalseScorer.from_question(
+            chat_target=target, question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
         )
     elif scorer_id == "category":
-        target = _mock_target('{"score_value": "True", "description": "d", "rationale": "r", "category": "harmful"}')
-        scorer = SelfAskCategoryScorer(
+        target = _mock_target('{"score_value": "True", "description": "d", "rationale": "r", "category": "bullying"}')
+        scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=target,
-            content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
+            content_classifier=ContentClassifier.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value),
         )
     elif scorer_id == "insecure_code":
         target = _mock_target('{"score_value": 0.5, "rationale": "r", "metadata": "m"}')
-        scorer = InsecureCodeScorer(chat_target=target)
+        scorer = InsecureCodeScorer.from_harm_categories(chat_target=target)
     elif scorer_id == "scale":
         target = _mock_target('{"score_value": "1", "description": "d", "rationale": "r"}')
-        scorer = SelfAskScaleScorer(
+        scorer = SelfAskScaleScorer.from_scale(
             chat_target=target,
-            scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
-            system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
+            scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
         )
     elif scorer_id == "likert":
         target = _mock_target('{"score_value": "1", "description": "d", "rationale": "r"}')
-        scorer = SelfAskLikertScorer(chat_target=target, likert_scale=LikertScalePaths.CYBER_SCALE)
+        scorer = SelfAskLikertScorer.from_likert_scale(
+            chat_target=target,
+            likert_scale=LikertScalePaths.CYBER_SCALE.load(),
+        )
     else:  # pragma: no cover - guard against typos in parametrization
         raise ValueError(f"Unknown scorer id: {scorer_id}")
     return scorer, target
+
+
+def _loaded_schema(scorer):
+    """Return the response schema regardless of where the scorer stores it.
+
+    The composition-migrated true/false scorer keeps it on its response handler
+    (``_response_handler.json_response_config.json_schema``); the other, not-yet-migrated scorers
+    still expose ``_response_json_schema`` directly.
+    """
+    handler = getattr(scorer, "_response_handler", None)
+    if handler is not None:
+        return handler.json_response_config.json_schema
+    return scorer._response_json_schema
 
 
 # Expected required-property sets for the schema each scorer loads. Asserting the
@@ -85,10 +102,10 @@ _ALL_SCORERS = list(_EXPECTED_REQUIRED)
 
 @pytest.mark.parametrize("scorer_id", _ALL_SCORERS)
 async def test_scorer_loads_response_json_schema(scorer_id: str, patch_central_database):
-    """Each scorer must populate ``_response_json_schema`` from its system prompt YAML."""
+    """Each scorer must load a response schema from its system prompt YAML."""
     scorer, _ = _make_scorer(scorer_id)
 
-    schema = scorer._response_json_schema
+    schema = _loaded_schema(scorer)
     assert schema is not None, f"{scorer_id} scorer did not load a response_json_schema"
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == _EXPECTED_REQUIRED[scorer_id]
@@ -98,7 +115,7 @@ async def test_scorer_loads_response_json_schema(scorer_id: str, patch_central_d
 async def test_scale_scorers_use_shared_schema(scorer_id: str, patch_central_database):
     """The scale and Likert scorers reference the shared bundled schema by name."""
     scorer, _ = _make_scorer(scorer_id)
-    assert scorer._response_json_schema == SCALE_SCHEMA
+    assert _loaded_schema(scorer) == SCALE_SCHEMA
 
 
 @pytest.mark.parametrize("scorer_id", _ALL_SCORERS)
@@ -110,7 +127,7 @@ async def test_scorer_forwards_schema_to_target(scorer_id: str, patch_central_da
 
     _, kwargs = target.send_prompt_async.call_args
     message_piece = kwargs["message"].message_pieces[-1]
-    assert message_piece.prompt_metadata[JSON_SCHEMA_METADATA_KEY] == scorer._response_json_schema
+    assert message_piece.prompt_metadata[JSON_SCHEMA_METADATA_KEY] == _loaded_schema(scorer)
     assert message_piece.prompt_metadata.get("response_format") == "json"
 
 
@@ -120,4 +137,4 @@ async def test_scorer_identifier_includes_schema(scorer_id: str, patch_central_d
     scorer, _ = _make_scorer(scorer_id)
 
     identifier = scorer.get_identifier()
-    assert identifier.params["response_json_schema"] == scorer._response_json_schema
+    assert identifier.params["response_json_schema"] == _loaded_schema(scorer)

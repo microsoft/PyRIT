@@ -15,6 +15,11 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
+import base64
+import binascii
+import hashlib
+import json
+import logging
 import mimetypes
 import uuid
 from collections.abc import Sequence
@@ -44,6 +49,8 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     CreateConversationRequest,
     CreateConversationResponse,
+    MessagePieceRequest,
+    PrependedMessageRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
@@ -51,7 +58,7 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.memory import CentralMemory, data_serializer_factory
+from pyrit.memory import AttackResultsKeysetCursor, CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -63,10 +70,11 @@ from pyrit.models import (
     ConversationStats,
     ConversationType,
     ConverterIdentifier,
-    MessagePiece,
     PromptDataType,
 )
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+
+logger = logging.getLogger(__name__)
 
 
 class AttackService:
@@ -125,7 +133,8 @@ class AttackService:
             min_turns: Filter by minimum executed turns.
             max_turns: Filter by maximum executed turns.
             limit: Maximum items to return.
-            cursor: Pagination cursor.
+            cursor: Opaque pagination token from a previous response's ``next_cursor``.
+                Omit (or pass ``None``) to fetch the first page.
 
         Returns:
             AttackListResponse with filtered and paginated attack summaries.
@@ -137,32 +146,48 @@ class AttackService:
         # consistent.
         effective_converter_types = converter_types if converter_types else None
 
-        attack_results = self._memory.get_attack_results(
+        # The cursor encodes both a keyset (seek) anchor — the recency sort key of the last
+        # row on the previous page — and a fingerprint of the filters it was generated for.
+        # Decoding against the current request's filters makes a cursor minted for a different
+        # filter set fall back to the first page instead of seeking within the wrong result
+        # set. The memory layer deduplicates, applies the turn bounds, orders by recency, seeks
+        # past the anchor, and limits in SQL, so only one page's worth of rows is materialized
+        # instead of the full table.
+        filter_fingerprint = self._attack_filter_fingerprint(
+            attack_types=attack_types,
+            converter_types=effective_converter_types,
+            converter_types_match=converter_types_match,
+            has_converters=has_converters,
+            outcome=outcome,
+            labels=labels if labels else None,
+            min_turns=min_turns,
+            max_turns=max_turns,
+        )
+        after = self._decode_attack_cursor(cursor=cursor, fingerprint=filter_fingerprint)
+        results = self._memory.get_attack_results(
             outcome=outcome,
             labels=labels if labels else None,
             attack_classes=attack_types if attack_types else None,
             converter_classes=effective_converter_types,
             converter_classes_match=converter_types_match,
             has_converters=has_converters,
+            min_turns=min_turns,
+            max_turns=max_turns,
+            limit=limit + 1,
+            after=after,
         )
 
-        filtered: list[AttackResult] = []
-        for ar in attack_results:
-            if min_turns is not None and ar.executed_turns < min_turns:
-                continue
-            if max_turns is not None and ar.executed_turns > max_turns:
-                continue
-            filtered.append(ar)
-
-        # Sort by most recent (metadata lives on AttackResult, no pieces needed)
-        filtered.sort(
-            key=lambda ar: ar.metadata.get("updated_at", ar.metadata.get("created_at", "")),
-            reverse=True,
+        # Over-fetch by one row to detect whether a further page exists.
+        has_next_page = len(results) > limit
+        page_results = list(results[:limit])
+        next_cursor = (
+            self._encode_attack_cursor(
+                cursor=AttackResultsKeysetCursor.from_attack_result(page_results[-1]),
+                fingerprint=filter_fingerprint,
+            )
+            if has_next_page and page_results
+            else None
         )
-
-        # Paginate on the lightweight list first
-        page_results, has_more = self._paginate_attack_results(items=filtered, cursor=cursor, limit=limit)
-        next_cursor = page_results[-1].attack_result_id if has_more and page_results else None
 
         # Phase 2: Lightweight DB aggregation for the page only.
         # Collect conversation IDs we care about (main + pruned, not adversarial).
@@ -196,7 +221,7 @@ class AttackService:
 
         return AttackListResponse(
             items=page,
-            pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
+            pagination=PaginationInfo(limit=limit, has_more=has_next_page, next_cursor=next_cursor, prev_cursor=cursor),
         )
 
     async def get_attack_options_async(self) -> list[str]:
@@ -204,7 +229,7 @@ class AttackService:
         Get all unique attack type names from stored attack results.
 
         Delegates to the memory layer which extracts distinct class_name
-        values from the attack_identifier JSON column via SQL.
+        values from the atomic_attack_identifier JSON column via SQL.
 
         Returns:
             Sorted list of unique attack type names.
@@ -216,7 +241,7 @@ class AttackService:
         Get all unique converter type names used across attack results.
 
         Delegates to the memory layer which extracts distinct converter
-        type names from the attack_identifier JSON column via SQL.
+        type names from the atomic_attack_identifier JSON column via SQL.
 
         Returns:
             Sorted list of unique converter type names.
@@ -286,8 +311,8 @@ class AttackService:
         Creates an AttackResult with a new conversation_id.  When
         ``source_conversation_id`` and ``cutoff_index`` are provided the
         backend duplicates messages up to and including the cutoff turn,
-        applies the new labels, and maps assistant roles to
-        ``simulated_assistant`` so the branched context is inert.
+        stores the new labels on the attack result, and maps assistant roles
+        to ``simulated_assistant`` so the branched context is inert.
 
         Returns:
             CreateAttackResponse with the new attack's ID and creation time.
@@ -315,7 +340,6 @@ class AttackService:
             conversation_id = self._duplicate_conversation_up_to(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
-                labels_override=labels,
                 remap_assistant_to_simulated=True,
                 target_identifier=target_identifier,
             )
@@ -334,9 +358,9 @@ class AttackService:
                 ),
             ),
             outcome=AttackOutcome.UNDETERMINED,
+            timestamp=now,
             metadata={
                 "created_at": now.isoformat(),
-                "updated_at": now.isoformat(),
             },
             labels=labels,
         )
@@ -344,12 +368,21 @@ class AttackService:
         # Store in memory
         self._memory.add_attack_results_to_memory(attack_results=[attack_result])
 
-        # Store prepended conversation messages if provided
-        if request.prepended_conversation:
+        # Store prepended conversation messages if provided. A system_prompt is lowered to a
+        # single system-role message at the front, composing with any prepended_conversation.
+        prepended = list(request.prepended_conversation or [])
+        if request.system_prompt:
+            prepended.insert(
+                0,
+                PrependedMessageRequest(
+                    role="system",
+                    pieces=[MessagePieceRequest(original_value=request.system_prompt)],
+                ),
+            )
+        if prepended:
             await self._store_prepended_messages_async(
                 conversation_id=conversation_id,
-                prepended=request.prepended_conversation,
-                labels=labels,  # deprecated
+                prepended=prepended,
                 target_identifier=target_identifier,
             )
 
@@ -381,15 +414,11 @@ class AttackService:
         }
         new_outcome = outcome_map.get(request.outcome, AttackOutcome.UNDETERMINED)
 
-        ar = results[0]
-        updated_metadata = dict(ar.metadata) if ar.metadata else {}
-        updated_metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
-
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
             update_fields={
                 "outcome": new_outcome.value,
-                "attack_metadata": updated_metadata,
+                "timestamp": datetime.now(timezone.utc),
             },
         )
 
@@ -494,14 +523,11 @@ class AttackService:
         # Add to pruned_conversation_ids so user-created branches are visible in the GUI history panel.
         existing_pruned = ar.get_pruned_conversation_ids()
 
-        updated_metadata = dict(ar.metadata or {})
-        updated_metadata["updated_at"] = now.isoformat()
-
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
             update_fields={
                 "pruned_conversation_ids": existing_pruned + [new_conversation_id],
-                "attack_metadata": updated_metadata,
+                "timestamp": now,
             },
         )
 
@@ -557,8 +583,6 @@ class AttackService:
         updated_pruned.append(ar.conversation_id)
 
         now = datetime.now(timezone.utc)
-        updated_metadata = dict(ar.metadata or {})
-        updated_metadata["updated_at"] = now.isoformat()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
@@ -566,7 +590,7 @@ class AttackService:
                 "conversation_id": target_conv_id,
                 "pruned_conversation_ids": updated_pruned if updated_pruned else None,
                 "adversarial_chat_conversation_ids": updated_adversarial if updated_adversarial else None,
-                "attack_metadata": updated_metadata,
+                "timestamp": now,
             },
         )
 
@@ -595,7 +619,7 @@ class AttackService:
         main_conversation_id = ar.conversation_id
 
         self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
-        self._validate_operator_match(conversation_id=main_conversation_id, request=request)
+        self._validate_operator_match(attack_result=ar, request=request)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -614,29 +638,38 @@ class AttackService:
         existing = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
         sequence = max((p.sequence for p in existing), default=-1) + 1
 
-        attack_labels = self._resolve_labels(
-            conversation_id=msg_conversation_id,
-            main_conversation_id=main_conversation_id,
-            existing_pieces=existing,
-            request_labels=request.labels,
-        )
-
         if request.send:
             assert target_registry_name is not None  # validated above
-            await self._send_and_store_message_async(
-                conversation_id=msg_conversation_id,
-                target_registry_name=target_registry_name,
-                request=request,
-                sequence=sequence,
-                labels=attack_labels,  # deprecated
-            )
+            try:
+                await self._send_and_store_message_async(
+                    conversation_id=msg_conversation_id,
+                    target_registry_name=target_registry_name,
+                    request=request,
+                    sequence=sequence,
+                )
+            except Exception:
+                # PromptNormalizer persists a full error piece (response_error +
+                # traceback) to memory *before* re-raising. Surface that stored
+                # piece inline so the send (POST) response matches the
+                # conversation-reload (GET) view instead of collapsing to a
+                # generic 500. If no new error piece was stored (the failure
+                # happened before the send, e.g. target lookup), re-raise so the
+                # route still reports a real error.
+                prior_ids = {p.id for p in existing}
+                current_pieces = self._memory.get_message_pieces(conversation_id=msg_conversation_id)
+                if not any(p.id not in prior_ids and p.has_error() for p in current_pieces):
+                    raise
+                logger.exception(
+                    "Send failed for attack '%s' conversation '%s'; surfacing stored error piece.",
+                    attack_result_id,
+                    msg_conversation_id,
+                )
         else:
             existing_metadata = self._memory._get_conversation(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                labels=attack_labels,  # deprecated
                 target_identifier=existing_metadata.target_identifier if existing_metadata else None,
             )
 
@@ -677,82 +710,45 @@ class AttackService:
             return
 
         request_target_id = request_target_obj.get_identifier()
-        if (
-            stored_target_id.class_name != request_target_id.class_name
-            or (stored_target_id.params.get("endpoint") or "") != (request_target_id.params.get("endpoint") or "")
-            or (stored_target_id.params.get("model_name") or "") != (request_target_id.params.get("model_name") or "")
-        ):
+        if stored_target_id.hash != request_target_id.hash:
             raise ValueError(
-                f"Target mismatch: attack was created with "
-                f"{stored_target_id.class_name}/{stored_target_id.params.get('model_name')} "
-                f"but request uses "
-                f"{request_target_id.class_name}/{request_target_id.params.get('model_name')}. "
+                f"Target mismatch: attack was created with {stored_target_id.unique_name} "
+                f"but request uses {request_target_id.unique_name}. "
                 f"Create a new attack to use a different target."
             )
 
-    def _validate_operator_match(self, *, conversation_id: str, request: AddMessageRequest) -> None:
+    def _validate_operator_match(self, *, attack_result: AttackResult, request: AddMessageRequest) -> None:
         """
-        Validate that the request operator matches existing messages' operator.
+        Validate that the request operator matches the attack result's operator.
 
         Raises:
-            ValueError: If the operator in the request doesn't match existing messages.
+            ValueError: If the operator in the request doesn't match the attack result.
         """
         if not request.labels:
             return
 
-        existing_pieces = self._memory.get_message_pieces(conversation_id=conversation_id)
-        existing_operator = next(
-            (p.labels.get("operator") for p in existing_pieces if p.labels and p.labels.get("operator")),
-            None,
-        )
-        if not existing_operator:
+        attack_operator = attack_result.labels.get("operator")
+        if not attack_operator:
             return
 
         request_operator = request.labels.get("operator")
-        if request_operator and request_operator != existing_operator:
+        if request_operator and request_operator != attack_operator:
             raise ValueError(
-                f"Operator mismatch: attack belongs to operator '{existing_operator}' "
+                f"Operator mismatch: attack belongs to operator '{attack_operator}' "
                 f"but request is from '{request_operator}'. "
                 f"Create a new attack to continue."
             )
-
-    def _resolve_labels(
-        self,
-        *,
-        conversation_id: str,
-        main_conversation_id: str,
-        existing_pieces: Sequence[MessagePiece],
-        request_labels: dict[str, str] | None,
-    ) -> dict[str, str]:
-        """
-        Resolve labels for a new message by inheriting from existing pieces.
-
-        Tries the target conversation first, falls back to the main conversation,
-        then falls back to labels provided explicitly in the request.
-
-        Returns:
-            dict[str, str]: Resolved labels for the new message.
-        """
-        attack_labels: dict[str, str] | None = next(
-            (p.labels for p in existing_pieces if p.labels and len(p.labels) > 0), None
-        )
-        if not attack_labels:
-            main_pieces = self._memory.get_message_pieces(conversation_id=main_conversation_id)
-            attack_labels = next((p.labels for p in main_pieces if p.labels and len(p.labels) > 0), None)
-        if not attack_labels:
-            attack_labels = dict(request_labels) if request_labels else {}
-        return attack_labels
 
     async def _update_attack_after_message_async(
         self, *, attack_result_id: str, ar: AttackResult, request: AddMessageRequest
     ) -> None:
         """
-        Update attack metadata and converter tracking after a message is added.
-        """
-        updated_metadata = dict(ar.metadata or {})
-        updated_metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+        Update attack recency and converter tracking after a message is added.
 
-        update_fields: dict[str, Any] = {"attack_metadata": updated_metadata}
+        Bumps the attack's ``timestamp`` column (the single indexed recency key) so the edited
+        conversation re-floats to the top of the History view.
+        """
+        update_fields: dict[str, Any] = {"timestamp": datetime.now(timezone.utc)}
 
         if request.converter_ids:
             converter_objs = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
@@ -851,28 +847,137 @@ class AttackService:
     # Private Helper Methods - Pagination
     # ========================================================================
 
-    def _paginate_attack_results(
-        self, *, items: list[AttackResult], cursor: str | None, limit: int
-    ) -> tuple[list[AttackResult], bool]:
+    @staticmethod
+    def _attack_filter_fingerprint(
+        *,
+        attack_types: Sequence[str] | None = None,
+        converter_types: Sequence[str] | None = None,
+        converter_types_match: str = "all",
+        has_converters: bool | None = None,
+        outcome: str | None = None,
+        labels: dict[str, str | Sequence[str]] | None = None,
+        min_turns: int | None = None,
+        max_turns: int | None = None,
+    ) -> str:
         """
-        Apply cursor-based pagination over AttackResult objects.
+        Compute a stable, opaque fingerprint of the filters that define a result set.
 
-        Operates on lightweight AttackResult objects before pieces are fetched,
-        so only the final page incurs per-attack piece queries.
+        A pagination cursor is only meaningful for the exact filter set it was generated
+        against. Embedding this fingerprint in the cursor lets ``_decode_attack_cursor``
+        detect a cursor minted for a different filter set and fall back to the first page,
+        instead of seeking with a keyset anchor that belongs to a different result set.
+        Sequence and label filters are order-normalized so a semantically identical filter
+        set always fingerprints the same regardless of argument order.
 
         Returns:
-            Tuple of (paginated items, has_more flag).
+            A short hex digest that is stable for a given set of filter values.
         """
-        start_idx = 0
-        if cursor:
-            for i, item in enumerate(items):
-                if item.attack_result_id == cursor:
-                    start_idx = i + 1
-                    break
 
-        page = items[start_idx : start_idx + limit]
-        has_more = len(items) > start_idx + limit
-        return page, has_more
+        def _norm_seq(values: Sequence[str] | None) -> list[str] | None:
+            return sorted(str(v) for v in values) if values else None
+
+        def _norm_labels(
+            raw: dict[str, str | Sequence[str]] | None,
+        ) -> dict[str, str | list[str]] | None:
+            if not raw:
+                return None
+            normalized: dict[str, str | list[str]] = {}
+            for key in sorted(raw):
+                value = raw[key]
+                if isinstance(value, str):
+                    normalized[key] = value
+                    continue
+                # Drop empty sequences: get_attack_results treats an empty-sequence label as
+                # "no filter" (see effective_labels), so including it here would fingerprint
+                # a request differently from the equivalent no-op filter and spuriously reset
+                # pagination to the first page.
+                candidates = sorted(str(v) for v in value)
+                if not candidates:
+                    continue
+                normalized[key] = candidates
+            return normalized or None
+
+        payload = {
+            "attack_types": _norm_seq(attack_types),
+            "converter_types": _norm_seq(converter_types),
+            "converter_types_match": converter_types_match,
+            "has_converters": has_converters,
+            "outcome": outcome,
+            "labels": _norm_labels(labels),
+            "min_turns": min_turns,
+            "max_turns": max_turns,
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def _encode_attack_cursor(*, cursor: AttackResultsKeysetCursor, fingerprint: str) -> str:
+        """
+        Encode a keyset anchor and its filter fingerprint into an opaque pagination cursor.
+
+        The anchor's timestamp can contain ``.``/``:``/``-`` (ISO timestamps), so the payload
+        is JSON-serialized and base64url-encoded rather than joined with a delimiter, keeping
+        the cursor an unambiguous opaque token for ``_decode_attack_cursor``.
+
+        Returns:
+            An opaque base64url cursor string encoding ``{fingerprint, timestamp,
+            attack_result_id}``.
+        """
+        payload = {
+            "f": fingerprint,
+            "t": cursor.timestamp.isoformat(),
+            "i": cursor.attack_result_id,
+        }
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_attack_cursor(*, cursor: str | None, fingerprint: str) -> AttackResultsKeysetCursor | None:
+        """
+        Decode the opaque list-attacks cursor into a keyset (seek) anchor.
+
+        The cursor encodes the previous page's last-row timestamp anchor together with a
+        fingerprint of the filter set it was generated for (see ``_attack_filter_fingerprint``).
+        A cursor is honored only when its fingerprint matches the current request's filters;
+        malformed, legacy (offset/attack-result-id/recency-string), or filter-mismatched cursors
+        fall back to the first page (``None``) so a stale cursor degrades gracefully instead of
+        raising or seeking within the wrong result set.
+
+        Returns:
+            The decoded ``AttackResultsKeysetCursor``, or ``None`` to start at the first page.
+        """
+        if not cursor:
+            return None
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        except (binascii.Error, ValueError, TypeError):
+            return None
+        if not isinstance(payload, dict) or payload.get("f") != fingerprint:
+            return None
+        raw_timestamp = payload.get("t")
+        attack_result_id = payload.get("i")
+        if not isinstance(raw_timestamp, str) or not isinstance(attack_result_id, str):
+            return None
+        try:
+            timestamp = datetime.fromisoformat(raw_timestamp)
+            uuid.UUID(attack_result_id)
+        except ValueError:
+            return None
+        if timestamp.tzinfo is None:
+            # Service-minted cursors always carry an aware (UTC) timestamp (AttackResult.timestamp
+            # is timezone-aware). A naive timestamp means a crafted or corrupted cursor whose anchor
+            # would bind inconsistently against the aware timestamp column, so restart at page one.
+            return None
+        # Canonicalize to UTC so the tie-break comparison matches the UTC-normalized timestamp
+        # column regardless of the offset a crafted cursor encodes (service cursors are already UTC).
+        try:
+            timestamp = timestamp.astimezone(timezone.utc)
+        except (OverflowError, OSError):
+            # A crafted cursor near datetime's min/max with a large UTC offset overflows the
+            # representable range when shifted to UTC; treat it as malformed and restart at page one.
+            return None
+        return AttackResultsKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
 
     # ========================================================================
     # Private Helper Methods - Duplicate / Branch
@@ -883,7 +988,6 @@ class AttackService:
         *,
         source_conversation_id: str,
         cutoff_index: int,
-        labels_override: dict[str, str] | None = None,
         remap_assistant_to_simulated: bool = False,
         target_identifier: ComponentIdentifier | None = None,
     ) -> str:
@@ -897,9 +1001,6 @@ class AttackService:
         Args:
             source_conversation_id: The conversation to copy from.
             cutoff_index: Include messages with sequence <= cutoff_index.
-            labels_override: When provided, the duplicated pieces' labels are
-                replaced with these values.  Used when branching into a new
-                attack that belongs to a different operator.
             remap_assistant_to_simulated: When True, pieces with role
                 ``assistant`` are changed to ``simulated_assistant`` so the
                 branched context is inert and won't confuse the target.
@@ -917,11 +1018,6 @@ class AttackService:
 
         # Apply optional overrides to the fresh pieces before persisting
         for piece in all_pieces:
-            if labels_override is not None:
-                # TODO: ``labels`` is slated to move from MessagePiece onto
-                # AttackResult. Revisit this once that lands so we set labels
-                # on the attack result instead of mutating each piece.
-                piece.labels = dict(labels_override)
             if remap_assistant_to_simulated and piece.api_role == "assistant":
                 piece.role = "simulated_assistant"
 
@@ -1020,7 +1116,6 @@ class AttackService:
         *,
         conversation_id: str,
         prepended: list[Any],
-        labels: dict[str, str] | None = None,  # deprecated
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store prepended conversation messages in memory."""
@@ -1036,7 +1131,6 @@ class AttackService:
                     role=msg.role,
                     conversation_id=conversation_id,
                     sequence=seq,
-                    labels=labels,  # deprecated
                 )
                 self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -1047,7 +1141,6 @@ class AttackService:
         target_registry_name: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,  # deprecated
     ) -> None:
         """Send message to target via normalizer and store response."""
         target_obj = get_target_service().get_target_object(target_registry_name=target_registry_name)
@@ -1062,7 +1155,6 @@ class AttackService:
             request=request,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,  # deprecated
         )
 
         converter_configs = self._get_converter_configs(request)
@@ -1073,7 +1165,6 @@ class AttackService:
             target=target_obj,
             conversation_id=conversation_id,
             request_converter_configurations=converter_configs,
-            labels=labels,
         )
         # PromptNormalizer stores both request and response in memory automatically
 
@@ -1083,7 +1174,6 @@ class AttackService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        labels: dict[str, str] | None = None,  # deprecated
         target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
@@ -1097,7 +1187,6 @@ class AttackService:
                 role=request.role,
                 conversation_id=conversation_id,
                 sequence=sequence,
-                labels=labels,  # deprecated
             )
             self._memory.add_message_pieces_to_memory(message_pieces=[piece])
 
@@ -1140,19 +1229,19 @@ class AttackService:
                 vp.prompt_metadata["video_id"] = video_id
                 return
 
-    def _get_converter_configs(self, request: AddMessageRequest) -> list[PromptConverterConfiguration]:
+    def _get_converter_configs(self, request: AddMessageRequest) -> list[ConverterConfiguration]:
         """
         Get converter configurations if needed.
 
         Returns:
-            List of PromptConverterConfiguration for the converters.
+            List of ConverterConfiguration for the converters.
         """
         has_preconverted = any(p.converted_value is not None for p in request.pieces)
         if has_preconverted or not request.converter_ids:
             return []
 
         converters = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
-        return PromptConverterConfiguration.from_converters(converters=converters)
+        return ConverterConfiguration.from_converters(converters=converters)
 
 
 # ============================================================================

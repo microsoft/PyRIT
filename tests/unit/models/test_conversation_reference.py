@@ -88,16 +88,3 @@ def test_model_dump_validate_roundtrip():
     payload = original.model_dump(mode="json")
     roundtripped = ConversationReference.model_validate(payload)
     assert original.model_dump(mode="json") == roundtripped.model_dump(mode="json")
-
-
-def test_to_dict_from_dict_deprecated_wrappers_still_work():
-    original = ConversationReference(
-        conversation_id="conv-123",
-        conversation_type=ConversationType.ADVERSARIAL,
-        description="main adversarial conversation",
-    )
-    with pytest.warns(DeprecationWarning):
-        payload = original.to_dict()
-    with pytest.warns(DeprecationWarning):
-        roundtripped = ConversationReference.from_dict(payload)
-    assert original.model_dump(mode="json") == roundtripped.model_dump(mode="json")

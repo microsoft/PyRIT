@@ -640,19 +640,6 @@ class TestCopilotAuthenticatorGetClaims:
             claims = await authenticator.get_claims_async()
             assert claims == {}
 
-    async def test_get_claims_emits_deprecation_warning_and_delegates(self, mock_env_vars, mock_persistent_cache):
-        """Deprecated ``get_claims`` shim warns and forwards to ``get_claims_async``."""
-
-        with patch(
-            "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
-            return_value=mock_persistent_cache,
-        ):
-            authenticator = CopilotAuthenticator()
-            authenticator._current_claims = {"upn": "shim@example.com"}
-            with pytest.warns(DeprecationWarning, match="get_claims_async"):
-                claims = await authenticator.get_claims()
-            assert claims == {"upn": "shim@example.com"}
-
 
 class TestCopilotAuthenticatorPlaywrightIntegration:
     """Test Playwright browser automation (mocked)."""

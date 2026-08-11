@@ -3,7 +3,7 @@
 //
 // Deploys the CoPyRIT GUI as an Azure Container App with:
 // - Workload profiles environment with public ingress + optional IP restriction
-// - MSAL PKCE authentication (frontend) + FastAPI JWT middleware (backend)
+// - MSAL PKCE authentication (frontend) + Microsoft Graph-backed auth (backend)
 // - User-assigned managed identity for Azure SQL, ACR, Azure OpenAI, Key Vault
 // - Azure SQL (existing) via managed identity — no passwords
 // - Key Vault for secrets (referenced via ACA secretRef, not embedded)
@@ -50,7 +50,13 @@ param entraClientId string
 
 @description('Object ID of the Entra security group allowed to access the GUI')
 @metadata({ description: 'Find this in Azure Portal → Entra ID → Groups → your group → Object ID' })
+@minLength(1)
 param allowedGroupObjectIds string
+
+var normalizedAllowedGroupObjectIds = filter(
+  map(split(allowedGroupObjectIds, ','), groupId => trim(groupId)),
+  groupId => !empty(groupId)
+)
 
 @description('CIDR range allowed to reach the app (e.g., your corp VPN CIDR). Empty = no IP restriction, all traffic allowed.')
 param allowedCidr string = ''
@@ -469,7 +475,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'ENTRA_ALLOWED_GROUP_IDS'
-              value: allowedGroupObjectIds
+              value: join(normalizedAllowedGroupObjectIds, ',')
             }
             // OTel: point the SDK at the ACA managed agent (localhost sidecar)
             {
@@ -509,8 +515,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 // certificates on app registrations, making Easy Auth's OAuth authorization
 // code flow impossible. Instead, authentication is handled in-app using
 // MSAL with PKCE (public client flow) — no secrets needed.
-// The frontend uses @azure/msal-browser for login; the backend validates
-// JWTs from the Authorization header against Entra JWKS.
+// The frontend uses @azure/msal-browser to acquire a delegated Microsoft Graph
+// token; the backend validates it through trusted Graph endpoints and applies
+// local group-based authorization.
 // ============================================================================
 
 // ============================================================================

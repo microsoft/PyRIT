@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
@@ -98,20 +99,20 @@ Examples:
   pyrit_scan --list-datasets
 
   # Run single-turn cyber attacks against a target
-  pyrit_scan airt.cyber --target openai_chat --strategies single_turn
+  pyrit_scan airt.cyber --target openai_chat --techniques single_turn
 
   # Run rapid response with specific datasets and concurrency
   pyrit_scan airt.rapid_response --target openai_chat
-    --strategies role_play --dataset-names airt_hate
+    --techniques role_play_movie_script --dataset-names airt_hate
     --max-dataset-size 5 --max-concurrency 4
 
   # Attach registered converters to a technique (repeatable, applied in order)
   pyrit_scan airt.rapid_response --target openai_chat
-    --strategies role_play:converter.translation_spanish:converter.leetspeak
+    --techniques role_play_movie_script:converter.translation_spanish:converter.leetspeak
 
   # Run multi-turn red team agent with labels for tracking
   pyrit_scan airt.red_team_agent --target openai_chat
-    --strategies crescendo
+    --techniques crescendo
     --memory-labels '{"experiment":"baseline"}'
 
   # Register a custom initializer from a Python script
@@ -123,6 +124,16 @@ Examples:
   # Stop the server
   pyrit_scan --stop-server
 """
+
+
+def _positive_finite_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a number greater than 0, got {value!r}") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError(f"expected a finite number greater than 0, got {value!r}")
+    return parsed
 
 
 def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
@@ -158,6 +169,13 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         "--stop-server",
         action="store_true",
         help="Stop the backend server and exit",
+    )
+    server_group.add_argument(
+        "--startup-timeout",
+        type=_positive_finite_float,
+        default=None,
+        metavar="SECONDS",
+        help="Seconds to wait for a local backend to start (default: server.startup_timeout or 120)",
     )
     server_group.add_argument(
         "--config-file",
@@ -236,12 +254,12 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         help=ARG_HELP["initializers"],
     )
     run_group.add_argument(
-        "--strategies",
-        "-s",
+        "--techniques",
+        "-t",
         type=str,
         nargs="+",
-        dest="scenario_strategies",
-        help=ARG_HELP["scenario_strategies"],
+        dest="scenario_techniques",
+        help=ARG_HELP["scenario_techniques"],
     )
     run_group.add_argument(
         "--max-concurrency",
@@ -431,12 +449,12 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
     Returns:
         str | None: The server base URL, or ``None`` if unreachable.
     """
-    from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
-    from pyrit.cli._server_launcher import ServerLauncher
+    from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_settings
+    from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address
 
-    base_url = parsed_args.server_url
-    if base_url is None:
-        base_url = read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
+    server_settings = read_server_settings(config_file=parsed_args.config_file)
+    base_url = parsed_args.server_url or server_settings.url or DEFAULT_SERVER_URL
+    startup_timeout = getattr(parsed_args, "startup_timeout", None) or server_settings.startup_timeout
 
     # Probe existing server
     if await ServerLauncher.probe_health_async(base_url=base_url):
@@ -444,21 +462,24 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
 
     # Auto-start if requested
     if parsed_args.start_server:
-        # The launcher can only bind localhost:8000. If the user explicitly
-        # configured a different URL we can't honor it — refuse rather than
-        # silently start a server the user can't reach.
-        if base_url != DEFAULT_SERVER_URL:
+        local_address = parse_local_server_address(base_url=base_url)
+        if local_address is None:
             print(
                 f"Error: cannot --start-server because the configured server URL ({base_url}) "
-                f"does not match the launcher default ({DEFAULT_SERVER_URL}). "
-                "Either remove --server-url / the server.url config entry, "
-                "or start the backend manually with `pyrit_backend --host ... --port ...`.",
+                "is not a plain local HTTP URL. Use localhost or 127.0.0.1, "
+                "or start a remote backend separately.",
                 file=sys.stderr,
             )
             return None
+        host, port = local_address
         launcher = ServerLauncher()
         try:
-            return await launcher.start_async(config_file=parsed_args.config_file)
+            return await launcher.start_async(
+                host=host,
+                port=port,
+                config_file=parsed_args.config_file,
+                startup_timeout=startup_timeout,
+            )
         except RuntimeError as exc:
             print(f"Error: {exc}")
             return None
@@ -502,23 +523,28 @@ async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     Handle ``--stop-server``: probe, then terminate the listening process.
 
     Returns:
-        int: Exit code (always ``0``).
+        int: Zero when no server is running or shutdown succeeds; one otherwise.
     """
-    from urllib.parse import urlparse
-
-    from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
+    from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address, stop_server_on_port
 
     base_url = _resolve_configured_server_url(parsed_args=parsed_args)
+    local_address = parse_local_server_address(base_url=base_url)
+    if local_address is None:
+        print(f"Cannot stop non-local server {base_url}. Stop it on its host instead.", file=sys.stderr)
+        return 1
     if not await ServerLauncher.probe_health_async(base_url=base_url):
         print(f"No server running at {base_url}.")
         return 0
 
-    port = urlparse(base_url).port or 8000
-    if stop_server_on_port(port=port):
-        print(f"Server on port {port} stopped.")
-    else:
-        print(f"Server at {base_url} is running but could not identify the process.")
+    _, port = local_address
+    if not await asyncio.to_thread(stop_server_on_port, port=port):
+        print(f"Server at {base_url} is running but could not be stopped.")
         print(f"Find and kill it manually: look for a process listening on port {port}.")
+        return 1
+    if await ServerLauncher.probe_health_async(base_url=base_url):
+        print(f"Server process exited, but a healthy backend is still responding at {base_url}.")
+        return 1
+    print(f"Server on port {port} stopped.")
     return 0
 
 
@@ -643,8 +669,8 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScen
         if init_args:
             kwargs["initializer_args"] = init_args
 
-    if parsed_args.scenario_strategies:
-        kwargs["strategies"] = parsed_args.scenario_strategies
+    if parsed_args.scenario_techniques:
+        kwargs["techniques"] = parsed_args.scenario_techniques
     if parsed_args.max_concurrency is not None:
         kwargs["max_concurrency"] = parsed_args.max_concurrency
     if parsed_args.max_retries is not None:
@@ -669,7 +695,7 @@ async def _poll_until_terminal_async(
     *,
     client: Any,
     scenario_result_id: str,
-    total_strategies: int,
+    total_techniques: int,
 ) -> ScenarioRunSummary:
     """
     Poll the server until the run reaches a terminal status.
@@ -682,9 +708,11 @@ async def _poll_until_terminal_async(
 
     terminal_states = {ScenarioRunState.COMPLETED, ScenarioRunState.FAILED, ScenarioRunState.CANCELLED}
 
+    seen_retry_attack_ids: set[str] = set()
     while True:
         run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
-        _output.print_scenario_run_progress(run=run, total_strategies=total_strategies)
+        _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen_retry_attack_ids)
+        _output.print_scenario_run_progress(run=run, total_techniques=total_techniques)
         if run.status in terminal_states:
             return run
         await asyncio.sleep(0.5)
@@ -708,7 +736,7 @@ async def _run_scenario_async(
     scenario_name = parsed_args.scenario_name
     request = _build_run_request(parsed_args=parsed_args, scenario_name=scenario_name)
 
-    total_strategies = len(request.strategies or scenario_meta.all_strategies or [])
+    total_techniques = len(request.techniques or scenario_meta.all_techniques or [])
     print(f"\nRunning scenario: {scenario_name}")
     sys.stdout.flush()
 
@@ -724,7 +752,7 @@ async def _run_scenario_async(
         run = await _poll_until_terminal_async(
             client=client,
             scenario_result_id=scenario_result_id,
-            total_strategies=total_strategies,
+            total_techniques=total_techniques,
         )
     except KeyboardInterrupt:
         print("\n\nCancelling scenario run...")
@@ -864,12 +892,10 @@ def main(args: list[str] | None = None) -> int:
 
     logging.basicConfig(level=parsed_args.log_level)
 
-    # Surface a one-line deprecation when the layered config contains blocks
-    # the thin CLI no longer reads (e.g. `scenario:`). The server still honors them.
-    from pyrit.cli._config_reader import ConfigError, warn_on_client_ignored_blocks
+    from pyrit.cli._config_reader import ConfigError, validate_client_config
 
     try:
-        warn_on_client_ignored_blocks(config_file=parsed_args.config_file)
+        validate_client_config(config_file=parsed_args.config_file)
         return asyncio.run(_run_async(parsed_args=parsed_args))
     except ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)

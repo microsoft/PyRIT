@@ -1,4 +1,4 @@
-import React, { useState, useMemo, forwardRef } from 'react'
+import React, { useState, useMemo, forwardRef, useId } from 'react'
 import {
   Table,
   TableHeader,
@@ -242,6 +242,7 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
 
 export default function TargetTable({ targets, activeTarget, onSetActiveTarget }: TargetTableProps) {
   const styles = useTargetTableStyles()
+  const typeFilterId = useId()
   const [typeFilter, setTypeFilter] = useState('')
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
   // We use a Set of target_registry_name strings — when a name is in the set,
@@ -277,7 +278,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
     activeTarget?.target_registry_name === target.target_registry_name
 
   return (
-    <div className={styles.tableContainer}>
+    <div className={styles.tableContainer} data-testid="target-table-scroll-region">
       {activeTarget && (
         <Table aria-label="Active target" className={styles.table} style={{ marginBottom: '12px' }}>
           <TableBody>
@@ -289,6 +290,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {hasInnerTargets(activeTarget) && (
                     <Button
+                      className={styles.rowAction}
                       appearance="subtle"
                       size="small"
                       icon={expandedRows.has(activeTarget.target_registry_name) ? <ChevronDownRegular /> : <ChevronRightRegular />}
@@ -333,12 +335,15 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
       )}
 
       {targetTypes.length > 1 && (
-        <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Text size={200}>Filter by type:</Text>
+        <div className={styles.filterRow}>
+          <label htmlFor={typeFilterId}>
+            <Text size={200}>Filter by type:</Text>
+          </label>
           <Select
+            id={typeFilterId}
+            className={styles.filterSelect}
             value={typeFilter}
             onChange={(_, data) => setTypeFilter(data.value)}
-            style={{ minWidth: '200px' }}
           >
             <option value="">All types</option>
             {targetTypes.map(t => (
@@ -402,6 +407,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
               <React.Fragment key={target.target_registry_name}>
                 <TableRow
                   className={isActive(target) ? styles.activeRow : undefined}
+                  data-testid={`target-row-${target.target_registry_name}`}
                 >
                   <TableCell>
                     {isActive(target) ? (
@@ -410,6 +416,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                       </Badge>
                     ) : (
                       <Button
+                        className={styles.rowAction}
                         appearance="primary"
                         size="small"
                         onClick={() => onSetActiveTarget(target)}
@@ -423,6 +430,7 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                       {/* Chevron in the Type column keeps the action column aligned */}
                       {expandable && (
                         <Button
+                          className={styles.rowAction}
                           appearance="subtle"
                           size="small"
                           icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
