@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+import asyncio
 import io
 import logging
+import os
 import pathlib
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -13,6 +15,8 @@ from pyrit.common.apply_defaults import reset_default_values
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 
 if TYPE_CHECKING:
+    from azure.keyvault.secrets.aio import SecretClient
+
     from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
@@ -22,8 +26,17 @@ SQLITE = "SQLite"
 AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 
+_AKV_REFERENCE_PREFIXES = frozenset({"akv", "kv", "azure_key_vault", "env_akv_ref"})
+_MAX_REFERENCE_DEPTH = 10
+_MAX_UNIQUE_SECRET_REFERENCES = 100
 
-def _load_environment_files(env_files: Sequence[pathlib.Path] | None, *, silent: bool = False) -> None:
+
+def _load_environment_files(
+    env_files: Sequence[pathlib.Path] | None,
+    *,
+    silent: bool = False,
+    include_default_base: bool = True,
+) -> bool:
     """
     Load environment files in the order they are provided.
     Later files override values from earlier files.
@@ -33,6 +46,11 @@ def _load_environment_files(env_files: Sequence[pathlib.Path] | None, *, silent:
             .env and .env.local from PyRIT home directory (only if they exist).
         silent: If True, suppresses print statements about environment file loading.
             Defaults to False.
+        include_default_base: If False and env_files is None, skips the default
+            .env file while still loading .env.local. Defaults to True.
+
+    Returns:
+        True if at least one environment file was loaded, otherwise False.
 
     Raises:
         ValueError: If any provided env_files do not exist.
@@ -51,7 +69,7 @@ def _load_environment_files(env_files: Sequence[pathlib.Path] | None, *, silent:
         base_file = path.CONFIGURATION_DIRECTORY_PATH / ".env"
         local_file = path.CONFIGURATION_DIRECTORY_PATH / ".env.local"
 
-        if base_file.exists():
+        if include_default_base and base_file.exists():
             default_files.append(base_file)
         if local_file.exists():
             default_files.append(local_file)
@@ -63,7 +81,7 @@ def _load_environment_files(env_files: Sequence[pathlib.Path] | None, *, silent:
                 )
             else:
                 _print_msg(
-                    "No default environment files found. Using system environment variables only.",
+                    "No default environment files found.",
                     quiet=silent,
                     log=True,
                 )
@@ -74,6 +92,8 @@ def _load_environment_files(env_files: Sequence[pathlib.Path] | None, *, silent:
         dotenv.load_dotenv(env_file, override=True, interpolate=True)
         if not silent:
             _print_msg(f"Loaded environment file: {env_file}", quiet=silent, log=True)
+
+    return bool(env_files)
 
 
 def _print_msg(message: str, quiet: bool, log: bool) -> None:
@@ -89,6 +109,41 @@ def _print_msg(message: str, quiet: bool, log: bool) -> None:
         print(message)
     if log:
         logger.info(message)
+
+
+def _warn_about_akv_environment_files(
+    env_files: Sequence[pathlib.Path] | None,
+    *,
+    silent: bool = False,
+) -> None:
+    """Warn when local environment files coexist with an AKV environment source."""
+    base_file = path.CONFIGURATION_DIRECTORY_PATH / ".env"
+    local_file = path.CONFIGURATION_DIRECTORY_PATH / ".env.local"
+    messages: list[str] = []
+
+    if base_file.exists():
+        messages.append(f"{base_file} exists and will be ignored because Key Vault supplies the base environment")
+
+    if local_file.exists():
+        if env_files is None:
+            messages.append(f"{local_file} will load after Key Vault and override matching values")
+        else:
+            messages.append(f"{local_file} exists but will be ignored because env_files was explicitly configured")
+
+    if env_files:
+        messages.append(f"explicit env_files will load after Key Vault and override matching values: {list(env_files)}")
+
+    if not messages:
+        return
+
+    message = (
+        "env_akv_ref is configured, but local environment files were also found:\n- "
+        + "\n- ".join(messages)
+        + "\nConfirm that this precedence is intentional."
+    )
+    if not silent:
+        print(f"WARNING: {message}")
+    logger.warning(message)
 
 
 def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
@@ -120,38 +175,172 @@ def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
 
 async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool = False) -> None:
     """
-    Load environment variables from Azure Key Vault secrets.
+    Load environment variables from an Azure Key Vault secret.
 
-    Each secret's value is treated as the full contents of a ``.env`` file and
-    parsed accordingly. Later secrets override values from earlier ones.
+    The first secret URL identifies the root environment document. Additional
+    URLs are ignored until the configuration supports labeled references.
 
     Authentication uses ``DefaultAzureCredential``, which silently tries managed
     identity, Azure CLI, VS Code credentials, etc., and falls back to interactive
     browser authentication when running locally.
 
     Args:
-        secret_urls (Sequence[str]): Sequence of AKV secret URLs to load, each in
-            the format ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
+        secret_urls (Sequence[str]): Sequence of AKV secret URLs. The first URL
+            must use the format ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
         silent (bool): If True, suppresses print statements. Defaults to False.
 
     Raises:
         ImportError: If ``azure-keyvault-secrets`` is not installed.
-        ValueError: If a secret URL is malformed.
+        ValueError: If no root secret is configured, the root URL is malformed,
+            or the environment document cannot be fully resolved.
     """
     if not secret_urls:
-        return
+        raise ValueError("At least one env_akv_ref URL is required to load an environment document.")
+
     from azure.identity.aio import DefaultAzureCredential
     from azure.keyvault.secrets.aio import SecretClient
 
-    credential = DefaultAzureCredential()
-    for secret_url in secret_urls:
-        _print_msg(f"Loading environment from AKV secret: {secret_url}", quiet=silent, log=True)
-        vault_url, secret_name, secret_version = _parse_akv_secret_url(secret_url)
-        client = SecretClient(vault_url=vault_url, credential=credential)
-        secret = await client.get_secret(secret_name, version=secret_version)
-        if secret.value:
-            dotenv.load_dotenv(stream=io.StringIO(secret.value), override=True)
-            _print_msg(f"Loaded environment from AKV secret: {secret_url}", quiet=silent, log=True)
+    secret_url = secret_urls[0]
+    if len(secret_urls) > 1:
+        _print_msg(
+            "Multiple env_akv_ref values were provided; using the first as the root environment document.",
+            quiet=silent,
+            log=True,
+        )
+
+    _print_msg(f"Loading environment from AKV secret: {secret_url}", quiet=silent, log=True)
+    vault_url, secret_name, secret_version = _parse_akv_secret_url(secret_url)
+    ambient_environment = dict(os.environ)
+    async with DefaultAzureCredential() as credential:
+        async with SecretClient(vault_url=vault_url, credential=credential) as client:
+            secret = await client.get_secret(secret_name, version=secret_version)
+
+            if not secret.value:
+                raise ValueError(f"AKV environment secret has no value: {secret_url}")
+
+            parsed_environment = dotenv.dotenv_values(stream=io.StringIO(secret.value), interpolate=True)
+            if not parsed_environment:
+                raise ValueError(f"AKV environment secret contains no environment entries: {secret_url}")
+
+            missing_values = [name for name, value in parsed_environment.items() if value is None]
+            if missing_values:
+                raise ValueError(
+                    "AKV environment document contains variables without values: " + ", ".join(missing_values)
+                )
+
+            resolved_secrets: dict[str, str] = {}
+            resolved_environment: dict[str, str] = {}
+            for variable_name, value in parsed_environment.items():
+                if value is None:
+                    continue
+                resolved_environment[variable_name] = await _resolve_environment_value_async(
+                    value=value,
+                    variable_name=variable_name,
+                    secret_client=client,
+                    ambient_environment=ambient_environment,
+                    resolved_secrets=resolved_secrets,
+                )
+
+    os.environ.update(resolved_environment)
+
+    _print_msg(f"Loaded environment from AKV secret: {secret_url}", quiet=silent, log=True)
+
+
+def _parse_environment_value_reference(value: str) -> tuple[str, str] | None:
+    """
+    Parse an exact whole-value environment or Key Vault reference.
+
+    Returns:
+        The normalized reference type and target, or None for a literal value.
+    """
+    prefix, separator, target = value.partition(":")
+    if not separator:
+        return None
+    if prefix == "env":
+        return "env", target.strip()
+    if prefix in _AKV_REFERENCE_PREFIXES:
+        return "akv", target.strip()
+    if prefix == "literal":
+        return "literal", target
+    return None
+
+
+def _validate_akv_secret_name(*, secret_name: str, variable_name: str) -> None:
+    if not secret_name or len(secret_name) > 127 or any(not char.isalnum() and char != "-" for char in secret_name):
+        raise ValueError(
+            f"Invalid same-vault secret name '{secret_name}' referenced by environment variable '{variable_name}'. "
+            "Secret names must contain only letters, numbers, and hyphens."
+        )
+
+
+async def _resolve_environment_value_async(
+    *,
+    value: str,
+    variable_name: str,
+    secret_client: "SecretClient",
+    ambient_environment: dict[str, str],
+    resolved_secrets: dict[str, str],
+    reference_path: tuple[str, ...] = (),
+) -> str:
+    reference = _parse_environment_value_reference(value)
+    if reference is None:
+        return value
+
+    reference_type, target = reference
+    if reference_type == "literal":
+        return target
+    if not target:
+        raise ValueError(f"Empty {reference_type} reference for environment variable '{variable_name}'.")
+    if len(reference_path) >= _MAX_REFERENCE_DEPTH:
+        raise ValueError(
+            f"Environment reference depth exceeded {_MAX_REFERENCE_DEPTH} while resolving '{variable_name}'."
+        )
+
+    normalized_target = target if reference_type == "env" else target.casefold()
+    reference_token = f"{reference_type}:{normalized_target}"
+    if reference_token in reference_path:
+        cycle = " -> ".join((*reference_path, reference_token))
+        raise ValueError(f"Environment reference cycle detected while resolving '{variable_name}': {cycle}")
+    next_path = (*reference_path, reference_token)
+
+    if reference_type == "env":
+        if target not in ambient_environment:
+            raise ValueError(
+                f"Environment variable '{target}' referenced by '{variable_name}' "
+                "is not set in the ambient environment."
+            )
+        return await _resolve_environment_value_async(
+            value=ambient_environment[target],
+            variable_name=variable_name,
+            secret_client=secret_client,
+            ambient_environment=ambient_environment,
+            resolved_secrets=resolved_secrets,
+            reference_path=next_path,
+        )
+
+    _validate_akv_secret_name(secret_name=target, variable_name=variable_name)
+    secret_cache_key = target.casefold()
+    if secret_cache_key in resolved_secrets:
+        return resolved_secrets[secret_cache_key]
+    if len(resolved_secrets) >= _MAX_UNIQUE_SECRET_REFERENCES:
+        raise ValueError(
+            f"Environment secret reference limit of {_MAX_UNIQUE_SECRET_REFERENCES} exceeded while resolving "
+            f"'{variable_name}'."
+        )
+
+    secret = await secret_client.get_secret(target)
+    if secret.value is None:
+        raise ValueError(f"AKV secret '{target}' referenced by environment variable '{variable_name}' has no value.")
+    resolved_value = await _resolve_environment_value_async(
+        value=secret.value,
+        variable_name=variable_name,
+        secret_client=secret_client,
+        ambient_environment=ambient_environment,
+        resolved_secrets=resolved_secrets,
+        reference_path=next_path,
+    )
+    resolved_secrets[secret_cache_key] = resolved_value
+    return resolved_value
 
 
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
@@ -237,12 +426,35 @@ async def initialize_pyrit_async(
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
-        ValueError: If an unsupported memory_db_type is provided or if env_files contains non-existent files.
+        ValueError: If an unsupported memory_db_type is provided, env_files contains non-existent files,
+            or neither env_akv_ref nor an environment file is available.
     """
     if env_akv_ref:
+        await asyncio.to_thread(
+            _warn_about_akv_environment_files,
+            env_files=env_files,
+            silent=silent,
+        )
         await _load_env_from_akv_async(secret_urls=env_akv_ref, silent=silent)
 
-    _load_environment_files(env_files=env_files, silent=silent)
+        # PR review decision: .env.local and explicit files currently override the Key Vault document.
+        # The default .env is always skipped because Key Vault supplies the base environment.
+        await asyncio.to_thread(
+            _load_environment_files,
+            env_files=env_files,
+            silent=silent,
+            include_default_base=False,
+        )
+    else:
+        loaded_local_file = await asyncio.to_thread(
+            _load_environment_files,
+            env_files=env_files,
+            silent=silent,
+        )
+        if not loaded_local_file:
+            raise ValueError(
+                "No environment source found. Configure env_akv_ref or provide at least one .env or .env.local file."
+            )
 
     # Reset all default values before executing initialization scripts
     # This ensures a clean state for each initialization

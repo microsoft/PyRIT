@@ -97,9 +97,17 @@ operation: op_trash_panda
 # Azure Key Vault Environment References
 # ---------------------------------------
 # List of AKV secret URLs to load during initialization.
-# Each secret's value must be the full contents of a .env file.
-# Loaded after env_files, so AKV secrets take precedence.
+# The first secret's value must be the full contents of a .env file.
+# Values in that document may reference ambient variables with env:NAME or
+# scalar secrets in the same vault with kv:SECRET_NAME.
+# Additional entries are currently ignored pending support for labeled references.
+# The AKV document replaces the default ~/.pyrit/.env source. Explicit env_files
+# and the default ~/.pyrit/.env.local are loaded afterward and take precedence.
+# PyRIT emits a warning when these local files coexist with env_akv_ref so stale
+# configuration cannot silently mask or be mistaken for the Key Vault document.
 # Authentication uses DefaultAzureCredential (managed identity, Azure CLI, etc.).
+# If env_akv_ref is omitted, at least one configured or default environment file
+# must exist. System environment variables remain available but are not a source by themselves.
 #
 # Requires: pip install azure-keyvault-secrets
 #

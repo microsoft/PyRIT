@@ -32,25 +32,33 @@ When PyRIT initializes, environment variables are loaded in a specific order. **
 
 ```{mermaid}
 flowchart LR
-    A["1. System Environment"] --> B{"env_files in .pyrit_conf?"}
-    B -->|No| C["2. ~/.pyrit/.env"]
-    C --> D["3. ~/.pyrit/.env.local"]
-    B -->|Yes| E["2. Your specified files (in order)"]
+  A["1. System Environment"] --> B{"env_akv_ref configured?"}
+  B -->|Yes| C["2. First AKV secret"]
+  B -->|No| D["2. ~/.pyrit/.env"]
+  C --> E["3. Explicit env_files or ~/.pyrit/.env.local"]
+  D --> F["3. ~/.pyrit/.env.local"]
 ```
 
-**Default behavior** (no `env_files` field in `.pyrit_conf`):
+System environment variables are always the baseline, but initialization requires either an AKV root or at least one environment file. A system-environment-only configuration is not considered a complete source.
+
+**Default file behavior** (no `env_akv_ref` or `env_files` field in `.pyrit_conf`):
 
 | Priority | Source | Description |
-|----------|--------|-------------|
+| ---------- | -------- | ------------- |
 | Lowest | System environment variables | Always loaded as the baseline |
 | Medium | `~/.pyrit/.env` | Default config file (loaded if it exists) |
 | Highest | `~/.pyrit/.env.local` | Local overrides (loaded if it exists) |
 
-**Custom behavior** (with `env_files` field): Only your specified files are loaded, in order. Default paths are completely ignored.
+**AKV behavior** (with `env_akv_ref`): The first referenced secret replaces `~/.pyrit/.env` as the root document. `~/.pyrit/.env.local` is loaded afterward if present. Additional AKV entries are currently ignored pending support for labeled references.
+
+PyRIT emits a warning when `env_akv_ref` is selected and default or explicit environment files coexist with it. The warning distinguishes files that are ignored from files that load afterward and override Key Vault values, making stale migration files visible at startup.
+
+**Custom behavior** (with `env_files` field): Only your specified files are loaded, in order. They override the AKV root when both fields are configured, and default paths are completely ignored.
 
 ### Using .env.local for Overrides
 
 You can use `~/.pyrit/.env.local` to override values in `~/.pyrit/.env` without modifying the base file. This is useful for:
+
 - Testing different targets
 - Using personal credentials instead of shared ones
 - Switching between configurations quickly
@@ -107,7 +115,7 @@ Use `pyrit list initializers` in the CLI to see all registered initializers. See
 Most users should enable the following initializers. These are what the `.pyrit_conf_example` ships with and are required for features like `pyrit_scan` and automated scenarios.
 
 | Initializer | What It Registers | When You Need It |
-|---|---|---|
+| --- | --- | --- |
 | `target` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | **Required for `pyrit_scan`** and any registry-based workflows |
 | `scorer` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | **Required for automated scoring** and `pyrit_scan` evaluations |
 | `technique` | Attack techniques into the `AttackTechniqueRegistry` | **Required for `pyrit_scan` scenarios** that select techniques |
@@ -161,7 +169,7 @@ Environment file paths to load during initialization. Later files override value
 
 | Value             | Behavior                                                             |
 | ----------------- | -------------------------------------------------------------------- |
-| Omitted or `null` | Load default `~/.pyrit/.env` and `~/.pyrit/.env.local` if they exist |
+| Omitted or `null` | Load default `~/.pyrit/.env` and `~/.pyrit/.env.local`, or only `.env.local` after an AKV root |
 | `[]` (empty list) | Load **no** environment files                                        |
 | List of paths     | Load **only** the specified files (defaults are skipped)             |
 
@@ -170,6 +178,29 @@ env_files:
   - /path/to/.env
   - /path/to/.env.local
 ```
+
+When `env_akv_ref` is not configured, an empty list or missing default files causes initialization to fail because no environment source is available.
+
+### `env_akv_ref`
+
+Azure Key Vault secret URLs used to obtain the root environment document. The first URL is used; its secret value must contain dotenv-formatted entries. Authentication uses `DefaultAzureCredential`.
+
+```yaml
+env_akv_ref:
+  - https://my-vault.vault.azure.net/secrets/my-pyrit-env
+```
+
+The root document can mix literal values with references to ambient environment variables and scalar secrets in the same vault:
+
+```dotenv
+OPENAI_CHAT_ENDPOINT="https://example.openai.azure.com/openai/v1"
+OPENAI_CHAT_KEY="kv:openai-chat-key"
+OPENAI_CHAT_MODEL="env:OPENAI_CHAT_MODEL"
+```
+
+References must occupy the entire value. `kv:` is the canonical Key Vault prefix; `akv:`, `azure_key_vault:`, and `env_akv_ref:` are accepted aliases. A referenced secret can point to another supported reference, subject to bounded depth and cycle detection. Prefix a value with `literal:` when its actual content starts with a reserved reference prefix.
+
+The AKV document is loaded before explicit `env_files` or the default `~/.pyrit/.env.local`, allowing local values to override shared configuration without writing the fetched document to disk.
 
 ### `silent`
 
@@ -197,7 +228,7 @@ This means you can set sensible defaults in `~/.pyrit/.pyrit_conf` and override 
 
 The 3-layer model above determines **which config values are selected**. Once resolved, the values are applied in a fixed runtime order:
 
-1. Environment files are loaded
+1. The AKV root or environment files are loaded, followed by local overrides
 2. Default values are reset
 3. Memory database is configured (from `memory_db_type`)
 4. Initializers are executed in listed order
@@ -279,6 +310,10 @@ initializers:
 # env_files:
 #   - /path/to/.env
 #   - /path/to/.env.local
+
+# Optional Azure Key Vault root environment document
+# env_akv_ref:
+#   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 
 # Suppress initialization messages
 silent: false
