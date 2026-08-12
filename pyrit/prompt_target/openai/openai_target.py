@@ -32,6 +32,7 @@ from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.openai._response_adapter import NoOpOpenAIResponseAdapter, OpenAIResponseAdapter
 from pyrit.prompt_target.openai.openai_error_handling import (
     _extract_error_payload,
     _extract_request_id_from_exception,
@@ -56,6 +57,7 @@ class OpenAITarget(PromptTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(supports_multi_message_pieces=True)
     )
+    _response_adapter: OpenAIResponseAdapter[Any] = NoOpOpenAIResponseAdapter()
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
     # endpoint (see ``is_azure_openai_endpoint``), so they support both modes.
@@ -537,7 +539,7 @@ class OpenAITarget(PromptTarget):
         Returns:
             bool: True if content filter detected, False otherwise.
         """
-        return False
+        return self._response_adapter.is_content_filter(response=response)
 
     def _handle_content_filter_response(self, response: Any, request: MessagePiece) -> Message:
         """
@@ -589,7 +591,7 @@ class OpenAITarget(PromptTarget):
         Returns:
             The partial text content, or None if no content was generated.
         """
-        return None
+        return self._response_adapter.extract_partial_content(response=response)
 
     def _capture_response_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
         """
@@ -608,6 +610,7 @@ class OpenAITarget(PromptTarget):
                 no usage or completion data, so implementations must tolerate missing attributes.
             pieces (list[MessagePiece]): The constructed response pieces.
         """
+        self._response_adapter.capture_metadata(response=response, pieces=pieces)
 
     def _validate_response(self, response: Any, request: MessagePiece) -> None:
         """
@@ -624,6 +627,7 @@ class OpenAITarget(PromptTarget):
         Raises:
             Various exceptions for validation failures.
         """
+        self._response_adapter.validate(response=response, is_truncated=self._is_truncated_response(response))
 
     def _is_truncated_response(self, response: Any) -> bool:
         """
@@ -642,7 +646,7 @@ class OpenAITarget(PromptTarget):
         Returns:
             bool: True if the response was truncated at the token limit, False otherwise.
         """
-        return False
+        return self._response_adapter.is_truncated(response=response)
 
     @abstractmethod
     def _set_openai_env_configuration_vars(self) -> None:
