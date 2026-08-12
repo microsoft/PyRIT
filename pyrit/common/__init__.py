@@ -24,6 +24,7 @@ from pyrit.common.apply_defaults import (
 from pyrit.common.brick_contract import enforce_keyword_only_init, forward_init_parameters
 from pyrit.common.default_values import get_non_required_value, get_required_value
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.mime_type import get_mime_type
 from pyrit.common.notebook_utils import is_in_ipython_session
 from pyrit.common.singleton import Singleton
 from pyrit.common.utils import (
@@ -46,6 +47,7 @@ __all__ = [
     "forward_init_parameters",
     "get_global_default_values",
     "get_kwarg_param",
+    "get_mime_type",
     "get_non_required_value",
     "get_random_indices",
     "get_required_value",

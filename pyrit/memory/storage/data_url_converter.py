@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pyrit.common import get_mime_type
 from pyrit.memory.storage.serializers import DataTypeSerializer, data_serializer_factory
 
 # Supported image formats for OpenAI vision models.
@@ -29,7 +30,7 @@ async def convert_local_image_to_data_url_async(image_path: str) -> str:
             f"Unsupported image format: {ext}. Supported formats are: {OPENAI_VISION_SUPPORTED_IMAGE_FORMATS}"
         )
 
-    mime_type = DataTypeSerializer.get_mime_type(image_path)
+    mime_type = get_mime_type(image_path)
     if not mime_type:
         mime_type = "application/octet-stream"
 

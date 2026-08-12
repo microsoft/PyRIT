@@ -7,8 +7,9 @@ from io import BytesIO
 
 from PIL import Image
 
+from pyrit.common import get_mime_type
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ class ImageOverlayConverter(Converter):
         self._overlay_size = overlay_size
         self._opacity = opacity
 
-        mime_type = DataTypeSerializer.get_mime_type(self._base_image) or "image/png"
+        mime_type = get_mime_type(self._base_image) or "image/png"
         image_type = mime_type.split("/")[-1].lower()
         # PIL/Pillow uses "JPEG" as the save format; normalize the file extension to "jpg"
         # to match the convention used by other image converters.
