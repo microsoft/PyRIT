@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import enum
 import logging
 import uuid
@@ -38,6 +37,7 @@ from pyrit.executor.attack.core.attack_config import (
 )
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
+from pyrit.executor.attack.multi_turn._tree_of_attacks_node_executor import _TreeOfAttacksNodeExecutor
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -1402,6 +1402,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         super().__init__(objective_target=objective_target, logger=logger, context_type=TAPAttackContext)
 
         self._memory = CentralMemory.get_memory_instance()
+        self._node_executor = _TreeOfAttacksNodeExecutor(
+            batch_size=self._configuration.batch_size,
+            logger=self._logger,
+        )
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
@@ -1885,25 +1889,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             context.tree_visualization.create_node(f"{context.executed_turns}: ", vis_id, parent=node._vis_node_id)
             node._vis_node_id = vis_id
 
-        # Process nodes in batches
-        for batch_start in range(0, len(context.nodes), self._configuration.batch_size):
-            batch_end = min(batch_start + self._configuration.batch_size, len(context.nodes))
-            batch_nodes = context.nodes[batch_start:batch_end]
-
-            self._logger.debug(
-                f"Processing batch {batch_start // self._configuration.batch_size + 1} "
-                f"(nodes {batch_start + 1}-{batch_end} of {len(context.nodes)})"
-            )
-
-            # Create tasks for parallel execution
-            tasks = []
-            for node_index, node in enumerate(batch_nodes, start=batch_start + 1):
-                self._logger.debug(f"Preparing prompt for node {node_index}/{len(context.nodes)}")
-                task = node.send_prompt_async(objective=context.objective)
-                tasks.append(task)
-
-            await asyncio.gather(*tasks)
-
+        async for batch_start, batch_nodes in self._node_executor.execute_nodes_async(
+            nodes=context.nodes,
+            objective=context.objective,
+        ):
             # Update visualization with results after batch completes
             for node_index, node in enumerate(batch_nodes, start=batch_start + 1):
                 result_string = self._format_node_result(node)
