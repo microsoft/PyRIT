@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pyrit.executor.attack.multi_turn._tree_of_attacks_node_executor import _TreeOfAttacksNodeExecutor
+from pyrit.executor.attack.multi_turn.tree_of_attacks import _TreeOfAttacksNodeExecutor
 
 
 @dataclass
