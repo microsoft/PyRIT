@@ -177,5 +177,5 @@ def setup_frontend() -> None:
         print("⚠️ WARNING: Frontend not found!")
         print(f"   Expected location: {frontend_path}")
         print("   The frontend must be built and included in the package.")
-        print("   Run: python build_scripts/prepare_package.py")
+        print("   Run: python -m build_scripts.prepare_package")
         print("   API endpoints will still work but the UI won't be available.")
