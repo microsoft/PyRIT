@@ -19,9 +19,7 @@ import pytest
 
 import pyrit.backend.services.scenario_configuration_resolver as _resolver_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
-from pyrit.backend.services.scenario_run_service import (
-    ScenarioRunService,
-)
+from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.converter import Converter
 from pyrit.memory import (
     AzureSQLMemory,
@@ -31,6 +29,8 @@ from pyrit.memory import (
     SQLiteMemory,
 )
 from pyrit.models import (
+    ADAPTIVE_ATTEMPT_LABEL,
+    ADAPTIVE_TECHNIQUE_NAME_LABEL,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -41,17 +41,19 @@ from pyrit.models import (
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioProgressResult,
+    ScenarioProgressResultKind,
     ScenarioProgressScore,
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
     ScoreStatus,
     SeedObjective,
     config_hash,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog import RunScenarioRequest, ScenarioRunSummary
 from pyrit.scenario.core import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
@@ -59,7 +61,7 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
-from unit.mocks import make_scenario_result
+from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 
 class _StubTechnique(ScenarioTechnique):
@@ -150,6 +152,21 @@ def _make_db_scenario_result(
     sr.error_message = None
     sr.error_type = None
     return sr
+
+
+def _get_run_using_active_snapshot(
+    *,
+    service: ScenarioRunService,
+    scenario_result_id: str,
+) -> ScenarioRunSummary | None:
+    """Mirror the route's event-loop snapshot and storage-safe lookup split."""
+    snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
+    return service.get_run_from_storage(
+        scenario_result_id=scenario_result_id,
+        active_error=snapshot.error,
+        queue_position=snapshot.queue_position,
+        active_scenario_result_id=snapshot.active_scenario_result_id,
+    )
 
 
 def _make_history_record(
@@ -531,20 +548,21 @@ class TestScenarioRunServiceStartRun:
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         assert init_call.kwargs["include_baseline"] is False
 
-    async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
-        """``max_dataset_size`` with no ``dataset_names`` reuses the scenario's default config."""
-        default_config = MagicMock()
-        default_config.max_dataset_size = 100  # original
+    async def test_start_run_max_dataset_size_copies_default_config(self, mock_all_registries) -> None:
+        """``max_dataset_size`` overrides an independent copy of the scenario default."""
+        default_config = DatasetAttackConfiguration(dataset_names=["original"], max_dataset_size=100)
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
 
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(max_dataset_size=5))
 
-        # max_dataset_size on the default config was overridden
-        assert default_config.max_dataset_size == 5
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        assert init_call.kwargs["dataset_config"] is default_config
+        built_config = init_call.kwargs["dataset_config"]
+        assert built_config is not default_config
+        assert type(built_config) is DatasetAttackConfiguration
+        assert built_config.max_dataset_size == 5
+        assert default_config.max_dataset_size == 100
 
     async def test_start_run_dataset_names_preserves_subclass_config_type(self, mock_all_registries) -> None:
         """``dataset_names`` rebuilds the config using the scenario's own DatasetConfiguration subclass.
@@ -632,9 +650,10 @@ class TestScenarioRunServiceStartRun:
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
         assert isinstance(built_config, CompoundDatasetAttackConfiguration)
-        assert built_config is default_config
+        assert built_config is not default_config
         assert built_config.dataset_names == ["airt_hate", "airt_fairness"]
         assert [child.max_dataset_size for child in built_config._configurations] == [2, 2]
+        assert [child.max_dataset_size for child in default_config._configurations] == [4, 4]
 
     async def test_start_run_non_name_overrides_preserve_shaped_compound_children(self, mock_all_registries) -> None:
         """Size and filter overrides do not rebuild scenario-specific child configurations."""
@@ -662,7 +681,7 @@ class TestScenarioRunServiceStartRun:
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
-        assert built_config is default_config
+        assert built_config is not default_config
         assert [type(child) for child in built_config._configurations] == [
             _ShapedDatasetConfiguration,
             _ShapedDatasetConfiguration,
@@ -672,6 +691,8 @@ class TestScenarioRunServiceStartRun:
             {"harm_categories": ["cyber"]},
             {"harm_categories": ["cyber"]},
         ]
+        assert [child.max_dataset_size for child in default_config._configurations] == [4, 4]
+        assert [child.filters for child in default_config._configurations] == [{}, {}]
 
     async def test_start_run_dataset_names_rejects_incompatible_subclass_constructor(self, mock_all_registries) -> None:
         """Reject overrides that cannot preserve scenario-specific dataset configuration."""
@@ -720,8 +741,8 @@ class TestScenarioRunServiceStartRun:
         assert built_config.max_dataset_size == 7
         assert built_config.filters == {"harm_categories": ["cyber"]}
 
-    async def test_start_run_dataset_filters_updates_default_config(self, mock_all_registries) -> None:
-        """``dataset_filters`` with no ``dataset_names`` merges filters into the default config."""
+    async def test_start_run_dataset_filters_copy_default_config(self, mock_all_registries) -> None:
+        """``dataset_filters`` with no names merges filters into an independent copy."""
         default_config = DatasetAttackConfiguration(dataset_names=["original"])
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
@@ -731,8 +752,9 @@ class TestScenarioRunServiceStartRun:
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
-        assert built_config is default_config
+        assert built_config is not default_config
         assert built_config.filters == {"harm_categories": ["cyber"]}
+        assert default_config.filters == {}
 
     async def test_start_run_dataset_names_introspection_failure_raises(self, mock_memory) -> None:
         """Passing ``dataset_names`` against a non-no-arg-instantiable scenario fails fast."""
@@ -1406,14 +1428,14 @@ class TestScenarioRunServiceStartRun:
         await asyncio.sleep(0)
 
 
-class TestScenarioRunServiceGetRun:
-    """Tests for ScenarioRunService.get_run."""
+class TestScenarioRunServiceGetRunFromStorage:
+    """Tests for the event-loop snapshot and storage-safe run lookup split."""
 
     def test_get_run_returns_none_for_unknown_id(self, mock_memory) -> None:
         """Test that get_run returns None for non-existent run."""
         mock_memory.get_scenario_results.return_value = []
         service = ScenarioRunService()
-        result = service.get_run(scenario_result_id="nonexistent-id")
+        result = _get_run_using_active_snapshot(service=service, scenario_result_id="nonexistent-id")
         assert result is None
 
     def test_get_run_returns_existing_run(self, mock_memory) -> None:
@@ -1422,7 +1444,7 @@ class TestScenarioRunServiceGetRun:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-123")
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id="sr-123")
 
         assert fetched is not None
         assert fetched.scenario_result_id == "sr-123"
@@ -1441,7 +1463,7 @@ class TestScenarioRunServiceGetRun:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id=str(db_result.id))
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id=str(db_result.id))
 
         assert fetched is not None
         assert fetched.status is ScenarioRunState.FAILED
@@ -1507,7 +1529,10 @@ class TestScenarioRunServiceGetRun:
         )
         mock_memory.get_scenario_results.return_value = [db_result]
 
-        fetched = ScenarioRunService().get_run(scenario_result_id=str(db_result.id))
+        fetched = _get_run_using_active_snapshot(
+            service=ScenarioRunService(),
+            scenario_result_id=str(db_result.id),
+        )
 
         assert fetched is not None
         assert fetched.scenario_registry_name == expected_registry_name
@@ -1535,7 +1560,7 @@ class TestScenarioRunServiceGetRun:
         mock_memory.get_attack_results.return_value = [error_ar]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-fail")
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id="sr-fail")
 
         assert fetched is not None
         assert fetched.error == "Connection refused"
@@ -2045,7 +2070,10 @@ class TestScenarioRunServiceExecution:
 
         # Executable task state is released during terminal handoff.
         assert response.scenario_result_id not in service._active_tasks
-        fetched = service.get_run(scenario_result_id=response.scenario_result_id)
+        fetched = _get_run_using_active_snapshot(
+            service=service,
+            scenario_result_id=response.scenario_result_id,
+        )
         assert fetched is not None
 
     async def test_execute_run_fails_with_error(self, mock_all_registries) -> None:
@@ -2075,8 +2103,11 @@ class TestScenarioRunServiceExecution:
         assert active.error == "scenario exploded"
         assert response.scenario_result_id not in service._active_tasks
 
-        # get_run surfaces the bounded terminal error evidence.
-        fetched = service.get_run(scenario_result_id=response.scenario_result_id)
+        # The active snapshot surfaces bounded terminal error evidence to the storage projection.
+        fetched = _get_run_using_active_snapshot(
+            service=service,
+            scenario_result_id=response.scenario_result_id,
+        )
         assert fetched is not None
         assert fetched.error == "scenario exploded"
 
@@ -2150,7 +2181,7 @@ class TestScenarioRunServiceProgressReporting:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-running")
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id="sr-running")
 
         assert fetched is not None
         assert fetched.status == ScenarioRunState.IN_PROGRESS
@@ -2170,7 +2201,7 @@ class TestScenarioRunServiceProgressReporting:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-new")
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id="sr-new")
 
         assert fetched is not None
         assert fetched.status == ScenarioRunState.CREATED
@@ -2195,7 +2226,7 @@ class TestScenarioRunServiceProgressReporting:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-done")
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id="sr-done")
 
         assert fetched is not None
         assert fetched.status == ScenarioRunState.COMPLETED
@@ -2232,7 +2263,7 @@ class TestScenarioRunServiceFailedAttackReporting:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-mixed")
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id="sr-mixed")
 
         assert fetched is not None
         assert fetched.total_retries == 6
@@ -2242,6 +2273,8 @@ class TestScenarioRunServiceFailedAttackReporting:
         assert failed.error_type == "RateLimitError"
         assert failed.error_message == "429 Too Many Requests"
         assert failed.total_retries == 4
+        assert fetched.error_attacks == 1
+        assert fetched.attack_details_truncated is False
 
     def test_negative_error_attack_retries_are_clamped(self, mock_memory) -> None:
         from pyrit.models import AttackOutcome
@@ -2260,7 +2293,10 @@ class TestScenarioRunServiceFailedAttackReporting:
         )
         mock_memory.get_scenario_results.return_value = [db_result]
 
-        fetched = ScenarioRunService().get_run(scenario_result_id="sr-negative-retries")
+        fetched = _get_run_using_active_snapshot(
+            service=ScenarioRunService(),
+            scenario_result_id="sr-negative-retries",
+        )
 
         assert fetched is not None
         assert fetched.total_retries == 0
@@ -2282,7 +2318,7 @@ class TestScenarioRunServiceFailedAttackReporting:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-clean")
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id="sr-clean")
 
         assert fetched is not None
         assert fetched.failed_attacks == []
@@ -2316,7 +2352,7 @@ class TestScenarioRunServiceFailedAttackReporting:
         mock_memory.get_scenario_results.return_value = [db_result]
 
         service = ScenarioRunService()
-        fetched = service.get_run(scenario_result_id="sr-retry")
+        fetched = _get_run_using_active_snapshot(service=service, scenario_result_id="sr-retry")
 
         assert fetched is not None
         assert len(fetched.attack_retries) == 1
@@ -2325,6 +2361,56 @@ class TestScenarioRunServiceFailedAttackReporting:
         assert summary.atomic_attack_name == "baseline_airt_hate"
         assert summary.retries[0].endpoint == "https://ep/"
         assert summary.retries[0].component_role == "objective_scorer"
+
+    def test_attack_details_keep_latest_entries_without_losing_totals(self, mock_memory) -> None:
+        detail_limit = _svc_mod._MAX_ATTACK_DETAIL_ENTRIES
+        result_count = detail_limit + 5
+        results = []
+        for index in range(result_count):
+            attack = MagicMock()
+            attack.outcome = AttackOutcome.ERROR
+            attack.objective = f"objective-{index}"
+            attack.error_type = "RateLimitError"
+            attack.error_message = f"error-{index}"
+            attack.total_retries = 2
+            attack.attack_result_id = f"ar-{index}"
+            attack.timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=index)
+            attack.retry_events = [
+                RetryEvent(
+                    attempt_number=1,
+                    exception_type="RateLimitError",
+                    exception_message=f"retry-{index}",
+                    component_role="objective_target",
+                    status_code=429,
+                )
+            ]
+            results.append(attack)
+
+        db_result = _make_db_scenario_result(
+            result_id="sr-bounded-details",
+            run_state=ScenarioRunState.COMPLETED,
+            attack_results={
+                "newer_attack": results[detail_limit:],
+                "older_attack": results[:detail_limit],
+            },
+        )
+        mock_memory.get_scenario_results.return_value = [db_result]
+
+        fetched = _get_run_using_active_snapshot(
+            service=ScenarioRunService(),
+            scenario_result_id="sr-bounded-details",
+        )
+
+        assert fetched is not None
+        assert len(fetched.failed_attacks) == detail_limit
+        assert len(fetched.attack_retries) == detail_limit
+        assert fetched.failed_attacks[0].objective == "objective-5"
+        assert fetched.failed_attacks[-1].objective == f"objective-{result_count - 1}"
+        assert fetched.attack_retries[0].attack_result_id == "ar-5"
+        assert fetched.attack_retries[-1].attack_result_id == f"ar-{result_count - 1}"
+        assert fetched.total_retries == result_count * 2
+        assert fetched.error_attacks == result_count
+        assert fetched.attack_details_truncated is True
 
 
 class TestResolveTechniquesAndConverters:
@@ -2619,6 +2705,151 @@ def test_history_and_detail_retry_work_match_across_attempt_partitions(mock_memo
     assert history.total_retries == detail.total_retries
 
 
+@pytest.mark.parametrize("envelope_kind", ["typed", "pre-nested", "legacy"])
+def test_sequential_envelope_is_excluded_from_detail_history_and_progress_accounting(
+    sqlite_instance: SQLiteMemory,
+    envelope_kind: str,
+) -> None:
+    objective = "adaptive objective"
+    scenario_result_id = uuid.uuid4()
+    plan = ScenarioRunPlan(
+        scenario_registry_name="adaptive.test",
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id="adaptive-group",
+                atomic_attack_name="adaptive",
+                display_group="Adaptive",
+                technique_eval_hash="adaptive-eval",
+                seed_group_ids=["seed-1"],
+                group_kind=ScenarioRunPlanGroupKind.ADAPTIVE,
+            )
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(
+                id="seed-1",
+                objective_sha256=_svc_mod.to_sha256(objective),
+                objective=objective,
+            )
+        ],
+    )
+    scenario_result = make_scenario_result(
+        id=scenario_result_id,
+        scenario_name="AdaptiveTestScenario",
+        objective_target_identifier=get_mock_target_identifier(),
+        attack_results={},
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+
+    child_identifier = AtomicAttackIdentifier.build(
+        attack_identifier=ComponentIdentifier(class_name="ChildAttack", class_module="tests")
+    )
+    if envelope_kind == "typed":
+        envelope_identifier = AtomicAttackIdentifier.build(
+            attack_identifier=ComponentIdentifier(class_name="SequentialAttack", class_module="pyrit")
+        )
+    elif envelope_kind == "pre-nested":
+        envelope_identifier = ComponentIdentifier(
+            class_name="AtomicAttack",
+            class_module="pyrit.scenario.core.atomic_attack",
+            children={
+                "attack": ComponentIdentifier(class_name="SequentialAttack", class_module="pyrit"),
+            },
+        )
+    else:
+        envelope_identifier = None
+    attribution_data = {
+        "parent_collection": "adaptive",
+        "parent_eval_hash": "adaptive-eval",
+        "seed_group_id": "seed-1",
+    }
+    timestamp = datetime(2026, 8, 9, tzinfo=timezone.utc)
+    attack_results = [
+        AttackResult(
+            conversation_id="",
+            objective=objective,
+            atomic_attack_identifier=child_identifier,
+            outcome=AttackOutcome.ERROR,
+            error_type="ChildError",
+            error_message="child failed",
+            total_retries=2,
+            timestamp=timestamp,
+            labels={
+                ADAPTIVE_ATTEMPT_LABEL: "1",
+                ADAPTIVE_TECHNIQUE_NAME_LABEL: "first technique",
+            },
+            attribution_parent_id=str(scenario_result_id),
+            attribution_data=attribution_data,
+        ),
+        AttackResult(
+            conversation_id="child-conversation",
+            objective=objective,
+            atomic_attack_identifier=child_identifier,
+            outcome=AttackOutcome.SUCCESS,
+            timestamp=timestamp + timedelta(seconds=1),
+            labels={
+                ADAPTIVE_ATTEMPT_LABEL: "2",
+                ADAPTIVE_TECHNIQUE_NAME_LABEL: "second technique",
+            },
+            attribution_parent_id=str(scenario_result_id),
+            attribution_data=attribution_data,
+        ),
+        AttackResult(
+            conversation_id="",
+            objective=objective,
+            atomic_attack_identifier=envelope_identifier,
+            outcome=AttackOutcome.ERROR,
+            error_type="AggregateError",
+            error_message="aggregate failed",
+            total_retries=7,
+            timestamp=timestamp + timedelta(seconds=2),
+            attribution_parent_id=str(scenario_result_id),
+            attribution_data=attribution_data,
+        ),
+    ]
+    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    service = ScenarioRunService()
+
+    detail = _get_run_using_active_snapshot(
+        service=service,
+        scenario_result_id=str(scenario_result_id),
+    )
+    history = service.list_runs(limit=10).items[0]
+    progress = service.get_run_progress_from_storage(
+        scenario_result_id=str(scenario_result_id),
+        since=None,
+        limit=10,
+        active_group_ids=[],
+    )
+    _, units_by_run, _ = sqlite_instance.get_scenario_run_history_page(limit=10)
+
+    assert detail is not None
+    assert progress is not None
+    assert detail.completed_attacks == history.completed_attacks == 1
+    assert detail.error_attacks == history.error_attacks == 1
+    assert detail.total_retries == history.total_retries == 3
+    assert [failure.error_message for failure in detail.failed_attacks] == ["child failed"]
+
+    unit = units_by_run[str(scenario_result_id)][0]
+    assert unit.attempt_count == 2
+    assert unit.error_count == 1
+    assert unit.total_retries == 3
+    assert unit.latest_outcome == AttackOutcome.SUCCESS.value
+
+    assert len(progress.results) == 3
+    assert [result.result_kind for result in progress.results] == [
+        ScenarioProgressResultKind.ADAPTIVE_TECHNIQUE,
+        ScenarioProgressResultKind.ADAPTIVE_TECHNIQUE,
+        ScenarioProgressResultKind.ADAPTIVE_ORCHESTRATION,
+    ]
+    target_results = [
+        result for result in progress.results if result.result_kind is ScenarioProgressResultKind.ADAPTIVE_TECHNIQUE
+    ]
+    live_retry_count = sum(result.total_retries for result in target_results) + max(0, len(target_results) - 1)
+    assert live_retry_count == detail.total_retries
+
+
 def test_planned_progress_maps_legacy_objective_hash_to_logical_seed_id(mock_memory) -> None:
     objective = "legacy resumed objective"
     seed_group = AttackSeedGroup(seeds=[SeedObjective(value=objective)])
@@ -2846,6 +3077,121 @@ def test_get_progress_exposes_persisted_started_at(mock_memory) -> None:
     assert progress.run.started_at == started_at
 
 
+def test_get_progress_preserves_eight_progress_units_and_twelve_persisted_results(mock_memory) -> None:
+    seed_ids = [f"seed-{index}" for index in range(1, 5)]
+    baseline_group_id = config_hash({"atomic_attack_name": "baseline", "technique_eval_hash": "baseline-eval"})
+    adaptive_group_ids = [
+        config_hash({"atomic_attack_name": f"adaptive-{index}", "technique_eval_hash": f"adaptive-eval-{index}"})
+        for index in range(1, 5)
+    ]
+    plan = ScenarioRunPlan(
+        scenario_registry_name="adaptive.text",
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id=baseline_group_id,
+                atomic_attack_name="baseline",
+                display_group="Direct baseline",
+                technique_eval_hash="baseline-eval",
+                seed_group_ids=seed_ids,
+                group_kind=ScenarioRunPlanGroupKind.DIRECT_BASELINE,
+            ),
+            *[
+                ScenarioRunPlanAtomicGroup(
+                    id=group_id,
+                    atomic_attack_name=f"adaptive-{index}",
+                    display_group="Adaptive",
+                    technique_eval_hash=f"adaptive-eval-{index}",
+                    seed_group_ids=[seed_ids[index - 1]],
+                    group_kind=ScenarioRunPlanGroupKind.ADAPTIVE,
+                )
+                for index, group_id in enumerate(adaptive_group_ids, start=1)
+            ],
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(
+                id=seed_id,
+                objective_sha256=f"objective-sha-{index}",
+                objective=f"objective {index}",
+            )
+            for index, seed_id in enumerate(seed_ids, start=1)
+        ],
+    )
+    timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    deltas: list[ScenarioAttackResultDelta] = []
+    for index, (seed_id, adaptive_group_id) in enumerate(zip(seed_ids, adaptive_group_ids, strict=True), start=1):
+        common = {
+            "objective": f"objective {index}",
+            "objective_sha256": f"objective-sha-{index}",
+            "outcome": AttackOutcome.SUCCESS,
+            "execution_time_ms": 10,
+        }
+        deltas.extend(
+            [
+                ScenarioAttackResultDelta(
+                    attack_result_id=str(uuid.uuid4()),
+                    timestamp=timestamp + timedelta(seconds=index * 3),
+                    attribution_data={
+                        "parent_collection": "baseline",
+                        "parent_eval_hash": "baseline-eval",
+                        "seed_group_id": seed_id,
+                    },
+                    **common,
+                ),
+                ScenarioAttackResultDelta(
+                    attack_result_id=str(uuid.uuid4()),
+                    timestamp=timestamp + timedelta(seconds=index * 3 + 1),
+                    attribution_data={
+                        "parent_collection": f"adaptive-{index}",
+                        "parent_eval_hash": f"adaptive-eval-{index}",
+                        "seed_group_id": seed_id,
+                    },
+                    labels={
+                        ADAPTIVE_ATTEMPT_LABEL: "1",
+                        ADAPTIVE_TECHNIQUE_NAME_LABEL: f"Technique {index}",
+                    },
+                    **common,
+                ),
+                ScenarioAttackResultDelta(
+                    attack_result_id=str(uuid.uuid4()),
+                    timestamp=timestamp + timedelta(seconds=index * 3 + 2),
+                    attribution_data={
+                        "parent_collection": f"adaptive-{index}",
+                        "parent_eval_hash": f"adaptive-eval-{index}",
+                        "seed_group_id": seed_id,
+                    },
+                    **common,
+                ),
+            ]
+        )
+        assert adaptive_group_id == config_hash(
+            {"atomic_attack_name": f"adaptive-{index}", "technique_eval_hash": f"adaptive-eval-{index}"}
+        )
+    header = make_scenario_result(
+        attack_results={},
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+    )
+    mock_memory.get_scenario_result_header.return_value = header
+    mock_memory.get_scenario_attack_result_deltas.return_value = (deltas, False)
+
+    progress = ScenarioRunService().get_run_progress(
+        scenario_result_id=str(header.id),
+        since=None,
+        limit=25,
+    )
+
+    assert progress is not None
+    assert progress.plan is not None
+    assert sum(len(group.seed_group_ids) for group in progress.plan.atomic_groups) == 8
+    assert len(progress.results) == 12
+    assert sum(result.total_retries for result in progress.results) == 0
+    assert sum(result.result_kind is ScenarioProgressResultKind.DIRECT_BASELINE for result in progress.results) == 4
+    assert sum(result.result_kind is ScenarioProgressResultKind.ADAPTIVE_TECHNIQUE for result in progress.results) == 4
+    assert (
+        sum(result.result_kind is ScenarioProgressResultKind.ADAPTIVE_ORCHESTRATION for result in progress.results) == 4
+    )
+
+
 def test_get_progress_rejects_duplicate_stored_plan_groups(mock_memory) -> None:
     group = ScenarioRunPlanAtomicGroup(
         id="duplicate",
@@ -3066,6 +3412,69 @@ def test_synthesize_legacy_plan_deduplicates_seed_ids_in_first_seen_order() -> N
     assert [seed.id for seed in plan.seed_groups] == ["seed-b", "seed-a"]
 
 
+def test_progress_maps_structured_adaptive_attempt_roles() -> None:
+    plan = ScenarioRunPlan(
+        scenario_registry_name="adaptive.text",
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id="adaptive-group",
+                atomic_attack_name="adaptive",
+                display_group="Adaptive",
+                technique_eval_hash="eval",
+                seed_group_ids=["seed-1"],
+                group_kind=ScenarioRunPlanGroupKind.ADAPTIVE,
+            )
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(
+                id="seed-1",
+                objective_sha256="objective-sha",
+                objective="objective",
+            )
+        ],
+    )
+    child = ScenarioAttackResultDelta(
+        attack_result_id=str(uuid.uuid4()),
+        objective="objective",
+        objective_sha256="objective-sha",
+        outcome=AttackOutcome.SUCCESS,
+        execution_time_ms=10,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        attribution_data={"parent_collection": "adaptive", "parent_eval_hash": "eval"},
+        labels={
+            ADAPTIVE_ATTEMPT_LABEL: "2",
+            ADAPTIVE_TECHNIQUE_NAME_LABEL: "Technique alpha",
+        },
+    )
+    envelope = child.model_copy(update={"attack_result_id": str(uuid.uuid4()), "labels": {}})
+    invalid_index_child = child.model_copy(
+        update={
+            "attack_result_id": str(uuid.uuid4()),
+            "labels": {
+                ADAPTIVE_ATTEMPT_LABEL: "0",
+                ADAPTIVE_TECHNIQUE_NAME_LABEL: "Technique alpha",
+            },
+        }
+    )
+
+    plan_lookup = _svc_mod._ScenarioPlanLookup.from_plan(plan=plan)
+    mapped_child = ScenarioRunService._map_progress_delta(delta=child, plan_lookup=plan_lookup)
+    mapped_envelope = ScenarioRunService._map_progress_delta(delta=envelope, plan_lookup=plan_lookup)
+    mapped_invalid_index = ScenarioRunService._map_progress_delta(
+        delta=invalid_index_child,
+        plan_lookup=plan_lookup,
+    )
+
+    assert mapped_child.result_kind is ScenarioProgressResultKind.ADAPTIVE_TECHNIQUE
+    assert mapped_child.technique_name == "Technique alpha"
+    assert mapped_child.attempt_index == 2
+    assert mapped_envelope.result_kind is ScenarioProgressResultKind.ADAPTIVE_ORCHESTRATION
+    assert mapped_envelope.technique_name is None
+    assert mapped_envelope.attempt_index is None
+    assert mapped_invalid_index.result_kind is ScenarioProgressResultKind.ADAPTIVE_TECHNIQUE
+    assert mapped_invalid_index.attempt_index is None
+
+
 def test_get_progress_synthesizes_incomplete_legacy_plan(mock_memory) -> None:
     header = make_scenario_result(
         attack_results={},
@@ -3095,6 +3504,119 @@ def test_get_progress_synthesizes_incomplete_legacy_plan(mock_memory) -> None:
     assert progress.plan is not None
     assert len(progress.plan.atomic_groups) == 1
     assert len(progress.results) == 1
+    assert progress.results[0].result_kind is ScenarioProgressResultKind.ATTACK
+
+
+def test_progress_classifies_legacy_result_without_conversation_as_aggregate_parent() -> None:
+    delta = ScenarioAttackResultDelta(
+        attack_result_id=str(uuid.uuid4()),
+        objective="legacy aggregate",
+        outcome=AttackOutcome.FAILURE,
+        execution_time_ms=10,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        attribution_data={"parent_collection": "legacy aggregate"},
+    )
+
+    mapped = ScenarioRunService._map_progress_delta(
+        delta=delta,
+        plan_lookup=_svc_mod._ScenarioPlanLookup.from_plan(plan=None),
+    )
+
+    assert mapped.result_kind is ScenarioProgressResultKind.AGGREGATE_PARENT
+
+
+def test_progress_does_not_classify_typed_non_sequential_empty_conversation_as_aggregate() -> None:
+    delta = ScenarioAttackResultDelta(
+        attack_result_id=str(uuid.uuid4()),
+        conversation_id="",
+        objective="child failure",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=ComponentIdentifier(class_name="ChildAttack", class_module="tests")
+        ),
+        outcome=AttackOutcome.ERROR,
+        execution_time_ms=10,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        attribution_data={"parent_collection": "adaptive"},
+    )
+
+    mapped = ScenarioRunService._map_progress_delta(
+        delta=delta,
+        plan_lookup=_svc_mod._ScenarioPlanLookup.from_plan(plan=None),
+    )
+
+    assert mapped.result_kind is ScenarioProgressResultKind.UNKNOWN
+
+
+def test_progress_classifies_legacy_sequential_envelope_as_aggregate_parent() -> None:
+    delta = ScenarioAttackResultDelta(
+        attack_result_id=str(uuid.uuid4()),
+        objective="legacy aggregate",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=ComponentIdentifier(
+                class_name="SequentialAttack",
+                class_module="pyrit.executor.attack.compound.sequential_attack",
+            )
+        ),
+        outcome=AttackOutcome.FAILURE,
+        execution_time_ms=10,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        attribution_data={"parent_collection": "legacy aggregate"},
+    )
+
+    mapped = ScenarioRunService._map_progress_delta(
+        delta=delta,
+        plan_lookup=_svc_mod._ScenarioPlanLookup.from_plan(plan=None),
+    )
+
+    assert mapped.result_kind is ScenarioProgressResultKind.AGGREGATE_PARENT
+
+
+def test_progress_classifies_planned_sequential_envelope_as_aggregate_parent() -> None:
+    plan = ScenarioRunPlan(
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id="sequential-group",
+                atomic_attack_name="sequential",
+                display_group="Sequential",
+                technique_eval_hash="eval",
+                seed_group_ids=["seed-1"],
+                group_kind=ScenarioRunPlanGroupKind.ATTACK,
+            )
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(
+                id="seed-1",
+                objective_sha256="objective-sha",
+                objective="objective",
+            )
+        ],
+    )
+    delta = ScenarioAttackResultDelta(
+        attack_result_id=str(uuid.uuid4()),
+        objective="objective",
+        objective_sha256="objective-sha",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=ComponentIdentifier(
+                class_name="SequentialAttack",
+                class_module="pyrit.executor.attack.compound.sequential_attack",
+            )
+        ),
+        outcome=AttackOutcome.FAILURE,
+        execution_time_ms=10,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        attribution_data={
+            "parent_collection": "sequential",
+            "parent_eval_hash": "eval",
+            "seed_group_id": "seed-1",
+        },
+    )
+
+    mapped = ScenarioRunService._map_progress_delta(
+        delta=delta,
+        plan_lookup=_svc_mod._ScenarioPlanLookup.from_plan(plan=plan),
+    )
+
+    assert mapped.result_kind is ScenarioProgressResultKind.AGGREGATE_PARENT
 
 
 def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None:

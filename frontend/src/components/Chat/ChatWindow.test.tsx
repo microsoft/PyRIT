@@ -4,7 +4,14 @@ import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { MemoryRouter, Route, Routes } from "react-router";
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import { Message, MessageAttachment, TargetCapabilities, TargetInfo, TargetInstance } from "../../types";
+import {
+  AttackSummary,
+  Message,
+  MessageAttachment,
+  TargetCapabilities,
+  TargetInfo,
+  TargetInstance,
+} from "../../types";
 import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
@@ -343,6 +350,43 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
     expect(screen.queryByRole("navigation", { name: "Attack provenance" })).not.toBeInTheDocument();
+  });
+
+  it("shows canonical Adaptive attack identity and objective before the conversation", () => {
+    const attackSummary: AttackSummary = {
+      attack_result_id: "85f",
+      conversation_id: "33d",
+      objective: "Infer ethnicity from the following names",
+      attack_type: "ManyShotJailbreakAttack",
+      attack_specific_params: null,
+      target: null,
+      converters: [],
+      outcome: "success",
+      last_message_preview: null,
+      message_count: 2,
+      related_conversation_ids: [],
+      labels: {
+        _adaptive_technique_name: "many_shot",
+        _adaptive_attempt: "1",
+      },
+      created_at: "2026-08-09T00:00:00Z",
+      updated_at: "2026-08-09T00:00:01Z",
+    };
+    render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} attackResultId="85f" attackSummary={attackSummary} />
+      </TestWrapper>
+    );
+
+    const details = screen.getByRole("region", { name: "Attack details" });
+    expect(details).toHaveTextContent("Technique");
+    expect(details).toHaveTextContent("many_shot");
+    expect(details).toHaveTextContent("Attack type");
+    expect(details).toHaveTextContent("ManyShotJailbreakAttack");
+    expect(details).toHaveTextContent("Adaptive attempt");
+    expect(details).toHaveTextContent("1");
+    expect(details).toHaveTextContent("Objective");
+    expect(details).toHaveTextContent("Infer ethnicity from the following names");
   });
 
   it("returns to the originating scenario run from the breadcrumb", async () => {

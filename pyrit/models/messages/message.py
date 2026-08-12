@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -306,7 +306,7 @@ class Message(BaseModel):
         *,
         prompt: str,
         role: ChatMessageRole,
-        prompt_metadata: dict[str, str | int] | None = None,
+        prompt_metadata: dict[str, Any] | None = None,
     ) -> Message:
         """
         Build a single-piece message from prompt text.
@@ -314,7 +314,7 @@ class Message(BaseModel):
         Args:
             prompt (str): Prompt text.
             role (ChatMessageRole): Role assigned to the message piece.
-            prompt_metadata (dict[str, str | int] | None): Optional prompt metadata.
+            prompt_metadata (dict[str, Any] | None): Optional prompt metadata.
 
         Returns:
             Message: Constructed message instance.

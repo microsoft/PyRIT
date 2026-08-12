@@ -39,6 +39,52 @@ export const useMessageListStyles = makeStyles({
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
   },
+  collapsedPrompt: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    minWidth: 0,
+  },
+  promptActions: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalS,
+    '& button': {
+      ...mobileTouchTarget,
+    },
+  },
+  promptDetails: {
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    '& summary': {
+      display: 'flex',
+      alignItems: 'center',
+      minHeight: '44px',
+      width: 'fit-content',
+      color: tokens.colorBrandForegroundLink,
+      cursor: 'pointer',
+      fontWeight: tokens.fontWeightSemibold,
+      ':focus-visible': {
+        outline: `2px solid ${tokens.colorStrokeFocus2}`,
+        outlineOffset: '2px',
+      },
+    },
+  },
+  fullPrompt: {
+    maxHeight: '480px',
+    overflow: 'auto',
+    padding: tokens.spacingHorizontalM,
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+  },
+  fullPromptText: {
+    margin: 0,
+    fontFamily: tokens.fontFamilyBase,
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase300,
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+  },
   messageJsonBlock: {
     margin: 0,
     padding: tokens.spacingHorizontalS,

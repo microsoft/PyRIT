@@ -1042,6 +1042,51 @@ describe("App", () => {
     );
   });
 
+  it("renders a message-less SequentialAttack as an orchestration result instead of chat", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack
+      .mockResolvedValueOnce({
+        attack_result_id: "parent-1",
+        conversation_id: "",
+        objective: "Test objective",
+        attack_type: "SequentialAttack",
+        message_count: 0,
+        labels: {},
+        related_conversation_ids: [],
+        metadata: {
+          child_attack_result_ids: ["child-1"],
+          completion_policy: "first_success",
+        },
+      })
+      .mockResolvedValueOnce({
+        attack_result_id: "child-1",
+        conversation_id: "child-conversation",
+        objective: "Test objective",
+        attack_type: "PromptSendingAttack",
+        outcome: "success",
+        message_count: 2,
+        labels: {
+          _adaptive_technique_name: "many_shot",
+          _adaptive_attempt: "1",
+        },
+        related_conversation_ids: [],
+      });
+
+    renderApp(`/attacks/parent-1?scenarioResultId=${scenarioResultId}`);
+
+    expect(await screen.findByRole("heading", {
+      level: 1,
+      name: "Adaptive orchestration result",
+    })).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", {
+      name: "Open conversation for attempt 1: many_shot",
+    })).toHaveAttribute(
+      "href",
+      `/attacks/child-1?scenarioResultId=${scenarioResultId}`
+    );
+  });
+
   it.each([
     "/attacks/ar-1?scenarioResultId=run-1",
     "/attacks/ar-1?scenarioResultId=https%3A%2F%2Fevil.example",

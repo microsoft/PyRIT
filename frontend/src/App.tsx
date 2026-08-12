@@ -5,6 +5,8 @@ import { Joyride } from 'react-joyride'
 import { useTheme } from './hooks/useTheme'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
+import AttackOrchestrationView from './components/Chat/AttackOrchestrationView'
+import { isAttackOrchestrationSummary } from './components/Chat/attackOrchestration'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
@@ -29,7 +31,7 @@ import {
 } from './components/History/scenarioHistoryFilters'
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { TargetInfo } from './types'
+import type { AttackSummary, TargetInstance, TargetInfo } from './types'
 import {
   targetEndpoint,
   targetIdentifierHash,
@@ -101,6 +103,7 @@ interface LoadedAttack {
   target: TargetInfo | null
   relatedConversationIds: string[]
   objective: string
+  summary: AttackSummary | null
   status: AttackLoadStatus
 }
 
@@ -304,6 +307,7 @@ function App() {
       target: null,
       relatedConversationIds: [],
       objective: '',
+      summary: null,
     })
     attacksApi
       .getAttack(routeAttackId)
@@ -318,6 +322,7 @@ function App() {
           target: attack.target ?? null,
           relatedConversationIds: attack.related_conversation_ids ?? [],
           objective: attack.objective ?? '',
+          summary: attack,
           status: 'success',
         })
       })
@@ -337,6 +342,7 @@ function App() {
           target: null,
           relatedConversationIds: [],
           objective: '',
+          summary: null,
         })
       })
     // Drop a stale response once the route has moved on to another attack.
@@ -430,6 +436,7 @@ function App() {
       target,
       relatedConversationIds: [],
       objective: '',
+      summary: null,
       status: 'success',
     })
     // Replace when promoting an empty /chat to its attack url (first message);
@@ -455,12 +462,22 @@ function App() {
     })
   }, [location.search, navigate])
 
+  const orchestrationSummary = readyAttack?.summary
+    && isAttackOrchestrationSummary(readyAttack.summary)
+    ? readyAttack.summary
+    : null
+
   const chatElement = isAttackNotFound || isAttackError ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
       variant={isAttackError ? 'error' : 'not-found'}
       onStartNew={() => navigate(VIEW_PATHS.chat)}
       onBackToHistory={() => navigate(VIEW_PATHS.history)}
+    />
+  ) : orchestrationSummary ? (
+    <AttackOrchestrationView
+      attackSummary={orchestrationSummary}
+      scenarioResultId={scenarioResultId}
     />
   ) : (
     <ChatWindow
@@ -478,6 +495,7 @@ function App() {
       attackTarget={readyAttack ? readyAttack.target : null}
       targetResolutionStatus={targetResolutionStatus}
       onRetryTargetResolution={retryTargetResolution}
+      attackSummary={readyAttack ? readyAttack.summary : null}
       isLoadingAttack={isLoadingAttack}
       relatedConversationCount={readyAttack ? readyAttack.relatedConversationIds.length : 0}
       objective={readyAttack ? readyAttack.objective : ''}

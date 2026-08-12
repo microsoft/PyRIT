@@ -11,15 +11,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import AttackSeedGroup, ScenarioDatasetSummary, SeedObjective
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models import (
+    AttackSeedGroup,
+    ComponentIdentifier,
+    ScenarioDatasetSummary,
+    ScenarioRunPlanGroupKind,
+    SeedObjective,
+)
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
-from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
-from pyrit.scenario.scenarios.adaptive.technique_identity import AdaptiveTechniqueIdentifier
-from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import BaselineAttackPolicy, CompoundDatasetAttackConfiguration
+from pyrit.scenario.scenarios.adaptive import (
+    AdaptiveTechniqueDispatcher,
+    AdaptiveTechniqueIdentifier,
+    TextAdaptive,
+)
 from pyrit.score import TrueFalseScorer
 
 _MOCK_MANY_SHOT_EXAMPLES = [{"question": f"q{i}", "answer": f"a{i}"} for i in range(100)]
@@ -889,5 +895,9 @@ class TestTextAdaptiveBaselinePolicy:
             plan = scenario._build_run_plan()
             planned_units = sum(len(group.seed_group_ids) for group in plan.atomic_groups)
             assert planned_units == 2
+            assert [group.group_kind for group in plan.atomic_groups] == [
+                ScenarioRunPlanGroupKind.DIRECT_BASELINE,
+                ScenarioRunPlanGroupKind.ADAPTIVE,
+            ]
             assert estimate.total_attack_count == planned_units
             assert [component.count for component in estimate.components] == [1, 1]

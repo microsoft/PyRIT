@@ -39,6 +39,7 @@ import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messa
 import { exportConversation } from '../../utils/conversationExport'
 import type { ExportFormat } from '../../utils/conversationExport'
 import type {
+  AttackSummary,
   AttackTargetResolutionStatus,
   Message,
   MessageAttachment,
@@ -105,6 +106,8 @@ interface ChatWindowProps {
   objective?: string
   /** Validated scenario-run provenance for attacks opened from a run dashboard. */
   scenarioResultId?: string | null
+  /** Canonical metadata for a historical attack detail route. */
+  attackSummary?: AttackSummary | null
 }
 
 export default function ChatWindow({
@@ -126,6 +129,7 @@ export default function ChatWindow({
   relatedConversationCount,
   objective = '',
   scenarioResultId,
+  attackSummary,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
@@ -869,7 +873,39 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
-        <ObjectiveHeader key={objective} objective={objective} />
+        {attackSummary ? (
+          <section className={styles.attackContext} aria-labelledby="attack-context-heading">
+            <Text as="h2" id="attack-context-heading" size={400} weight="semibold">
+              Attack details
+            </Text>
+            <dl className={styles.attackFacts}>
+              {attackSummary.labels?._adaptive_technique_name && (
+                <div className={styles.attackFact}>
+                  <dt>Technique</dt>
+                  <dd>{attackSummary.labels._adaptive_technique_name}</dd>
+                </div>
+              )}
+              <div className={styles.attackFact}>
+                <dt>Attack type</dt>
+                <dd>{attackSummary.attack_type}</dd>
+              </div>
+              {attackSummary.labels?._adaptive_attempt && (
+                <div className={styles.attackFact}>
+                  <dt>Adaptive attempt</dt>
+                  <dd>{attackSummary.labels._adaptive_attempt}</dd>
+                </div>
+              )}
+              {attackSummary.objective && (
+                <div className={mergeClasses(styles.attackFact, styles.objectiveFact)}>
+                  <dt>Objective</dt>
+                  <dd>{attackSummary.objective}</dd>
+                </div>
+              )}
+            </dl>
+          </section>
+        ) : (
+          <ObjectiveHeader key={objective} objective={objective} />
+        )}
         {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
@@ -883,6 +919,7 @@ export default function ChatWindow({
           isCrossTarget={isCrossTargetLocked || isTargetResolutionLocked}
           noTargetSelected={!activeTarget}
           globalMarkdown={globalMarkdown}
+          collapseLongPrompts={Boolean(attackSummary)}
         />
         <ChatInputArea
           ref={inputBoxRef}

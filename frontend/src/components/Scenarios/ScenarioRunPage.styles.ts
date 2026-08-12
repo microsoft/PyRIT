@@ -168,6 +168,63 @@ export const useScenarioRunPageStyles = makeStyles({
   metricValue: {
     fontVariantNumeric: 'tabular-nums',
   },
+  accountingSurface: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    padding: tokens.spacingVerticalL,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  accountingEquation: {
+    display: 'flex',
+    alignItems: 'stretch',
+    gap: tokens.spacingHorizontalS,
+    [NARROW_VIEWPORT_QUERY]: {
+      flexDirection: 'column',
+    },
+  },
+  accountingOperand: {
+    display: 'flex',
+    flex: '1 1 10rem',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: tokens.spacingVerticalXXS,
+    minWidth: 0,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    [NARROW_VIEWPORT_QUERY]: {
+      flexBasis: 'auto',
+    },
+  },
+  accountingResult: {
+    display: 'flex',
+    flex: '1 1 10rem',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: tokens.spacingVerticalXXS,
+    minWidth: 0,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    border: `1px solid ${tokens.colorBrandStroke1}`,
+    borderRadius: tokens.borderRadiusMedium,
+    color: tokens.colorBrandForeground1,
+    backgroundColor: tokens.colorBrandBackground2,
+    [NARROW_VIEWPORT_QUERY]: {
+      flexBasis: 'auto',
+    },
+  },
+  accountingOperator: {
+    alignSelf: 'center',
+    flexShrink: 0,
+    paddingInline: tokens.spacingHorizontalXS,
+    color: tokens.colorNeutralForeground3,
+  },
+  accountingProvenance: {
+    overflowWrap: 'anywhere',
+  },
   summaryGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(15rem, 1fr))',
@@ -254,6 +311,27 @@ export const useScenarioRunPageStyles = makeStyles({
       gridTemplateColumns: `${MINIMUM_TOUCH_TARGET_SIZE} 1fr`,
       gap: tokens.spacingVerticalS,
     },
+  },
+  supportingResults: {
+    marginTop: tokens.spacingVerticalL,
+    '& > summary': {
+      display: 'list-item',
+      boxSizing: 'border-box',
+      minHeight: MINIMUM_TOUCH_TARGET_SIZE,
+      width: 'fit-content',
+      paddingBlock: tokens.spacingVerticalM,
+      color: tokens.colorBrandForegroundLink,
+      cursor: 'pointer',
+      fontWeight: tokens.fontWeightSemibold,
+      ':focus-visible': {
+        outline: `2px solid ${tokens.colorStrokeFocus2}`,
+        outlineOffset: '2px',
+      },
+    },
+    '& > div': {
+      marginTop: tokens.spacingVerticalS,
+    },
+  },
   },
   expandButton: {
     ...mobileTouchTarget,
