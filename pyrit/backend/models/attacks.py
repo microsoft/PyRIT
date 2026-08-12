@@ -234,6 +234,15 @@ class AttackSummary(AttackResult):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def has_explicit_objective(self) -> bool:
+        """
+        Whether ``objective`` was supplied by the user,
+        as opposed to the auto-generated manual-attack placeholder.
+        """
+        return not self.metadata.get("objective_is_placeholder", False)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def attack_specific_params(self) -> dict[str, Any] | None:
         """The attack strategy params, or ``None``."""
         identifier = self.get_attack_strategy_identifier()

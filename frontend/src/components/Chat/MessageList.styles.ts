@@ -79,6 +79,7 @@ export const useMessageListStyles = makeStyles({
     minWidth: 'auto',
     height: '24px',
     padding: `0 ${tokens.spacingHorizontalXS}`,
+    ...mobileTouchTarget,
   },
   scoreSurface: {
     display: 'flex',

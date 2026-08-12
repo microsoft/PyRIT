@@ -710,6 +710,24 @@ describe("App", () => {
     expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
   });
 
+  it("hides the placeholder objective of an unnamed manual attack on reload", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      objective: "Manual attack via GUI",
+      has_explicit_objective: false,
+      labels: {},
+      related_conversation_ids: [],
+    });
+    renderApp("/attacks/ar-1");
+
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+    expect(screen.getByTestId("objective")).toHaveTextContent("");
+  });
+
   it("uses the conversation from a deep link when it belongs to the attack", async () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",

@@ -1,5 +1,7 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
+import { mobileTouchTargetHeight } from '../../styles/touchTargets'
+
 export const useObjectiveHeaderStyles = makeStyles({
   root: {
     flexShrink: 0,
@@ -37,5 +39,6 @@ export const useObjectiveHeaderStyles = makeStyles({
     minWidth: 'auto',
     whiteSpace: 'nowrap',
     color: tokens.colorBrandForeground1,
+    ...mobileTouchTargetHeight,
   },
 })

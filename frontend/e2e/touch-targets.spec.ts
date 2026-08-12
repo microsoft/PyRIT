@@ -74,7 +74,17 @@ const MESSAGES = [
         converted_value_data_type: "text",
         original_value: "Deterministic assistant response for touch-target tests.",
         converted_value: "Deterministic assistant response for touch-target tests.",
-        scores: [],
+        scores: [
+          {
+            id: "mobile-assistant-score",
+            scorer_type: "SelfAskRefusalScorer",
+            score_type: "true_false",
+            score_value: "true",
+            score_category: ["refusal"],
+            score_rationale: "Deterministic rationale for touch-target tests.",
+            timestamp: "2026-07-22T13:10:01.500Z",
+          },
+        ],
         response_error: "none",
       },
     ],
@@ -217,6 +227,8 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
           attack_type: "PromptSendingAttack",
           conversation_id: "mobile-conversation-001",
           related_conversation_ids: [],
+          objective:
+            "Deterministic long objective that does not fit on a single line of the mobile objective header and must be truncated with a disclosure toggle.",
           labels: {
             operator: "mobile_operator",
             operation: "touch_targets",
@@ -418,8 +430,10 @@ test.describe("Mobile touch targets", () => {
           '[data-testid="new-attack-btn"]',
           '[aria-label="Attach files"]',
           '[data-testid="toggle-converter-panel-btn"]',
+          '[data-testid="toggle-objective-header-btn"]',
           '[data-testid="chat-input"]',
           '[data-testid="send-message-btn"]',
+          '[data-testid="message-score-1"]',
           '[data-testid="copy-to-input-btn-1"]',
           '[data-testid="copy-to-new-conv-btn-1"]',
           '[data-testid="branch-conv-btn-1"]',

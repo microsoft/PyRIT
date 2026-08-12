@@ -969,6 +969,27 @@ class TestCreateAttack:
             stored_ar = call_args[1]["attack_results"][0]
             assert stored_ar.objective == "Manual attack via GUI"
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
+            assert stored_ar.metadata["objective_is_placeholder"] is True
+
+    async def test_create_attack_with_name_marks_objective_explicit(self, attack_service, mock_memory) -> None:
+        """Test that a user-supplied request.name is not flagged as a placeholder objective."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", name="Extract the secret")
+            )
+
+            stored_ar = mock_memory.add_attack_results_to_memory.call_args[1]["attack_results"][0]
+            assert stored_ar.objective == "Extract the secret"
+            assert stored_ar.metadata["objective_is_placeholder"] is False
 
 
 # ============================================================================

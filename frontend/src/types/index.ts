@@ -247,6 +247,7 @@ export interface AttackSummary {
   attack_type: string
   attack_specific_params?: Record<string, unknown> | null
   objective: string
+  has_explicit_objective?: boolean
   target?: TargetInfo | null
   converters: string[]
   outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null

@@ -361,6 +361,9 @@ class AttackService:
             timestamp=now,
             metadata={
                 "created_at": now.isoformat(),
+                # request.name absent means "objective" above is the generic
+                # placeholder, not something the user actually typed.
+                "objective_is_placeholder": not request.name,
             },
             labels=labels,
         )
