@@ -12,13 +12,14 @@ from pyrit.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
 )
+from pyrit.models import ChatMessageRole  # noqa: TC001 - public annotation must resolve at runtime
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.component.prepended_history_send_context import (
         PrependedHistorySendContext,
     )
-    from pyrit.models import ChatMessageRole, Message
+    from pyrit.models import Message
     from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 

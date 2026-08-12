@@ -207,6 +207,29 @@ class TestFactoryInit:
 
         assert not factory.can_append_request_converter(converter_type=TranslationConverter)
 
+    def test_request_converter_composition_requires_supported_constructor(self):
+        class _NoConverterAttack:
+            def __init__(self, *, objective_target, attack_scoring_config=None):
+                self.objective_target = objective_target
+
+        with pytest.raises(ValueError, match="does not accept 'attack_converter_config'"):
+            AttackTechniqueFactory(
+                name="test",
+                attack_class=_NoConverterAttack,
+                supports_request_converter_composition=True,
+            )
+
+    def test_request_converter_composition_is_explicit_opt_in(self):
+        default_factory = AttackTechniqueFactory(name="default", attack_class=_StubAttack)
+        composable_factory = AttackTechniqueFactory(
+            name="composable",
+            attack_class=_StubAttack,
+            supports_request_converter_composition=True,
+        )
+
+        assert not default_factory.supports_request_converter_composition
+        assert composable_factory.supports_request_converter_composition
+
 
 class TestFactoryCreate:
     """Tests for AttackTechniqueFactory.create()."""

@@ -27,17 +27,20 @@ Inline configs (``seeds=`` / ``seed_groups=``) never touch memory.
 
 from __future__ import annotations
 
+import asyncio
 import random
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, Seed, SeedGroup, group_seeds_into_attack_groups
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from pyrit.memory import MemoryInterface
 
@@ -48,6 +51,17 @@ INLINE_DATASET_NAME = "inline"
 
 # Internal helper TypeVar for size-capping any homogeneous list.
 _ItemT = TypeVar("_ItemT")
+_AUTO_FETCH_ALLOWED: ContextVar[bool] = ContextVar("dataset_auto_fetch_allowed", default=True)
+
+
+@contextmanager
+def read_only_dataset_resolution() -> Iterator[None]:
+    """Disable dataset auto-fetch persistence within the current async context."""
+    token = _AUTO_FETCH_ALLOWED.set(False)
+    try:
+        yield
+    finally:
+        _AUTO_FETCH_ALLOWED.reset(token)
 
 
 class DatasetSourceKind(Enum):
@@ -393,6 +407,28 @@ class DatasetConfiguration:
         return dict(self._filters)
 
     @property
+    def has_size_cap(self) -> bool:
+        """Whether this configuration applies a logical-group selection cap."""
+        return self.max_dataset_size is not None
+
+    def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
+        """
+        Describe configured caps for each named dataset or inline source.
+
+        Returns:
+            dict[str, list[tuple[str, int, Literal]]]: Source name to ordered
+            ``(cap label, count, provenance)`` entries.
+        """
+        if self.max_dataset_size is None:
+            return {}
+        names = self.dataset_names or [INLINE_DATASET_NAME]
+        if len(names) == 1:
+            cap = ("per-dataset cap", self.max_dataset_size, "dataset")
+        else:
+            cap = ("combined configuration cap", self.max_dataset_size, "configuration")
+        return {name: [cap] for name in names}
+
+    @property
     def _get_seeds_filters(self) -> dict[str, Any]:
         """
         The configured filters widened to ``Any`` for ``get_seeds`` keyword unpacking.
@@ -454,25 +490,42 @@ class DatasetConfiguration:
             DatasetConstraintError: If the dataset yields no seeds even after auto-fetch, or
                 if auto-fetch itself fails (the provider error is chained as the cause).
         """
-        found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._get_seeds_filters))
-        if not found and self._auto_fetch:
+        found = list(
+            await asyncio.to_thread(
+                self._memory.get_seeds,
+                dataset_name=dataset_name,
+                **self._get_seeds_filters,
+            )
+        )
+        auto_fetch_allowed = self._auto_fetch and _AUTO_FETCH_ALLOWED.get()
+        if not found and auto_fetch_allowed:
             try:
                 await self._fetch_dataset_async(dataset_name=dataset_name)
             except Exception as exc:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' could not be loaded: auto-fetch from the registered provider failed."
                 ) from exc
-            found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._get_seeds_filters))
+            found = list(
+                await asyncio.to_thread(
+                    self._memory.get_seeds,
+                    dataset_name=dataset_name,
+                    **self._get_seeds_filters,
+                )
+            )
         if not found:
-            if self._filters and self._memory.get_seeds(dataset_name=dataset_name):
+            unfiltered = (
+                await asyncio.to_thread(self._memory.get_seeds, dataset_name=dataset_name) if self._filters else []
+            )
+            if unfiltered:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
                 )
-            hint = (
-                "auto-fetch from the registered provider did not populate it"
-                if self._auto_fetch
-                else "auto_fetch is disabled"
-            )
+            if auto_fetch_allowed:
+                hint = "auto-fetch from the registered provider did not populate it"
+            elif self._auto_fetch:
+                hint = "auto_fetch is disabled for read-only resolution"
+            else:
+                hint = "auto_fetch is disabled"
             raise DatasetConstraintError(
                 f"Dataset '{dataset_name}' could not be loaded: no seeds found in memory and {hint}."
             )
@@ -822,6 +875,27 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         if all(child.source_kind is DatasetSourceKind.INLINE for child in self._configurations):
             return DatasetSourceKind.INLINE
         return DatasetSourceKind.MEMORY
+
+    @property
+    def has_size_cap(self) -> bool:
+        """Whether the compound or any child applies a logical-group cap."""
+        return self.max_dataset_size is not None or any(child.has_size_cap for child in self._configurations)
+
+    def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
+        """
+        Describe child and combined caps for every contributed dataset.
+
+        Returns:
+            dict[str, list[tuple[str, int, Literal]]]: Ordered cap labels, counts, and provenance by source.
+        """
+        caps: dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]] = {}
+        for child in self._configurations:
+            for name, child_caps in child.size_caps_by_dataset().items():
+                caps.setdefault(name, []).extend(child_caps)
+        if self.max_dataset_size is not None:
+            for name in self.dataset_names or [INLINE_DATASET_NAME]:
+                caps.setdefault(name, []).append(("combined compound cap", self.max_dataset_size, "compound"))
+        return caps
 
     def update_filters(self, *, filters: dict[str, list[str]]) -> None:
         """

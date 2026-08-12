@@ -14,9 +14,11 @@ canonical models.
 """
 
 from datetime import datetime
-from typing import Any
+from enum import Enum
+from math import prod
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 from pyrit.models.parameter import Parameter
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -39,21 +41,265 @@ from pyrit.models.retry_event import RetryEvent
 DATASET_FILTERS: frozenset[str] = frozenset({"harm_categories", "data_types"})
 
 
+def _validate_dataset_filter_mapping(
+    value: dict[str, list[str]] | None,
+) -> dict[str, list[str]] | None:
+    """
+    Validate dataset filter keys shared by launch and estimate requests.
+
+    Returns:
+        dict[str, list[str]] | None: Validated filters.
+
+    Raises:
+        ValueError: If a filter key is not supported.
+    """
+    for key in value or {}:
+        if key not in DATASET_FILTERS:
+            raise ValueError(f"Unknown dataset filter '{key}'. Allowed: {', '.join(sorted(DATASET_FILTERS))}.")
+    return value
+
+
+class ScenarioRunSizeEstimateStatus(str, Enum):
+    """Confidence level for a catalog default-run size estimate."""
+
+    Exact = "exact"
+    Conditional = "conditional"
+    Unavailable = "unavailable"
+
+
+class ScenarioRunSizeFactor(BaseModel):
+    """One labeled multiplicative factor in a run-size component."""
+
+    label: str = Field(..., min_length=1)
+    count: int = Field(..., ge=0)
+
+
+class ScenarioRunSizeComponent(BaseModel):
+    """One additive component of a default-run size estimate."""
+
+    label: str = Field(..., min_length=1)
+    count: int = Field(..., ge=0)
+    factors: list[ScenarioRunSizeFactor] = Field(default_factory=list)
+    is_baseline: bool = False
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def validate_factor_product(self) -> "ScenarioRunSizeComponent":
+        """
+        Require known component totals to equal their ordered factor product.
+
+        Returns:
+            ScenarioRunSizeComponent: The validated component.
+
+        Raises:
+            ValueError: If a component with factors has an inconsistent count.
+        """
+        if self.factors:
+            factor_product = prod(factor.count for factor in self.factors)
+            if self.count != factor_product:
+                raise ValueError(
+                    f"Component '{self.label}' count ({self.count}) must equal its factor product ({factor_product})"
+                )
+        return self
+
+
+class ScenarioDatasetSizeCap(BaseModel):
+    """One configured cap affecting a dataset or compound population."""
+
+    label: str = Field(..., min_length=1)
+    count: int = Field(..., ge=1)
+    configured_on: Literal["dataset", "configuration", "compound"] = "dataset"
+    dataset_name: str | None = None
+
+
+class ScenarioDatasetSummary(BaseModel):
+    """Logical seed-group counts for one default dataset or synthesized population."""
+
+    name: str = Field(..., min_length=1)
+    kind: Literal["dataset", "synthesized"] = "dataset"
+    logical_seed_group_count: int = Field(
+        ...,
+        ge=0,
+        validation_alias=AliasChoices("logical_seed_group_count", "seed_group_count"),
+    )
+    selected_seed_group_count: int = Field(..., ge=0)
+    configured_caps: list[ScenarioDatasetSizeCap] = Field(default_factory=list)
+    selection_note: str | None = None
+
+
+class ScenarioDefaultRunSizeEstimate(BaseModel):
+    """
+    Structured estimate of default planned scenario execution units.
+
+    Counts use the same outer unit as ``ScenarioRunPlan``: one atomic-attack and
+    logical-seed-group pair. Retries and internal attack turns are excluded.
+    """
+
+    version: Literal[1] = 1
+    status: ScenarioRunSizeEstimateStatus
+    total_attack_count: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("total_attack_count", "total"),
+    )
+    components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
+    datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
+    note: str | None = Field(default=None, validation_alias=AliasChoices("note", "caveat"))
+    retries_included: Literal[False] = False
+
+    @property
+    def total(self) -> int | None:
+        """The legacy Python attribute for total_attack_count."""
+        return self.total_attack_count
+
+    @property
+    def caveat(self) -> str | None:
+        """The legacy Python attribute for note."""
+        return self.note
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_total(cls, data: Any) -> Any:
+        """
+        Explain component-less legacy exact totals in the canonical shape.
+
+        Returns:
+            Any: The normalized input when it is a legacy exact estimate; otherwise the original input.
+        """
+        if not isinstance(data, dict) or "total" not in data or "components" in data:
+            return data
+        if data.get("status") != ScenarioRunSizeEstimateStatus.Exact and data.get("status") != "exact":
+            return data
+        normalized = dict(data)
+        normalized["components"] = [
+            {
+                "label": "Legacy total",
+                "count": data["total"],
+                "note": "Normalized from a legacy component-less estimate.",
+            }
+        ]
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_total(self) -> "ScenarioDefaultRunSizeEstimate":
+        """
+        Ensure exact estimates expose and explain their complete total.
+
+        Returns:
+            ScenarioDefaultRunSizeEstimate: The validated estimate.
+
+        Raises:
+            ValueError: If an exact estimate omits or misstates its total.
+        """
+        if self.status is ScenarioRunSizeEstimateStatus.Exact:
+            if self.total_attack_count is None:
+                raise ValueError("Exact default-run estimates require total_attack_count")
+            component_total = sum(component.count for component in self.components)
+            if component_total != self.total_attack_count:
+                raise ValueError(
+                    f"Exact default-run estimate components total {component_total}, not {self.total_attack_count}"
+                )
+        return self
+
+    @classmethod
+    def unavailable(
+        cls, *, note: str = "Default-run size estimate is unavailable."
+    ) -> "ScenarioDefaultRunSizeEstimate":
+        """
+        Build an unavailable estimate without presenting a guessed total.
+
+        Returns:
+            ScenarioDefaultRunSizeEstimate: An unavailable estimate.
+        """
+        return cls(status=ScenarioRunSizeEstimateStatus.Unavailable, note=note)
+
+
+# Backward-compatible catalog name from the initial run-size DTO.
+ScenarioRunSizeEstimate = ScenarioDefaultRunSizeEstimate
+
+
 class RegisteredScenario(BaseModel):
     """Summary of a registered scenario."""
 
     scenario_name: str = Field(..., description="Scenario name  (e.g., 'foundry.red_team_agent')")
     scenario_type: str = Field(..., description="Scenario type identifier (e.g., 'RedTeamAgentScenario')")
+    scenario_version: int = Field(1, ge=1, description="Scenario definition version used for default metadata")
     description: str = Field(..., description="Human-readable description of the scenario")
+    description_markdown: str = Field(
+        "",
+        description=(
+            "Dedented Markdown source preserving the scenario docstring structure. "
+            "Clients must treat embedded HTML as untrusted text."
+        ),
+    )
     default_technique: str = Field(..., description="Default technique name used when none specified")
+    default_techniques: list[str] = Field(
+        default_factory=list,
+        description="Ordered concrete techniques selected by the scenario's default technique policy",
+    )
     aggregate_techniques: list[str] = Field(
         ..., description="Aggregate techniques that combine multiple attack approaches"
     )
+    aggregate_technique_expansions: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Concrete ordered technique expansion for every aggregate selector",
+    )
     all_techniques: list[str] = Field(..., description="All available concrete technique names")
     default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
+    default_dataset_summaries: list[ScenarioDatasetSummary] = Field(
+        default_factory=list,
+        description="Logical and effectively selected attack-group counts for the default configuration",
+    )
+    baseline_policy: Literal["enabled", "disabled", "forbidden"] = Field(
+        "enabled", description="Whether baseline execution is enabled, disabled, or forbidden"
+    )
+    include_baseline_by_default: bool = Field(True, description="Whether an omitted baseline flag includes it")
     supported_parameters: list[Parameter] = Field(
         default_factory=list, description="Scenario-declared custom parameters"
     )
+    default_run_size: ScenarioDefaultRunSizeEstimate = Field(
+        default_factory=ScenarioDefaultRunSizeEstimate.unavailable,
+        description="Scenario-owned structured estimate of the default planned execution units",
+    )
+
+
+class ScenarioRunSizeEstimateRequest(BaseModel):
+    """Request-specific scenario run-size configuration."""
+
+    target_name: str | None = Field(
+        None,
+        description="Optional registered objective target used to resolve target-capability-dependent estimates",
+    )
+    techniques: list[str] | None = Field(
+        None, description="Technique names to estimate (uses scenario default if omitted)"
+    )
+    dataset_names: list[str] | None = Field(
+        None, description="Dataset names to estimate (uses scenario default if omitted)"
+    )
+    max_dataset_size: int | None = Field(None, ge=1, description="Maximum selected logical seed groups")
+    dataset_filters: dict[str, list[str]] | None = Field(
+        None,
+        description="Dataset seed filters keyed by field. Accepted keys: harm_categories, data_types.",
+    )
+    include_baseline: bool | None = Field(
+        None,
+        description="Override the scenario baseline default; forbidden scenarios reject true",
+    )
+    scenario_params: dict[str, Any] | None = Field(
+        None,
+        description="Scenario-declared parameters such as Jailbreak template and attempt counts",
+    )
+
+    @field_validator("dataset_filters")
+    @classmethod
+    def _validate_dataset_filters(cls, value: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+        """
+        Validate estimate dataset filters against the shared allow-list.
+
+        Returns:
+            dict[str, list[str]] | None: Validated filters.
+        """
+        return _validate_dataset_filter_mapping(value)
 
 
 class RunScenarioRequest(BaseModel):
@@ -75,6 +321,9 @@ class RunScenarioRequest(BaseModel):
     )
     max_concurrency: int = Field(10, ge=1, le=100, description="Maximum concurrent operations")
     max_retries: int = Field(0, ge=0, le=20, description="Maximum retry attempts on failure")
+    include_baseline: bool | None = Field(
+        None, description="Override the scenario baseline default; forbidden scenarios reject true"
+    )
     labels: dict[str, str] | None = Field(None, description="Labels to attach to memory entries")
     scenario_params: dict[str, Any] | None = Field(
         None,
@@ -99,21 +348,10 @@ class RunScenarioRequest(BaseModel):
         """
         Reject any dataset-filter key not in the exposed ``DATASET_FILTERS`` allow-list.
 
-        Runs for every request source (CLI and GUI), so the allow-list is enforced server-side.
-
-        Args:
-            value (dict[str, list[str]] | None): The submitted dataset filters.
-
         Returns:
             dict[str, list[str]] | None: The validated filters, unchanged.
-
-        Raises:
-            ValueError: If any key is not present in ``DATASET_FILTERS``.
         """
-        for key in value or {}:
-            if key not in DATASET_FILTERS:
-                raise ValueError(f"Unknown dataset filter '{key}'. Allowed: {', '.join(sorted(DATASET_FILTERS))}.")
-        return value
+        return _validate_dataset_filter_mapping(value)
 
 
 class AttackErrorSummary(BaseModel):
@@ -141,6 +379,7 @@ class ScenarioRunSummary(BaseModel):
 
     scenario_result_id: str = Field(..., description="UUID of the ScenarioResult in memory")
     scenario_name: str = Field(..., description="Registry key of the scenario being run")
+    scenario_registry_name: str | None = Field(None, description="Requested scenario registry key when available")
     scenario_version: int = Field(0, ge=0, description="Version of the scenario")
     status: ScenarioRunState = Field(..., description="Current run status")
     created_at: datetime = Field(..., description="When the run was created")
