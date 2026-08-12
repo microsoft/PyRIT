@@ -1071,6 +1071,7 @@ async def test_openai_chat_target_with_sync_token_provider(sqlite_instance: SQLi
     [
         ("GROQ_ENDPOINT", "GROQ_KEY", "GROQ_LLAMA_MODEL"),
         ("OPEN_ROUTER_ENDPOINT", "OPEN_ROUTER_KEY", "OPEN_ROUTER_CLAUDE_MODEL"),
+        ("ORCA_ROUTER_ENDPOINT", "ORCA_ROUTER_KEY", "ORCA_ROUTER_MODEL"),
         ("OLLAMA_CHAT_ENDPOINT", "", "OLLAMA_MODEL"),
     ],
 )

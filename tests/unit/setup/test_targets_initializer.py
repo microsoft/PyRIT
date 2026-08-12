@@ -157,6 +157,21 @@ class TestTargetInitializerInitialize:
         assert target is not None
         assert target._model_name == "llama2"
 
+    async def test_registers_orca_router_with_env_vars(self):
+        """Test that the OrcaRouter target is registered when its env vars are set."""
+        os.environ["ORCA_ROUTER_ENDPOINT"] = "https://api.orcarouter.ai/v1"
+        os.environ["ORCA_ROUTER_KEY"] = "test_key"
+        os.environ["ORCA_ROUTER_MODEL"] = "orcarouter/auto"
+
+        init = TargetInitializer()
+        await init.initialize_async()
+
+        registry = TargetRegistry.get_registry_singleton()
+        assert "orca_router" in registry.instances
+        target = registry.instances.get("orca_router")
+        assert target is not None
+        assert target._model_name == "orcarouter/auto"
+
     async def test_azure_target_uses_entra_auth(self):
         """Test that Azure targets use Entra auth (token provider) instead of API key."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://my-deployment.openai.azure.com/openai/v1"
@@ -205,6 +220,7 @@ class TestTargetInitializerTargetConfigs:
         assert "ollama" in registry_names
         assert "groq" in registry_names
         assert "google_gemini" in registry_names
+        assert "orca_router" in registry_names
 
     def test_target_configs_have_unique_registry_names(self):
         """Guard against typos: every ``registry_name`` in ``ENV_TARGET_CONFIGS`` must be unique.

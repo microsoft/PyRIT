@@ -267,6 +267,13 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="OPEN_ROUTER_CLAUDE_MODEL",
     ),
     TargetConfig(
+        registry_name="orca_router",
+        target_class=OpenAIChatTarget,
+        endpoint_var="ORCA_ROUTER_ENDPOINT",
+        key_var="ORCA_ROUTER_KEY",
+        model_var="ORCA_ROUTER_MODEL",
+    ),
+    TargetConfig(
         registry_name="ollama",
         target_class=OpenAIChatTarget,
         endpoint_var="OLLAMA_CHAT_ENDPOINT",
@@ -497,6 +504,7 @@ class TargetInitializer(PyRITInitializer):
     - AZURE_FOUNDRY_MISTRAL_LARGE_* - Azure AI Foundry Mistral Large
     - GROQ_* - Groq API
     - OPEN_ROUTER_* - OpenRouter API
+    - ORCA_ROUTER_* - OrcaRouter API
     - OLLAMA_* - Ollama local
     - GOOGLE_GEMINI_* - Google Gemini (OpenAI-compatible)
 

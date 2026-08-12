@@ -83,6 +83,16 @@ OPENAI_CHAT_MODEL="anthropic/claude-3.7-sonnet"
 Get your API key from [openrouter.ai](https://openrouter.ai/).
 :::
 
+:::{tab-item} OrcaRouter
+```bash
+OPENAI_CHAT_ENDPOINT="https://api.orcarouter.ai/v1"
+OPENAI_CHAT_KEY="sk-orca-your-key-here"
+OPENAI_CHAT_MODEL="orcarouter/auto"
+```
+
+Get your API key from [orcarouter.ai](https://www.orcarouter.ai/).
+:::
+
 ::::
 
 ```{note}
