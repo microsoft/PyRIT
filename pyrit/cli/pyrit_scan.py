@@ -14,15 +14,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args, get_origin
-from urllib.parse import urlparse
 
 from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
+    add_results_arguments,
     build_parameters_from_api,
     collapse_dataset_filters,
     non_negative_int,
@@ -126,6 +127,16 @@ Examples:
 """
 
 
+def _positive_finite_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a number greater than 0, got {value!r}") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError(f"expected a finite number greater than 0, got {value!r}")
+    return parsed
+
+
 def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
     """
     Build the ``pyrit_scan`` argparse parser with the built-in (non-scenario) flags.
@@ -159,6 +170,13 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         "--stop-server",
         action="store_true",
         help="Stop the backend server and exit",
+    )
+    server_group.add_argument(
+        "--startup-timeout",
+        type=_positive_finite_float,
+        default=None,
+        metavar="SECONDS",
+        help="Seconds to wait for a local backend to start (default: server.startup_timeout or 120)",
     )
     server_group.add_argument(
         "--config-file",
@@ -277,6 +295,9 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         metavar="KEY=VALUE",
         help=ARG_HELP["dataset_filters"],
     )
+
+    # -- Scenario results (inspect a completed run and exit) --
+    add_results_arguments(parser=parser, include_id_flag=True)
 
     return parser
 
@@ -432,12 +453,12 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
     Returns:
         str | None: The server base URL, or ``None`` if unreachable.
     """
-    from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
-    from pyrit.cli._server_launcher import ServerLauncher
+    from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_settings
+    from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address
 
-    base_url = parsed_args.server_url
-    if base_url is None:
-        base_url = read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
+    server_settings = read_server_settings(config_file=parsed_args.config_file)
+    base_url = parsed_args.server_url or server_settings.url or DEFAULT_SERVER_URL
+    startup_timeout = getattr(parsed_args, "startup_timeout", None) or server_settings.startup_timeout
 
     # Probe existing server
     if await ServerLauncher.probe_health_async(base_url=base_url):
@@ -445,16 +466,8 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
 
     # Auto-start if requested
     if parsed_args.start_server:
-        parsed_url = urlparse(base_url)
-        if (
-            parsed_url.scheme != "http"
-            or parsed_url.hostname not in {"localhost", "127.0.0.1"}
-            or parsed_url.username is not None
-            or parsed_url.password is not None
-            or parsed_url.path not in {"", "/"}
-            or parsed_url.query
-            or parsed_url.fragment
-        ):
+        local_address = parse_local_server_address(base_url=base_url)
+        if local_address is None:
             print(
                 f"Error: cannot --start-server because the configured server URL ({base_url}) "
                 "is not a plain local HTTP URL. Use localhost or 127.0.0.1, "
@@ -462,12 +475,14 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
                 file=sys.stderr,
             )
             return None
+        host, port = local_address
         launcher = ServerLauncher()
         try:
             return await launcher.start_async(
-                host=parsed_url.hostname,
-                port=parsed_url.port or 80,
+                host=host,
+                port=port,
                 config_file=parsed_args.config_file,
+                startup_timeout=startup_timeout,
             )
         except RuntimeError as exc:
             print(f"Error: {exc}")
@@ -491,6 +506,7 @@ def _is_command_specified(*, parsed_args: Namespace) -> bool:
         or parsed_args.list_converters
         or parsed_args.list_datasets
         or parsed_args.add_initializer
+        or parsed_args.scenario_results
         or parsed_args.scenario_name
     )
 
@@ -512,21 +528,28 @@ async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     Handle ``--stop-server``: probe, then terminate the listening process.
 
     Returns:
-        int: Exit code (always ``0``).
+        int: Zero when no server is running or shutdown succeeds; one otherwise.
     """
-    from pyrit.cli._server_launcher import ServerLauncher, stop_server_on_port
+    from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address, stop_server_on_port
 
     base_url = _resolve_configured_server_url(parsed_args=parsed_args)
+    local_address = parse_local_server_address(base_url=base_url)
+    if local_address is None:
+        print(f"Cannot stop non-local server {base_url}. Stop it on its host instead.", file=sys.stderr)
+        return 1
     if not await ServerLauncher.probe_health_async(base_url=base_url):
         print(f"No server running at {base_url}.")
         return 0
 
-    port = urlparse(base_url).port or 8000
-    if stop_server_on_port(port=port):
-        print(f"Server on port {port} stopped.")
-    else:
-        print(f"Server at {base_url} is running but could not identify the process.")
+    _, port = local_address
+    if not await asyncio.to_thread(stop_server_on_port, port=port):
+        print(f"Server at {base_url} is running but could not be stopped.")
         print(f"Find and kill it manually: look for a process listening on port {port}.")
+        return 1
+    if await ServerLauncher.probe_health_async(base_url=base_url):
+        print(f"Server process exited, but a healthy backend is still responding at {base_url}.")
+        return 1
+    print(f"Server on port {port} stopped.")
     return 0
 
 
@@ -586,6 +609,70 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
         except ServerNotAvailableError as exc:
             print(f"Error: {exc}")
             return 1
+    return 0
+
+
+def _validate_results_flags(*, parsed_args: Namespace) -> str | None:
+    """
+    Ensure the ``scenario-results`` sub-flags are only used with ``--scenario-results``.
+
+    ``--view`` / ``--attack-result-ids`` / ``--limit`` only mean something when a
+    run is being inspected. Because the flat parser accepts them regardless, this
+    check gives a clear error instead of the generic "no scenario specified"
+    fallthrough.
+
+    Args:
+        parsed_args (Namespace): The parsed CLI arguments.
+
+    Returns:
+        str | None: An error message when a sub-flag is misused, else None.
+    """
+    if parsed_args.scenario_results:
+        return None
+    misused: list[str] = []
+    if parsed_args.view is not None:
+        misused.append("--view")
+    if parsed_args.attack_result_ids:
+        misused.append("--attack-result-ids")
+    if parsed_args.limit is not None:
+        misused.append("--limit")
+    if not misused:
+        return None
+    return f"Error: {', '.join(misused)} require --scenario-results <id>."
+
+
+async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
+    """
+    Handle ``--scenario-results``: fetch a run and render the requested view.
+
+    Returns:
+        int: Exit code (``0`` on success, ``1`` on error).
+    """
+    from pyrit.cli import _output
+    from pyrit.cli._cli_args import ScenarioResultView
+    from pyrit.cli._results import apply_view_limit_policy, build_attacks_table_payload, resolve_view
+
+    scenario_result_id = parsed_args.scenario_results
+    view = resolve_view(view=parsed_args.view)
+    limit = apply_view_limit_policy(view=view, limit=parsed_args.limit)
+
+    try:
+        result = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
+    except Exception as exc:
+        _print_cli_exception(exc=exc)
+        return 1
+
+    if view is ScenarioResultView.OVERVIEW:
+        await _output.print_scenario_result_async(result=result)
+        return 0
+
+    payload = build_attacks_table_payload(
+        result=result,
+        scenario_result_id=scenario_result_id,
+        attack_result_ids=parsed_args.attack_result_ids,
+        limit=limit,
+    )
+    _output.print_attacks_table(payload=payload)
     return 0
 
 
@@ -777,6 +864,9 @@ async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) ->
     if parsed_args.add_initializer:
         return await _handle_add_initializer_async(client=client, parsed_args=parsed_args)
 
+    if parsed_args.scenario_results:
+        return await _handle_results_async(client=client, parsed_args=parsed_args)
+
     scenario_name = parsed_args.scenario_name
     if not scenario_name:
         print("Error: No scenario specified. Provide one positionally or use --list-scenarios.")
@@ -814,6 +904,11 @@ async def _run_async(*, parsed_args: Namespace) -> int:
 
     if parsed_args.stop_server:
         return await _handle_stop_server_async(parsed_args=parsed_args)
+
+    results_flag_error = _validate_results_flags(parsed_args=parsed_args)
+    if results_flag_error is not None:
+        print(results_flag_error, file=sys.stderr)
+        return 1
 
     if not (parsed_args.start_server or _is_command_specified(parsed_args=parsed_args)):
         _build_base_parser().print_help()

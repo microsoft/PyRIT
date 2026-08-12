@@ -667,6 +667,67 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
 
 
 # ---------------------------------------------------------------------------
+# print_attacks_table
+# ---------------------------------------------------------------------------
+
+
+def _attacks_payload(*, rows, total):
+    from pyrit.cli._results import AttackRow, AttacksTablePayload
+
+    return AttacksTablePayload(
+        scenario_result_id="SID",
+        rows=[AttackRow(**row) for row in rows],
+        total=total,
+    )
+
+
+def test_print_attacks_table_empty(capsys):
+    _output.print_attacks_table(payload=_attacks_payload(rows=[], total=0))
+    out = capsys.readouterr().out
+    assert "No attack results found" in out
+    assert "SID" in out
+
+
+def test_print_attacks_table_renders_rows(capsys):
+    rows = [
+        {
+            "attack_result_id": "aid-1",
+            "atomic_attack_name": "tech_a",
+            "objective": "extract secrets",
+            "outcome": "success",
+            "executed_turns": 3,
+            "score_value": "0.9",
+        }
+    ]
+    _output.print_attacks_table(payload=_attacks_payload(rows=rows, total=1))
+    out = capsys.readouterr().out
+    assert "aid-1" in out
+    assert "tech_a" in out
+    assert "extract secrets" in out
+    assert "SUCCESS" in out
+    assert "0.9" in out
+    assert "Total attacks: 1" in out
+
+
+def test_print_attacks_table_shows_truncation_note(capsys):
+    rows = [
+        {
+            "attack_result_id": "aid-1",
+            "atomic_attack_name": "tech_a",
+            "objective": "obj",
+            "outcome": "failure",
+            "executed_turns": 1,
+            "score_value": None,
+        }
+    ]
+    # total (5) exceeds shown rows (1) -> "showing N of M" note.
+    _output.print_attacks_table(payload=_attacks_payload(rows=rows, total=5))
+    out = capsys.readouterr().out
+    assert "Showing 1 of 5" in out
+    assert "—" in out  # missing score placeholder
+
+
+# ---------------------------------------------------------------------------
 # print_scenario_runs_list
 # ---------------------------------------------------------------------------
 
