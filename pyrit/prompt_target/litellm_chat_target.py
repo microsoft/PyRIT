@@ -31,7 +31,7 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
 from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_content_filter_message,
     build_response_pieces_async,
-    capture_token_usage,
+    capture_usage_and_finish_reason,
     extract_partial_content,
     is_content_filter_response,
     validate_chat_completion_response,
@@ -382,13 +382,16 @@ class LiteLLMChatTarget(PromptTarget):
         # exception) so attacks can continue and blocked-content scorers can still score.
         if is_content_filter_response(response):
             logger.warning("Output content filtered by content policy.")
-            return [
-                build_content_filter_message(
-                    response=response,
-                    request=request_piece,
-                    partial_content=extract_partial_content(response),
-                )
-            ]
+            filter_message = build_content_filter_message(
+                response=response,
+                request=request_piece,
+                partial_content=extract_partial_content(response),
+            )
+            # A filtered response still reports the tokens (and cost) it consumed, which would
+            # otherwise be lost precisely where a red teamer most wants to see it.
+            capture_usage_and_finish_reason(pieces=filter_message.message_pieces, response=response)
+            self._capture_response_cost(pieces=filter_message.message_pieces, response=response)
+            return [filter_message]
 
         validate_chat_completion_response(response=response)
         return [await self._construct_message_from_response_async(response=response, request=request_piece)]
@@ -464,7 +467,7 @@ class LiteLLMChatTarget(PromptTarget):
         pieces = await build_response_pieces_async(response=response, request=request, audio_format=audio_format)
         if not pieces:
             raise EmptyResponseException(message="Failed to extract any response content from LiteLLM.")
-        capture_token_usage(pieces=pieces, response=response)
+        capture_usage_and_finish_reason(pieces=pieces, response=response)
         self._capture_response_cost(pieces=pieces, response=response)
         return Message(message_pieces=pieces)
 
@@ -477,7 +480,9 @@ class LiteLLMChatTarget(PromptTarget):
         model-aware and is unique to LiteLLM (the raw OpenAI SDK response carries no cost), so this
         mirrors ``capture_token_usage`` and writes ``token_usage_cost`` alongside the token counts.
         The value is stored as a string to honor the ``prompt_metadata`` value contract, and any
-        failure is swallowed so cost accounting never breaks the response path.
+        failure is swallowed so cost accounting never breaks the response path. This has to run
+        after usage capture, which clears the whole ``token_usage_`` prefix and would otherwise
+        drop the cost again.
 
         Args:
             pieces (list[MessagePiece]): The constructed response pieces.
