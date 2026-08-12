@@ -34,11 +34,12 @@ interface StatusBannerProps {
   textClassName: string
   buttonTestId?: string
   buttonClassName?: string
+  tourTarget?: string
 }
 
-function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId, buttonClassName }: StatusBannerProps) {
+function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId, buttonClassName, tourTarget }: StatusBannerProps) {
   return (
-    <div className={className} data-testid={testId}>
+    <div className={className} data-testid={testId} data-tour={tourTarget}>
       {icon}
       <Text className={textClassName} size={300}>
         {text}
@@ -507,6 +508,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             testId="no-target-banner"
             buttonTestId="configure-target-input-btn"
             buttonClassName={styles.touchTarget}
+            tourTarget="chat-prerequisite"
           />
         ) : operatorLocked ? (
           <StatusBanner
@@ -585,6 +587,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                   onClick={onToggleConverterPanel}
                   disabled={disabled}
                   data-testid="toggle-converter-panel-btn"
+                  data-tour="converter-toggle"
                   aria-label="Toggle converter panel"
                 />
               </Tooltip>

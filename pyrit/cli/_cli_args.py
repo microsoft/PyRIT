@@ -19,6 +19,7 @@ import inspect
 import json
 import logging
 import shlex
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args, get_origin
 
@@ -39,6 +40,51 @@ if TYPE_CHECKING:
 IN_MEMORY = "InMemory"
 SQLITE = "SQLite"
 AZURE_SQL = "AzureSQL"
+
+
+# ---------------------------------------------------------------------------
+# Scenario-results views
+# ---------------------------------------------------------------------------
+
+
+class ScenarioResultView(str, Enum):
+    """
+    Granularity of a ``scenario-results`` render.
+
+    Defined here (a lightweight, parse-time-safe module) rather than alongside
+    the Pydantic payload models in ``pyrit.cli._results`` so the argument parsers
+    can reference it without importing ``pydantic`` on the ``--help`` path.
+    Inherits from ``str`` so the value round-trips cleanly through argparse.
+    """
+
+    #: Scenario-level aggregate (totals + per-group success rates).
+    OVERVIEW = "overview"
+    #: One row per individual attack result.
+    ATTACKS = "attacks"
+
+
+def parse_scenario_result_view(raw: str) -> ScenarioResultView:
+    """
+    Parse a ``--view`` token into a ``ScenarioResultView``.
+
+    Used as an argparse ``type=`` so an invalid value produces an error that
+    lists the valid view names (``ScenarioResultView(raw)`` alone would raise a
+    bare ``ValueError`` argparse renders without the choices).
+
+    Args:
+        raw (str): The raw ``--view`` token.
+
+    Returns:
+        ScenarioResultView: The matching view.
+
+    Raises:
+        argparse.ArgumentTypeError: If *raw* is not a valid view name.
+    """
+    try:
+        return ScenarioResultView(raw)
+    except ValueError:
+        valid = ", ".join(view.value for view in ScenarioResultView)
+        raise argparse.ArgumentTypeError(f"invalid view '{raw}' (choose from {valid})") from None
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +418,72 @@ ARG_HELP = {
     "Targets are registered by initializers (e.g., 'target' initializer). "
     "Use --list-targets to see available target names after initializers have run",
 }
+
+
+def add_results_arguments(*, parser: argparse.ArgumentParser, include_id_flag: bool = False) -> None:
+    """
+    Add the shared ``scenario-results`` selection flags to *parser*.
+
+    Registers ``--view``, ``--attack-result-ids``, and ``--limit`` in a
+    ``scenario results`` group so that ``pyrit_scan`` and ``pyrit_shell`` expose
+    an identical results interface. The scenario-result id differs by surface —
+    a ``--scenario-results`` value in scan versus a positional in the shell — so
+    it is only added here when *include_id_flag* is set (the scan case).
+
+    ``--view`` defaults to ``None`` (not ``OVERVIEW``) so callers can tell an
+    explicit ``--view`` apart from an omitted one; resolve it with
+    ``pyrit.cli._results.resolve_view``.
+
+    Args:
+        parser (argparse.ArgumentParser): The parser to extend.
+        include_id_flag (bool): When True, also register ``--scenario-results``
+            (scan's mode flag). Defaults to False.
+    """
+    group = parser.add_argument_group("scenario results")
+    if include_id_flag:
+        group.add_argument(
+            "--scenario-results",
+            dest="scenario_results",
+            metavar="SCENARIO_RESULT_ID",
+            help="Print results for a completed scenario run and exit",
+        )
+    group.add_argument(
+        "--view",
+        type=parse_scenario_result_view,
+        default=None,
+        metavar="{" + ",".join(view.value for view in ScenarioResultView) + "}",
+        help="Result granularity: 'overview' (aggregate, default) or 'attacks' (per-attack table)",
+    )
+    group.add_argument(
+        "--attack-result-ids",
+        nargs="+",
+        metavar="ID",
+        help="Restrict the view to these attack result ids (default: all attacks in the run)",
+    )
+    group.add_argument(
+        "--limit",
+        type=positive_int,
+        metavar="N",
+        help="Show at most N attack rows (ignored for --view overview)",
+    )
+
+
+def build_scenario_results_parser() -> argparse.ArgumentParser:
+    """
+    Build the ``pyrit_shell`` parser for ``scenario-results <id> [flags]``.
+
+    The shell takes the scenario-result id positionally (scan takes it as the
+    ``--scenario-results`` value), then shares the remaining selection flags via
+    ``add_results_arguments``. ``add_help`` is disabled so a bad line raises
+    ``SystemExit`` for the caller to catch instead of printing argparse's help.
+
+    Returns:
+        argparse.ArgumentParser: The configured parser.
+    """
+    parser = argparse.ArgumentParser(prog="scenario-results", add_help=False)
+    parser.add_argument("scenario_result_id", help="Scenario result id to inspect")
+    add_results_arguments(parser=parser)
+    return parser
 
 
 # ---------------------------------------------------------------------------

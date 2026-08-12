@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router'
 import { useMsal } from '@azure/msal-react'
 import { Joyride } from 'react-joyride'
 import { useTheme } from './hooks/useTheme'
@@ -347,7 +347,12 @@ function App() {
   // Onboarding tour — pass handleNavigate so the tour can switch views between steps.
   // The tour does not auto-start; users launch it from the "Take a tour" button in the top bar.
   const { resolved } = useTheme()
-  const { startTour, tourProps } = useTour(handleNavigate, resolved === 'dark', currentView)
+  const { startTour, tourProps } = useTour(
+    handleNavigate,
+    resolved === 'dark',
+    currentView,
+    activeTarget !== null,
+  )
 
   return (
     <ErrorBoundary>
@@ -402,6 +407,8 @@ function App() {
                     onOpenAttack={handleOpenAttack}
                     filters={historyFilters}
                     onFiltersChange={handleFiltersChange}
+                    activeTarget={activeTarget}
+                    onNavigate={handleNavigate}
                   />
                 }
               />

@@ -7,12 +7,15 @@ import {
   DialogContent,
   DialogActions,
   Button,
+  Dropdown,
   Input,
   Label,
   Link,
+  Option,
   Radio,
   RadioGroup,
   Select,
+  Spinner,
   Switch,
   Text,
   tokens,
@@ -61,7 +64,39 @@ const TARGET_FORM_SHAPES: Record<string, TargetFormShape> = {
 
 const RENDERABLE_TARGET_TYPES = Object.keys(TARGET_FORM_SHAPES)
 
+const TARGET_DISPLAY_NAMES: Record<string, string> = {
+  AzureMLChatTarget: 'Azure Machine Learning chat',
+  OpenAIChatTarget: 'OpenAI chat',
+  OpenAICompletionTarget: 'OpenAI text completion',
+  OpenAIImageTarget: 'OpenAI image',
+  OpenAIResponseTarget: 'OpenAI Responses API',
+  OpenAITTSTarget: 'OpenAI text to speech',
+  OpenAIVideoTarget: 'OpenAI video',
+  RoundRobinTarget: 'Weighted round robin',
+}
+
+const FALLBACK_TARGET_CATALOG_ENTRIES: TargetCatalogEntry[] = RENDERABLE_TARGET_TYPES.map((targetType) => ({
+  target_type: targetType,
+  parameters: [],
+  supported_auth_modes: [],
+  description: null,
+}))
+
 type AuthMode = 'api_key' | 'identity'
+type CatalogStatus = 'loading' | 'loaded' | 'error'
+
+function getTargetDisplayName(targetType: string): string {
+  return TARGET_DISPLAY_NAMES[targetType] ?? targetType
+}
+
+function getAuthDescription(authModes: TargetCatalogEntry['supported_auth_modes']): string | null {
+  if (authModes.length === 0) return null
+
+  const labels = authModes.map((mode) => (
+    mode === 'identity' ? 'Microsoft Entra ID' : 'API key'
+  ))
+  return `Supported authentication: ${labels.join(' or ')}`
+}
 
 /**
  * Fallback for whether a target type supports identity-based auth when the
@@ -189,10 +224,24 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   // --- Catalog state ---
   // Available target types + their auth facts, fetched from the backend registry.
   const [catalogEntries, setCatalogEntries] = useState<TargetCatalogEntry[]>([])
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>('loading')
   const catalogByType = useMemo(
     () => new Map(catalogEntries.map((entry) => [entry.target_type, entry])),
     [catalogEntries],
   )
+
+  // Reset the catalog back to its loading state whenever the dialog is opened,
+  // so a stale error/entries from a previous session isn't shown while the
+  // refetch is in flight. Adjusted during render (rather than in the effect
+  // below) to avoid a cascading render.
+  const [seenOpen, setSeenOpen] = useState(open)
+  if (open !== seenOpen) {
+    setSeenOpen(open)
+    if (open) {
+      setCatalogEntries([])
+      setCatalogStatus('loading')
+    }
+  }
 
   // Fetch the target catalog once when the dialog opens. The backend is the
   // authority on which types exist and which auth modes they support.
@@ -201,29 +250,40 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     let cancelled = false
     targetsApi.listTargetCatalog()
       .then((res) => {
-        if (!cancelled) setCatalogEntries(res.items)
+        if (!cancelled) {
+          setCatalogEntries(res.items)
+          setCatalogStatus('loaded')
+        }
       })
       .catch(() => {
-        // Ignore fetch errors — fall back to the locally-known renderable types.
+        if (!cancelled) {
+          setCatalogEntries([])
+          setCatalogStatus('error')
+        }
       })
     return () => { cancelled = true }
   }, [open])
 
-  // The types offered in the dropdown: catalog types the dialog can render,
-  // preserving catalog order. Fall back to the locally-known types when the
-  // catalog hasn't loaded (or the fetch failed) so the form stays usable.
-  const targetTypeOptions = useMemo(() => {
-    const fromCatalog = catalogEntries
-      .map((entry) => entry.target_type)
-      .filter((type) => type in TARGET_FORM_SHAPES)
-    return fromCatalog.length > 0 ? fromCatalog : RENDERABLE_TARGET_TYPES
+  const catalogTargetTypeOptions = useMemo(() => {
+    return catalogEntries.filter((entry) => entry.target_type in TARGET_FORM_SHAPES)
   }, [catalogEntries])
+  const catalogMetadataAvailable = catalogTargetTypeOptions.length > 0
+  const catalogUnavailable = catalogStatus !== 'loading' && !catalogMetadataAvailable
+  const targetTypeOptions = catalogStatus === 'loading'
+    ? []
+    : catalogMetadataAvailable
+      ? catalogTargetTypeOptions
+      : FALLBACK_TARGET_CATALOG_ENTRIES
 
   const formShape = TARGET_FORM_SHAPES[targetType]
   const isRoundRobin = formShape === 'roundrobin'
   const isAzureML = formShape === 'azureml'
   const isOpenAi = formShape === 'openai'
   const catalogEntry = catalogByType.get(targetType)
+  const selectedTargetDisplayName = getTargetDisplayName(targetType)
+  const selectedTargetAuthDescription = catalogEntry
+    ? getAuthDescription(catalogEntry.supported_auth_modes)
+    : null
   const supportsIdentity = catalogEntry
     ? catalogEntry.supported_auth_modes.includes('identity')
     : defaultSupportsIdentity(formShape)
@@ -447,18 +507,39 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 </MessageBar>
               )}
 
+              {catalogStatus === 'loading' && (
+                <Spinner size="tiny" label="Loading target details..." labelPosition="after" />
+              )}
+
+              {catalogUnavailable && (
+                <MessageBar intent="warning">
+                  <MessageBarBody>
+                    Target details could not be loaded. You can still select a supported target type,
+                    but its catalog description and authentication options are unavailable.
+                  </MessageBarBody>
+                </MessageBar>
+              )}
+
               <Field
                 className={styles.formField}
                 label="Target Type"
+                hint="Each option shows what the target does, its implementation class, and how it authenticates."
                 required
                 validationMessage={fieldErrors.targetType}
                 validationState={fieldErrors.targetType ? 'error' : 'none'}
               >
-                <Select
+                <Dropdown
+                  aria-label="Target Type"
                   className={styles.fullWidthSelect}
-                  value={targetType}
-                  onChange={(_, data) => {
-                    const next = data.value
+                  disabled={catalogStatus === 'loading'}
+                  listbox={{ className: styles.targetTypeListbox }}
+                  placeholder={catalogStatus === 'loading' ? 'Loading target types...' : 'Select a target type'}
+                  positioning={{ matchTargetSize: 'width' }}
+                  selectedOptions={targetType ? [targetType] : []}
+                  value={targetType ? selectedTargetDisplayName : ''}
+                  onOptionSelect={(_, data) => {
+                    const next = data.optionValue
+                    if (!next) return
                     setTargetType(next)
                     const nextEntry = catalogByType.get(next)
                     const nextSupportsIdentity = nextEntry
@@ -469,12 +550,71 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     }
                   }}
                 >
-                  <option value="">Select a target type</option>
-                  {targetTypeOptions.map((type) => (
-                    <option key={type} value={type}>{type}</option>
-                  ))}
-                </Select>
+                  {targetTypeOptions.map((entry) => {
+                    const displayName = getTargetDisplayName(entry.target_type)
+                    const authDescription = getAuthDescription(entry.supported_auth_modes)
+                    const accessibleDescription = [
+                      displayName,
+                      entry.description,
+                      `Implementation: ${entry.target_type}`,
+                      authDescription,
+                    ].filter((value): value is string => Boolean(value)).join('. ')
+
+                    return (
+                      <Option
+                        aria-label={accessibleDescription}
+                        key={entry.target_type}
+                        text={displayName}
+                        value={entry.target_type}
+                      >
+                        <div className={styles.targetTypeOption}>
+                          <div className={styles.targetTypeOptionHeader}>
+                            <Text weight="semibold">{displayName}</Text>
+                            <code className={styles.targetTypeIdentifier}>{entry.target_type}</code>
+                          </div>
+                          {entry.description && (
+                            <Text size={200} className={styles.targetTypeDescription}>
+                              {entry.description}
+                            </Text>
+                          )}
+                          {authDescription && (
+                            <Text size={200} className={styles.targetTypeAuth}>
+                              {authDescription}
+                            </Text>
+                          )}
+                        </div>
+                      </Option>
+                    )
+                  })}
+                </Dropdown>
               </Field>
+
+              {targetType && (
+                <section
+                  aria-label="Selected target details"
+                  aria-live="polite"
+                  className={styles.selectedTargetDetails}
+                >
+                  <div className={styles.targetTypeOptionHeader}>
+                    <Text weight="semibold">{selectedTargetDisplayName}</Text>
+                    <code className={styles.targetTypeIdentifier}>{targetType}</code>
+                  </div>
+                  {catalogEntry?.description ? (
+                    <Text size={200} className={styles.targetTypeDescription}>
+                      {catalogEntry.description}
+                    </Text>
+                  ) : (
+                    <Text size={200} className={styles.targetTypeDescription}>
+                      Catalog details are unavailable for this target.
+                    </Text>
+                  )}
+                  {selectedTargetAuthDescription && (
+                    <Text size={200} className={styles.targetTypeAuth}>
+                      {selectedTargetAuthDescription}
+                    </Text>
+                  )}
+                </section>
+              )}
 
               {/* === RoundRobinTarget form: select existing targets === */}
               {isRoundRobin && (

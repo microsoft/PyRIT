@@ -7,6 +7,7 @@ import textwrap
 from colorama import Fore, Style
 
 from pyrit.models import Message, MessagePiece, Score
+from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.conversation.base import ConversationPrinterBase
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.sink import Sink
@@ -14,7 +15,7 @@ from pyrit.output.sink import Sink
 logger = logging.getLogger(__name__)
 
 
-class PrettyConversationPrinter(ConversationPrinterBase):
+class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
     """
     Pretty printer for conversation message histories with ANSI-colored formatting.
 
@@ -173,22 +174,6 @@ class PrettyConversationPrinter(ConversationPrinterBase):
             await self._display_image_async(piece)
 
         return "".join(lines)
-
-    def _format_colored(self, text: str, *colors: str) -> str:
-        """
-        Format text with color codes if colors are enabled.
-
-        Args:
-            text (str): The text to format.
-            *colors: Variable number of colorama color constants to apply.
-
-        Returns:
-            str: The formatted line with trailing newline.
-        """
-        if self._enable_colors and colors:
-            color_prefix = "".join(colors)
-            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
-        return f"{text}\n"
 
     def _render_wrapped_text(self, text: str, color: str) -> str:
         """
