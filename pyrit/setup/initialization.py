@@ -5,11 +5,12 @@ import io
 import logging
 import os
 import pathlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import dotenv
 from dotenv.parser import parse_stream
+from dotenv.variables import parse_variables
 
 from pyrit.common import path
 from pyrit.common.apply_defaults import reset_default_values
@@ -54,7 +55,79 @@ def _load_environment_files(
     Raises:
         ValueError: If any provided env_files do not exist.
     """
-    # Validate env_files exist if they were provided
+    selected_files = _select_environment_files(
+        env_files=env_files,
+        silent=silent,
+        include_default_base=include_default_base,
+    )
+    for env_file in selected_files:
+        dotenv.load_dotenv(env_file, override=True, interpolate=True)
+        if not silent:
+            _print_msg(f"Loaded environment file: {env_file}", quiet=silent, log=True)
+
+    return bool(selected_files)
+
+
+def _resolve_environment_files(
+    env_files: Sequence[pathlib.Path] | None,
+    *,
+    base_environment: Mapping[str, str],
+    silent: bool = False,
+    include_default_base: bool = True,
+) -> tuple[dict[str, str], bool]:
+    """
+    Resolve environment files without mutating ``os.environ``.
+
+    Args:
+        env_files: Optional sequence of environment file paths. If None, resolves
+            default files from the PyRIT configuration directory.
+        base_environment: Environment visible to interpolation before file values.
+        silent: If True, suppresses loading messages. Defaults to False.
+        include_default_base: If False and env_files is None, skips the default
+            .env file while still resolving .env.local. Defaults to True.
+
+    Returns:
+        tuple[dict[str, str], bool]: Resolved values and whether any file was selected.
+
+    Raises:
+        ValueError: If any explicitly provided environment file does not exist.
+    """
+    selected_files = _select_environment_files(
+        env_files=env_files,
+        silent=silent,
+        include_default_base=include_default_base,
+    )
+    if _dotenv_loading_disabled():
+        return {}, bool(selected_files)
+
+    staged_environment = dict(base_environment)
+    resolved_environment: dict[str, str] = {}
+    for env_file in selected_files:
+        raw_values = dotenv.dotenv_values(dotenv_path=env_file, interpolate=False)
+        file_values = _interpolate_dotenv_values(values=raw_values, base_environment=staged_environment)
+        staged_environment.update(file_values)
+        resolved_environment.update(file_values)
+        if not silent:
+            _print_msg(f"Loaded environment file: {env_file}", quiet=silent, log=True)
+
+    return resolved_environment, bool(selected_files)
+
+
+def _select_environment_files(
+    env_files: Sequence[pathlib.Path] | None,
+    *,
+    silent: bool,
+    include_default_base: bool,
+) -> list[pathlib.Path]:
+    """
+    Select and validate environment files without reading their contents.
+
+    Returns:
+        list[pathlib.Path]: Environment files in load order.
+
+    Raises:
+        ValueError: If an explicitly provided environment file does not exist.
+    """
     if env_files is not None:
         if not silent:
             _print_msg(f"Loading custom environment files: {[str(f) for f in env_files]}", quiet=silent, log=True)
@@ -87,12 +160,37 @@ def _load_environment_files(
 
         env_files = default_files
 
-    for env_file in env_files:
-        dotenv.load_dotenv(env_file, override=True, interpolate=True)
-        if not silent:
-            _print_msg(f"Loaded environment file: {env_file}", quiet=silent, log=True)
+    return list(env_files)
 
-    return bool(env_files)
+
+def _interpolate_dotenv_values(
+    *,
+    values: Mapping[str, str | None],
+    base_environment: Mapping[str, str],
+) -> dict[str, str]:
+    """
+    Resolve dotenv interpolation against a staged environment mapping.
+
+    Returns:
+        dict[str, str]: Interpolated assignments, excluding valueless entries.
+    """
+    visible_environment: dict[str, str | None] = dict(base_environment)
+    resolved_values: dict[str, str] = {}
+    for name, value in values.items():
+        if value is None:
+            visible_environment[name] = None
+            continue
+
+        resolved_value = "".join(atom.resolve(visible_environment) for atom in parse_variables(value))
+        visible_environment[name] = resolved_value
+        resolved_values[name] = resolved_value
+
+    return resolved_values
+
+
+def _dotenv_loading_disabled() -> bool:
+    value = os.environ.get("PYTHON_DOTENV_DISABLED", "")
+    return value.casefold() in {"1", "true", "t", "yes", "y"}
 
 
 def _print_msg(message: str, quiet: bool, log: bool) -> None:
@@ -226,7 +324,7 @@ async def _load_env_from_akv_async(
     secret_url: str,
     strict: bool = True,
     silent: bool = False,
-) -> None:
+) -> dict[str, str]:
     """
     Load environment variables from an Azure Key Vault secret.
 
@@ -243,6 +341,9 @@ async def _load_env_from_akv_async(
         strict (bool): If True, reject malformed or valueless dotenv entries.
             If False, warn and skip those entries. Defaults to True.
         silent (bool): If True, suppresses print statements. Defaults to False.
+
+    Returns:
+        dict[str, str]: The fully resolved Key Vault environment mapping.
 
     Raises:
         ImportError: If ``azure-keyvault-secrets`` is not installed.
@@ -281,9 +382,7 @@ async def _load_env_from_akv_async(
                     resolved_secrets=resolved_secrets,
                 )
 
-    os.environ.update(resolved_environment)
-
-    _print_msg(f"Loaded environment from AKV secret: {secret_url}", quiet=silent, log=True)
+    return resolved_environment
 
 
 def _parse_environment_value_reference(value: str) -> tuple[str, str] | None:
@@ -498,6 +597,8 @@ async def initialize_pyrit_async(
     Raises:
         ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
     """
+    base_environment = dict(os.environ)
+    environment_updates: dict[str, str] = {}
     if env_akv_ref:
         await asyncio.to_thread(
             _warn_about_akv_environment_files,
@@ -510,24 +611,31 @@ async def initialize_pyrit_async(
                 quiet=silent,
                 log=True,
             )
-        await _load_env_from_akv_async(
+        akv_environment = await _load_env_from_akv_async(
             secret_url=env_akv_ref[0],
             strict=env_akv_strict,
             silent=silent,
         )
-
-        await asyncio.to_thread(
-            _load_environment_files,
+        staged_environment = {**base_environment, **akv_environment}
+        local_environment, _ = await asyncio.to_thread(
+            _resolve_environment_files,
             env_files=env_files,
+            base_environment=staged_environment,
             silent=silent,
             include_default_base=False,
         )
+        environment_updates.update(akv_environment)
+        environment_updates.update(local_environment)
     else:
-        await asyncio.to_thread(
-            _load_environment_files,
+        local_environment, _ = await asyncio.to_thread(
+            _resolve_environment_files,
             env_files=env_files,
+            base_environment=base_environment,
             silent=silent,
         )
+        environment_updates.update(local_environment)
+
+    os.environ.update(environment_updates)
 
     # Reset all default values before executing initialization scripts
     # This ensures a clean state for each initialization

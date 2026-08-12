@@ -179,7 +179,9 @@ env_files:
   - /path/to/.env.local
 ```
 
-Local environment files use standard dotenv behavior. PyRIT does not interpret `kv:`, `akv:`, `env:`, or `literal:` prefixes in `.env`, `.env.local`, or explicit `env_files`; those strings remain literal values. Standard dotenv interpolation such as `DERIVED=${BASE}` remains enabled.
+Local environment files use standard dotenv behavior. PyRIT does not interpret `kv:`, `akv:`, `env:`, or `literal:` prefixes in `.env`, `.env.local`, or explicit `env_files`; those strings remain literal values. Standard dotenv interpolation such as `DERIVED=${BASE}` remains enabled. `env_akv_strict` does not apply to local files: malformed local lines retain python-dotenv's existing permissive skip-and-warn behavior.
+
+During `initialize_pyrit_async`, PyRIT stages the Key Vault mapping and every selected local file before updating `os.environ`. Later files can interpolate and override earlier staged values. If any selected source fails to load or resolve, none of the staged environment values are committed. Memory setup and initializers run after this environment commit and are outside this transaction.
 
 When `env_akv_ref` is not configured, an empty `env_files` list or missing default files leaves existing process environment variables unchanged and initialization continues.
 
@@ -231,7 +233,7 @@ The AKV document is loaded before explicit `env_files` or the default `~/.pyrit/
 
 ### `env_akv_strict`
 
-Controls validation of the Key Vault bootstrap document and defaults to `true`.
+Controls validation only of the Key Vault bootstrap document and defaults to `true`. It does not change parsing of `.env`, `.env.local`, or explicit `env_files`.
 
 ```yaml
 env_akv_strict: false

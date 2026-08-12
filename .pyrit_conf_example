@@ -90,6 +90,8 @@ operation: op_trash_panda
 # - Set to list of paths: Load only the specified files
 # - PyRIT reference prefixes are not resolved in local files; standard dotenv
 #   interpolation such as DERIVED=${BASE} remains enabled.
+# - During PyRIT initialization, selected environment sources are staged and
+#   committed together only after every source loads successfully.
 #
 # Example:
 # env_files:
@@ -123,8 +125,10 @@ operation: op_trash_panda
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 #
-# Strict validation is enabled by default. Set this to false to skip malformed
-# or valueless bootstrap entries with a warning while loading valid entries.
+# Strict validation applies only to the Key Vault bootstrap and is enabled by
+# default. Set this to false to skip malformed or valueless bootstrap entries
+# with a warning while loading valid entries. Local files retain standard
+# python-dotenv parsing regardless of this setting.
 # env_akv_strict: false
 
 # Max Concurrent Scenario Runs
