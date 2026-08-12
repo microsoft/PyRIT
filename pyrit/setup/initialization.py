@@ -27,8 +27,6 @@ AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 
 _AKV_REFERENCE_PREFIXES = frozenset({"akv", "kv", "azure_key_vault", "env_akv_ref"})
-_MAX_REFERENCE_DEPTH = 10
-_MAX_UNIQUE_SECRET_REFERENCES = 100
 
 
 def _load_environment_files(
@@ -177,8 +175,9 @@ async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool =
     """
     Load environment variables from an Azure Key Vault secret.
 
-    The first secret URL identifies the root environment document. Additional
-    URLs are ignored until the configuration supports labeled references.
+    The first secret URL identifies the bootstrap environment document. Values
+    in that document may directly reference scalar secrets in the same vault.
+    Additional root URLs are ignored.
 
     Authentication uses ``DefaultAzureCredential``, which silently tries managed
     identity, Azure CLI, VS Code credentials, etc., and falls back to interactive
@@ -192,7 +191,7 @@ async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool =
     Raises:
         ImportError: If ``azure-keyvault-secrets`` is not installed.
         ValueError: If no root secret is configured, the root URL is malformed,
-            or the environment document cannot be fully resolved.
+            or the bootstrap environment document cannot be fully resolved.
     """
     if not secret_urls:
         raise ValueError("At least one env_akv_ref URL is required to load an environment document.")
@@ -280,8 +279,23 @@ async def _resolve_environment_value_async(
     secret_client: "SecretClient",
     ambient_environment: dict[str, str],
     resolved_secrets: dict[str, str],
-    reference_path: tuple[str, ...] = (),
 ) -> str:
+    """
+    Resolve one value from the bootstrap environment document.
+
+    Args:
+        value (str): The parsed bootstrap value.
+        variable_name (str): The environment variable receiving the resolved value.
+        secret_client (SecretClient): The client for the bootstrap document's vault.
+        ambient_environment (dict[str, str]): Snapshot used for ``env:`` references.
+        resolved_secrets (dict[str, str]): Same-vault scalar cache keyed by secret name.
+
+    Returns:
+        str: The literal, ambient, or same-vault scalar value.
+
+    Raises:
+        ValueError: If a reference is empty or cannot resolve to a value.
+    """
     reference = _parse_environment_value_reference(value)
     if reference is None:
         return value
@@ -291,17 +305,6 @@ async def _resolve_environment_value_async(
         return target
     if not target:
         raise ValueError(f"Empty {reference_type} reference for environment variable '{variable_name}'.")
-    if len(reference_path) >= _MAX_REFERENCE_DEPTH:
-        raise ValueError(
-            f"Environment reference depth exceeded {_MAX_REFERENCE_DEPTH} while resolving '{variable_name}'."
-        )
-
-    normalized_target = target if reference_type == "env" else target.casefold()
-    reference_token = f"{reference_type}:{normalized_target}"
-    if reference_token in reference_path:
-        cycle = " -> ".join((*reference_path, reference_token))
-        raise ValueError(f"Environment reference cycle detected while resolving '{variable_name}': {cycle}")
-    next_path = (*reference_path, reference_token)
 
     if reference_type == "env":
         if target not in ambient_environment:
@@ -309,38 +312,18 @@ async def _resolve_environment_value_async(
                 f"Environment variable '{target}' referenced by '{variable_name}' "
                 "is not set in the ambient environment."
             )
-        return await _resolve_environment_value_async(
-            value=ambient_environment[target],
-            variable_name=variable_name,
-            secret_client=secret_client,
-            ambient_environment=ambient_environment,
-            resolved_secrets=resolved_secrets,
-            reference_path=next_path,
-        )
+        return ambient_environment[target]
 
     _validate_akv_secret_name(secret_name=target, variable_name=variable_name)
     secret_cache_key = target.casefold()
     if secret_cache_key in resolved_secrets:
         return resolved_secrets[secret_cache_key]
-    if len(resolved_secrets) >= _MAX_UNIQUE_SECRET_REFERENCES:
-        raise ValueError(
-            f"Environment secret reference limit of {_MAX_UNIQUE_SECRET_REFERENCES} exceeded while resolving "
-            f"'{variable_name}'."
-        )
 
     secret = await secret_client.get_secret(target)
     if secret.value is None:
         raise ValueError(f"AKV secret '{target}' referenced by environment variable '{variable_name}' has no value.")
-    resolved_value = await _resolve_environment_value_async(
-        value=secret.value,
-        variable_name=variable_name,
-        secret_client=secret_client,
-        ambient_environment=ambient_environment,
-        resolved_secrets=resolved_secrets,
-        reference_path=next_path,
-    )
-    resolved_secrets[secret_cache_key] = resolved_value
-    return resolved_value
+    resolved_secrets[secret_cache_key] = secret.value
+    return secret.value
 
 
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
@@ -419,8 +402,9 @@ async def initialize_pyrit_async(
             in order. If not provided, will load default .env and .env.local files from PyRIT home if they exist.
             All paths must be valid pathlib.Path objects.
         env_akv_ref (Sequence[str] | None): Optional sequence of Azure Key Vault secret URLs to load.
-            Each secret's value must be the full contents of a .env file. Loaded before ``env_files``
-            so local files take precedence over AKV. Requires ``azure-keyvault-secrets``.
+            The first secret's value must contain the bootstrap .env document; additional URLs are ignored.
+            Loaded before ``env_files`` so local files take precedence over AKV. Requires
+            ``azure-keyvault-secrets``.
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.

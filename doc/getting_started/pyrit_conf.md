@@ -49,7 +49,7 @@ System environment variables are always the baseline, but initialization require
 | Medium | `~/.pyrit/.env` | Default config file (loaded if it exists) |
 | Highest | `~/.pyrit/.env.local` | Local overrides (loaded if it exists) |
 
-**AKV behavior** (with `env_akv_ref`): The first referenced secret replaces `~/.pyrit/.env` as the root document. `~/.pyrit/.env.local` is loaded afterward if present. Additional AKV entries are currently ignored pending support for labeled references.
+**AKV behavior** (with `env_akv_ref`): The first referenced secret replaces `~/.pyrit/.env` as the root document. `~/.pyrit/.env.local` is loaded afterward if present. If multiple AKV URLs are configured, only the first is used.
 
 PyRIT emits a warning when `env_akv_ref` is selected and default or explicit environment files coexist with it. The warning distinguishes files that are ignored from files that load afterward and override Key Vault values, making stale migration files visible at startup.
 
@@ -195,10 +195,26 @@ The root document can mix literal values with references to ambient environment 
 ```dotenv
 OPENAI_CHAT_ENDPOINT="https://example.openai.azure.com/openai/v1"
 OPENAI_CHAT_KEY="kv:openai-chat-key"
-OPENAI_CHAT_MODEL="env:OPENAI_CHAT_MODEL"
+OPENAI_CHAT_MODEL="env:PYRIT_OPENAI_CHAT_MODEL"
 ```
 
-References must occupy the entire value. `kv:` is the canonical Key Vault prefix; `akv:`, `azure_key_vault:`, and `env_akv_ref:` are accepted aliases. A referenced secret can point to another supported reference, subject to bounded depth and cycle detection. Prefix a value with `literal:` when its actual content starts with a reserved reference prefix.
+Resolution is deliberately limited to two levels:
+
+1. PyRIT fetches the first `env_akv_ref` secret and parses it as the bootstrap dotenv document.
+2. For each reference in that document, PyRIT either copies one ambient `env:` value or fetches one scalar secret from the same vault. The resulting value is final and is not parsed as another reference.
+
+For example, if `OPENAI_CHAT_KEY="kv:openai-chat-key"`, the value of the `openai-chat-key` secret becomes `OPENAI_CHAT_KEY` verbatim. If that secret happens to contain `kv:another-secret`, the final environment value is the string `kv:another-secret`; PyRIT does not fetch `another-secret`.
+
+References must occupy the entire value. `kv:` is the canonical Key Vault prefix; `akv:`, `azure_key_vault:`, and `env_akv_ref:` are accepted aliases.
+
+`literal:` is an escape hatch for a bootstrap value that begins with a reserved reference prefix. PyRIT removes `literal:` and returns the remainder without interpreting it as a reference. Quoting does not provide this escape because dotenv removes quotes while parsing. Values fetched from child secrets are already terminal and do not need this escape.
+
+```dotenv
+REFERENCE="kv:openai-chat-key"
+LITERAL_VALUE="literal:kv:not-a-secret-name"
+```
+
+Here, `REFERENCE` retrieves `openai-chat-key`, while `LITERAL_VALUE` becomes the string `kv:not-a-secret-name`.
 
 The AKV document is loaded before explicit `env_files` or the default `~/.pyrit/.env.local`, allowing local values to override shared configuration without writing the fetched document to disk.
 

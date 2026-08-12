@@ -467,6 +467,16 @@ class TestLoadEnvironmentFiles:
             assert mock_load_dotenv.call_args[0][0] == custom_env
 
 
+def _create_mock_akv_clients() -> tuple[mock.MagicMock, mock.MagicMock]:
+    credential = mock.MagicMock()
+    credential.__aenter__ = mock.AsyncMock(return_value=credential)
+    credential.__aexit__ = mock.AsyncMock(return_value=None)
+    client = mock.MagicMock()
+    client.__aenter__ = mock.AsyncMock(return_value=client)
+    client.__aexit__ = mock.AsyncMock(return_value=None)
+    return credential, client
+
+
 class TestAkvEnvironmentLoading:
     """Tests for AKV URL parsing and env loading helpers."""
 
@@ -496,60 +506,59 @@ class TestAkvEnvironmentLoading:
         with pytest.raises(ValueError, match="At least one env_akv_ref URL is required"):
             await _load_env_from_akv_async(secret_urls=[])
 
-    @pytest.mark.parametrize(
-        "secret_urls",
-        [
-            ["https://myvault.vault.azure.net/secrets/my-secret/v1"],
-            [
-                "https://myvault.vault.azure.net/secrets/my-secret/v1",
-                "https://myvault.vault.azure.net/secrets/ignored/v2",
-            ],
-        ],
-    )
-    async def test_load_env_from_akv_async_loads_first_secret_content(self, secret_urls):
-        credential = mock.MagicMock()
-        credential.__aenter__ = mock.AsyncMock(return_value=credential)
-        credential.__aexit__ = mock.AsyncMock(return_value=None)
-        client = mock.MagicMock()
-        client.__aenter__ = mock.AsyncMock(return_value=client)
-        client.__aexit__ = mock.AsyncMock(return_value=None)
-        client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value="AKV_VAR=from_secret\n"))
+    async def test_load_env_from_akv_async_uses_first_root_and_resolves_one_level(self):
+        credential, client = _create_mock_akv_clients()
+        root_document = (
+            "DIRECT=from-bootstrap\n"
+            "FROM_ENV=env:SOURCE_VALUE\n"
+            "FROM_KV=kv:api-key\n"
+            "DUPLICATE_KV=akv:API-KEY\n"
+            "ESCAPED=literal:kv:not-a-secret"
+        )
+        client.get_secret = mock.AsyncMock(
+            side_effect=[
+                types.SimpleNamespace(value=root_document),
+                types.SimpleNamespace(value="env:not-resolved-again"),
+            ]
+        )
+        secret_urls = [
+            "https://myvault.vault.azure.net/secrets/bootstrap/v1",
+            "https://myvault.vault.azure.net/secrets/ignored/v2",
+        ]
 
         with (
+            mock.patch.dict(os.environ, {"SOURCE_VALUE": "kv:not-fetched"}, clear=False),
             mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential) as mock_credential_cls,
             mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client) as mock_client_cls,
-            mock.patch("pyrit.setup.initialization.dotenv.load_dotenv") as mock_load_dotenv,
             mock.patch("pyrit.setup.initialization._print_msg") as mock_print_msg,
         ):
-            mock_load_dotenv.return_value = True
             await _load_env_from_akv_async(secret_urls=secret_urls, silent=True)
+
+            assert os.environ["DIRECT"] == "from-bootstrap"
+            assert os.environ["FROM_ENV"] == "kv:not-fetched"
+            assert os.environ["FROM_KV"] == "env:not-resolved-again"
+            assert os.environ["DUPLICATE_KV"] == "env:not-resolved-again"
+            assert os.environ["ESCAPED"] == "kv:not-a-secret"
 
         mock_credential_cls.assert_called_once_with()
         mock_client_cls.assert_called_once_with(vault_url="https://myvault.vault.azure.net", credential=credential)
-        client.get_secret.assert_awaited_once_with("my-secret", version="v1")
+        assert client.get_secret.await_args_list == [
+            mock.call("bootstrap", version="v1"),
+            mock.call("api-key"),
+        ]
         credential.__aenter__.assert_awaited_once()
         credential.__aexit__.assert_awaited_once()
         client.__aenter__.assert_awaited_once()
         client.__aexit__.assert_awaited_once()
-
-        stream = mock_load_dotenv.call_args.kwargs["stream"]
-        assert stream.getvalue() == "AKV_VAR=from_secret\n"
-        assert mock_load_dotenv.call_args.kwargs["override"] is True
-        assert mock_print_msg.call_count == 2 + (len(secret_urls) > 1)
+        assert mock_print_msg.call_count == 3
 
     async def test_load_env_from_akv_async_empty_secret_raises(self):
-        credential = mock.MagicMock()
-        credential.__aenter__ = mock.AsyncMock(return_value=credential)
-        credential.__aexit__ = mock.AsyncMock(return_value=None)
-        client = mock.MagicMock()
-        client.__aenter__ = mock.AsyncMock(return_value=client)
-        client.__aexit__ = mock.AsyncMock(return_value=None)
+        credential, client = _create_mock_akv_clients()
         client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value=None))
 
         with (
             mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
             mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
-            mock.patch("pyrit.setup.initialization.dotenv.load_dotenv") as mock_load_dotenv,
             pytest.raises(ValueError, match="has no value"),
         ):
             await _load_env_from_akv_async(
@@ -557,23 +566,16 @@ class TestAkvEnvironmentLoading:
                 silent=True,
             )
 
-        mock_load_dotenv.assert_not_called()
         credential.__aexit__.assert_awaited_once()
         client.__aexit__.assert_awaited_once()
 
     async def test_load_env_from_akv_async_without_entries_raises(self):
-        credential = mock.MagicMock()
-        credential.__aenter__ = mock.AsyncMock(return_value=credential)
-        credential.__aexit__ = mock.AsyncMock(return_value=None)
-        client = mock.MagicMock()
-        client.__aenter__ = mock.AsyncMock(return_value=client)
-        client.__aexit__ = mock.AsyncMock(return_value=None)
+        credential, client = _create_mock_akv_clients()
         client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value="# comments only\n"))
 
         with (
             mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
             mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
-            mock.patch("pyrit.setup.initialization.dotenv.load_dotenv", return_value=False),
             pytest.raises(ValueError, match="contains no environment entries"),
         ):
             await _load_env_from_akv_async(
@@ -583,3 +585,25 @@ class TestAkvEnvironmentLoading:
 
         credential.__aexit__.assert_awaited_once()
         client.__aexit__.assert_awaited_once()
+
+    async def test_load_env_from_akv_async_failure_does_not_partially_update_environment(self):
+        credential, client = _create_mock_akv_clients()
+        client.get_secret = mock.AsyncMock(
+            side_effect=[
+                types.SimpleNamespace(value="GOOD=resolved\nBAD=kv:missing-value"),
+                types.SimpleNamespace(value=None),
+            ]
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with (
+                mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+                mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
+                pytest.raises(ValueError, match="has no value"),
+            ):
+                await _load_env_from_akv_async(
+                    secret_urls=["https://myvault.vault.azure.net/secrets/bootstrap"],
+                    silent=True,
+                )
+
+            assert "GOOD" not in os.environ
