@@ -587,7 +587,7 @@ class OpenAIResponseTarget(OpenAITarget):
         status = getattr(response, "status", None)
         incomplete_details = getattr(response, "incomplete_details", None)
         incomplete_reason = getattr(incomplete_details, "reason", None) if incomplete_details else None
-        set_response_metadata(pieces=pieces, values={"status": status, "incomplete_reason": incomplete_reason})
+        set_response_metadata(pieces=pieces, status=status, incomplete_reason=incomplete_reason)
 
     def _validate_response(self, response: Response, request: MessagePiece) -> None:
         """

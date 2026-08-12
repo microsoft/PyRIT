@@ -3,7 +3,7 @@
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any
 
 from pyrit.exceptions import PyritException
@@ -99,7 +99,13 @@ def build_empty_truncated_response(*, request: MessagePiece) -> Message:
 RESERVED_RESPONSE_METADATA_KEYS: frozenset[str] = frozenset({"finish_reason", "status", "incomplete_reason"})
 
 
-def set_response_metadata(*, pieces: list[MessagePiece], values: Mapping[str, Any]) -> None:
+def set_response_metadata(
+    *,
+    pieces: list[MessagePiece],
+    finish_reason: Any = None,
+    status: Any = None,
+    incomplete_reason: Any = None,
+) -> None:
     """
     Record provider-reported, response-level metadata on the first response piece.
 
@@ -111,15 +117,22 @@ def set_response_metadata(*, pieces: list[MessagePiece], values: Mapping[str, An
     the reservation hold, since a target only writes the subset its own API reports. Response-level
     metadata lives on the first piece, matching where ``capture_token_usage`` writes token counts.
 
+    There is one keyword parameter per reserved key so the two cannot drift apart: a key the
+    clearing loop does not know about is a type error rather than a value that is silently
+    persisted. ``prompt_metadata`` is persisted as JSON, so anything that is not a non-empty
+    string — including a missing field read off a loosely-typed response object — is treated as
+    "not reported" and leaves that key unset.
+
     Args:
         pieces (list[MessagePiece]): The constructed response pieces.
-        values (Mapping[str, Any]): The provider-reported values, keyed by reserved metadata key.
-            ``prompt_metadata`` is persisted as JSON, so anything that is not a non-empty string —
-            including a missing field read off a loosely-typed response object — is treated as "not
-            reported" and leaves that key unset.
+        finish_reason (Any): The stop reason a Chat Completions or Completions response reported.
+        status (Any): The status a Responses API response reported.
+        incomplete_reason (Any): The incomplete detail a Responses API response reported.
     """
     if not pieces:
         return
+
+    values = {"finish_reason": finish_reason, "status": status, "incomplete_reason": incomplete_reason}
 
     for piece in pieces:
         for reserved_key in RESERVED_RESPONSE_METADATA_KEYS:

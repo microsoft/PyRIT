@@ -325,7 +325,7 @@ def capture_usage_and_finish_reason(*, pieces: list[MessagePiece], response: Any
     # rather than relying on ``get_finish_reason``'s empty-list guard.
     choices = getattr(response, "choices", None)
     finish_reason = get_finish_reason(response=response) if choices else None
-    set_response_metadata(pieces=pieces, values={"finish_reason": finish_reason})
+    set_response_metadata(pieces=pieces, finish_reason=finish_reason)
 
 
 def token_usage_from_chat_completion(usage: Any) -> TokenUsage:

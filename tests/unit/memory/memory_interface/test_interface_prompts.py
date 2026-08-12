@@ -965,8 +965,8 @@ def test_get_message_pieces_captured_response_metadata(sqlite_instance: MemoryIn
         role="assistant",
         original_value="fine",
     )
-    set_response_metadata(pieces=[matching], values={key: value})
-    set_response_metadata(pieces=[other], values={key: "something_else"})
+    set_response_metadata(pieces=[matching], **{key: value})
+    set_response_metadata(pieces=[other], **{key: "something_else"})
     sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=matching), PromptMemoryEntry(entry=other)])
 
     retrieved = sqlite_instance.get_message_pieces(prompt_metadata={key: value})

@@ -172,12 +172,14 @@ class OpenAICompletionTarget(OpenAITarget):
                 the SDK raises on a content filter.
             pieces (list[MessagePiece]): The constructed response pieces.
         """
+        # The Completions and Chat Completions APIs report the same ``usage`` schema, so the parser is shared.
         capture_token_usage(pieces=pieces, response=response)
 
         choices = getattr(response, "choices", None) or []
         for index, piece in enumerate(pieces):
+            # Per piece, not per response: each piece is one choice, so each carries its own stop reason.
             choice = choices[index] if index < len(choices) else None
-            set_response_metadata(pieces=[piece], values={"finish_reason": getattr(choice, "finish_reason", None)})
+            set_response_metadata(pieces=[piece], finish_reason=getattr(choice, "finish_reason", None))
 
     async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """

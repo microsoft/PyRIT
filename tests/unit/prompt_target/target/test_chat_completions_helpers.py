@@ -4,6 +4,7 @@
 """Unit tests for the shared OpenAI Chat Completions wire-format helpers."""
 
 import base64
+import inspect
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -273,7 +274,7 @@ def test_capture_usage_and_finish_reason_overwrites_caller_supplied_finish_reaso
 def test_set_response_metadata_ignores_unreported_values(value):
     """``prompt_metadata`` is JSON-serialized, so anything but a non-empty string is not reported."""
     piece = _request_piece("ok")
-    set_response_metadata(pieces=[piece], values={"status": value})
+    set_response_metadata(pieces=[piece], status=value)
     assert "status" not in piece.prompt_metadata
 
 
@@ -283,7 +284,7 @@ def test_set_response_metadata_clears_every_reserved_key(reserved_key):
     piece = _request_piece("ok")
     piece.prompt_metadata[reserved_key] = "caller_supplied"
 
-    set_response_metadata(pieces=[piece], values={"finish_reason": "stop"})
+    set_response_metadata(pieces=[piece], finish_reason="stop")
 
     assert piece.prompt_metadata.get(reserved_key) == ("stop" if reserved_key == "finish_reason" else None)
 
@@ -292,7 +293,7 @@ def test_set_response_metadata_keeps_all_reported_values():
     """Clearing runs once up front, so a second reported key must not wipe the first."""
     piece = _request_piece("ok")
 
-    set_response_metadata(pieces=[piece], values={"status": "incomplete", "incomplete_reason": "max_output_tokens"})
+    set_response_metadata(pieces=[piece], status="incomplete", incomplete_reason="max_output_tokens")
 
     assert piece.prompt_metadata["status"] == "incomplete"
     assert piece.prompt_metadata["incomplete_reason"] == "max_output_tokens"
@@ -302,7 +303,7 @@ def test_set_response_metadata_leaves_unreserved_caller_metadata_untouched():
     piece = _request_piece("ok")
     piece.prompt_metadata["video_id"] = "caller_supplied"
 
-    set_response_metadata(pieces=[piece], values={"finish_reason": "stop"})
+    set_response_metadata(pieces=[piece], finish_reason="stop")
 
     assert piece.prompt_metadata["video_id"] == "caller_supplied"
 
@@ -613,3 +614,25 @@ async def test_build_response_pieces_async_orders_text_audio_tool():
         pieces = await build_response_pieces_async(response=resp, request=_request_piece(), audio_format="wav")
 
     assert [p.converted_value_data_type for p in pieces] == ["text", "text", "audio_path", "function_call"]
+
+
+def test_set_response_metadata_records_every_reserved_key():
+    """Every reserved key must be reachable: named in the signature and written back to the piece."""
+    piece = _request_piece("ok")
+    reported = {key: f"reported_{key}" for key in RESERVED_RESPONSE_METADATA_KEYS}
+    parameters = inspect.signature(set_response_metadata).parameters
+    keyword_only = {name for name, p in parameters.items() if p.kind is inspect.Parameter.KEYWORD_ONLY}
+
+    assert keyword_only - {"pieces"} == RESERVED_RESPONSE_METADATA_KEYS
+
+    set_response_metadata(pieces=[piece], **reported)
+
+    assert piece.prompt_metadata == reported
+
+
+def test_set_response_metadata_rejects_an_unreserved_key():
+    """An unreserved key is drift or a typo, so it fails at the call site instead of being persisted."""
+    piece = _request_piece("ok")
+
+    with pytest.raises(TypeError):
+        set_response_metadata(pieces=[piece], reasoning_status="not_reserved")
