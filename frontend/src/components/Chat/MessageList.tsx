@@ -30,8 +30,9 @@ import {
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
+import MarkdownContent from '@/components/Markdown/MarkdownContent'
+
 import type { DisplayScore, Message, MessageAttachment, MessageDisplayPiece } from '../../types'
-import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
 
 interface MessageListProps {

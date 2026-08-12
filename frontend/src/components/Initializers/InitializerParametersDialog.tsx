@@ -1,29 +1,20 @@
 import { useRef, useState } from 'react'
 import {
   Button,
-  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
   DialogSurface,
   DialogTitle,
-  Field,
-  Input,
-  Select,
-  Switch,
   Text,
 } from '@fluentui/react-components'
 
-import type { Parameter, RegisteredInitializer } from '@/types'
+import ParameterField from '@/components/Parameters/ParameterField'
+import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
+import type { RegisteredInitializer } from '@/types'
 
 import { useAdditionalInitializersStyles } from './AdditionalInitializers.styles'
-import {
-  buildParametersFromForm,
-  getInitialFormValues,
-  getParameterControlKind,
-  type ParameterFormValue,
-} from './initializerParameterForm'
 
 interface InitializerParametersDialogProps {
   open: boolean
@@ -49,7 +40,7 @@ export default function InitializerParametersDialog({
   const styles = useAdditionalInitializersStyles()
   const parameters = initializer?.supported_parameters ?? []
   const [values, setValues] = useState<Record<string, ParameterFormValue>>(() =>
-    getInitialFormValues(parameters, initialParameters),
+    getInitialFormValues(parameters, initialParameters, { prefillDefaults: mode === 'add' }),
   )
   const [error, setError] = useState<string | null>(null)
   const submitInProgressRef = useRef(false)
@@ -153,102 +144,5 @@ export default function InitializerParametersDialog({
         </DialogBody>
       </DialogSurface>
     </Dialog>
-  )
-}
-
-interface ParameterFieldProps {
-  parameter: Parameter
-  value: ParameterFormValue
-  disabled: boolean
-  onChange: (name: string, value: ParameterFormValue) => void
-}
-
-function ParameterField({ parameter, value, disabled, onChange }: ParameterFieldProps) {
-  const styles = useAdditionalInitializersStyles()
-  const kind = getParameterControlKind(parameter)
-  const label = parameter.required ? `${parameter.name} *` : parameter.name
-
-  if (kind === 'boolean') {
-    const checked = value === 'true'
-    return (
-      <Field label={label} hint={parameter.description ?? undefined}>
-        <Switch
-          checked={checked}
-          label={checked ? 'True' : 'False'}
-          disabled={disabled}
-          onChange={(_, data) => onChange(parameter.name, data.checked ? 'true' : 'false')}
-          data-testid={`param-${parameter.name}`}
-        />
-      </Field>
-    )
-  }
-
-  if (kind === 'multiselect') {
-    const selected = Array.isArray(value) ? value : []
-    return (
-      <Field label={label} hint={parameter.description ?? undefined}>
-        <div className={styles.checkboxGroup} role="group" aria-labelledby={`param-${parameter.name}-group-label`}>
-          <span id={`param-${parameter.name}-group-label`} className={styles.srOnly}>{label}</span>
-          {(parameter.choices ?? []).map((choice) => {
-            const choiceLabelId = `param-${encodeURIComponent(parameter.name)}-${encodeURIComponent(choice)}-label`
-            return (
-              <Checkbox
-                key={choice}
-                id={`param-${parameter.name}-${choice}`}
-                aria-labelledby={choiceLabelId}
-                label={{ children: choice, id: choiceLabelId }}
-                checked={selected.includes(choice)}
-                disabled={disabled}
-                onChange={(_, data) => {
-                  const next = data.checked
-                    ? [...selected, choice]
-                    : selected.filter((entry) => entry !== choice)
-                  onChange(parameter.name, next)
-                }}
-                data-testid={`param-${parameter.name}-${choice}`}
-              />
-            )
-          })}
-        </div>
-      </Field>
-    )
-  }
-
-  const stringValue = typeof value === 'string' ? value : ''
-
-  if (kind === 'select') {
-    return (
-      <Field label={label} hint={parameter.description ?? undefined}>
-        <Select
-          value={stringValue}
-          disabled={disabled}
-          onChange={(_, data) => onChange(parameter.name, data.value)}
-          data-testid={`param-${parameter.name}`}
-        >
-          <option value="">Select a value</option>
-          {(parameter.choices ?? []).map((choice) => (
-            <option key={choice} value={choice}>
-              {choice}
-            </option>
-          ))}
-        </Select>
-      </Field>
-    )
-  }
-
-  const hint =
-    parameter.description ?? (kind === 'list' ? 'Comma-separated list of values.' : parameter.type_name)
-
-  return (
-    <Field label={label} hint={hint}>
-      <Input
-        value={stringValue}
-        type={kind === 'number' ? 'number' : 'text'}
-        placeholder={parameter.default ?? undefined}
-        disabled={disabled}
-        onChange={(_, data) => onChange(parameter.name, data.value)}
-        data-testid={`param-${parameter.name}`}
-      />
-    </Field>
   )
 }

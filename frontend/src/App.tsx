@@ -10,6 +10,9 @@ import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import Initializers from './components/Initializers/Initializers'
 import AttackHistory from './components/History/AttackHistory'
+import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
+import ScenarioDetail from './components/Scenarios/ScenarioDetail'
+import ScenarioRunStarted from './components/Scenarios/ScenarioRunStarted'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -40,10 +43,19 @@ const VIEW_PATHS: Record<ViewName, string> = {
   history: '/history',
   config: '/config',
   initializers: '/initializers',
+  scenarios: '/scenarios',
 }
 
-/** Resolves the active view from a URL path, defaulting to home for unknown paths. */
+/**
+ * Resolves the active view from a URL path, defaulting to home for unknown
+ * paths. Scenario routes are prefix-matched (`/scenarios/...` and
+ * `/scenario-history/...`) since they carry a path parameter rather than a
+ * single canonical `VIEW_PATHS` entry.
+ */
 function viewFromPath(pathname: string): ViewName {
+  if (pathname === VIEW_PATHS.scenarios || pathname.startsWith(`${VIEW_PATHS.scenarios}/`) || pathname.startsWith('/scenario-history/')) {
+    return 'scenarios'
+  }
   const match = (Object.entries(VIEW_PATHS) as [ViewName, string][]).find(
     ([, path]) => path === pathname,
   )
@@ -462,6 +474,18 @@ function App() {
                 }
               />
               <Route path="/initializers" element={<Initializers />} />
+              <Route path="/scenarios" element={<ScenarioCatalog />} />
+              <Route
+                path="/scenarios/:scenarioName"
+                element={
+                  <ScenarioDetail
+                    activeTarget={activeTarget}
+                    labels={globalLabels}
+                    onNavigate={handleNavigate}
+                  />
+                }
+              />
+              <Route path="/scenario-history/:scenarioResultId" element={<ScenarioRunStarted />} />
               <Route
                 path="/history"
                 element={

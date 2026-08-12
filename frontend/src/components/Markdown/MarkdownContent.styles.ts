@@ -3,8 +3,8 @@ import { makeStyles, tokens } from '@fluentui/react-components'
 export const useMarkdownContentStyles = makeStyles({
   root: {
     wordBreak: 'break-word',
-    // Collapse the outer margins react-markdown adds to the first/last block so
-    // the rendered content sits flush inside the chat bubble.
+    // Collapse outer block margins so the renderer composes cleanly in chat,
+    // catalog, and detail surfaces.
     '& > :first-child': { marginTop: 0 },
     '& > :last-child': { marginBottom: 0 },
     '& p': {
@@ -50,7 +50,7 @@ export const useMarkdownContentStyles = makeStyles({
     '& blockquote': {
       margin: `0 0 ${tokens.spacingVerticalM} 0`,
       paddingLeft: tokens.spacingHorizontalM,
-      borderLeft: `3px solid ${tokens.colorNeutralStroke1}`,
+      borderLeft: `1px solid ${tokens.colorNeutralStroke1}`,
       color: tokens.colorNeutralForeground2,
     },
     '& table': {

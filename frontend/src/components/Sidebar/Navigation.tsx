@@ -14,6 +14,7 @@ import {
   SettingsRegular,
   HistoryRegular,
   PersonFeedbackRegular,
+  ScriptRegular,
   WrenchRegular,
   OpenRegular,
   WeatherMoonRegular,
@@ -23,7 +24,7 @@ import { useTheme } from '../../hooks/useTheme'
 import type { ThemeMode } from '../../hooks/useTheme'
 import { useNavigationStyles } from './Navigation.styles'
 
-export type ViewName = 'home' | 'chat' | 'history' | 'config' | 'initializers'
+export type ViewName = 'home' | 'chat' | 'history' | 'config' | 'initializers' | 'scenarios'
 
 interface NavigationProps {
   currentView: ViewName
@@ -92,6 +93,17 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
           aria-label="Attack History"
           aria-current={currentView === 'history' ? 'page' : undefined}
           onClick={() => onNavigate('history')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'scenarios'}
+          appearance="subtle"
+          icon={<ScriptRegular />}
+          title="Scenarios"
+          aria-label="Scenarios"
+          aria-current={currentView === 'scenarios' ? 'page' : undefined}
+          onClick={() => onNavigate('scenarios')}
         />
 
         <Button

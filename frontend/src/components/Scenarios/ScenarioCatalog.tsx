@@ -1,0 +1,377 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+
+import {
+  Button,
+  Input,
+  mergeClasses,
+  MessageBar,
+  MessageBarBody,
+  Spinner,
+  Table,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHeaderCell,
+  TableRow,
+  Text,
+} from '@fluentui/react-components'
+import {
+  ArrowSyncRegular,
+  SearchRegular,
+  SettingsRegular,
+} from '@fluentui/react-icons'
+import { Link, useNavigate } from 'react-router'
+
+import { scenariosApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
+import type { RegisteredScenario, ScenarioDatasetSummary } from '@/types'
+import { fetchAllPages } from '@/utils/fetchAllPages'
+
+import { useScenarioCatalogStyles } from './ScenarioCatalog.styles'
+import {
+  ScenarioRunEstimateSummary,
+} from './ScenarioRunEstimate'
+import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
+import { techniqueSetName } from './scenarioTechniqueSets'
+
+/** Items requested per catalog page while paging through the full list. */
+const CATALOG_PAGE_SIZE = 200
+
+function matchesSearch(scenario: RegisteredScenario, query: string): boolean {
+  if (!query) {
+    return true
+  }
+  const haystack = [
+    scenario.scenario_name,
+    scenario.description,
+    scenario.description_markdown,
+    scenario.scenario_type,
+    scenario.default_technique,
+    ...scenario.default_techniques,
+    ...scenario.aggregate_techniques,
+    ...scenario.aggregate_techniques.map(techniqueSetName),
+    ...Object.values(scenario.aggregate_technique_expansions).flat(),
+    ...scenario.all_techniques,
+    ...scenario.default_datasets,
+    ...scenario.default_dataset_summaries.flatMap((dataset) => [
+      dataset.name,
+      dataset.selection_note ?? '',
+      ...dataset.configured_caps.map((cap) => cap.label),
+    ]),
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(query.toLowerCase())
+}
+
+function uniqueNames(names: string[]): string[] {
+  return [...new Set(names)]
+}
+
+function formatCount(value: number): string {
+  return value.toLocaleString()
+}
+
+function formatObjectiveCount(value: number): string {
+  return `${formatCount(value)} objective${value === 1 ? '' : 's'}`
+}
+
+function DefaultDatasetSizeSummary({
+  datasets,
+  hasDeclaredDatasets,
+}: {
+  datasets: ScenarioDatasetSummary[]
+  hasDeclaredDatasets: boolean
+}) {
+  const styles = useScenarioCatalogStyles()
+
+  if (datasets.length === 0) {
+    return (
+      <Text weight="semibold">
+        {hasDeclaredDatasets ? 'Population counts unavailable' : 'No default dataset'}
+      </Text>
+    )
+  }
+
+  if (datasets.length === 1) {
+    const dataset = datasets[0]
+    return (
+      <div className={styles.compactStack}>
+        <Text weight="semibold">{formatObjectiveCount(dataset.selected_seed_group_count)}</Text>
+        <Text size={200} className={styles.secondaryText}>
+          {dataset.name} · {formatCount(dataset.logical_seed_group_count)} available
+        </Text>
+      </div>
+    )
+  }
+
+  return (
+    <Text size={200} weight="semibold">
+      {datasets
+        .map((dataset) => `${formatObjectiveCount(dataset.selected_seed_group_count)} · ${dataset.name}`)
+        .join(' · ')}
+    </Text>
+  )
+}
+
+interface ScenarioCatalogRowProps {
+  scenario: RegisteredScenario
+}
+
+function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
+  const styles = useScenarioCatalogStyles()
+  const navigate = useNavigate()
+  const defaultConcreteTechniques = uniqueNames(scenario.default_techniques)
+  const estimateState = mapScenarioRunEstimate(scenario.default_run_size, 'default')
+  const scenarioPath = `/scenarios/${encodeURIComponent(scenario.scenario_name)}`
+
+  return (
+    <TableRow
+      className={styles.summaryRow}
+      data-testid={`scenario-card-${scenario.scenario_name}`}
+    >
+      <TableCell
+        className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
+      >
+        <Text className={styles.mobileLabel} size={200} weight="semibold">
+          Scenario / purpose
+        </Text>
+        <div className={styles.scenarioSummary}>
+          <Link to={scenarioPath} className={styles.scenarioLink}>
+            {scenario.scenario_name}
+          </Link>
+          <Text size={200} className={styles.purposePreview}>{scenario.description}</Text>
+        </div>
+      </TableCell>
+      <TableCell
+        className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
+      >
+        <Text className={styles.mobileLabel} size={200} weight="semibold">
+          Configure
+        </Text>
+        <Button
+          className={styles.configureButton}
+          appearance="primary"
+          icon={<SettingsRegular />}
+          type="button"
+          onClick={() => navigate(scenarioPath)}
+        >
+          Configure run
+        </Button>
+      </TableCell>
+      <TableCell
+        className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
+      >
+        <Text className={styles.mobileLabel} size={200} weight="semibold">
+          Default dataset size
+        </Text>
+        <DefaultDatasetSizeSummary
+          datasets={scenario.default_dataset_summaries}
+          hasDeclaredDatasets={scenario.default_datasets.length > 0}
+        />
+      </TableCell>
+      <TableCell
+        className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
+      >
+        <Text className={styles.mobileLabel} size={200} weight="semibold">
+          Default techniques
+        </Text>
+        <Text weight="semibold">
+          {defaultConcreteTechniques.length === 0
+            ? 'No default techniques'
+            : `${defaultConcreteTechniques.length} technique${defaultConcreteTechniques.length === 1 ? '' : 's'}`}
+        </Text>
+      </TableCell>
+      <TableCell
+        className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
+      >
+        <Text className={styles.mobileLabel} size={200} weight="semibold">
+          Default run size
+        </Text>
+        <ScenarioRunEstimateSummary state={estimateState} />
+      </TableCell>
+    </TableRow>
+  )
+}
+
+export default function ScenarioCatalog() {
+  const styles = useScenarioCatalogStyles()
+  const [scenarios, setScenarios] = useState<RegisteredScenario[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [refetchCount, setRefetchCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetchAllPages(
+      (cursor) => scenariosApi.listCatalog(CATALOG_PAGE_SIZE, cursor),
+      undefined,
+      (scenario) => scenario.scenario_name,
+    )
+      .then((items) => {
+        if (cancelled) return
+        setScenarios(items)
+        setError(null)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setScenarios([])
+        setError(toApiError(err).detail)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [refetchCount])
+
+  const handleRetry = useCallback(() => {
+    setLoading(true)
+    setError(null)
+    setRefetchCount((count) => count + 1)
+  }, [])
+
+  const filteredScenarios = useMemo(
+    () => scenarios.filter((scenario) => matchesSearch(scenario, query)),
+    [scenarios, query],
+  )
+
+  return (
+    <section
+      className={styles.root}
+      data-testid="scenario-catalog"
+      aria-labelledby="scenario-catalog-title"
+    >
+      <div className={styles.header}>
+        <div className={styles.headerText}>
+          <Text id="scenario-catalog-title" as="h1" size={600} weight="semibold">
+            Scenarios
+          </Text>
+          <Text size={300} className={styles.subtitle}>
+            Browse registered scenarios and launch a run against a configured target.
+          </Text>
+          <Text as="p" size={300} className={styles.explanation}>
+            A scenario packages objective datasets, technique sets or selected techniques, baseline policy,
+            and scenario-specific axes into a run plan.
+          </Text>
+        </div>
+        <div className={styles.headerActions}>
+          <Input
+            className={styles.search}
+            contentBefore={<SearchRegular />}
+            placeholder="Search scenarios..."
+            value={query}
+            onChange={(_, data) => setQuery(data.value)}
+            aria-label="Search scenarios"
+          />
+          <Button
+            className={styles.touchTarget}
+            appearance="subtle"
+            icon={<ArrowSyncRegular />}
+            onClick={handleRetry}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className={styles.centeredState}>
+          <Spinner label="Loading scenarios..." />
+        </div>
+      ) : error ? (
+        <div className={styles.centeredState} data-testid="error-state">
+          <MessageBar intent="error">
+            <MessageBarBody>{error}</MessageBarBody>
+          </MessageBar>
+          <Button
+            className={styles.touchTarget}
+            appearance="primary"
+            icon={<ArrowSyncRegular />}
+            onClick={handleRetry}
+            data-testid="retry-btn"
+          >
+            Retry
+          </Button>
+        </div>
+      ) : scenarios.length === 0 ? (
+        <div className={styles.centeredState} data-testid="empty-state">
+          <Text size={400}>No scenarios are registered</Text>
+          <Text size={200}>Register a scenario via your PyRIT initializers to see it here.</Text>
+        </div>
+      ) : filteredScenarios.length === 0 ? (
+        <div className={styles.centeredState} data-testid="no-results-state">
+          <Text size={400}>No scenarios match &quot;{query}&quot;</Text>
+          <Text size={200}>Try a different search term.</Text>
+        </div>
+      ) : (
+        <div className={styles.tableContainer}>
+          <Table className={styles.table} size="small" aria-label="Registered scenarios">
+            <TableHeader className={styles.tableHeader}>
+              <TableRow>
+                <TableHeaderCell
+                  className={mergeClasses(
+                    styles.scenarioColumn,
+                    styles.tableHeaderCell,
+                    'scenario-catalog-cell-padding',
+                  )}
+                >
+                  Scenario / purpose
+                </TableHeaderCell>
+                <TableHeaderCell
+                  className={mergeClasses(
+                    styles.configureColumn,
+                    styles.tableHeaderCell,
+                    'scenario-catalog-cell-padding',
+                  )}
+                >
+                  Configure
+                </TableHeaderCell>
+                <TableHeaderCell
+                  className={mergeClasses(
+                    styles.datasetColumn,
+                    styles.tableHeaderCell,
+                    'scenario-catalog-cell-padding',
+                  )}
+                >
+                  Default dataset size
+                </TableHeaderCell>
+                <TableHeaderCell
+                  className={mergeClasses(
+                    styles.techniqueColumn,
+                    styles.tableHeaderCell,
+                    'scenario-catalog-cell-padding',
+                  )}
+                >
+                  Default techniques
+                </TableHeaderCell>
+                <TableHeaderCell
+                  className={mergeClasses(
+                    styles.sizeColumn,
+                    styles.tableHeaderCell,
+                    'scenario-catalog-cell-padding',
+                  )}
+                >
+                  Default run size
+                </TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody className={styles.tableBody}>
+              {filteredScenarios.map((scenario) => (
+                <ScenarioCatalogRow
+                  key={scenario.scenario_name}
+                  scenario={scenario}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </section>
+  )
+}

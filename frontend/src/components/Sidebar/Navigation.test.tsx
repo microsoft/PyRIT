@@ -3,7 +3,7 @@
  * Licensed under the MIT license.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
 import Navigation from "./Navigation";
@@ -95,6 +95,52 @@ describe("Navigation", () => {
     expect(
       screen.getByRole("button", { name: "Attack History" })
     ).toBeInTheDocument();
+  });
+
+  it("renders the scenarios button", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+    expect(
+      screen.getByRole("button", { name: "Scenarios" })
+    ).toBeInTheDocument();
+  });
+
+  it("places Scenarios immediately after Attack History without a history placeholder", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+    const navigation = screen.getByRole("navigation", { name: "Primary" });
+    const labels = within(navigation)
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"));
+
+    expect(labels).toEqual([
+      "Home",
+      "Chat",
+      "Attack History",
+      "Scenarios",
+      "Configuration",
+      "Initializers",
+    ]);
+    expect(screen.queryByRole("button", { name: "Scenario History" })).not.toBeInTheDocument();
+  });
+
+  it("calls onNavigate with 'scenarios' when the scenarios button is clicked", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Scenarios" }));
+    expect(onNavigate).toHaveBeenCalledWith("scenarios");
+  });
+
+  it("marks the scenarios button current when it is the active view", () => {
+    renderWithProvider(
+      <Navigation {...defaultProps} currentView="scenarios" />
+    );
+    expect(screen.getByRole("button", { name: "Scenarios" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
   });
 
   it("renders the feedback button and forwards clicks to onOpenFeedback", () => {
