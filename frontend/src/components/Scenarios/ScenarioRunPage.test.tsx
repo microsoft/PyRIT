@@ -10,6 +10,7 @@ import {
 } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
+import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import type {
   ScenarioComponentIdentity,
@@ -28,6 +29,10 @@ jest.mock('@/hooks/useScenarioRunProgress', () => ({
   useScenarioRunProgress: jest.fn(),
 }))
 
+jest.mock('@/hooks/useScenarioQueue', () => ({
+  useScenarioQueue: jest.fn(),
+}))
+
 jest.mock('@/services/api', () => ({
   scenariosApi: {
     cancelRun: jest.fn(),
@@ -35,6 +40,7 @@ jest.mock('@/services/api', () => ({
 }))
 
 const mockUseScenarioRunProgress = useScenarioRunProgress as jest.Mock
+const mockUseScenarioQueue = useScenarioQueue as jest.Mock
 const mockCancelRun = scenariosApi.cancelRun as jest.Mock
 const mockRetry = jest.fn()
 const mockApplyRunSummary = jest.fn()
@@ -280,6 +286,13 @@ function renderPage(path = `/scanner-history/${SCENARIO_RESULT_ID}`) {
 describe('ScenarioRunPage', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockUseScenarioQueue.mockReturnValue({
+      snapshot: { revision: 0, snapshot_at: '2026-01-01T00:00:00Z', active: null, queued: [] },
+      loading: false,
+      stale: false,
+      error: null,
+      retry: jest.fn(),
+    })
     mockHookState(makeState())
   })
 
@@ -319,6 +332,8 @@ describe('ScenarioRunPage', () => {
 
     const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)
     expect(headings).toEqual([
+      'Run configuration',
+      'Scenario queue',
       'Overall progress',
       'Atomic attack groups',
       'Objective Scorer',
@@ -392,7 +407,7 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByText(/showing the last successfully loaded progress/i)).toBeInTheDocument()
   })
 
-  it('cancels after confirmation and immediately applies the returned terminal state', async () => {
+  it('cancels a queued run after confirmation and immediately applies the terminal state', async () => {
     const user = userEvent.setup()
     const cancelledRun = {
       scenario_result_id: 'run-1',
@@ -413,10 +428,21 @@ describe('ScenarioRunPage', () => {
       labels: {},
     }
     mockCancelRun.mockResolvedValueOnce(cancelledRun)
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        status: 'QUEUED',
+        queue_position: 1,
+        active_scenario_result_id: 'active-run',
+      },
+      results: [],
+      activeAtomicGroupIds: [],
+    }))
 
     renderPage()
     await user.click(screen.getByRole('button', { name: 'Cancel run' }))
     const dialog = screen.getByRole('dialog', { name: 'Cancel this scenario run?' })
+    expect(within(dialog).getByText(/removed from the queue and will never execute/i)).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Cancel run' }))
 
     await waitFor(() => expect(mockApplyRunSummary).toHaveBeenCalledWith(cancelledRun))
@@ -698,6 +724,7 @@ describe('ScenarioRunPage', () => {
       loadStatus: 'not-found',
       error: 'Run not found',
     })
+
     const notFound = renderPage()
     expect(screen.getByRole('heading', { name: 'Scenario run not found' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
@@ -711,6 +738,47 @@ describe('ScenarioRunPage', () => {
     renderPage()
     expect(screen.getByRole('heading', { name: 'Unable to load scenario run' })).toBeInTheDocument()
     expect(screen.getByText('Backend unavailable')).toBeInTheDocument()
+  })
+
+  it('renders queued position without progress percentage or ETA', () => {
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        status: 'QUEUED',
+        queue_position: 2,
+        active_scenario_result_id: 'active-run',
+      },
+      results: [],
+      activeAtomicGroupIds: [],
+    }))
+
+    renderPage()
+
+    expect(screen.getByTestId('run-state-badge')).toHaveTextContent('Queued')
+    expect(screen.getByTestId('queued-run-progress')).toHaveTextContent('Position 2')
+    expect(screen.getByText(/waiting for active run active-run/i)).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(screen.getByText('Available after start')).toBeInTheDocument()
+  })
+
+  it('shows structured overload roles, counts, and non-adaptive retry guidance', () => {
+    mockHookState(makeState({
+      overloadSummaries: [{
+        component_role: 'adversarial_chat',
+        count: 3,
+        rate_limit_count: 2,
+        server_error_count: 1,
+        status_codes: [429, 503],
+        latest_timestamp: '2026-01-01T00:00:06Z',
+      }],
+    }))
+
+    renderPage()
+
+    const warning = screen.getByTestId('scenario-overload-warning')
+    expect(warning).toHaveTextContent('Adversarial chat')
+    expect(warning).toHaveTextContent('3 × HTTP 429/503')
+    expect(warning).toHaveTextContent(/without adaptive throttling/i)
   })
 
   it('decodes route IDs and does not offer cancellation for terminal runs', () => {

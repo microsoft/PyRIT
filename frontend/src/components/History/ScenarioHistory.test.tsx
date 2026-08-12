@@ -2,6 +2,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
+import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { labelsApi, scenariosApi } from '@/services/api'
 import type { ScenarioRunListItem } from '@/types'
 
@@ -18,8 +19,13 @@ jest.mock('@/services/api', () => ({
   },
 }))
 
+jest.mock('@/hooks/useScenarioQueue', () => ({
+  useScenarioQueue: jest.fn(),
+}))
+
 const mockedScenariosApi = scenariosApi as jest.Mocked<typeof scenariosApi>
 const mockedLabelsApi = labelsApi as jest.Mocked<typeof labelsApi>
+const mockUseScenarioQueue = useScenarioQueue as jest.Mock
 
 const RUN: ScenarioRunListItem = {
   scenario_result_id: 'run-1',
@@ -28,6 +34,7 @@ const RUN: ScenarioRunListItem = {
   scenario_version: 3,
   status: 'COMPLETED',
   created_at: '2026-01-01T00:00:00Z',
+  started_at: '2026-01-01T00:00:05Z',
   updated_at: '2026-01-01T00:01:00Z',
   completed_at: '2026-01-01T00:01:00Z',
   techniques_used: ['prompt injection'],
@@ -68,6 +75,13 @@ function renderHistory(props = defaultProps) {
 describe('ScenarioHistory', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockUseScenarioQueue.mockReturnValue({
+      snapshot: { revision: 0, snapshot_at: '2026-01-01T00:00:00Z', active: null, queued: [] },
+      loading: false,
+      stale: false,
+      error: null,
+      retry: jest.fn(),
+    })
     mockedScenariosApi.listCatalog.mockResolvedValue({
       items: [{ scenario_name: 'foundry.red_team' }] as Awaited<ReturnType<typeof scenariosApi.listCatalog>>['items'],
       pagination: { limit: 100, has_more: false },
@@ -76,6 +90,10 @@ describe('ScenarioHistory', () => {
       source: 'scenarios',
       labels: { operator: ['alice'], operation: ['nightly'], team: ['safety'] },
     })
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
   })
 
   it('renders safe run metadata and opens rows by click or keyboard', async () => {
@@ -125,6 +143,84 @@ describe('ScenarioHistory', () => {
     expect(await screen.findByText('1 known / total unknown')).toBeInTheDocument()
     expect(screen.getByText('1/1 known results')).toBeInTheDocument()
     expect(screen.queryByText('1/1 (100%)')).not.toBeInTheDocument()
+  })
+
+  it('renders safe fallbacks when optional run metadata is unavailable', async () => {
+    jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-01-01T00:00:30Z'))
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [{
+        ...RUN,
+        scenario_name: 'LegacyScenario',
+        scenario_registry_name: null,
+        scenario_version: 1,
+        status: 'IN_PROGRESS',
+        started_at: '2026-01-01T00:00:20Z',
+        completed_at: null,
+        total_attacks: 0,
+        completed_attacks: 0,
+        successful_attacks: undefined,
+        objective_achieved_rate: 0,
+        failed_attacks: [{
+          atomic_attack_name: 'legacy-attack',
+          objective: 'Legacy objective',
+          total_retries: 0,
+        }],
+        error_attacks: undefined,
+        total_retries: 0,
+        labels: {},
+        target: {
+          target_type: 'TextTarget',
+          endpoint: null,
+          model_name: null,
+        },
+      }],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    renderHistory()
+
+    expect(await screen.findByRole('link', {
+      name: 'Open LegacyScenario scenario run',
+    })).toBeInTheDocument()
+    expect(screen.getByText('v1')).toBeInTheDocument()
+    expect(screen.getAllByText('TextTarget')).toHaveLength(2)
+    expect(screen.getByText('Not yet')).toBeInTheDocument()
+    expect(screen.getByText('10s elapsed')).toBeInTheDocument()
+    expect(screen.getAllByText('0/0')).toHaveLength(2)
+    expect(screen.getByText('1 / 0')).toBeInTheDocument()
+  })
+
+  it('does not display queue wait as execution elapsed time', async () => {
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [{
+        ...RUN,
+        status: 'QUEUED',
+        started_at: null,
+        completed_at: null,
+      }],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    renderHistory()
+
+    expect(await screen.findByText('Not started')).toBeInTheDocument()
+    expect(screen.queryByText(/\d+(?:s|m|h).*elapsed$/)).not.toBeInTheDocument()
+  })
+
+  it('does not display queue wait for a terminal run that never started', async () => {
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [{
+        ...RUN,
+        status: 'CANCELLED',
+        started_at: null,
+      }],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    renderHistory()
+
+    expect(await screen.findByText('Execution time unavailable')).toBeInTheDocument()
+    expect(screen.queryByText(/\d+(?:s|m|h).*elapsed$/)).not.toBeInTheDocument()
   })
 
   it('isolates option-loading failures from the primary history request', async () => {

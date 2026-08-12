@@ -442,7 +442,7 @@ def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
     memory_interface: AzureSQLMemory,
 ) -> None:
     """Scenario-history SQL Server conditions bind repeated values without interpolation."""
-    label_condition = memory_interface._get_scenario_result_label_condition(
+    label_condition = memory_interface._get_scenario_result_labels_condition(
         labels={"team.name": ["alice", "bob"], "operation": "nightly"}
     )
     registry_condition = memory_interface._get_scenario_registry_name_condition(

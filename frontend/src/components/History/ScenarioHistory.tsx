@@ -27,6 +27,8 @@ import {
   ScriptRegular,
 } from '@fluentui/react-icons'
 
+import ScenarioQueue from '@/components/Scenarios/ScenarioQueue'
+import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { labelsApi, scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { ScenarioRunListItem, ScenarioRunState } from '@/types'
@@ -91,6 +93,7 @@ export default function ScenarioHistory({
   onNavigate,
 }: ScenarioHistoryProps) {
   const styles = useScenarioHistoryStyles()
+  const queue = useScenarioQueue()
   const [runs, setRuns] = useState<ScenarioRunListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -295,6 +298,15 @@ export default function ScenarioHistory({
         )}
       </header>
 
+      <div className={styles.queue}>
+        <ScenarioQueue
+          snapshot={queue.snapshot}
+          loading={queue.loading}
+          stale={queue.stale}
+          error={queue.error}
+        />
+      </div>
+
       <div className={styles.content}>
         {displayLoading ? (
           <div className={styles.emptyState}><Spinner label="Loading scenario history..." /></div>
@@ -465,7 +477,12 @@ function formatTimestamp(value: string): string {
 }
 
 function formatElapsed(run: ScenarioRunListItem): string {
-  const start = Date.parse(run.created_at)
+  if (!run.started_at) {
+    return run.status === 'CREATED' || run.status === 'QUEUED'
+      ? 'Not started'
+      : 'Execution time unavailable'
+  }
+  const start = Date.parse(run.started_at)
   const end = run.completed_at ? Date.parse(run.completed_at) : Date.now()
   const seconds = Math.max(0, Math.floor((end - start) / 1000))
   if (seconds < 60) return `${seconds}s elapsed`

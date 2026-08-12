@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const RUN_ID = "123e4567-e89b-12d3-a456-426614174000";
+const ACTIVE_RUN_ID = "123e4567-e89b-12d3-a456-426614174001";
+const QUEUED_RUN_ID = "123e4567-e89b-12d3-a456-426614174002";
 const ATTACK_ID = "attack-result-1";
 const SCENARIO_NAME = "airt.jailbreak";
 const RAW_IMAGE_HTML = '<img src=x onerror="alert(1)">unsafe';
@@ -584,5 +586,106 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(row).toBeVisible();
     expect((await refresh.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     expect((await row.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  });
+
+  test("renders deterministic FIFO position changes and queued-to-completed handoff", async ({ page }) => {
+    await mockScenarioAPIs(page);
+    let progressRequests = 0;
+    let queueRequests = 0;
+
+    await page.route(new RegExp(`/api/scenarios/runs/${QUEUED_RUN_ID}/progress(?:\\?|$)`), async (route) => {
+      progressRequests += 1;
+      const statuses = ["QUEUED", "QUEUED", "IN_PROGRESS", "COMPLETED"] as const;
+      const status = statuses[Math.min(progressRequests - 1, statuses.length - 1)];
+      const queuePosition = status === "QUEUED" ? (progressRequests === 1 ? 2 : 1) : null;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          run: {
+            ...runSummary,
+            scenario_result_id: QUEUED_RUN_ID,
+            status,
+            completed_at: status === "COMPLETED" ? runSummary.completed_at : null,
+            queue_position: queuePosition,
+            active_scenario_result_id: status === "QUEUED" ? ACTIVE_RUN_ID : QUEUED_RUN_ID,
+            overload_summaries: [{
+              component_role: "objective_target",
+              count: 2,
+              rate_limit_count: 1,
+              server_error_count: 1,
+              status_codes: [429, 503],
+              latest_timestamp: "2026-08-07T00:00:45Z",
+            }],
+          },
+          plan: progressRequests === 1 ? plan : null,
+          reset: progressRequests === 1,
+          active_atomic_group_ids: status === "IN_PROGRESS" ? ["group-1"] : [],
+          results: status === "COMPLETED" ? [progressAttempt] : [],
+          next_cursor: `queue-progress-${progressRequests}`,
+          has_more: false,
+          plan_complete: true,
+        }),
+      });
+    });
+
+    await page.route(/\/api\/scenarios\/runs\/queue(?:\?|$)/, async (route) => {
+      queueRequests += 1;
+      const active = {
+        scenario_result_id: ACTIVE_RUN_ID,
+        scenario_name: "Active scenario",
+        scenario_registry_name: "active.scenario",
+        state: "IN_PROGRESS",
+        created_at: "2026-08-07T00:00:00Z",
+        enqueued_at: "2026-08-07T00:00:00Z",
+        started_at: "2026-08-07T00:00:01Z",
+      };
+      const queued = {
+        scenario_result_id: QUEUED_RUN_ID,
+        scenario_name: "Jailbreak",
+        scenario_registry_name: SCENARIO_NAME,
+        state: "QUEUED",
+        position: queueRequests === 1 ? 2 : 1,
+        created_at: runSummary.created_at,
+        enqueued_at: runSummary.created_at,
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          revision: queueRequests,
+          snapshot_at: `2026-08-07T00:00:0${Math.min(queueRequests, 9)}Z`,
+          active: queueRequests < 3 ? active : queueRequests === 3 ? { ...queued, state: "IN_PROGRESS", position: null } : null,
+          queued: queueRequests < 3
+            ? [
+                ...(queueRequests === 1 ? [{ ...queued, scenario_result_id: RUN_ID, position: 1 }] : []),
+                queued,
+              ]
+            : [],
+        }),
+      });
+    });
+
+    await page.goto(`/scenario-history/${QUEUED_RUN_ID}`);
+
+    await expect(page.getByTestId("run-state-badge")).toHaveText("Queued");
+    await expect(page.getByTestId("queued-run-progress")).toContainText("Position 2");
+    await expect(page.getByTestId("queued-run-progress")).not.toContainText("%");
+    await expect(page.getByRole("link", { name: new RegExp(ACTIVE_RUN_ID) })).toHaveAttribute(
+      "href",
+      `/scenario-history/${ACTIVE_RUN_ID}`,
+    );
+    const warning = page.getByTestId("scenario-overload-warning");
+    await expect(warning).toContainText("Objective target");
+    await expect(warning).toContainText("2 × HTTP 429/503");
+    await expect(warning).toContainText("without adaptive throttling");
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect((await page.getByRole("button", { name: "Cancel run" }).boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await expect(page.getByTestId("queued-run-progress")).toContainText("Position 1", { timeout: 6_000 });
+    await expect(page.getByTestId("run-state-badge")).toHaveText("In progress", { timeout: 6_000 });
+    await expect(page.getByTestId("run-state-badge")).toHaveText("Completed", { timeout: 6_000 });
+    expect(progressRequests).toBe(4);
+
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   });
 });

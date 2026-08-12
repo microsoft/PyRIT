@@ -41,12 +41,18 @@ class RetryCollector:
         # Extract exception info
         exception_type = ""
         exception_message = ""
+        status_code: int | None = None
         outcome = retry_state.outcome
         if outcome is not None and outcome.failed:
             exc = outcome.exception()
             if exc:
                 exception_type = type(exc).__name__
                 exception_message = str(exc)
+                candidate_status = getattr(exc, "status_code", None)
+                if not isinstance(candidate_status, int):
+                    candidate_status = getattr(getattr(exc, "response", None), "status_code", None)
+                if isinstance(candidate_status, int):
+                    status_code = candidate_status
 
         # Extract context info
         component_role = ""
@@ -69,6 +75,7 @@ class RetryCollector:
             component_role=component_role,
             component_name=component_name,
             endpoint=endpoint,
+            status_code=status_code,
             elapsed_seconds=round(elapsed, 3),
         )
         self.events.append(event)
