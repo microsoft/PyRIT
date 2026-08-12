@@ -312,7 +312,7 @@ async def test_start_async_cancellation_cleans_up_spawned_process():
     assert not _server_launcher._pid_file_path(port=8000).exists()
 
 
-async def test_start_async_cancellation_waits_for_pid_write_before_cleanup():
+async def test_start_async_repeated_cancellation_waits_for_pid_write_before_cleanup():
     launcher = ServerLauncher()
     fake_proc = MagicMock()
     fake_proc.pid = 99
@@ -339,6 +339,9 @@ async def test_start_async_cancellation_waits_for_pid_write_before_cleanup():
     ):
         startup_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
         assert await asyncio.to_thread(write_started.wait, 5)
+        startup_task.cancel()
+        await asyncio.sleep(0)
+        assert not startup_task.done()
         startup_task.cancel()
         await asyncio.sleep(0)
         assert not startup_task.done()

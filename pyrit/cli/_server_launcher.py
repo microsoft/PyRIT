@@ -415,11 +415,16 @@ async def _write_pid_record_async(*, host: str, port: int, pid: int) -> None:
             pid=pid,
         )
     )
-    try:
-        await asyncio.shield(write_task)
-    except asyncio.CancelledError:
-        await write_task
-        raise
+    cancellation: asyncio.CancelledError | None = None
+    while not write_task.done():
+        try:
+            await asyncio.shield(write_task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+
+    write_task.result()
+    if cancellation is not None:
+        raise cancellation
 
 
 class ServerLauncher:
