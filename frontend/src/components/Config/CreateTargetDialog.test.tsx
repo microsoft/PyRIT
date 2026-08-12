@@ -144,6 +144,19 @@ async function selectTargetType(value: string): Promise<void> {
   restoreDialogAccessibility();
 }
 
+// The catalog fetch mock (see beforeEach) resolves on mount, and its
+// setCatalogEntries/setCatalogStatus updates land on the next microtask
+// tick. Tests that follow up with an `await` (selectTargetType,
+// openTargetTypePicker, userEvent, ...) give React a chance to settle that
+// update inside their own act()-wrapped waiting. Tests that only make
+// synchronous assertions after `render` never yield, so the update fires
+// after the test body returns and React reports it as outside act(...).
+// Call this right after `render` in those synchronous tests to flush it
+// deterministically.
+async function flushCatalogFetch(): Promise<void> {
+  await act(async () => {});
+}
+
 describe("parseWeight", () => {
   it("rejects empty input", () => {
     expect(parseWeight("")).toEqual({ ok: false, error: "Weight is required" });
@@ -233,12 +246,13 @@ describe("CreateTargetDialog", () => {
     dialogAccessibilityObserver.disconnect();
   });
 
-  it("should render dialog when open", () => {
+  it("should render dialog when open", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
+    await flushCatalogFetch();
 
     expect(screen.getByText("Create New Target")).toBeInTheDocument();
     expect(screen.getByText("Create Target")).toBeInTheDocument();
@@ -386,12 +400,13 @@ describe("CreateTargetDialog", () => {
     expect(screen.queryByText("Create New Target")).not.toBeInTheDocument();
   });
 
-  it("should have Create button disabled until type and endpoint filled", () => {
+  it("should have Create button disabled until type and endpoint filled", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
+    await flushCatalogFetch();
 
     const createButton = screen.getByText("Create Target");
     expect(createButton.closest("button")).toBeDisabled();
@@ -634,12 +649,13 @@ describe("CreateTargetDialog", () => {
     });
   });
 
-  it("should display supported target initializer guidance", () => {
+  it("should display supported target initializer guidance", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
+    await flushCatalogFetch();
 
     expect(screen.getByText("target", { selector: "code" })).toBeInTheDocument();
     expect(
@@ -650,12 +666,13 @@ describe("CreateTargetDialog", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("should render .pyrit_conf_example as an accessible link", () => {
+  it("should render .pyrit_conf_example as an accessible link", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
+    await flushCatalogFetch();
 
     const link = screen.getByRole("link", { name: ".pyrit_conf_example" });
     expect(link).toBeInTheDocument();

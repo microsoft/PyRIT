@@ -265,9 +265,11 @@ class HuggingFaceChatTarget(PromptTarget):
                 return
 
             if self.model_path:
-                # Load the tokenizer and model from the local directory
+                # Load the tokenizer and model from the local directory. This imports `transformers`
+                # and performs blocking disk I/O, so it is offloaded to a worker thread to keep the
+                # event loop responsive.
                 logger.info(f"Loading model from local path: {self.model_path}...")
-                self._load_from_path(self.model_path, **optional_model_kwargs)
+                await asyncio.to_thread(self._load_from_path, self.model_path, **optional_model_kwargs)
             else:
                 from pyrit.common.download_hf_model import download_specific_files_async
 
@@ -299,12 +301,15 @@ class HuggingFaceChatTarget(PromptTarget):
                         Path(cache_dir),
                     )
 
-                # Load the tokenizer and model from the downloaded local snapshot.
+                # Load the tokenizer and model from the downloaded local snapshot. This imports
+                # `transformers` and performs blocking disk I/O, so it is offloaded to a worker
+                # thread to keep the event loop responsive.
                 logger.info(f"Loading model {self.model_id} from cache path: {cache_dir}...")
-                self._load_from_path(str(cache_dir), **optional_model_kwargs)
+                await asyncio.to_thread(self._load_from_path, str(cache_dir), **optional_model_kwargs)
 
-            # Move the model to the correct device
-            self.model = self.model.to(self.device)
+            # Move the model to the correct device. This can be a slow, blocking operation
+            # (e.g., copying weights to a GPU), so it is offloaded to a worker thread as well.
+            self.model = await asyncio.to_thread(self.model.to, self.device)
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")

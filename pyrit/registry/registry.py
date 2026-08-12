@@ -171,7 +171,13 @@ class Registry(ABC, Generic[T, MetadataT]):
 
     # Class-level singleton instances, keyed by registry class.
     _singletons: dict[type, Registry[Any, Any]] = {}
+    # Guards only the two class-level dicts below (fast dict lookups); it is never held
+    # while a registry class is being constructed, so unrelated registry classes never
+    # queue behind one another's constructor.
     _singletons_lock = threading.RLock()
+    # Per-registry-class construction locks, so concurrent same-class callers converge
+    # onto a single construction while different registry classes construct independently.
+    _singleton_construction_locks: dict[type, threading.Lock] = {}
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
@@ -182,8 +188,15 @@ class Registry(ABC, Generic[T, MetadataT]):
                 If False, discovery runs immediately in the constructor.
         """
         self._catalog_lock = threading.RLock()
+        # Guards the (potentially slow) metadata build so concurrent callers single-flight
+        # onto one build instead of each redoing it; never held while _catalog_lock is held,
+        # so catalog reads (__contains__, get_class, ...) are never parked behind a build.
+        self._metadata_build_lock = threading.RLock()
         self._classes: dict[str, type[T]] = {}
         self._metadata_cache: dict[str, MetadataT] | None = None
+        # Bumped on every catalog mutation so an in-flight metadata build can detect a
+        # registration that landed mid-build and retry instead of caching a stale snapshot.
+        self._catalog_version = 0
         self._discovered = False
         self._lazy_discovery = lazy_discovery
 
@@ -196,15 +209,30 @@ class Registry(ABC, Generic[T, MetadataT]):
         """
         Get the singleton instance of this registry.
 
-        Creates the instance on first call with default parameters.
+        Creates the instance on first call with default parameters. Construction
+        happens under a per-class lock rather than the shared map lock, so a slow
+        eager constructor (e.g. one that runs discovery synchronously) blocks only
+        other callers of the *same* registry class; unrelated registry classes
+        construct independently.
 
         Returns:
             The singleton instance of this registry class.
         """
         with cls._singletons_lock:
-            if cls not in cls._singletons:
-                cls._singletons[cls] = cls()
-            return cls._singletons[cls]  # type: ignore[ty:invalid-return-type]
+            instance = cls._singletons.get(cls)
+            if instance is not None:
+                return instance  # type: ignore[ty:invalid-return-type]
+            construction_lock = cls._singleton_construction_locks.setdefault(cls, threading.Lock())
+
+        with construction_lock:
+            with cls._singletons_lock:
+                instance = cls._singletons.get(cls)
+                if instance is not None:
+                    return instance  # type: ignore[ty:invalid-return-type]
+            instance = cls()
+            with cls._singletons_lock:
+                cls._singletons[cls] = instance
+            return instance  # type: ignore[ty:invalid-return-type]
 
     @classmethod
     def reset_registry_singleton(cls) -> None:
@@ -502,6 +530,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             self._validate_class(cls)
             self._classes[name] = cls
             self._metadata_cache = None
+            self._catalog_version += 1
 
     def get_class(self, name: str) -> type[T]:
         """
@@ -539,16 +568,40 @@ class Registry(ABC, Generic[T, MetadataT]):
         """
         Build (once) and return the metadata cache keyed by catalog name.
 
+        Building metadata re-derives every registered class's build contract (the
+        same introspection cost as discovery) and can take a while for a large
+        catalog. That work runs with ``_catalog_lock`` released so it never parks
+        concurrent catalog reads (``__contains__``, ``get_class``, ...) — those
+        only need the lock for a quick dict lookup. ``_metadata_build_lock`` still
+        makes concurrent metadata callers single-flight onto one build, and the
+        ``_catalog_version`` stamp detects a registration that lands mid-build so a
+        stale snapshot is never cached over a newer one; the build simply retries.
+
         Returns:
             dict[str, MetadataT]: Metadata for every registered class, keyed by name.
         """
         with self._catalog_lock:
             self._ensure_discovered()
-            if self._metadata_cache is None:
-                self._metadata_cache = {
-                    name: self._build_metadata(name, cls) for name, cls in sorted(self._classes.items())
-                }
-            return self._metadata_cache
+            if self._metadata_cache is not None:
+                return self._metadata_cache
+
+        with self._metadata_build_lock:
+            while True:
+                with self._catalog_lock:
+                    if self._metadata_cache is not None:
+                        return self._metadata_cache
+                    classes_snapshot = dict(self._classes)
+                    version = self._catalog_version
+
+                built = {name: self._build_metadata(name, cls) for name, cls in sorted(classes_snapshot.items())}
+
+                with self._catalog_lock:
+                    if self._metadata_cache is not None:
+                        return self._metadata_cache
+                    if self._catalog_version == version:
+                        self._metadata_cache = built
+                        return self._metadata_cache
+                    # A registration landed mid-build; retry with a fresh snapshot.
 
     def get_all_registered_class_metadata(
         self,
