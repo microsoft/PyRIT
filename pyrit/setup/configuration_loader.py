@@ -136,7 +136,7 @@ class ConfigurationLoader(YamlLoadable):
     initializers: list[str | dict[str, Any]] = field(default_factory=list)
     initialization_scripts: list[str] | None = None
     env_files: list[str] | None = None
-    env_akv_ref: list[str] | None = None
+    env_akv_ref: str | None = None
     env_akv_strict: bool = True
     silent: bool = False
     operator: str | None = None
@@ -150,7 +150,20 @@ class ConfigurationLoader(YamlLoadable):
         """Validate and normalize the configuration after loading."""
         self._normalize_memory_db_type()
         self._normalize_initializers()
+        self._validate_env_akv_ref()
         self._normalize_server()
+
+    def _validate_env_akv_ref(self) -> None:
+        """
+        Validate the Key Vault bootstrap secret reference.
+
+        Raises:
+            ValueError: If env_akv_ref is not one non-empty string.
+        """
+        if self.env_akv_ref is None:
+            return
+        if not isinstance(self.env_akv_ref, str) or not self.env_akv_ref.strip():
+            raise ValueError("env_akv_ref must be one non-empty Azure Key Vault secret URL.")
 
     def _normalize_memory_db_type(self) -> None:
         """
@@ -403,7 +416,7 @@ class ConfigurationLoader(YamlLoadable):
         initializers: Sequence[str | dict[str, Any]] | None = None,
         initialization_scripts: Sequence[str] | None = None,
         env_files: Sequence[str] | None = None,
-        env_akv_ref: Sequence[str] | None = None,
+        env_akv_ref: str | None = None,
         env_akv_strict: bool | None = None,
     ) -> "ConfigurationLoader":
         """
@@ -420,7 +433,7 @@ class ConfigurationLoader(YamlLoadable):
             initializers: Override for initializer list.
             initialization_scripts: Override for initialization script paths.
             env_files: Override for environment file paths.
-            env_akv_ref: Override for Azure Key Vault secret URLs.
+            env_akv_ref: Override for the Azure Key Vault bootstrap secret URL.
             env_akv_strict: Override for strict Key Vault bootstrap validation.
 
         Returns:
@@ -482,7 +495,7 @@ class ConfigurationLoader(YamlLoadable):
             config_data["env_files"] = list(env_files)
 
         if env_akv_ref is not None:
-            config_data["env_akv_ref"] = list(env_akv_ref)
+            config_data["env_akv_ref"] = env_akv_ref
 
         if env_akv_strict is not None:
             config_data["env_akv_strict"] = env_akv_strict
@@ -588,12 +601,12 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def resolve_env_akv_ref(self) -> list[str] | None:
+    def resolve_env_akv_ref(self) -> str | None:
         """
-        Return the list of AKV secret URLs, or ``None`` when not configured.
+        Return the AKV bootstrap secret URL, or ``None`` when not configured.
 
         Returns:
-            list[str] | None: The configured AKV secret URLs, or ``None``.
+            str | None: The configured AKV bootstrap secret URL, or ``None``.
         """
         return self.env_akv_ref
 

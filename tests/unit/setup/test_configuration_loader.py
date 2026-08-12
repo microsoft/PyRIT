@@ -147,7 +147,7 @@ class TestConfigurationLoader:
             "initializers": ["simple"],
             "initialization_scripts": ["/path/to/script.py"],
             "env_files": ["/path/to/.env"],
-            "env_akv_ref": ["https://vault.vault.azure.net/secrets/one"],
+            "env_akv_ref": "https://vault.vault.azure.net/secrets/one",
             "env_akv_strict": False,
             "silent": True,
         }
@@ -156,7 +156,7 @@ class TestConfigurationLoader:
         assert config.initializers == ["simple"]
         assert config.initialization_scripts == ["/path/to/script.py"]
         assert config.env_files == ["/path/to/.env"]
-        assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
+        assert config.env_akv_ref == "https://vault.vault.azure.net/secrets/one"
         assert config.env_akv_strict is False
         assert config.silent is True
 
@@ -310,13 +310,15 @@ class TestConfigurationLoaderResolvers:
         assert config.resolve_env_akv_ref() is None
 
     def testresolve_env_akv_ref_returns_configured_values(self):
-        """Test that configured AKV references are returned unchanged."""
-        refs = [
-            "https://vault.vault.azure.net/secrets/first",
-            "https://vault.vault.azure.net/secrets/second/version",
-        ]
-        config = ConfigurationLoader(env_akv_ref=refs)
-        assert config.resolve_env_akv_ref() == refs
+        """Test that the configured AKV reference is returned unchanged."""
+        ref = "https://vault.vault.azure.net/secrets/first"
+        config = ConfigurationLoader(env_akv_ref=ref)
+        assert config.resolve_env_akv_ref() == ref
+
+    @pytest.mark.parametrize("env_akv_ref", [[], ["https://vault.vault.azure.net/secrets/one"], ""])
+    def test_env_akv_ref_rejects_non_scalar_or_empty_values(self, env_akv_ref):
+        with pytest.raises(ValueError, match="env_akv_ref must be one non-empty"):
+            ConfigurationLoader(env_akv_ref=env_akv_ref)  # type: ignore[arg-type]
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -343,17 +345,14 @@ class TestConfigurationLoaderInitialization:
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     async def test_initialize_pyrit_async_with_env_akv_ref(self, mock_init):
         """Test initialization forwards env_akv_ref to initialize_pyrit_async."""
-        refs = [
-            "https://vault.vault.azure.net/secrets/first",
-            "https://vault.vault.azure.net/secrets/second/version",
-        ]
-        config = ConfigurationLoader(memory_db_type="in_memory", env_akv_ref=refs, env_akv_strict=False)
+        ref = "https://vault.vault.azure.net/secrets/first"
+        config = ConfigurationLoader(memory_db_type="in_memory", env_akv_ref=ref, env_akv_strict=False)
 
         await config.initialize_pyrit_async()
 
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args.kwargs
-        assert call_kwargs["env_akv_ref"] == refs
+        assert call_kwargs["env_akv_ref"] == ref
         assert call_kwargs["env_akv_strict"] is False
 
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
@@ -466,13 +465,13 @@ class TestLoadWithOverrides:
         mock_default_path.exists.return_value = True
         mock_from_yaml.return_value = ConfigurationLoader(
             memory_db_type="sqlite",
-            env_akv_ref=["https://default.vault.azure.net/secrets/from-default"],
+            env_akv_ref="https://default.vault.azure.net/secrets/from-default",
         )
 
         config = ConfigurationLoader.load_with_overrides()
 
         mock_from_yaml.assert_called_once_with(mock_default_path)
-        assert config.env_akv_ref == ["https://default.vault.azure.net/secrets/from-default"]
+        assert config.env_akv_ref == "https://default.vault.azure.net/secrets/from-default"
 
     @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
     def test_load_with_overrides_memory_db_type_override(self, mock_default_path):
@@ -517,10 +516,10 @@ class TestLoadWithOverrides:
         mock_default_path.exists.return_value = False
 
         config = ConfigurationLoader.load_with_overrides(
-            env_akv_ref=["https://vault.vault.azure.net/secrets/one"],
+            env_akv_ref="https://vault.vault.azure.net/secrets/one",
         )
 
-        assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
+        assert config.env_akv_ref == "https://vault.vault.azure.net/secrets/one"
 
     @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
     def test_load_with_overrides_converts_sequence_to_list(self, mock_default_path):
@@ -532,18 +531,15 @@ class TestLoadWithOverrides:
             initializers=("init1", "init2"),
             initialization_scripts=("/path/script1.py", "/path/script2.py"),
             env_files=("/path/.env",),
-            env_akv_ref=("https://vault.vault.azure.net/secrets/one",),
         )
 
         # Verify they are stored as lists
         assert isinstance(config.initializers, list)
         assert isinstance(config.initialization_scripts, list)
         assert isinstance(config.env_files, list)
-        assert isinstance(config.env_akv_ref, list)
         assert config.initializers == ["init1", "init2"]
         assert config.initialization_scripts == ["/path/script1.py", "/path/script2.py"]
         assert config.env_files == ["/path/.env"]
-        assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
 
     def test_load_with_overrides_explicit_config_file_not_found(self):
         """Test FileNotFoundError when explicit config file doesn't exist."""
@@ -566,8 +562,7 @@ initialization_scripts:
   - /explicit/script.py
 env_files:
   - /explicit/.env
-env_akv_ref:
-    - https://vault.vault.azure.net/secrets/explicit
+env_akv_ref: https://vault.vault.azure.net/secrets/explicit
 """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
@@ -580,7 +575,7 @@ env_akv_ref:
             assert config._initializer_configs[0].name == "explicit_init"
             assert config.initialization_scripts == ["/explicit/script.py"]
             assert config.env_files == ["/explicit/.env"]
-            assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/explicit"]
+            assert config.env_akv_ref == "https://vault.vault.azure.net/secrets/explicit"
         finally:
             config_path.unlink()
 

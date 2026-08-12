@@ -8,9 +8,11 @@ import types
 from unittest import mock
 
 import pytest
+from azure.core.exceptions import ResourceNotFoundError
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.singleton import Singleton
+from pyrit.exceptions import KeyVaultInitializationException
 from pyrit.registry import InitializerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initialization import (
@@ -18,6 +20,8 @@ from pyrit.setup.initialization import (
     _load_environment_files,
     _parse_akv_secret_url,
     _parse_environment_value_reference,
+    _resolve_environment_files,
+    _resolve_environment_references_async,
     _warn_about_akv_environment_files,
 )
 
@@ -176,18 +180,15 @@ class ScriptInit(PyRITInitializer):
     @mock.patch("pyrit.setup.initialization._resolve_environment_files", return_value=({}, False))
     @mock.patch("pyrit.setup.initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
     async def test_initialize_with_env_akv_ref(self, mock_load_akv, mock_resolve_env, mock_set_memory):
-        """Test that env_akv_ref loads only its first entry."""
-        refs = [
-            "https://vault.vault.azure.net/secrets/test-secret",
-            "https://vault.vault.azure.net/secrets/ignored",
-        ]
+        """Test that env_akv_ref loads its bootstrap secret."""
+        ref = "https://vault.vault.azure.net/secrets/test-secret"
 
-        mock_load_akv.return_value = {}
+        mock_load_akv.return_value = {}, "https://vault.vault.azure.net"
 
-        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs, load_defaults=False)
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=ref, load_defaults=False)
 
         mock_load_akv.assert_awaited_once()
-        assert mock_load_akv.await_args.kwargs["secret_url"] == refs[0]
+        assert mock_load_akv.await_args.kwargs["secret_url"] == ref
         assert mock_load_akv.await_args.kwargs["strict"] is True
         assert mock_load_akv.await_args.kwargs["silent"] is False
         mock_resolve_env.assert_called_once()
@@ -196,52 +197,18 @@ class ScriptInit(PyRITInitializer):
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     @mock.patch("pyrit.setup.initialization._resolve_environment_files", return_value=({}, False))
     @mock.patch("pyrit.setup.initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
-    async def test_initialize_with_empty_env_akv_ref_does_not_load_akv(
-        self, mock_load_akv, mock_resolve_env, mock_set_memory
-    ):
-        """Test that empty env_akv_ref does not invoke AKV loading."""
-        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=[], load_defaults=False)
+    async def test_initialize_with_empty_env_akv_ref_raises(self, mock_load_akv, mock_resolve_env, mock_set_memory):
+        """Test that an empty env_akv_ref is rejected."""
+        with pytest.raises(ValueError, match="env_akv_ref must be a non-empty"):
+            await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref="", load_defaults=False)
 
         mock_load_akv.assert_not_called()
-        mock_resolve_env.assert_called_once()
-        mock_set_memory.assert_called_once()
-
-    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
-    async def test_initialize_loads_akv_before_env_files(self, mock_set_memory):
-        """Test that AKV refs are loaded before env_files so env_files can override values."""
-        call_order: list[str] = []
-
-        def _record_warning(*, env_files, silent=False):
-            call_order.append("warning")
-
-        async def _record_akv_call(*, secret_url, strict=True, silent=False):
-            call_order.append("akv")
-            return {"FROM_AKV": "shared"}
-
-        def _record_env_file_call(*, env_files, base_environment, silent=False, include_default_base=True):
-            call_order.append("env_files")
-            assert include_default_base is False
-            assert base_environment["FROM_AKV"] == "shared"
-            return {"FROM_LOCAL": "override"}, True
-
-        refs = ["https://vault.vault.azure.net/secrets/test-secret"]
-
-        with mock.patch.dict(os.environ, {}, clear=True):
-            with (
-                mock.patch("pyrit.setup.initialization._warn_about_akv_environment_files", side_effect=_record_warning),
-                mock.patch("pyrit.setup.initialization._load_env_from_akv_async", side_effect=_record_akv_call),
-                mock.patch("pyrit.setup.initialization._resolve_environment_files", side_effect=_record_env_file_call),
-            ):
-                await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs, load_defaults=False)
-
-            assert os.environ == {"FROM_AKV": "shared", "FROM_LOCAL": "override"}
-
-        assert call_order == ["warning", "akv", "env_files"]
-        mock_set_memory.assert_called_once()
+        mock_resolve_env.assert_not_called()
+        mock_set_memory.assert_not_called()
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     async def test_initialize_akv_and_local_files_are_applied_atomically(self, mock_set_memory):
-        refs = ["https://vault.vault.azure.net/secrets/bootstrap"]
+        ref = "https://vault.vault.azure.net/secrets/bootstrap"
         nonexistent = pathlib.Path("/nonexistent/.env")
 
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -250,13 +217,13 @@ class ScriptInit(PyRITInitializer):
                 mock.patch(
                     "pyrit.setup.initialization._load_env_from_akv_async",
                     new_callable=mock.AsyncMock,
-                    return_value={"FROM_AKV": "resolved"},
+                    return_value=({"FROM_AKV": "resolved"}, "https://vault.vault.azure.net"),
                 ),
                 pytest.raises(ValueError, match="Environment file not found"),
             ):
                 await initialize_pyrit_async(
                     memory_db_type=IN_MEMORY,
-                    env_akv_ref=refs,
+                    env_akv_ref=ref,
                     env_files=[nonexistent],
                     load_defaults=False,
                 )
@@ -267,7 +234,7 @@ class ScriptInit(PyRITInitializer):
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     async def test_initialize_stages_local_overrides_on_akv_environment(self, mock_set_memory):
-        refs = ["https://vault.vault.azure.net/secrets/bootstrap"]
+        ref = "https://vault.vault.azure.net/secrets/bootstrap"
         with tempfile.TemporaryDirectory() as temp_dir:
             local_file = pathlib.Path(temp_dir) / ".env.local"
             local_file.write_text("DERIVED=${BASE}\nBASE=local")
@@ -278,12 +245,12 @@ class ScriptInit(PyRITInitializer):
                 mock.patch(
                     "pyrit.setup.initialization._load_env_from_akv_async",
                     new_callable=mock.AsyncMock,
-                    return_value={"BASE": "akv", "ONLY_AKV": "shared"},
+                    return_value=({"BASE": "akv", "ONLY_AKV": "shared"}, "https://vault.vault.azure.net"),
                 ),
             ):
                 await initialize_pyrit_async(
                     memory_db_type=IN_MEMORY,
-                    env_akv_ref=refs,
+                    env_akv_ref=ref,
                     env_files=[local_file],
                     load_defaults=False,
                 )
@@ -292,6 +259,87 @@ class ScriptInit(PyRITInitializer):
                 assert os.environ["DERIVED"] == "akv"
                 assert os.environ["ONLY_AKV"] == "shared"
 
+        mock_set_memory.assert_called_once()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    async def test_initialize_default_files_override_akv_in_order(self, mock_set_memory):
+        ref = "https://vault.vault.azure.net/secrets/bootstrap"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            (temp_path / ".env").write_text("VALUE=env")
+            (temp_path / ".env.local").write_text("VALUE=local")
+
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH", temp_path),
+                mock.patch("pyrit.setup.initialization._warn_about_akv_environment_files"),
+                mock.patch(
+                    "pyrit.setup.initialization._load_env_from_akv_async",
+                    new_callable=mock.AsyncMock,
+                    return_value=({"VALUE": "akv"}, "https://vault.vault.azure.net"),
+                ),
+            ):
+                await initialize_pyrit_async(
+                    memory_db_type=IN_MEMORY,
+                    env_akv_ref=ref,
+                    load_defaults=False,
+                    silent=True,
+                )
+
+                assert os.environ["VALUE"] == "local"
+
+        mock_set_memory.assert_called_once()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    async def test_initialize_resolves_only_winning_references_after_local_override(self, mock_set_memory):
+        ref = "https://vault.vault.azure.net/secrets/bootstrap"
+        credential, client = _create_mock_akv_clients()
+        client.get_secret = mock.AsyncMock(
+            side_effect=[
+                types.SimpleNamespace(value="bootstrap-secret-value"),
+                types.SimpleNamespace(value="local-secret-value"),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_file = pathlib.Path(temp_dir) / ".env.local"
+            local_file.write_text(
+                "OVERRIDDEN=local\n"
+                "LOCAL_SECRET=kv:https://vault.vault.azure.net/secrets/local-secret\n"
+                "LOCAL_ENV=env:BOOTSTRAP_SOURCE"
+            )
+            bootstrap_environment = {
+                "OVERRIDDEN": "kv:https://vault.vault.azure.net/secrets/unused-secret",
+                "BOOTSTRAP_SECRET": "kv:https://vault.vault.azure.net/secrets/bootstrap-secret",
+                "BOOTSTRAP_SOURCE": "bootstrap-value",
+            }
+
+            with (
+                mock.patch.dict(os.environ, {"SOURCE_VALUE": "ambient-value"}, clear=True),
+                mock.patch("pyrit.setup.initialization._warn_about_akv_environment_files"),
+                mock.patch(
+                    "pyrit.setup.initialization._load_env_from_akv_async",
+                    new_callable=mock.AsyncMock,
+                    return_value=(bootstrap_environment, "https://vault.vault.azure.net"),
+                ),
+                mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+                mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
+            ):
+                await initialize_pyrit_async(
+                    memory_db_type=IN_MEMORY,
+                    env_akv_ref=ref,
+                    env_files=[local_file],
+                    load_defaults=False,
+                )
+
+                assert os.environ["OVERRIDDEN"] == "local"
+                assert os.environ["BOOTSTRAP_SECRET"] == "bootstrap-secret-value"
+                assert os.environ["LOCAL_SECRET"] == "local-secret-value"
+                assert os.environ["LOCAL_ENV"] == "bootstrap-value"
+
+        assert client.get_secret.await_args_list == [
+            mock.call("bootstrap-secret", version=None),
+            mock.call("local-secret", version=None),
+        ]
         mock_set_memory.assert_called_once()
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
@@ -341,56 +389,41 @@ class TestInitializePyritSilent:
 class TestLoadEnvironmentFiles:
     """Tests for _load_environment_files function and env_files parameter in initialize_pyrit_async."""
 
-    @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
-    async def test_loads_default_env_files_when_none_provided(self, mock_config_path, mock_load_dotenv):
+    async def test_loads_default_env_files_when_none_provided(self, mock_config_path):
         """Test that default .env and .env.local files are loaded when env_files is None."""
-        # Create temporary directory and files
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = pathlib.Path(temp_dir)
             env_file = temp_path / ".env"
             env_local_file = temp_path / ".env.local"
-
-            # Create the files
             env_file.write_text("VAR1=value1")
             env_local_file.write_text("VAR2=value2")
-
-            # Mock CONFIGURATION_DIRECTORY_PATH to point to our temp directory
             mock_config_path.__truediv__ = lambda self, other: temp_path / other
 
-            # Call the function with None (default behavior)
-            loaded = _load_environment_files(env_files=None)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                loaded = _load_environment_files(env_files=None)
 
-            # Verify both files were loaded
-            assert loaded is True
-            assert mock_load_dotenv.call_count == 2
-            calls = [call[0][0] for call in mock_load_dotenv.call_args_list]
-            assert env_file in calls
-            assert env_local_file in calls
+                assert loaded is True
+                assert os.environ["VAR1"] == "value1"
+                assert os.environ["VAR2"] == "value2"
 
-    @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
-    async def test_only_loads_existing_default_files(self, mock_config_path, mock_load_dotenv):
+    async def test_only_loads_existing_default_files(self, mock_config_path):
         """Test that only existing default files are loaded."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = pathlib.Path(temp_dir)
             env_file = temp_path / ".env"
-
-            # Only create .env, not .env.local
             env_file.write_text("VAR1=value1")
-
             mock_config_path.__truediv__ = lambda self, other: temp_path / other
 
-            loaded = _load_environment_files(env_files=None)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                loaded = _load_environment_files(env_files=None)
 
-            # Verify only one file was loaded
-            assert loaded is True
-            assert mock_load_dotenv.call_count == 1
-            assert mock_load_dotenv.call_args[0][0] == env_file
+                assert loaded is True
+                assert os.environ["VAR1"] == "value1"
 
-    @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
-    async def test_excludes_default_env_when_loading_local_override(self, mock_config_path, mock_load_dotenv):
+    async def test_excludes_default_env_when_loading_local_override(self, mock_config_path):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = pathlib.Path(temp_dir)
             env_file = temp_path / ".env"
@@ -400,23 +433,23 @@ class TestLoadEnvironmentFiles:
 
             mock_config_path.__truediv__ = lambda self, other: temp_path / other
 
-            loaded = _load_environment_files(env_files=None, include_default_base=False)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                loaded = _load_environment_files(env_files=None, include_default_base=False)
 
-            assert loaded is True
-            mock_load_dotenv.assert_called_once()
-            assert mock_load_dotenv.call_args.args[0] == env_local_file
+                assert loaded is True
+                assert os.environ["VAR"] == "local"
 
-    @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
-    async def test_returns_false_when_no_default_files_exist(self, mock_config_path, mock_load_dotenv):
+    async def test_returns_false_when_no_default_files_exist(self, mock_config_path):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = pathlib.Path(temp_dir)
             mock_config_path.__truediv__ = lambda self, other: temp_path / other
 
-            loaded = _load_environment_files(env_files=None)
+            with mock.patch.dict(os.environ, {}, clear=True):
+                loaded = _load_environment_files(env_files=None)
 
-            assert loaded is False
-            mock_load_dotenv.assert_not_called()
+                assert loaded is False
+                assert os.environ == {}
 
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
     def test_warns_when_default_files_coexist_with_akv(self, mock_config_path, caplog, capsys):
@@ -433,12 +466,31 @@ class TestLoadEnvironmentFiles:
 
         output = capsys.readouterr().out
         assert output.startswith("WARNING: env_akv_ref is configured")
-        assert f"{env_file} exists and will be ignored" in output
+        assert f"{env_file} will load after Key Vault and override matching values" in output
         assert f"{env_local_file} will load after Key Vault and override matching values" in output
         assert "clear or remove ~/.pyrit/.env and ~/.pyrit/.env.local" in output
         assert "remove explicit env_files when Key Vault should be the only source" in output
         assert "restart PyRIT" in output
         assert caplog.records[0].levelname == "WARNING"
+
+    @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
+    def test_warns_when_explicit_files_replace_defaults_with_akv(self, mock_config_path, capsys):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            env_file = temp_path / ".env"
+            env_local_file = temp_path / ".env.local"
+            custom_file = temp_path / ".env.custom"
+            env_file.write_text("VAR=base")
+            env_local_file.write_text("VAR=local")
+            custom_file.write_text("VAR=custom")
+            mock_config_path.__truediv__ = lambda self, other: temp_path / other
+
+            _warn_about_akv_environment_files(env_files=[custom_file])
+
+        output = capsys.readouterr().out
+        assert f"{env_file} exists but will be ignored because env_files was explicitly configured" in output
+        assert f"{env_local_file} exists but will be ignored because env_files was explicitly configured" in output
+        assert f"explicit env_files will load after Key Vault and override matching values: {[custom_file]}" in output
 
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
     def test_akv_environment_file_warning_respects_silent(self, mock_config_path, caplog, capsys):
@@ -451,11 +503,10 @@ class TestLoadEnvironmentFiles:
                 _warn_about_akv_environment_files(env_files=None, silent=True)
 
         assert capsys.readouterr().out == ""
-        assert "will be ignored because Key Vault supplies the base environment" in caplog.text
+        assert "will load after Key Vault and override matching values" in caplog.text
         assert "restart PyRIT" in caplog.text
 
-    @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
-    async def test_loads_custom_env_files_in_order(self, mock_load_dotenv):
+    async def test_loads_custom_env_files_in_order(self):
         """Test that custom env_files are loaded in the order provided."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = pathlib.Path(temp_dir)
@@ -468,15 +519,24 @@ class TestLoadEnvironmentFiles:
             env2.write_text("VAR=prod")
             env3.write_text("VAR=local")
 
-            # Pass custom files
-            _load_environment_files(env_files=[env1, env2, env3])
+            with mock.patch.dict(os.environ, {}, clear=True):
+                loaded = _load_environment_files(env_files=[env1, env2, env3])
 
-            # Verify all three files were loaded in order
-            assert mock_load_dotenv.call_count == 3
-            call_args = [call[0][0] for call in mock_load_dotenv.call_args_list]
-            assert call_args == [env1, env2, env3]
+                assert loaded is True
+                assert os.environ["VAR"] == "local"
 
-    async def test_local_environment_files_keep_pyrit_references_literal(self):
+    async def test_load_environment_files_honors_python_dotenv_disabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = pathlib.Path(temp_dir) / ".env"
+            env_file.write_text("DISABLED_VALUE=not-loaded")
+
+            with mock.patch.dict(os.environ, {"PYTHON_DOTENV_DISABLED": "true"}, clear=True):
+                loaded = _load_environment_files(env_files=[env_file], silent=True)
+
+                assert loaded is True
+                assert "DISABLED_VALUE" not in os.environ
+
+    async def test_direct_local_file_loader_keeps_pyrit_references_literal(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             env_file = pathlib.Path(temp_dir) / ".env"
             env_file.write_text(
@@ -490,6 +550,29 @@ class TestLoadEnvironmentFiles:
                 assert os.environ["KV_REFERENCE"] == "kv:api-key"
                 assert os.environ["ENV_REFERENCE"] == "env:SOURCE_VALUE"
                 assert os.environ["INTERPOLATED"] == "base"
+
+    @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
+    def test_default_local_file_can_interpolate_base_file_but_not_reverse(self, mock_config_path):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            env_file = temp_path / ".env"
+            env_local_file = temp_path / ".env.local"
+            env_file.write_text(
+                "OPENAI_CHAT_ENDPOINT=https://example.openai.azure.com/openai/v1\nFROM_LATER_LOCAL=${LOCAL_ONLY}"
+            )
+            env_local_file.write_text("FOOBAR=${OPENAI_CHAT_ENDPOINT}\nLOCAL_ONLY=local")
+            mock_config_path.__truediv__ = lambda self, other: temp_path / other
+
+            resolved, loaded = _resolve_environment_files(
+                env_files=None,
+                base_environment={},
+                silent=True,
+            )
+
+            assert loaded is True
+            assert resolved["FOOBAR"] == "https://example.openai.azure.com/openai/v1"
+            assert resolved["FROM_LATER_LOCAL"] == ""
+            assert resolved["LOCAL_ONLY"] == "local"
 
     async def test_env_akv_strict_does_not_validate_local_environment_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -507,6 +590,36 @@ class TestLoadEnvironmentFiles:
 
                 assert os.environ["GOOD"] == "resolved"
                 assert os.environ["OTHER"] == "also-resolved"
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    async def test_initialize_local_file_resolves_full_akv_reference_without_bootstrap(self, mock_set_memory):
+        credential, client = _create_mock_akv_clients()
+        client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value="local-secret-value"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = pathlib.Path(temp_dir) / ".env"
+            env_file.write_text("API_KEY=kv:https://myvault.vault.azure.net/secrets/api-key")
+
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+                mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client) as mock_client_cls,
+            ):
+                await initialize_pyrit_async(
+                    memory_db_type=IN_MEMORY,
+                    env_files=[env_file],
+                    load_defaults=False,
+                    silent=True,
+                )
+
+                assert os.environ["API_KEY"] == "local-secret-value"
+
+        _assert_mock_akv_client_created(
+            mock_client_cls,
+            vault_url="https://myvault.vault.azure.net",
+            credential=credential,
+        )
+        client.get_secret.assert_awaited_once_with("api-key", version=None)
+        mock_set_memory.assert_called_once()
 
     async def test_raises_error_for_nonexistent_env_file(self):
         """Test that ValueError is raised for non-existent env file."""
@@ -570,12 +683,32 @@ def _create_mock_akv_clients() -> tuple[mock.MagicMock, mock.MagicMock]:
     return credential, client
 
 
+def _assert_mock_akv_client_created(
+    mock_client_cls: mock.MagicMock,
+    *,
+    vault_url: str,
+    credential: mock.MagicMock,
+) -> None:
+    mock_client_cls.assert_called_once()
+    call_kwargs = mock_client_cls.call_args.kwargs
+    assert call_kwargs["vault_url"] == vault_url
+    assert call_kwargs["credential"] is credential
+    retry_policy = call_kwargs["retry_policy"]
+    assert retry_policy.total_retries == 3
+    assert retry_policy.connect_retries == 3
+    assert retry_policy.read_retries == 3
+    assert retry_policy.status_retries == 3
+    assert retry_policy.backoff_factor == 0.8
+
+
 class TestAkvEnvironmentLoading:
     """Tests for AKV URL parsing and env loading helpers."""
 
     @pytest.mark.parametrize("prefix", ["kv", "akv", "azure_key_vault", "env_akv_ref"])
     def test_parse_environment_value_reference_accepts_akv_aliases(self, prefix):
-        assert _parse_environment_value_reference(f"{prefix}:api-key") == ("akv", "api-key")
+        secret_url = "https://myvault.vault.azure.net/secrets/api-key"
+
+        assert _parse_environment_value_reference(f"{prefix}:{secret_url}") == ("akv", secret_url)
 
     def test_parse_environment_value_reference_rejects_azure_app_service_syntax(self):
         value = "@Microsoft.KeyVault(SecretUri=https://myvault.vault.azure.net/secrets/api-key)"
@@ -604,78 +737,144 @@ class TestAkvEnvironmentLoading:
         with pytest.raises(ValueError, match="Invalid AKV secret URL"):
             _parse_akv_secret_url("https://myvault.vault.azure.net/not-secrets/my-secret")
 
-    async def test_load_env_from_akv_async_resolves_one_level(self):
+    async def test_load_env_from_akv_async_returns_unresolved_bootstrap(self):
         credential, client = _create_mock_akv_clients()
         root_document = (
             "DIRECT=from-bootstrap\n"
             "FROM_ENV=env:SOURCE_VALUE\n"
-            "FROM_KV=kv:api-key\n"
-            "DUPLICATE_KV=akv:https://MYVAULT.vault.azure.net/secrets/API-KEY\n"
+            "FROM_KV=kv:https://myvault.vault.azure.net/secrets/api-key\n"
             "PINNED_KV=kv:https://myvault.vault.azure.net/secrets/api-key/version-2\n"
             "ESCAPED=literal:kv:not-a-secret"
         )
-        client.get_secret = mock.AsyncMock(
-            side_effect=[
-                types.SimpleNamespace(value=root_document),
-                types.SimpleNamespace(value="env:not-resolved-again"),
-                types.SimpleNamespace(value="pinned-secret-value"),
-            ]
-        )
+        client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value=root_document))
         secret_url = "https://myvault.vault.azure.net/secrets/bootstrap/v1"
 
         with (
-            mock.patch.dict(os.environ, {"SOURCE_VALUE": "kv:not-fetched"}, clear=False),
             mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential) as mock_credential_cls,
             mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client) as mock_client_cls,
             mock.patch("pyrit.setup.initialization._print_msg") as mock_print_msg,
         ):
-            resolved_environment = await _load_env_from_akv_async(secret_url=secret_url, silent=True)
+            parsed_environment, vault_url = await _load_env_from_akv_async(secret_url=secret_url, silent=True)
 
-            assert resolved_environment == {
+            assert parsed_environment == {
                 "DIRECT": "from-bootstrap",
-                "FROM_ENV": "kv:not-fetched",
-                "FROM_KV": "env:not-resolved-again",
-                "DUPLICATE_KV": "env:not-resolved-again",
-                "PINNED_KV": "pinned-secret-value",
-                "ESCAPED": "kv:not-a-secret",
+                "FROM_ENV": "env:SOURCE_VALUE",
+                "FROM_KV": "kv:https://myvault.vault.azure.net/secrets/api-key",
+                "PINNED_KV": "kv:https://myvault.vault.azure.net/secrets/api-key/version-2",
+                "ESCAPED": "literal:kv:not-a-secret",
             }
-            assert "DIRECT" not in os.environ
+            assert vault_url == "https://myvault.vault.azure.net"
 
         mock_credential_cls.assert_called_once_with()
-        mock_client_cls.assert_called_once_with(vault_url="https://myvault.vault.azure.net", credential=credential)
-        assert client.get_secret.await_args_list == [
-            mock.call("bootstrap", version="v1"),
-            mock.call("api-key", version=None),
-            mock.call("api-key", version="version-2"),
-        ]
+        _assert_mock_akv_client_created(
+            mock_client_cls,
+            vault_url="https://myvault.vault.azure.net",
+            credential=credential,
+        )
+        client.get_secret.assert_awaited_once_with("bootstrap", version="v1")
         credential.__aenter__.assert_awaited_once()
         credential.__aexit__.assert_awaited_once()
         client.__aenter__.assert_awaited_once()
         client.__aexit__.assert_awaited_once()
         mock_print_msg.assert_called_once()
 
-    async def test_load_env_from_akv_async_rejects_cross_vault_reference(self):
+    async def test_resolve_environment_references_async_resolves_local_values(self):
         credential, client = _create_mock_akv_clients()
         client.get_secret = mock.AsyncMock(
-            return_value=types.SimpleNamespace(
-                value="API_KEY=kv:https://other-vault.vault.azure.net/secrets/api-key/version-1"
-            )
+            side_effect=[
+                types.SimpleNamespace(value="local-secret-value"),
+                types.SimpleNamespace(value="pinned-secret-value"),
+            ]
         )
+        values = {
+            "DIRECT": "from-local",
+            "FROM_ENV": "env:SOURCE_VALUE",
+            "DECLARED": "merged-value",
+            "FROM_DECLARED": "env:DECLARED",
+            "SHADOWED": "merged-wins",
+            "FROM_SHADOWED": "env:SHADOWED",
+            "FROM_KV": "kv:https://myvault.vault.azure.net/secrets/api-key",
+            "PINNED_KV": "akv:https://myvault.vault.azure.net/secrets/api-key/version-2",
+            "ESCAPED": "literal:kv:not-a-secret",
+        }
 
-        with mock.patch.dict(os.environ, {}, clear=True):
-            with (
-                mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
-                mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
-                pytest.raises(ValueError, match="Cross-vault AKV reference"),
-            ):
-                await _load_env_from_akv_async(
-                    secret_url="https://myvault.vault.azure.net/secrets/bootstrap",
-                    silent=True,
-                )
+        with (
+            mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+            mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client) as mock_client_cls,
+        ):
+            resolved = await _resolve_environment_references_async(
+                values=values,
+                ambient_environment={"SOURCE_VALUE": "ambient-value", "SHADOWED": "ambient-loses"},
+            )
 
-            assert "API_KEY" not in os.environ
+        assert resolved == {
+            "DIRECT": "from-local",
+            "FROM_ENV": "ambient-value",
+            "DECLARED": "merged-value",
+            "FROM_DECLARED": "merged-value",
+            "SHADOWED": "merged-wins",
+            "FROM_SHADOWED": "merged-wins",
+            "FROM_KV": "local-secret-value",
+            "PINNED_KV": "pinned-secret-value",
+            "ESCAPED": "kv:not-a-secret",
+        }
+        _assert_mock_akv_client_created(
+            mock_client_cls,
+            vault_url="https://myvault.vault.azure.net",
+            credential=credential,
+        )
+        assert client.get_secret.await_args_list == [
+            mock.call("api-key", version=None),
+            mock.call("api-key", version="version-2"),
+        ]
 
-        client.get_secret.assert_awaited_once_with("bootstrap", version=None)
+    async def test_resolve_environment_references_async_rejects_self_reference(self):
+        with pytest.raises(ValueError, match="cannot reference itself"):
+            await _resolve_environment_references_async(
+                values={"MODEL": "env:MODEL"},
+                ambient_environment={"MODEL": "ambient-model"},
+            )
+
+    async def test_resolve_environment_references_async_preserves_windows_case_insensitive_lookup(self):
+        with mock.patch("pyrit.setup.initialization.os.name", "nt"):
+            resolved = await _resolve_environment_references_async(
+                values={"ALIAS": "env:Path"},
+                ambient_environment={"PATH": "windows-path"},
+            )
+
+        assert resolved["ALIAS"] == "windows-path"
+
+    async def test_resolve_environment_references_async_rejects_windows_case_variant_self_reference(self):
+        with (
+            mock.patch("pyrit.setup.initialization.os.name", "nt"),
+            pytest.raises(ValueError, match="cannot reference itself"),
+        ):
+            await _resolve_environment_references_async(
+                values={"MODEL": "env:model"},
+                ambient_environment={},
+            )
+
+    async def test_resolve_environment_references_async_rejects_short_secret_name(self):
+        with pytest.raises(ValueError, match="must use a full secret URL"):
+            await _resolve_environment_references_async(
+                values={"API_KEY": "kv:api-key"},
+                ambient_environment={},
+            )
+
+    @pytest.mark.parametrize(
+        "reference_url",
+        [
+            "https://other-vault.vault.azure.net/secrets/api-key",
+            "https://other-vault.vault.azure.net/secrets/api-key/version-1",
+        ],
+    )
+    async def test_resolve_environment_references_async_rejects_cross_vault_reference(self, reference_url):
+        with pytest.raises(ValueError, match="Cross-vault AKV reference"):
+            await _resolve_environment_references_async(
+                values={"API_KEY": f"kv:{reference_url}"},
+                ambient_environment={},
+                bootstrap_vault_url="https://myvault.vault.azure.net",
+            )
 
     async def test_load_env_from_akv_async_empty_secret_raises(self):
         credential, client = _create_mock_akv_clients()
@@ -736,6 +935,39 @@ class TestAkvEnvironmentLoading:
             assert "GOOD" not in os.environ
             assert "OTHER" not in os.environ
 
+    async def test_load_env_from_akv_async_wraps_malformed_bootstrap(self):
+        credential, client = _create_mock_akv_clients()
+        client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value="=malformed"))
+
+        with (
+            mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+            mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
+            pytest.raises(KeyVaultInitializationException, match="malformed entries") as exc_info,
+        ):
+            await _load_env_from_akv_async(
+                secret_url="https://myvault.vault.azure.net/secrets/bootstrap",
+                silent=True,
+            )
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
+
+    async def test_resolve_environment_references_async_wraps_missing_secret(self):
+        credential, client = _create_mock_akv_clients()
+        missing_error = ResourceNotFoundError(message="Secret was not found")
+        client.get_secret = mock.AsyncMock(side_effect=missing_error)
+
+        with (
+            mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+            mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
+            pytest.raises(KeyVaultInitializationException, match="Failed to resolve Key Vault reference") as exc_info,
+        ):
+            await _resolve_environment_references_async(
+                values={"API_KEY": "kv:https://myvault.vault.azure.net/secrets/missing"},
+                ambient_environment={},
+            )
+
+        assert exc_info.value.__cause__ is missing_error
+
     async def test_load_env_from_akv_async_allows_empty_assignment(self):
         credential, client = _create_mock_akv_clients()
         client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value="EMPTY="))
@@ -745,13 +977,29 @@ class TestAkvEnvironmentLoading:
             mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
             mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
         ):
-            resolved_environment = await _load_env_from_akv_async(
+            resolved_environment, _ = await _load_env_from_akv_async(
                 secret_url="https://myvault.vault.azure.net/secrets/bootstrap",
                 silent=True,
             )
 
             assert resolved_environment["EMPTY"] == ""
             assert "EMPTY" not in os.environ
+
+    async def test_resolve_environment_references_async_allows_empty_child_secret(self):
+        credential, client = _create_mock_akv_clients()
+        client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value=""))
+
+        with (
+            mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+            mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
+        ):
+            resolved_environment = await _resolve_environment_references_async(
+                values={"EMPTY": "kv:https://myvault.vault.azure.net/secrets/empty-secret"},
+                ambient_environment={},
+            )
+
+        assert resolved_environment["EMPTY"] == ""
+        client.get_secret.assert_awaited_once_with("empty-secret", version=None)
 
     async def test_load_env_from_akv_async_non_strict_warns_and_skips_invalid_entries(self, caplog, capsys):
         credential, client = _create_mock_akv_clients()
@@ -764,7 +1012,7 @@ class TestAkvEnvironmentLoading:
             mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
             caplog.at_level("WARNING", logger="pyrit.setup.initialization"),
         ):
-            resolved_environment = await _load_env_from_akv_async(
+            resolved_environment, _ = await _load_env_from_akv_async(
                 secret_url="https://myvault.vault.azure.net/secrets/bootstrap",
                 strict=False,
                 silent=False,
@@ -799,14 +1047,9 @@ class TestAkvEnvironmentLoading:
         assert capsys.readouterr().out == ""
         assert "variables without values: MISSING_VALUE" in caplog.text
 
-    async def test_load_env_from_akv_async_failure_does_not_partially_update_environment(self):
+    async def test_resolve_environment_references_async_failure_returns_no_partial_mapping(self):
         credential, client = _create_mock_akv_clients()
-        client.get_secret = mock.AsyncMock(
-            side_effect=[
-                types.SimpleNamespace(value="GOOD=resolved\nBAD=kv:missing-value"),
-                types.SimpleNamespace(value=None),
-            ]
-        )
+        client.get_secret = mock.AsyncMock(return_value=types.SimpleNamespace(value=None))
 
         with mock.patch.dict(os.environ, {}, clear=True):
             with (
@@ -814,9 +1057,12 @@ class TestAkvEnvironmentLoading:
                 mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
                 pytest.raises(ValueError, match="has no value"),
             ):
-                await _load_env_from_akv_async(
-                    secret_url="https://myvault.vault.azure.net/secrets/bootstrap",
-                    silent=True,
+                await _resolve_environment_references_async(
+                    values={
+                        "GOOD": "resolved",
+                        "BAD": "kv:https://myvault.vault.azure.net/secrets/missing-value",
+                    },
+                    ambient_environment={},
                 )
 
             assert "GOOD" not in os.environ

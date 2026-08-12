@@ -88,8 +88,11 @@ operation: op_trash_panda
 # - Omit this field (or set to null): Load default .env and .env.local from ~/.pyrit/ if they exist
 # - Set to []: Explicitly load NO environment files
 # - Set to list of paths: Load only the specified files
-# - PyRIT reference prefixes are not resolved in local files; standard dotenv
-#   interpolation such as DERIVED=${BASE} remains enabled.
+# - Local files retain standard dotenv parsing and interpolation. After source
+#   precedence is applied, PyRIT resolves complete-value kv:/env: references in
+#   winning values from any source. Overridden references are not fetched.
+# - Interpolation follows load order: .env.local can reference .env, but .env
+#   cannot see variables introduced only by the later .env.local.
 # - During PyRIT initialization, selected environment sources are staged and
 #   committed together only after every source loads successfully.
 #
@@ -100,35 +103,39 @@ operation: op_trash_panda
 
 # Azure Key Vault Environment References
 # ---------------------------------------
-# List of AKV secret URLs to load during initialization.
-# The first secret's value must be the full contents of a .env file.
-# Values in that document may reference ambient variables with env:NAME or
-# scalar secrets in the same vault with kv:SECRET_NAME.
-# Full same-vault URIs are also accepted, including a version to pin a secret:
+# AKV secret URL whose value is the bootstrap .env document.
+# Winning values may reference another merged environment key with env:NAME,
+# falling back to the existing process environment, or reference a scalar
+# secret in the same vault using a full URL:
+# kv:https://my-vault.vault.azure.net/secrets/SECRET_NAME
+# Include a version to pin a secret:
 # kv:https://my-vault.vault.azure.net/secrets/SECRET_NAME/SECRET_VERSION
+# Short secret names such as kv:SECRET_NAME are rejected.
 # Cross-vault child references are rejected.
+# Referenced secrets are not cached; each kv: occurrence performs a vault read.
 # Referenced values are terminal scalars; they are not parsed for more references.
-# If multiple URLs are listed, only the first is used.
-# The AKV document replaces the default ~/.pyrit/.env source. Explicit env_files
-# and the default ~/.pyrit/.env.local are loaded afterward and take precedence.
+# Source precedence is AKV bootstrap -> ~/.pyrit/.env -> ~/.pyrit/.env.local.
+# Explicit env_files replace the default files and load after the AKV bootstrap.
 # PyRIT emits a warning when these local files coexist with env_akv_ref so stale
 # configuration cannot silently mask or be mistaken for the Key Vault document.
 # When migrating, remove or clear ~/.pyrit/.env and ~/.pyrit/.env.local, remove
 # explicit env_files if Key Vault should be authoritative, and restart PyRIT.
 # Authentication uses DefaultAzureCredential (managed identity, Azure CLI, etc.).
+# Key Vault operations use up to three retries with exponential backoff and
+# raise KeyVaultInitializationException on bootstrap or secret-resolution failure.
 # If env_akv_ref and local files are omitted, PyRIT uses existing process
 # environment variables and continues initialization.
 #
 # Requires: pip install azure-keyvault-secrets
 #
 # Example:
-# env_akv_ref:
-#   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
+# env_akv_ref: https://my-vault.vault.azure.net/secrets/my-pyrit-env
 #
 # Strict validation applies only to the Key Vault bootstrap and is enabled by
 # default. Set this to false to skip malformed or valueless bootstrap entries
 # with a warning while loading valid entries. Local files retain standard
 # python-dotenv parsing regardless of this setting.
+# Empty assignments (NAME=) and child secrets containing an empty string are valid.
 # env_akv_strict: false
 
 # Max Concurrent Scenario Runs
