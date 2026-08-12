@@ -209,6 +209,12 @@ class DataTypeSerializer(abc.ABC):
         Raises:
             RuntimeError: If storage IO is not initialized.
         """
+        original_file_extension = self.file_extension
+        self.file_extension = "wav"
+        if output_filename:
+            output_suffix = Path(output_filename).suffix
+            if output_suffix.casefold() == f".{original_file_extension}".casefold():
+                output_filename = output_filename[: -len(output_suffix)]
         file_path = await self.get_data_filename_async(file_name=output_filename)
 
         # save audio file locally first if in AzureStorageBlob so we can use wave.open to set audio parameters
@@ -346,6 +352,9 @@ class DataTypeSerializer(abc.ABC):
 
             results_path = str(DB_DATA_PATH)
         file_name = file_name if file_name else str(ticks)
+        file_suffix = Path(file_name).suffix
+        if file_suffix.casefold() == f".{self.file_extension}".casefold():
+            file_name = file_name[: -len(file_suffix)]
 
         if self._is_azure_storage_url(results_path):
             full_data_directory_path = results_path + self.data_sub_directory
