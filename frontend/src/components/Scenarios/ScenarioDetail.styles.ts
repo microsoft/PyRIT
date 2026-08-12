@@ -38,6 +38,9 @@ export const useScenarioDetailStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalXS,
   },
+  scenarioMetadata: {
+    color: tokens.colorNeutralForeground3,
+  },
   description: {
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
@@ -64,6 +67,9 @@ export const useScenarioDetailStyles = makeStyles({
   },
   control: {
     ...mobileTouchTargetHeight,
+    width: '100%',
+    minWidth: 0,
+    maxWidth: '100%',
     '& > select': {
       [TOUCH_INPUT_QUERY]: {
         minHeight: MINIMUM_TOUCH_TARGET_SIZE,
@@ -109,6 +115,28 @@ export const useScenarioDetailStyles = makeStyles({
   },
   techniqueTag: {
     ...mobileTouchTarget,
+  },
+  datasetPickerHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
+  },
+  datasetList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalXXS,
+    maxHeight: '18rem',
+    overflowY: 'auto',
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  datasetEmptyState: {
+    padding: tokens.spacingVerticalM,
+    color: tokens.colorNeutralForeground3,
   },
   hint: {
     color: tokens.colorNeutralForeground3,

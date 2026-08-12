@@ -4,10 +4,10 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { scenariosApi, targetsApi } from '@/services/api'
+import { datasetsApi, scenariosApi, targetsApi } from '@/services/api'
 import type {
   RegisteredScenario,
-  ScenarioRunSizeEstimateResponse,
+  ScenarioDefaultRunSizeEstimate,
   TargetInstance,
 } from '@/types'
 import type { ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
@@ -31,6 +31,9 @@ jest.mock('@/services/api', () => ({
   targetsApi: {
     listTargets: jest.fn(),
   },
+  datasetsApi: {
+    listDatasets: jest.fn(),
+  },
 }))
 
 const mockUseScenarioRunProgress = useScenarioRunProgress as jest.Mock
@@ -39,6 +42,7 @@ const mockGetScenario = scenariosApi.getScenario as jest.Mock
 const mockListCatalog = scenariosApi.listCatalog as jest.Mock
 const mockStartRun = scenariosApi.startRun as jest.Mock
 const mockListTargets = targetsApi.listTargets as jest.Mock
+const mockListDatasets = datasetsApi.listDatasets as jest.Mock
 
 const SCENARIO_NAME = 'foundry.red_team_agent'
 const RUN_ID = '123e4567-e89b-12d3-a456-426614174000'
@@ -62,14 +66,26 @@ const SCENARIO: RegisteredScenario = {
     tags: [],
   }],
   default_datasets: ['harmbench'],
+  dataset_size_limit: {
+    default_scope: 'none',
+    default_count: null,
+    override_scope: 'per_dataset',
+  },
   baseline_policy: 'enabled',
   include_baseline_by_default: true,
   supported_parameters: [],
   default_run_size: {
-    estimated_attack_count: 2,
+    version: 1,
+    status: 'exact',
+    total_attack_count: 2,
+    minimum_attack_count: null,
+    maximum_attack_count: null,
+    condition: null,
     components: [],
     datasets: [],
+    adaptive_details: null,
     note: null,
+    retries_included: false,
   },
 }
 
@@ -81,16 +97,24 @@ const TARGET: TargetInstance = {
   },
 }
 
-const ESTIMATE: ScenarioRunSizeEstimateResponse = {
-  estimated_attack_count: 2,
+const ESTIMATE: ScenarioDefaultRunSizeEstimate = {
+  version: 1,
+  status: 'exact',
+  total_attack_count: 2,
+  minimum_attack_count: null,
+  maximum_attack_count: null,
+  condition: null,
   components: [{
     label: 'Configured attacks',
     count: 2,
+    factors: [],
     is_baseline: false,
     note: null,
   }],
   datasets: [],
+  adaptive_details: null,
   note: null,
+  retries_included: false,
 }
 
 const RUN_STATE: ScenarioRunProgressState = {
@@ -170,6 +194,7 @@ describe('Scenario catalog-to-run integration', () => {
       items: [TARGET],
       pagination: { limit: 200, has_more: false },
     })
+    mockListDatasets.mockResolvedValue({ items: [{ name: 'harmbench' }] })
     mockEstimateRun.mockResolvedValue(ESTIMATE)
     mockStartRun.mockResolvedValue({ scenario_result_id: RUN_ID })
     mockUseScenarioRunProgress.mockReturnValue({
@@ -179,12 +204,13 @@ describe('Scenario catalog-to-run integration', () => {
     })
   })
 
-  it('carries one configured request from catalog detail through estimate, launch, and run hydration', async () => {
+  it('carries one configured request from catalog through estimate, launch, and run hydration', async () => {
     const user = userEvent.setup()
     renderFlow()
 
-    await user.click(await screen.findByRole('link', { name: SCENARIO_NAME }))
+    await user.click(await screen.findByRole('button', { name: 'Configure run' }))
     expect(await screen.findByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(screen.getByText('RedTeamAgentScenario · v1')).toBeInTheDocument()
 
     const expectedEstimateRequest = {
       target_name: TARGET.target_registry_name,
@@ -196,8 +222,8 @@ describe('Scenario catalog-to-run integration', () => {
       expectedEstimateRequest,
       expect.any(AbortSignal),
     ))
-    const estimate = screen.getByRole('region', { name: 'Run estimate' })
-    expect(within(estimate).getByText('Total atomic attacks').parentElement).toHaveTextContent('2')
+    expect(within(screen.getByRole('complementary', { name: 'Run preview' }))
+      .getByRole('group', { name: '2 planned attacks.' })).toBeInTheDocument()
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
     const preview = await screen.findByRole('dialog', { hidden: true })

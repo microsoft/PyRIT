@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -97,6 +97,9 @@ class WebInjection(Scenario):
 
     VERSION: int = 1
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
+    DATASET_SIZE_LIMIT_OVERRIDE_SCOPE: ClassVar[Literal["per_dataset", "combined", "unsupported"] | None] = (
+        "unsupported"
+    )
 
     # Local ``.prompt`` datasets under datasets/seed_datasets/local/garak.
     DATASET_EXAMPLE_DOMAINS: ClassVar[str] = "garak_example_domains_xss"

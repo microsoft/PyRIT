@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH
@@ -342,6 +342,9 @@ class Psychosocial(Scenario):
     """
 
     VERSION: int = 3
+    DATASET_SIZE_LIMIT_OVERRIDE_SCOPE: ClassVar[Literal["per_dataset", "combined", "unsupported"] | None] = (
+        "per_dataset"
+    )
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:

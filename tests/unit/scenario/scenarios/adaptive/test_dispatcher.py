@@ -18,6 +18,8 @@ from pyrit.models import (
 )
 from pyrit.scenario.scenarios.adaptive.dispatcher import (
     ADAPTIVE_ATTEMPT_LABEL,
+    ADAPTIVE_TECHNIQUE_ID_LABEL,
+    ADAPTIVE_TECHNIQUE_NAME_LABEL,
     AdaptiveTechniqueDispatcher,
     TechniqueBundle,
 )
@@ -127,6 +129,10 @@ class TestBuildAttackAsync:
         # 1-based per-attempt label stamped on each child
         assert attack._child_attacks[0].memory_labels[ADAPTIVE_ATTEMPT_LABEL] == "1"
         assert attack._child_attacks[1].memory_labels[ADAPTIVE_ATTEMPT_LABEL] == "2"
+        assert attack._child_attacks[0].memory_labels[ADAPTIVE_TECHNIQUE_ID_LABEL] == "a"
+        assert attack._child_attacks[1].memory_labels[ADAPTIVE_TECHNIQUE_ID_LABEL] == "b"
+        assert attack._child_attacks[0].memory_labels[ADAPTIVE_TECHNIQUE_NAME_LABEL] == "a"
+        assert attack._child_attacks[1].memory_labels[ADAPTIVE_TECHNIQUE_NAME_LABEL] == "b"
         # default policy is FIRST_SUCCESS
         assert attack._completion_policy is SequenceCompletionPolicy.FIRST_SUCCESS
 
@@ -239,37 +245,25 @@ class TestBuildAttackAsync:
 
 
 @pytest.mark.usefixtures("patch_central_database")
-class TestEvalHashRoundTrip:
+class TestRegisteredTechniqueIdentityRoundTrip:
     """
-    Pin the load-bearing invariant that ``compute_inner_attack_eval_hash``
-    (used by ``AdaptiveScenario._build_techniques_dict`` to key the
-    ``techniques`` dict and by the selector to look up historical stats)
-    equals the ``eval_hash`` the executor stamps on persisted child rows.
-
-    If the prediction helper and the write path ever drift (e.g. a new
-    field is added to the eval-hash rule on one side only), the selector
-    silently reads zero history for every technique and epsilon-greedy
-    degrades to random with no error. This test runs a real
-    ``PromptSendingAttack`` through the dispatcher's ``SequentialAttack``
-    end-to-end and asserts the round-trip holds.
+    Pin the selector identity labels through real child-result persistence.
     """
 
-    async def test_predicted_hash_matches_persisted_row(self, sqlite_instance):
+    async def test_registered_identity_and_name_are_persisted(self, sqlite_instance):
         from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
         from pyrit.memory.memory_models import AttackResultEntry
         from pyrit.models import AttackSeedGroup, SeedObjective
-        from pyrit.models.identifiers import compute_inner_attack_eval_hash
         from tests.unit.mocks import MockPromptTarget
 
         live_target = MockPromptTarget()
         attack = PromptSendingAttack(objective_target=live_target)
-        predicted_hash = compute_inner_attack_eval_hash(attack=attack)
-
-        bundles = {predicted_hash: TechniqueBundle(attack=attack, name="prompt_sending")}
+        technique_identifier = "factory-identity-hash"
+        bundles = {technique_identifier: TechniqueBundle(attack=attack, name="prompt_sending")}
         dispatcher = AdaptiveTechniqueDispatcher(
             objective_target=live_target,
             techniques=bundles,
-            selector=_StubSelector(technique_order=[predicted_hash]),
+            selector=_StubSelector(technique_order=[technique_identifier]),
             max_attempts_per_objective=1,
         )
 
@@ -280,8 +274,6 @@ class TestEvalHashRoundTrip:
         with sqlite_instance.get_session() as session:
             rows = session.query(AttackResultEntry).all()
 
-        # Drill into the persisted envelope to find rows whose inner attack is PromptSendingAttack,
-        # then assert the eval_hash on those rows matches what the selector predicted.
         matching_rows = [
             r
             for r in rows
@@ -297,10 +289,5 @@ class TestEvalHashRoundTrip:
             f"Expected at least one persisted row whose inner attack is PromptSendingAttack; "
             f"found rows: {[(r.id, r.atomic_attack_identifier) for r in rows]}"
         )
-        for row in matching_rows:
-            stamped_hash = row.atomic_attack_identifier["eval_hash"]
-            assert stamped_hash == predicted_hash, (
-                f"Selector-side eval_hash ({predicted_hash}) drifted from executor-stamped "
-                f"eval_hash ({stamped_hash}) on persisted row {row.id}. "
-                f"compute_inner_attack_eval_hash and AtomicAttackIdentifier.build must agree."
-            )
+        assert all(row.labels[ADAPTIVE_TECHNIQUE_ID_LABEL] == technique_identifier for row in matching_rows)
+        assert all(row.labels[ADAPTIVE_TECHNIQUE_NAME_LABEL] == "prompt_sending" for row in matching_rows)

@@ -2,15 +2,17 @@
 # Licensed under the MIT license.
 
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
-from pyrit.analytics.technique_analysis import compute_technique_stats
+from pyrit.analytics.technique_analysis import compute_labeled_technique_stats, compute_technique_stats
 from pyrit.models import AttackOutcome
 
 
 def _make_result(*, eval_hash: str | None, outcome: AttackOutcome) -> MagicMock:
     r = MagicMock()
+    r.attack_result_id = str(uuid4())
     if eval_hash is None:
         r.atomic_attack_identifier = None
     else:
@@ -18,7 +20,14 @@ def _make_result(*, eval_hash: str | None, outcome: AttackOutcome) -> MagicMock:
         identifier.eval_hash = eval_hash
         r.atomic_attack_identifier = identifier
     r.outcome = outcome
+    r.labels = {}
     return r
+
+
+def _make_labeled_result(*, label_name: str, technique_identifier: str, outcome: AttackOutcome) -> MagicMock:
+    result = _make_result(eval_hash=None, outcome=outcome)
+    result.labels = {label_name: technique_identifier}
+    return result
 
 
 @pytest.fixture(autouse=True)
@@ -144,3 +153,77 @@ class TestComputeTechniqueStats:
         injected.get_attack_results.assert_called_once()
         _patch_memory.get_attack_results.assert_not_called()
         assert stats["a"].successes == 1
+
+
+class TestComputeLabeledTechniqueStats:
+    def test_counts_distinct_labeled_techniques(self, _patch_memory):
+        label_name = "_adaptive_technique_id"
+        _patch_memory.get_attack_results.return_value = [
+            _make_labeled_result(
+                label_name=label_name,
+                technique_identifier="role-play-movie",
+                outcome=AttackOutcome.SUCCESS,
+            ),
+            _make_labeled_result(
+                label_name=label_name,
+                technique_identifier="role-play-video",
+                outcome=AttackOutcome.FAILURE,
+            ),
+        ]
+
+        stats = compute_labeled_technique_stats(
+            technique_identifiers=["role-play-movie", "role-play-video"],
+            label_name=label_name,
+        )
+
+        assert stats["role-play-movie"].successes == 1
+        assert stats["role-play-video"].failures == 1
+        assert _patch_memory.get_attack_results.call_args.kwargs["labels"] == {
+            label_name: ["role-play-movie", "role-play-video"]
+        }
+
+    def test_unlabeled_and_unrequested_results_are_ignored(self, _patch_memory):
+        label_name = "_adaptive_technique_id"
+        unlabeled = _make_result(eval_hash="shared", outcome=AttackOutcome.SUCCESS)
+        _patch_memory.get_attack_results.return_value = [
+            unlabeled,
+            _make_labeled_result(
+                label_name=label_name,
+                technique_identifier="other",
+                outcome=AttackOutcome.SUCCESS,
+            ),
+        ]
+
+        stats = compute_labeled_technique_stats(
+            technique_identifiers=["requested"],
+            label_name=label_name,
+        )
+
+        assert stats == {}
+
+    def test_merges_labeled_and_normal_scenario_history_without_double_counting(self, _patch_memory):
+        label_name = "_adaptive_technique_id"
+        labeled = _make_labeled_result(
+            label_name=label_name,
+            technique_identifier="factory-arm",
+            outcome=AttackOutcome.SUCCESS,
+        )
+        labeled.atomic_attack_identifier = MagicMock(eval_hash="inner-attack-hash")
+        normal = _make_result(eval_hash="full-technique-hash", outcome=AttackOutcome.FAILURE)
+        _patch_memory.get_attack_results.side_effect = [
+            [labeled],
+            [labeled, normal],
+        ]
+
+        stats = compute_labeled_technique_stats(
+            technique_identifiers=["factory-arm"],
+            label_name=label_name,
+            technique_eval_hashes_by_identifier={"factory-arm": "full-technique-hash"},
+        )
+
+        assert stats["factory-arm"].successes == 1
+        assert stats["factory-arm"].failures == 1
+        assert stats["factory-arm"].total_decided == 2
+        assert _patch_memory.get_attack_results.call_args_list[1].kwargs["atomic_attack_eval_hashes"] == [
+            "full-technique-hash"
+        ]

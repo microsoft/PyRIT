@@ -1,26 +1,31 @@
 import { test, expect } from "@playwright/test";
+import type { APIRequestContext } from "@playwright/test";
 
 // API tests go through the Vite dev server proxy (/api -> configured backend)
 // rather than hitting the backend directly, so they work as soon as
 // Playwright's webServer is ready.
 
-test.describe("API Health Check", () => {
-  // The backend may still be starting when Vite is already up.
-  // Poll the health endpoint through the proxy until the backend is ready.
-  test.beforeAll(async ({ request }) => {
-    const maxWait = 30_000;
-    const interval = 1_000;
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      try {
-        const resp = await request.get("/api/health", { timeout: 2_000 });
-        if (resp.ok()) return;
-      } catch {
-        // Backend not ready yet
+async function waitForBackend(request: APIRequestContext): Promise<void> {
+  const maxWait = 30_000;
+  const interval = 1_000;
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    try {
+      const response = await request.get("/api/health", { timeout: 2_000 });
+      if (response.ok()) {
+        return;
       }
-      await new Promise((r) => setTimeout(r, interval));
+    } catch {
+      // Backend not ready yet
     }
-    throw new Error("Backend did not become healthy within 30 seconds");
+    await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+  throw new Error("Backend did not become healthy within 30 seconds");
+}
+
+test.describe("API Health Check", () => {
+  test.beforeAll(async ({ request }) => {
+    await waitForBackend(request);
   });
 
   test("should have healthy backend API @seeded", async ({ request }) => {
@@ -38,24 +43,12 @@ test.describe("API Health Check", () => {
     const data = await response.json();
     expect(data).toBeDefined();
   });
+
 });
 
 test.describe("Targets API", () => {
   test.beforeAll(async ({ request }) => {
-    // Wait for backend readiness
-    const maxWait = 30_000;
-    const interval = 1_000;
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      try {
-        const resp = await request.get("/api/health", { timeout: 2_000 });
-        if (resp.ok()) return;
-      } catch {
-        // Backend not ready yet
-      }
-      await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error("Backend did not become healthy within 30 seconds");
+    await waitForBackend(request);
   });
 
   test("should list targets @seeded", async ({ request }) => {
@@ -103,24 +96,43 @@ test.describe("Targets API", () => {
 
 test.describe("Attacks API", () => {
   test.beforeAll(async ({ request }) => {
-    const maxWait = 30_000;
-    const interval = 1_000;
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      try {
-        const resp = await request.get("/api/health", { timeout: 2_000 });
-        if (resp.ok()) return;
-      } catch {
-        // Backend not ready yet
-      }
-      await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error("Backend did not become healthy within 30 seconds");
+    await waitForBackend(request);
   });
 
   test("should list attacks @seeded", async ({ request }) => {
     const response = await request.get("/api/attacks");
     expect(response.ok()).toBe(true);
+  });
+});
+
+test.describe("Scenarios API", () => {
+  test.beforeAll(async ({ request }) => {
+    await waitForBackend(request);
+  });
+
+  test("should expose scenario catalog details and queue state @seeded", async ({ request }) => {
+    test.setTimeout(90_000);
+    const catalogResponse = await request.get("/api/scenarios/catalog?limit=200");
+    expect(catalogResponse.ok()).toBe(true);
+    const catalog = await catalogResponse.json();
+    expect(catalog.items.length).toBeGreaterThan(0);
+
+    const scenarioName = catalog.items[0].scenario_name as string;
+    const detailResponse = await request.get(`/api/scenarios/catalog/${encodeURIComponent(scenarioName)}`);
+    expect(detailResponse.ok()).toBe(true);
+    const detail = await detailResponse.json();
+    expect(detail.scenario_name).toBe(scenarioName);
+    expect(detail.dataset_size_limit).toEqual(expect.objectContaining({
+      default_scope: expect.any(String),
+      override_scope: expect.any(String),
+    }));
+
+    const queueResponse = await request.get("/api/scenarios/runs/queue");
+    expect(queueResponse.ok()).toBe(true);
+    await expect(queueResponse.json()).resolves.toEqual(expect.objectContaining({
+      revision: expect.any(Number),
+      queued: expect.any(Array),
+    }));
   });
 });
 

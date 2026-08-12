@@ -3,6 +3,7 @@
 
 """Tests for the Jailbreak class."""
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,10 +19,10 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.catalog import ScenarioRunSizeEstimateStatus
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
+from pyrit.registry import ScenarioRegistry, TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.registry.components.scenario_registry import ScenarioRegistry
 from pyrit.scenario.core import BaselineAttackPolicy
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.scenarios.airt.jailbreak import (
@@ -251,9 +252,11 @@ class TestJailbreakInitialization:
             )
 
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
-        assert estimate.estimated_attack_count is None
+        assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
+        assert estimate.total_attack_count is None
         assert estimate.minimum_attack_count == 2
         assert estimate.maximum_attack_count == 4
+        assert estimate.condition.value == "target_capabilities"
         assert [component.label for component in estimate.components] == [
             "Inline jailbreak delivery",
             "Native system-prompt jailbreak delivery",

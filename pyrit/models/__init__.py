@@ -23,11 +23,14 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.models.catalog import (
+        ScenarioAdaptiveRunSizeDetails,
         ScenarioDatasetSizeCap,
+        ScenarioDatasetSizeLimit,
         ScenarioDatasetSummary,
         ScenarioRunListItem,
         ScenarioRunSizeComponent,
         ScenarioRunSizeEstimate,
+        ScenarioRunSizeEstimateCondition,
         ScenarioRunSizeEstimateRequest,
         ScenarioTechniqueSummary,
     )
@@ -264,11 +267,14 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScorerEvaluationIdentifier": "pyrit.models.identifiers",
     "ScorerIdentifier": "pyrit.models.identifiers",
     "ScenarioIdentifier": "pyrit.models.identifiers",
+    "ScenarioAdaptiveRunSizeDetails": "pyrit.models.catalog",
     "ScenarioDatasetSizeCap": "pyrit.models.catalog",
+    "ScenarioDatasetSizeLimit": "pyrit.models.catalog",
     "ScenarioDatasetSummary": "pyrit.models.catalog",
     "ScenarioRunListItem": "pyrit.models.catalog",
     "ScenarioRunSizeComponent": "pyrit.models.catalog",
     "ScenarioRunSizeEstimate": "pyrit.models.catalog",
+    "ScenarioRunSizeEstimateCondition": "pyrit.models.catalog",
     "ScenarioRunSizeEstimateRequest": "pyrit.models.catalog",
     "ScenarioTechniqueSummary": "pyrit.models.catalog",
     "ScenarioResult": "pyrit.models.results.scenario_result",
