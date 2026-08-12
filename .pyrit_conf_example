@@ -136,6 +136,18 @@ max_concurrent_scenario_runs: 3
 # Default: false
 allow_custom_initializers: false
 
+# Local Backend Server
+# --------------------
+# Client settings used by pyrit_scan when connecting to or launching a backend.
+# - url: Backend URL used when --server-url is omitted.
+# - startup_timeout: Seconds to wait for --start-server before cleaning up the
+#   spawned process and returning an error.
+#
+# Both settings can be overridden with --server-url and --startup-timeout.
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
+
 # Silent Mode
 # -----------
 # If true, suppresses print statements during initialization.
