@@ -4,13 +4,13 @@
 import logging
 import threading
 import weakref
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from sqlalchemy import and_, create_engine, exists, func, or_, text
+from sqlalchemy import and_, create_engine, exists, func, or_, select, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
@@ -479,7 +479,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         return result
 
-    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
         """
         SQLite implementation for filtering ScenarioResults by labels.
         Uses json_extract() function specific to SQLite.
@@ -487,6 +487,71 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Any: A SQLAlchemy exists subquery condition.
         """
-        return and_(
-            *[func.json_extract(ScenarioResultEntry.labels, f"$.{key}") == value for key, value in labels.items()]
+        conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if values:
+                conditions.append(func.json_extract(ScenarioResultEntry.labels, f'$."{key}"').in_(values))
+        return and_(*conditions)
+
+    def _get_scenario_registry_name_condition(self, *, scenario_names: Sequence[str]) -> Any:
+        """
+        Match requested scenario registry names inside the persisted run plan.
+
+        Returns:
+            Any: SQLite JSON condition for the requested names.
+        """
+        registry_name = func.json_extract(
+            ScenarioResultEntry.scenario_metadata,
+            "$.run_plan.scenario_registry_name",
         )
+        return registry_name.in_(scenario_names)
+
+    def _get_scenario_history_plan_expressions(self) -> tuple[Any, Any, Any]:
+        """Return compact SQLite run-plan fields without objective-bearing seed groups."""
+        seed_rows = func.json_each(
+            ScenarioResultEntry.scenario_metadata,
+            "$.run_plan.seed_groups",
+        ).table_valued("value")
+        compact_seed_map = (
+            select(
+                func.json_group_array(
+                    func.json_object(
+                        "id",
+                        func.json_extract(seed_rows.c.value, "$.id"),
+                        "objective_sha256",
+                        func.json_extract(seed_rows.c.value, "$.objective_sha256"),
+                    )
+                )
+            )
+            .select_from(seed_rows)
+            .scalar_subquery()
+        )
+        return (
+            func.json_extract(
+                ScenarioResultEntry.scenario_metadata,
+                "$.run_plan.scenario_registry_name",
+            ),
+            func.json_extract(
+                ScenarioResultEntry.scenario_metadata,
+                "$.run_plan.atomic_groups",
+            ),
+            compact_seed_map,
+        )
+
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+        """Return SQLite JSON expressions for persisted scenario attempt attribution."""
+        atomic_name = func.coalesce(
+            func.json_extract(AttackResultEntry.attribution_data, '$."parent_collection"'),
+            "",
+        )
+        technique_hash = func.coalesce(
+            func.json_extract(AttackResultEntry.attribution_data, '$."parent_eval_hash"'),
+            "",
+        )
+        seed_group_id = func.coalesce(
+            func.json_extract(AttackResultEntry.attribution_data, '$."seed_group_id"'),
+            AttackResultEntry.objective_sha256,
+            "",
+        )
+        return atomic_name, technique_hash, seed_group_id

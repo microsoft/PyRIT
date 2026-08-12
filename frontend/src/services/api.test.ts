@@ -742,6 +742,32 @@ describe("api service", () => {
       expect(result.status).toBe("IN_PROGRESS");
     });
 
+    it("lists scenario history with repeated array query parameters", async () => {
+      const mockResponse = {
+        data: { items: [], pagination: { limit: 10, has_more: false } },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listRuns({
+        limit: 10,
+        cursor: "history-cursor",
+        scenario_names: ["first.scenario", "second.scenario"],
+        run_statuses: ["IN_PROGRESS", "FAILED"],
+        label: ["operator:alice", "operator:bob", "team:safety"],
+      });
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs", {
+        params: {
+          limit: 10,
+          cursor: "history-cursor",
+          scenario_names: ["first.scenario", "second.scenario"],
+          run_statuses: ["IN_PROGRESS", "FAILED"],
+          label: ["operator:alice", "operator:bob", "team:safety"],
+        },
+        paramsSerializer: { indexes: null },
+      });
+    });
+
     it("gets scenario run progress with since/limit query params", async () => {
       const mockResponse = {
         data: {

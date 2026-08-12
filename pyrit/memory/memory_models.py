@@ -1848,7 +1848,10 @@ class ScenarioResultEntry(Base):
     """
 
     __tablename__ = "ScenarioResultEntries"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        Index("ix_ScenarioResultEntries_timestamp_id", "timestamp", "id"),
+        {"extend_existing": True},
+    )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     scenario_name = mapped_column(String, nullable=False)
     scenario_description = mapped_column(Unicode, nullable=True)

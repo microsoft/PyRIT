@@ -327,6 +327,35 @@ describe('ScenarioRunPage', () => {
     ])
   })
 
+  it('renders contract-backed safe target and run configuration metadata', () => {
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        target: {
+          target_type: 'OpenAIChatTarget',
+          endpoint: 'https://example.test/v1',
+          model_name: 'gpt-4o',
+          identifier_hash: 'safe-hash',
+        },
+        techniques_used: ['Technique One'],
+        datasets_used: ['harmbench'],
+        scenario_parameters: { max_turns: 5 },
+        labels: { operator: 'alice' },
+        pyrit_version: '0.10.0',
+      },
+    }))
+
+    renderPage()
+
+    expect(screen.getByText('gpt-4o')).toBeInTheDocument()
+    expect(screen.getByText('https://example.test/v1')).toBeInTheDocument()
+    expect(screen.getByText('safe-hash')).toBeInTheDocument()
+    expect(screen.getByText('harmbench')).toBeInTheDocument()
+    expect(screen.getByText('max_turns: 5')).toBeInTheDocument()
+    expect(screen.getByText('operator: alice')).toBeInTheDocument()
+    expect(screen.getByText('0.10.0')).toBeInTheDocument()
+  })
+
   it('keeps legacy runs useful without misleading totals, ETA, or a progress bar', () => {
     mockHookState(makeState({
       planComplete: false,

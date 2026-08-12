@@ -39,7 +39,6 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.backend.routes import version as version_routes
-from pyrit.backend.routes.labels import get_label_options
 from pyrit.models import ConverterIdentifier, MessagePiece, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 
@@ -1429,13 +1428,21 @@ class TestLabelsRoutes:
             assert set(data["labels"]["operator"]) == {"alice", "bob"}
             assert set(data["labels"]["operation"]) == {"hunt", "scan"}
 
-    async def test_get_label_options_unsupported_source_returns_empty_labels(self) -> None:
-        """Test that get_label_options returns empty labels for unsupported source types."""
-        with patch("pyrit.backend.routes.labels.CentralMemory"):
-            # Call the function directly with a non-"attacks" source to cover the else branch.
-            # The Literal["attacks"] type hint prevents this via the API, but the function
-            # handles it gracefully.
-            result = await get_label_options(source="other")  # type: ignore[arg-type]
+    async def test_get_label_options_rejects_unsupported_source(self, client: TestClient) -> None:
+        """Test that unsupported label source types are rejected."""
+        response = client.get("/api/labels?source=other")
 
-        assert result.source == "other"
-        assert result.labels == {}
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_get_scenario_label_options(self, client: TestClient) -> None:
+        """Test that scenario labels use the scenario memory source."""
+        with patch("pyrit.backend.routes.labels.CentralMemory") as mock_central_memory:
+            mock_memory = MagicMock()
+            mock_memory.get_unique_scenario_labels.return_value = {"operator": ["alice"]}
+            mock_central_memory.get_memory_instance.return_value = mock_memory
+
+            response = client.get("/api/labels?source=scenarios")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"source": "scenarios", "labels": {"operator": ["alice"]}}
+        mock_memory.get_unique_scenario_labels.assert_called_once_with()
