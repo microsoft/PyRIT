@@ -88,6 +88,8 @@ operation: op_trash_panda
 # - Omit this field (or set to null): Load default .env and .env.local from ~/.pyrit/ if they exist
 # - Set to []: Explicitly load NO environment files
 # - Set to list of paths: Load only the specified files
+# - PyRIT reference prefixes are not resolved in local files; standard dotenv
+#   interpolation such as DERIVED=${BASE} remains enabled.
 #
 # Example:
 # env_files:
@@ -109,9 +111,11 @@ operation: op_trash_panda
 # and the default ~/.pyrit/.env.local are loaded afterward and take precedence.
 # PyRIT emits a warning when these local files coexist with env_akv_ref so stale
 # configuration cannot silently mask or be mistaken for the Key Vault document.
+# When migrating, remove or clear ~/.pyrit/.env and ~/.pyrit/.env.local, remove
+# explicit env_files if Key Vault should be authoritative, and restart PyRIT.
 # Authentication uses DefaultAzureCredential (managed identity, Azure CLI, etc.).
-# If env_akv_ref is omitted, at least one configured or default environment file
-# must exist. System environment variables remain available but are not a source by themselves.
+# If env_akv_ref and local files are omitted, PyRIT uses existing process
+# environment variables and continues initialization.
 #
 # Requires: pip install azure-keyvault-secrets
 #

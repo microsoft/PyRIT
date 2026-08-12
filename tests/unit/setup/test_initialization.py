@@ -237,11 +237,10 @@ class ScriptInit(PyRITInitializer):
         mock_set_memory.assert_called_once()
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
-    async def test_initialize_without_environment_source_raises(self, mock_set_memory):
-        with pytest.raises(ValueError, match="No environment source found"):
-            await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_files=[], load_defaults=False)
+    async def test_initialize_without_environment_file_uses_system_environment(self, mock_set_memory):
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_files=[], load_defaults=False)
 
-        mock_set_memory.assert_not_called()
+        mock_set_memory.assert_called_once()
 
 
 @pytest.fixture
@@ -378,7 +377,9 @@ class TestLoadEnvironmentFiles:
         assert output.startswith("WARNING: env_akv_ref is configured")
         assert f"{env_file} exists and will be ignored" in output
         assert f"{env_local_file} will load after Key Vault and override matching values" in output
-        assert "Confirm that this precedence is intentional." in output
+        assert "clear or remove ~/.pyrit/.env and ~/.pyrit/.env.local" in output
+        assert "remove explicit env_files when Key Vault should be the only source" in output
+        assert "restart PyRIT" in output
         assert caplog.records[0].levelname == "WARNING"
 
     @mock.patch("pyrit.setup.initialization.path.CONFIGURATION_DIRECTORY_PATH")
@@ -393,6 +394,7 @@ class TestLoadEnvironmentFiles:
 
         assert capsys.readouterr().out == ""
         assert "will be ignored because Key Vault supplies the base environment" in caplog.text
+        assert "restart PyRIT" in caplog.text
 
     @mock.patch("pyrit.setup.initialization.dotenv.load_dotenv")
     async def test_loads_custom_env_files_in_order(self, mock_load_dotenv):
@@ -415,6 +417,21 @@ class TestLoadEnvironmentFiles:
             assert mock_load_dotenv.call_count == 3
             call_args = [call[0][0] for call in mock_load_dotenv.call_args_list]
             assert call_args == [env1, env2, env3]
+
+    async def test_local_environment_files_keep_pyrit_references_literal(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = pathlib.Path(temp_dir) / ".env"
+            env_file.write_text(
+                "BASE_VALUE=base\nKV_REFERENCE=kv:api-key\nENV_REFERENCE=env:SOURCE_VALUE\nINTERPOLATED=${BASE_VALUE}"
+            )
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                loaded = _load_environment_files(env_files=[env_file], silent=True)
+
+                assert loaded is True
+                assert os.environ["KV_REFERENCE"] == "kv:api-key"
+                assert os.environ["ENV_REFERENCE"] == "env:SOURCE_VALUE"
+                assert os.environ["INTERPOLATED"] == "base"
 
     async def test_raises_error_for_nonexistent_env_file(self):
         """Test that ValueError is raised for non-existent env file."""

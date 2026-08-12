@@ -39,7 +39,7 @@ flowchart LR
   D --> F["3. ~/.pyrit/.env.local"]
 ```
 
-System environment variables are always the baseline, but initialization requires either an AKV root or at least one environment file. A system-environment-only configuration is not considered a complete source.
+System environment variables are always the baseline. If no AKV root or environment file is available, PyRIT continues initialization using the existing process environment only.
 
 **Default file behavior** (no `env_akv_ref` or `env_files` field in `.pyrit_conf`):
 
@@ -51,7 +51,7 @@ System environment variables are always the baseline, but initialization require
 
 **AKV behavior** (with `env_akv_ref`): The first referenced secret replaces `~/.pyrit/.env` as the root document. `~/.pyrit/.env.local` is loaded afterward if present. If multiple AKV URLs are configured, only the first is used.
 
-PyRIT emits a warning when `env_akv_ref` is selected and default or explicit environment files coexist with it. The warning distinguishes files that are ignored from files that load afterward and override Key Vault values, making stale migration files visible at startup.
+PyRIT emits a warning when `env_akv_ref` is selected and default or explicit environment files coexist with it. The warning distinguishes files that are ignored from files that load afterward and override Key Vault values, making stale migration files visible at startup. When migrating to Key Vault, clear or remove `~/.pyrit/.env` and `~/.pyrit/.env.local`, remove explicit `env_files` when Key Vault should be the only source, and restart PyRIT so values already present in the process environment cannot mask the Key Vault configuration.
 
 **Custom behavior** (with `env_files` field): Only your specified files are loaded, in order. They override the AKV root when both fields are configured, and default paths are completely ignored.
 
@@ -179,7 +179,9 @@ env_files:
   - /path/to/.env.local
 ```
 
-When `env_akv_ref` is not configured, an empty list or missing default files causes initialization to fail because no environment source is available.
+Local environment files use standard dotenv behavior. PyRIT does not interpret `kv:`, `akv:`, `env:`, or `literal:` prefixes in `.env`, `.env.local`, or explicit `env_files`; those strings remain literal values. Standard dotenv interpolation such as `DERIVED=${BASE}` remains enabled.
+
+When `env_akv_ref` is not configured, an empty `env_files` list or missing default files leaves existing process environment variables unchanged and initialization continues.
 
 ### `env_akv_ref`
 

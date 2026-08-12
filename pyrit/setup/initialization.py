@@ -80,7 +80,7 @@ def _load_environment_files(
                 )
             else:
                 _print_msg(
-                    "No default environment files found.",
+                    "No default environment files found. Using system environment variables only.",
                     quiet=silent,
                     log=True,
                 )
@@ -138,7 +138,9 @@ def _warn_about_akv_environment_files(
     message = (
         "env_akv_ref is configured, but local environment files were also found:\n- "
         + "\n- ".join(messages)
-        + "\nConfirm that this precedence is intentional."
+        + "\nWhen migrating to Key Vault, clear or remove ~/.pyrit/.env and ~/.pyrit/.env.local, "
+        "remove explicit env_files when Key Vault should be the only source, and restart PyRIT so stale "
+        "process values cannot mask Key Vault configuration."
     )
     if not silent:
         print(f"WARNING: {message}")
@@ -494,8 +496,7 @@ async def initialize_pyrit_async(
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
-        ValueError: If an unsupported memory_db_type is provided, env_files contains non-existent files,
-            or neither env_akv_ref nor an environment file is available.
+        ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
     """
     if env_akv_ref:
         await asyncio.to_thread(
@@ -522,15 +523,11 @@ async def initialize_pyrit_async(
             include_default_base=False,
         )
     else:
-        loaded_local_file = await asyncio.to_thread(
+        await asyncio.to_thread(
             _load_environment_files,
             env_files=env_files,
             silent=silent,
         )
-        if not loaded_local_file:
-            raise ValueError(
-                "No environment source found. Configure env_akv_ref or provide at least one .env or .env.local file."
-            )
 
     # Reset all default values before executing initialization scripts
     # This ensures a clean state for each initialization
