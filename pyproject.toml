@@ -120,7 +120,7 @@ playwright = [
     "playwright>=1.49.0",
 ]
 fairness_bias = [
-    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
+    "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
 ]
 opencv = [
     "opencv-python>=4.11.0.86",
@@ -156,7 +156,7 @@ all = [
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
     "pyarrow>=22.0.0; python_version >= '3.14'",
-    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
+    "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
     "torch>=2.7.0",
 ]
 
