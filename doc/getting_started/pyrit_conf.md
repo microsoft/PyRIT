@@ -195,6 +195,7 @@ The root document can mix literal values with references to ambient environment 
 ```dotenv
 OPENAI_CHAT_ENDPOINT="https://example.openai.azure.com/openai/v1"
 OPENAI_CHAT_KEY="kv:openai-chat-key"
+PINNED_OPENAI_CHAT_KEY="kv:https://my-vault.vault.azure.net/secrets/openai-chat-key/version-id"
 OPENAI_CHAT_MODEL="env:PYRIT_OPENAI_CHAT_MODEL"
 ```
 
@@ -207,6 +208,14 @@ For example, if `OPENAI_CHAT_KEY="kv:openai-chat-key"`, the value of the `openai
 
 References must occupy the entire value. `kv:` is the canonical Key Vault prefix; `akv:`, `azure_key_vault:`, and `env_akv_ref:` are accepted aliases.
 
+A Key Vault reference may use a secret name or a full secret URI from the bootstrap document's vault. A name or unversioned URI reads the latest secret version at initialization. Include the version in the URI to pin it. Cross-vault child references are rejected.
+
+```dotenv
+LATEST_KEY="kv:openai-chat-key"
+LATEST_KEY_URI="kv:https://my-vault.vault.azure.net/secrets/openai-chat-key"
+PINNED_KEY="kv:https://my-vault.vault.azure.net/secrets/openai-chat-key/version-id"
+```
+
 `literal:` is an escape hatch for a bootstrap value that begins with a reserved reference prefix. PyRIT removes `literal:` and returns the remainder without interpreting it as a reference. Quoting does not provide this escape because dotenv removes quotes while parsing. Values fetched from child secrets are already terminal and do not need this escape.
 
 ```dotenv
@@ -218,6 +227,18 @@ Here, `REFERENCE` retrieves `openai-chat-key`, while `LITERAL_VALUE` becomes the
 
 The AKV document is loaded before explicit `env_files` or the default `~/.pyrit/.env.local`, allowing local values to override shared configuration without writing the fetched document to disk.
 
+### `env_akv_strict`
+
+Controls validation of the Key Vault bootstrap document and defaults to `true`.
+
+```yaml
+env_akv_strict: false
+```
+
+In strict mode, any malformed dotenv line or variable without an equals sign stops initialization. Empty assignments such as `OPTIONAL_VALUE=` remain valid. With `env_akv_strict: false`, PyRIT emits a warning containing only malformed line numbers and valueless variable names, skips those entries, and loads the valid assignments. Secret values are never included in the warning.
+
+Non-strict mode does not suppress Key Vault or reference failures. Missing secrets, invalid `kv:` names, unresolved `env:` references, and a bootstrap document with no valid assignments still stop initialization.
+
 ### `silent`
 
 If `true`, suppresses print statements during initialization. Useful for non-interactive environments or when embedding PyRIT in other tools. Defaults to `false`.
@@ -227,7 +248,7 @@ If `true`, suppresses print statements during initialization. Useful for non-int
 Client settings for connecting to or launching a PyRIT backend.
 
 | Field | Description | Default |
-|---|---|---|
+| --- | --- | --- |
 | `url` | Backend URL used when `--server-url` is omitted | `http://localhost:8000` |
 | `startup_timeout` | Seconds `pyrit_scan --start-server` waits for a healthy backend before terminating the spawned process | `120` |
 
@@ -349,6 +370,7 @@ initializers:
 # Optional Azure Key Vault root environment document
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
+# env_akv_strict: false  # Optional; defaults to true
 
 # Suppress initialization messages
 silent: false

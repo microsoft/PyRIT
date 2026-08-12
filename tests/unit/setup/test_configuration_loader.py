@@ -42,6 +42,7 @@ class TestConfigurationLoader:
         assert config.initialization_scripts is None  # None means "use defaults"
         assert config.env_files is None  # None means "use defaults"
         assert config.env_akv_ref is None
+        assert config.env_akv_strict is True
         assert config.silent is False
 
     def test_valid_memory_db_types_snake_case(self):
@@ -147,6 +148,7 @@ class TestConfigurationLoader:
             "initialization_scripts": ["/path/to/script.py"],
             "env_files": ["/path/to/.env"],
             "env_akv_ref": ["https://vault.vault.azure.net/secrets/one"],
+            "env_akv_strict": False,
             "silent": True,
         }
         config = ConfigurationLoader.from_dict(data)
@@ -155,6 +157,7 @@ class TestConfigurationLoader:
         assert config.initialization_scripts == ["/path/to/script.py"]
         assert config.env_files == ["/path/to/.env"]
         assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
+        assert config.env_akv_strict is False
         assert config.silent is True
 
     def test_from_dict_filters_none_values(self):
@@ -334,6 +337,7 @@ class TestConfigurationLoaderInitialization:
         assert call_kwargs["initializers"] is None
         assert call_kwargs["env_files"] is None
         assert call_kwargs["env_akv_ref"] is None
+        assert call_kwargs["env_akv_strict"] is True
         assert call_kwargs["silent"] is False
 
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
@@ -343,13 +347,14 @@ class TestConfigurationLoaderInitialization:
             "https://vault.vault.azure.net/secrets/first",
             "https://vault.vault.azure.net/secrets/second/version",
         ]
-        config = ConfigurationLoader(memory_db_type="in_memory", env_akv_ref=refs)
+        config = ConfigurationLoader(memory_db_type="in_memory", env_akv_ref=refs, env_akv_strict=False)
 
         await config.initialize_pyrit_async()
 
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs["env_akv_ref"] == refs
+        assert call_kwargs["env_akv_strict"] is False
 
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     @mock.patch("pyrit.registry.InitializerRegistry")

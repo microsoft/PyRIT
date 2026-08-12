@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import dotenv
+from dotenv.parser import parse_stream
 
 from pyrit.common import path
 from pyrit.common.apply_defaults import reset_default_values
@@ -171,41 +172,83 @@ def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
     return vault_url, secret_name, secret_version
 
 
-async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool = False) -> None:
+def _validate_dotenv_document(
+    document: str,
+    *,
+    strict: bool = True,
+    silent: bool = False,
+) -> str:
+    """
+    Validate that every dotenv binding uses ``NAME=VALUE`` syntax.
+
+    Args:
+        document (str): The dotenv document to validate.
+        strict (bool): If True, reject any invalid entry. If False, warn and
+            allow python-dotenv to skip invalid entries. Defaults to True.
+        silent (bool): If True, suppress the console warning. Defaults to False.
+
+    Returns:
+        str: The original document, or a sanitized document when strict is False.
+
+    Raises:
+        ValueError: If strict is True and the document contains invalid entries.
+    """
+    bindings = list(parse_stream(io.StringIO(document)))
+    malformed_lines = [str(binding.original.line) for binding in bindings if binding.error]
+    valueless_names = [binding.key for binding in bindings if binding.key is not None and binding.value is None]
+    issues: list[str] = []
+    if malformed_lines:
+        issues.append("malformed entries at lines: " + ", ".join(malformed_lines))
+    if valueless_names:
+        issues.append("variables without values: " + ", ".join(valueless_names))
+    if not issues:
+        return document
+
+    details = "; ".join(issues)
+    if strict:
+        raise ValueError("AKV environment document contains " + details)
+
+    message = "AKV environment document contains invalid entries that will be skipped: " + details
+    if not silent:
+        print(f"WARNING: {message}")
+    logger.warning(message)
+    return "".join(
+        binding.original.string
+        for binding in bindings
+        if not binding.error and not (binding.key is not None and binding.value is None)
+    )
+
+
+async def _load_env_from_akv_async(
+    *,
+    secret_url: str,
+    strict: bool = True,
+    silent: bool = False,
+) -> None:
     """
     Load environment variables from an Azure Key Vault secret.
 
-    The first secret URL identifies the bootstrap environment document. Values
-    in that document may directly reference scalar secrets in the same vault.
-    Additional root URLs are ignored.
+    The secret URL identifies the bootstrap environment document. Values in
+    that document may directly reference scalar secrets in the same vault.
 
     Authentication uses ``DefaultAzureCredential``, which silently tries managed
     identity, Azure CLI, VS Code credentials, etc., and falls back to interactive
     browser authentication when running locally.
 
     Args:
-        secret_urls (Sequence[str]): Sequence of AKV secret URLs. The first URL
-            must use the format ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
+        secret_url (str): AKV secret URL in the format
+            ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
+        strict (bool): If True, reject malformed or valueless dotenv entries.
+            If False, warn and skip those entries. Defaults to True.
         silent (bool): If True, suppresses print statements. Defaults to False.
 
     Raises:
         ImportError: If ``azure-keyvault-secrets`` is not installed.
-        ValueError: If no root secret is configured, the root URL is malformed,
-            or the bootstrap environment document cannot be fully resolved.
+        ValueError: If the root URL is malformed or the bootstrap environment
+            document cannot be fully resolved.
     """
-    if not secret_urls:
-        raise ValueError("At least one env_akv_ref URL is required to load an environment document.")
-
     from azure.identity.aio import DefaultAzureCredential
     from azure.keyvault.secrets.aio import SecretClient
-
-    secret_url = secret_urls[0]
-    if len(secret_urls) > 1:
-        _print_msg(
-            "Multiple env_akv_ref values were provided; using the first as the root environment document.",
-            quiet=silent,
-            log=True,
-        )
 
     _print_msg(f"Loading environment from AKV secret: {secret_url}", quiet=silent, log=True)
     vault_url, secret_name, secret_version = _parse_akv_secret_url(secret_url)
@@ -217,15 +260,10 @@ async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool =
             if not secret.value:
                 raise ValueError(f"AKV environment secret has no value: {secret_url}")
 
-            parsed_environment = dotenv.dotenv_values(stream=io.StringIO(secret.value), interpolate=True)
+            validated_document = _validate_dotenv_document(secret.value, strict=strict, silent=silent)
+            parsed_environment = dotenv.dotenv_values(stream=io.StringIO(validated_document), interpolate=True)
             if not parsed_environment:
                 raise ValueError(f"AKV environment secret contains no environment entries: {secret_url}")
-
-            missing_values = [name for name, value in parsed_environment.items() if value is None]
-            if missing_values:
-                raise ValueError(
-                    "AKV environment document contains variables without values: " + ", ".join(missing_values)
-                )
 
             resolved_secrets: dict[str, str] = {}
             resolved_environment: dict[str, str] = {}
@@ -236,6 +274,7 @@ async def _load_env_from_akv_async(*, secret_urls: Sequence[str], silent: bool =
                     value=value,
                     variable_name=variable_name,
                     secret_client=client,
+                    vault_url=vault_url,
                     ambient_environment=ambient_environment,
                     resolved_secrets=resolved_secrets,
                 )
@@ -272,11 +311,47 @@ def _validate_akv_secret_name(*, secret_name: str, variable_name: str) -> None:
         )
 
 
+def _resolve_akv_secret_reference(
+    *,
+    target: str,
+    variable_name: str,
+    vault_url: str,
+) -> tuple[str, str | None, str]:
+    """
+    Resolve a same-vault secret name or full secret URI.
+
+    Args:
+        target (str): A secret name or full Key Vault secret URI.
+        variable_name (str): The environment variable receiving the secret.
+        vault_url (str): The bootstrap document's vault URL.
+
+    Returns:
+        tuple[str, str | None, str]: Secret name, optional version, and cache key.
+
+    Raises:
+        ValueError: If the target is invalid or references another vault.
+    """
+    secret_name = target
+    secret_version: str | None = None
+    if target.casefold().startswith("https://"):
+        referenced_vault_url, secret_name, secret_version = _parse_akv_secret_url(target)
+        if referenced_vault_url.rstrip("/").casefold() != vault_url.rstrip("/").casefold():
+            raise ValueError(
+                f"Cross-vault AKV reference for environment variable '{variable_name}' is not supported. "
+                f"Expected vault '{vault_url}', got '{referenced_vault_url}'."
+            )
+
+    _validate_akv_secret_name(secret_name=secret_name, variable_name=variable_name)
+    cache_key = f"{secret_name.casefold()}|{secret_version or ''}"
+    return secret_name, secret_version, cache_key
+
+
 async def _resolve_environment_value_async(
     *,
     value: str,
     variable_name: str,
     secret_client: "SecretClient",
+    vault_url: str,
     ambient_environment: dict[str, str],
     resolved_secrets: dict[str, str],
 ) -> str:
@@ -287,6 +362,7 @@ async def _resolve_environment_value_async(
         value (str): The parsed bootstrap value.
         variable_name (str): The environment variable receiving the resolved value.
         secret_client (SecretClient): The client for the bootstrap document's vault.
+        vault_url (str): The bootstrap document's vault URL.
         ambient_environment (dict[str, str]): Snapshot used for ``env:`` references.
         resolved_secrets (dict[str, str]): Same-vault scalar cache keyed by secret name.
 
@@ -314,14 +390,19 @@ async def _resolve_environment_value_async(
             )
         return ambient_environment[target]
 
-    _validate_akv_secret_name(secret_name=target, variable_name=variable_name)
-    secret_cache_key = target.casefold()
+    secret_name, secret_version, secret_cache_key = _resolve_akv_secret_reference(
+        target=target,
+        variable_name=variable_name,
+        vault_url=vault_url,
+    )
     if secret_cache_key in resolved_secrets:
         return resolved_secrets[secret_cache_key]
 
-    secret = await secret_client.get_secret(target)
+    secret = await secret_client.get_secret(secret_name, version=secret_version)
     if secret.value is None:
-        raise ValueError(f"AKV secret '{target}' referenced by environment variable '{variable_name}' has no value.")
+        raise ValueError(
+            f"AKV secret '{secret_name}' referenced by environment variable '{variable_name}' has no value."
+        )
     resolved_secrets[secret_cache_key] = secret.value
     return secret.value
 
@@ -375,6 +456,7 @@ async def initialize_pyrit_async(
     load_defaults: bool = True,
     env_files: Sequence[pathlib.Path] | None = None,
     env_akv_ref: Sequence[str] | None = None,
+    env_akv_strict: bool = True,
     silent: bool = False,
     **memory_instance_kwargs: Any,
 ) -> None:
@@ -405,6 +487,8 @@ async def initialize_pyrit_async(
             The first secret's value must contain the bootstrap .env document; additional URLs are ignored.
             Loaded before ``env_files`` so local files take precedence over AKV. Requires
             ``azure-keyvault-secrets``.
+        env_akv_strict (bool): If True, reject malformed or valueless entries in the Key Vault
+            bootstrap document. If False, warn and skip those entries. Defaults to True.
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
@@ -419,10 +503,18 @@ async def initialize_pyrit_async(
             env_files=env_files,
             silent=silent,
         )
-        await _load_env_from_akv_async(secret_urls=env_akv_ref, silent=silent)
+        if len(env_akv_ref) > 1:
+            _print_msg(
+                "Multiple env_akv_ref values were provided; using the first as the root environment document.",
+                quiet=silent,
+                log=True,
+            )
+        await _load_env_from_akv_async(
+            secret_url=env_akv_ref[0],
+            strict=env_akv_strict,
+            silent=silent,
+        )
 
-        # PR review decision: .env.local and explicit files currently override the Key Vault document.
-        # The default .env is always skipped because Key Vault supplies the base environment.
         await asyncio.to_thread(
             _load_environment_files,
             env_files=env_files,
