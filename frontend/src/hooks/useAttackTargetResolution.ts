@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { targetsApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
 import type {
   AttackTargetResolutionStatus,
   TargetInfo,
@@ -10,6 +11,7 @@ import {
   resolveTargetByIdentifierHash,
   targetIdentifierHash,
 } from '@/utils/targetIdentity'
+import type { TargetHashResolution } from '@/utils/targetIdentity'
 
 const TARGET_PAGE_SIZE = 200
 const TARGET_MAX_PAGES = 100
@@ -75,6 +77,24 @@ async function listAllTargets(): Promise<TargetInstance[]> {
   return targets
 }
 
+async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashResolution> {
+  if (target.target_registry_name) {
+    try {
+      const namedTarget = await targetsApi.getTarget(target.target_registry_name)
+      if (
+        typeof namedTarget?.identifier?.hash === 'string'
+        && targetIdentifierHash(namedTarget) === target.identifier_hash
+      ) {
+        return { status: 'resolved' as const, target: namedTarget }
+      }
+    } catch (error) {
+      if (toApiError(error).status !== 404) throw error
+    }
+  }
+
+  return resolveTargetByIdentifierHash(target.identifier_hash, await listAllTargets())
+}
+
 export function useAttackTargetResolution({
   attackId,
   attackLoadSequence,
@@ -117,10 +137,9 @@ export function useAttackTargetResolution({
     let cancelled = false
     const resolveTarget = async (): Promise<void> => {
       try {
-        const targets = await listAllTargets()
+        const resolution = await resolvePersistedTarget(attackTarget)
         if (cancelled) return
 
-        const resolution = resolveTargetByIdentifierHash(attackTarget.identifier_hash, targets)
         const currentSelection = selectionRef.current
         if (currentSelection.source === 'explicit') {
           if (
@@ -128,10 +147,7 @@ export function useAttackTargetResolution({
             || targetIdentifierHash(currentSelection.target) !== attackTarget.identifier_hash
           ) return
 
-          if (
-            resolution.status === 'resolved'
-            && resolution.target.target_registry_name === currentSelection.target.target_registry_name
-          ) {
+          if (resolution.status === 'resolved') {
             setRegistryResolution({
               attackId,
               attackLoadSequence,
@@ -143,7 +159,7 @@ export function useAttackTargetResolution({
           setRegistryResolution({
             attackId,
             attackLoadSequence,
-            status: resolution.status === 'resolved' ? 'unavailable' : resolution.status,
+            status: resolution.status,
           })
           return
         }

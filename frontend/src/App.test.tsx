@@ -60,6 +60,7 @@ jest.mock("./services/api", () => ({
   },
   targetsApi: {
     listTargets: jest.fn(),
+    getTarget: jest.fn(),
   },
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
@@ -71,6 +72,7 @@ const mockedVersionApi = jest.requireMock("./services/api").versionApi;
 
 const mockGetAttack = attacksApi.getAttack as jest.Mock;
 const mockListTargets = targetsApi.listTargets as jest.Mock;
+const mockGetTarget = targetsApi.getTarget as jest.Mock;
 
 // Mock the child components to isolate App logic
 jest.mock("./components/Labels/LabelsBar", () => {
@@ -333,6 +335,7 @@ describe("App", () => {
       items: [],
       pagination: { limit: 200, has_more: false, next_cursor: null },
     });
+    mockGetTarget.mockRejectedValue({ isAxiosError: true, response: { status: 404 } });
     window.localStorage.clear();
   });
 
@@ -880,6 +883,168 @@ describe("App", () => {
     expect(mockListTargets).toHaveBeenNthCalledWith(2, 200, "page-2");
   });
 
+  it("restores a named target directly after validating its full hash", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      identifier_hash: "persisted-alias-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-named",
+      conversation_id: "conv-named",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "persisted-alias-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(exactTarget);
+
+    renderApp("/attacks/ar-named");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias")
+    );
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockGetTarget).toHaveBeenCalledWith("persisted-alias");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("falls back to full-hash resolution when a persisted alias points to a different target", async () => {
+    const staleAliasTarget = makeTarget({
+      target_registry_name: "reused-alias",
+      identifier_hash: "different-hash",
+    });
+    const renamedTarget = makeTarget({
+      target_registry_name: "renamed-target",
+      identifier_hash: "original-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-reused-alias",
+      conversation_id: "conv-reused-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "reused-alias",
+        identifier_hash: "original-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(staleAliasTarget);
+    mockListTargets.mockResolvedValue({
+      items: [staleAliasTarget, renamedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-reused-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("renamed-target")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("reused-alias");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("falls back to full-hash resolution when a persisted alias was removed", async () => {
+    const renamedTarget = makeTarget({
+      target_registry_name: "renamed-target",
+      identifier_hash: "original-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-removed-alias",
+      conversation_id: "conv-removed-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "removed-alias",
+        identifier_hash: "original-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [renamedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-removed-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("renamed-target")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("removed-alias");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("falls back when a reserved alias returns a non-target response", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "catalog",
+      identifier_hash: "catalog-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-catalog-alias",
+      conversation_id: "conv-catalog-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "catalog",
+        identifier_hash: "catalog-target-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue({ items: [] });
+    mockListTargets.mockResolvedValue({
+      items: [exactTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-catalog-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("catalog")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("catalog");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("retries named-target registry failures without masking them with a list fallback", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      identifier_hash: "persisted-alias-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-named-error",
+      conversation_id: "conv-named-error",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "persisted-alias-hash",
+      },
+    });
+    mockGetTarget
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 500 } })
+      .mockResolvedValueOnce(exactTarget);
+    const user = userEvent.setup();
+
+    renderApp("/attacks/ar-named-error");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+    expect(mockListTargets).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("retry-target-resolution"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias")
+    );
+    expect(mockGetTarget).toHaveBeenCalledTimes(2);
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
   it("fails closed when registry pagination does not advance", async () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-stalled-pagination",
@@ -1169,6 +1334,40 @@ describe("App", () => {
     );
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
     expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("preserves an explicitly selected alias with the same canonical hash", async () => {
+    const persistedAliasTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      target_type: "OpenAIChatTarget",
+      identifier_hash: "test-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-same-identity",
+      conversation_id: "conv-same-identity",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "test-target-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(persistedAliasTarget);
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByTestId("nav-config"));
+    await user.click(screen.getByTestId("set-target"));
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(mockGetTarget).toHaveBeenCalledWith("persisted-alias");
+    expect(mockListTargets).not.toHaveBeenCalled();
   });
 
   it.each([401, 500])(

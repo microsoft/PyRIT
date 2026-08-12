@@ -300,6 +300,7 @@ function App() {
     const target: TargetInfo | null = activeTarget
       ? {
           target_type: targetType(activeTarget),
+          target_registry_name: activeTarget.target_registry_name,
           endpoint: targetEndpoint(activeTarget),
           model_name: targetModelName(activeTarget),
           identifier_hash: targetIdentifierHash(activeTarget),

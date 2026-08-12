@@ -41,6 +41,7 @@ function makeAttackSummary(attackResultId: string, outcome: "success" | "failure
     attack_type: "SingleTurnAttack",
     target: {
       target_type: "OpenAIChatTarget",
+      target_registry_name: ROUTING_TARGET.target_registry_name,
       model_name: "gpt-4o",
       identifier_hash: ROUTING_TARGET_HASH,
     },
@@ -103,13 +104,17 @@ const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 /** Register every API mock the routing tests rely on. */
 async function mockRoutingAPIs(page: Page) {
   await page.route(/\/api\/targets/, async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const body = pathname.endsWith(`/${ROUTING_TARGET.target_registry_name}`)
+      ? ROUTING_TARGET
+      : {
+          items: [ROUTING_TARGET],
+          pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+        };
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({
-        items: [ROUTING_TARGET],
-        pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
-      }),
+      body: JSON.stringify(body),
     });
   });
 

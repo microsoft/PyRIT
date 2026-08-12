@@ -234,6 +234,7 @@ export interface TargetCatalogResponse {
 
 export interface TargetInfo {
   target_type: string
+  target_registry_name?: string | null
   endpoint?: string | null
   model_name?: string | null
   identifier_hash: string
