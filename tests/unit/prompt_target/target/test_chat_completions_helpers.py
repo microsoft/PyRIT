@@ -634,5 +634,5 @@ def test_set_response_metadata_rejects_an_unreserved_key():
     """An unreserved key is drift or a typo, so it fails at the call site instead of being persisted."""
     piece = _request_piece("ok")
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="reasoning_status"):
         set_response_metadata(pieces=[piece], reasoning_status="not_reserved")

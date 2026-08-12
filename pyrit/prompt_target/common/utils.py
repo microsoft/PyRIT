@@ -94,8 +94,10 @@ def build_empty_truncated_response(*, request: MessagePiece) -> Message:
 
 
 #: ``prompt_metadata`` keys that record why a provider stopped generating. Every API shape names this
-#: differently, so the union is reserved rather than any single key: whichever target handles the
-#: response clears all of them and writes back only what its own provider reported.
+#: differently, so the union is reserved rather than any single key: a target that captures response
+#: metadata clears all of them and writes back only what its own provider reported. A path that never
+#: reaches a provider response, such as the one that handles an HTTP 400, captures nothing and so
+#: clears nothing.
 RESERVED_RESPONSE_METADATA_KEYS: frozenset[str] = frozenset({"finish_reason", "status", "incomplete_reason"})
 
 

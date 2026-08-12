@@ -480,7 +480,9 @@ class LiteLLMChatTarget(PromptTarget):
         model-aware and is unique to LiteLLM (the raw OpenAI SDK response carries no cost), so this
         mirrors ``capture_token_usage`` and writes ``token_usage_cost`` alongside the token counts.
         The value is stored as a string to honor the ``prompt_metadata`` value contract, and any
-        failure is swallowed so cost accounting never breaks the response path.
+        failure is swallowed so cost accounting never breaks the response path. This has to run
+        after usage capture, which clears the whole ``token_usage_`` prefix and would otherwise
+        drop the cost again.
 
         Args:
             pieces (list[MessagePiece]): The constructed response pieces.
