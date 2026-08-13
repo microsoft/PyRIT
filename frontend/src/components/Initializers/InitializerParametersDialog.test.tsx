@@ -147,6 +147,21 @@ describe('InitializerParametersDialog', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ flag: true, tags: ['a'] }))
   })
 
+  it('toggles the intended multiselect option when clicking checkbox label text', async () => {
+    const user = userEvent.setup()
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog {...baseProps} onSubmit={onSubmit} initializer={allKindsInitializer} />
+      </TestWrapper>,
+    )
+
+    await user.click(screen.getByText('b'))
+    await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ tags: ['b'] }))
+  })
+
   it('unchecks a multiselect choice and picks a select value', async () => {
     const user = userEvent.setup()
     const onSubmit = jest.fn().mockResolvedValue(undefined)

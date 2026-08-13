@@ -191,6 +191,7 @@ function ParameterField({ parameter, value, disabled, onChange }: ParameterField
           {(parameter.choices ?? []).map((choice) => (
             <Checkbox
               key={choice}
+              id={`param-${parameter.name}-${choice}`}
               label={choice}
               checked={selected.includes(choice)}
               disabled={disabled}
