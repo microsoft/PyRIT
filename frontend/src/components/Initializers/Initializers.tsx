@@ -31,6 +31,7 @@ export default function Initializers() {
   const [refetchCount, setRefetchCount] = useState(0)
   const [creating, setCreating] = useState(false)
   const [savingInitializerId, setSavingInitializerId] = useState<string | null>(null)
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
   const [applyingInitializerId, setApplyingInitializerId] = useState<string | null>(null)
   const [deletingInitializerId, setDeletingInitializerId] = useState<string | null>(null)
 
@@ -106,17 +107,32 @@ export default function Initializers() {
     request: UpdateAdditionalInitializerRequest,
   ): Promise<boolean> => {
     setSavingInitializerId(id)
+    setSaveErrors((currentErrors) => {
+      const remainingErrors = { ...currentErrors }
+      delete remainingErrors[id]
+      return remainingErrors
+    })
     try {
       await initializersApi.updateAdditional(id, request)
       setStatusMessage({ intent: 'success', text: 'Saved additional initializer.' })
       await refetchSettingsOnly()
       return true
     } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+      const detail = toApiError(error).detail
+      setStatusMessage({ intent: 'error', text: detail })
+      setSaveErrors((currentErrors) => ({ ...currentErrors, [id]: detail }))
       return false
     } finally {
       setSavingInitializerId(null)
     }
+  }
+
+  const clearSaveError = (id: string): void => {
+    setSaveErrors((currentErrors) => {
+      const remainingErrors = { ...currentErrors }
+      delete remainingErrors[id]
+      return remainingErrors
+    })
   }
 
   const handleApply = async (
@@ -195,10 +211,12 @@ export default function Initializers() {
             registeredInitializers={registeredInitializers}
             creating={creating}
             savingInitializerId={savingInitializerId}
+            saveErrors={saveErrors}
             applyingInitializerId={applyingInitializerId}
             deletingInitializerId={deletingInitializerId}
             onAdd={handleAdd}
             onSave={handleSave}
+            onClearSaveError={clearSaveError}
             onApply={handleApply}
             onRemove={handleRemove}
           />

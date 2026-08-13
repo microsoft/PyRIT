@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { useState } from 'react'
 
 import type { AdditionalInitializerSetting, RegisteredInitializer } from '@/types'
 
@@ -139,6 +140,7 @@ describe('AdditionalInitializers', () => {
     creating: false,
     onAdd: jest.fn().mockResolvedValue(true),
     onSave: jest.fn().mockResolvedValue(true),
+    onClearSaveError: jest.fn(),
     onApply: jest.fn().mockResolvedValue(undefined),
     onRemove: jest.fn().mockResolvedValue(undefined),
   }
@@ -337,13 +339,34 @@ describe('AdditionalInitializers', () => {
     expect(defaultProps.onAdd).toHaveBeenCalledWith('tagged_target', { tags: ['default', 'scorer'] })
   })
 
-  it('should keep the edit dialog open when save fails', async () => {
+  it('should keep the edit dialog open and show an inline error when save fails', async () => {
     const user = userEvent.setup()
-    const onSave = jest.fn().mockResolvedValue(false)
+    const onSave = jest.fn()
+    const onClearSaveError = jest.fn()
+
+    function TestComponent() {
+      const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
+
+      return (
+        <AdditionalInitializers
+          {...defaultProps}
+          saveErrors={saveErrors}
+          onSave={async (id, request) => {
+            onSave(id, request)
+            setSaveErrors({ [id]: 'Mock save failure' })
+            return false
+          }}
+          onClearSaveError={(id) => {
+            onClearSaveError(id)
+            setSaveErrors({})
+          }}
+        />
+      )
+    }
 
     render(
       <TestWrapper>
-        <AdditionalInitializers {...defaultProps} onSave={onSave} />
+        <TestComponent />
       </TestWrapper>,
     )
 
@@ -356,7 +379,13 @@ describe('AdditionalInitializers', () => {
     fireEvent.change(editor, { target: { value: 'modified' } })
     await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
 
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { hidden: true })).toBeInTheDocument()
+    expect(await within(dialog).findByRole('alert', { hidden: true })).toHaveTextContent('Mock save failure')
+    expect(editor).toHaveValue('modified')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel', hidden: true }))
+
+    expect(onClearSaveError).toHaveBeenCalledWith('additional-1')
   })
 
   it('should hide the parameters editor and submit null for a no-parameter initializer', async () => {

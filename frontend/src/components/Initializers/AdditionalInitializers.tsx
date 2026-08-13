@@ -26,10 +26,12 @@ interface AdditionalInitializersProps {
   registeredInitializers: RegisteredInitializer[]
   creating: boolean
   savingInitializerId?: string | null
+  saveErrors?: Record<string, string>
   applyingInitializerId?: string | null
   deletingInitializerId?: string | null
   onAdd: (initializerName: string, parameters: Record<string, unknown> | null) => Promise<boolean>
   onSave: (id: string, request: UpdateAdditionalInitializerRequest) => Promise<boolean>
+  onClearSaveError: (id: string) => void
   onApply: (id: string, initializerName: string, parameters?: Record<string, unknown> | null) => Promise<void>
   onRemove: (id: string) => Promise<void>
 }
@@ -40,7 +42,9 @@ interface AdditionalInitializerCardProps {
   isSaving: boolean
   isApplying: boolean
   isDeleting: boolean
+  saveError?: string | null
   onSave: (id: string, request: UpdateAdditionalInitializerRequest) => Promise<boolean>
+  onClearSaveError: (id: string) => void
   onApply: (id: string, initializerName: string, parameters?: Record<string, unknown> | null) => Promise<void>
   onRemove: (id: string) => Promise<void>
 }
@@ -51,7 +55,9 @@ function AdditionalInitializerCard({
   isSaving,
   isApplying,
   isDeleting,
+  saveError,
   onSave,
+  onClearSaveError,
   onApply,
   onRemove,
 }: AdditionalInitializerCardProps) {
@@ -64,6 +70,13 @@ function AdditionalInitializerCard({
     const saved = await onSave(item.id, { parameters, order_index: item.order_index ?? null })
     if (saved) {
       setEditOpen(false)
+    }
+  }
+
+  const handleEditOpenChange = (open: boolean): void => {
+    setEditOpen(open)
+    if (!open) {
+      onClearSaveError(item.id)
     }
   }
 
@@ -131,8 +144,9 @@ function AdditionalInitializerCard({
           initializer={initializer}
           initialParameters={item.parameters}
           submitting={isSaving}
+          externalError={saveError}
           onSubmit={handleEditSubmit}
-          onOpenChange={setEditOpen}
+          onOpenChange={handleEditOpenChange}
         />
       )}
     </div>
@@ -144,10 +158,12 @@ export default function AdditionalInitializers({
   registeredInitializers,
   creating,
   savingInitializerId = null,
+  saveErrors = {},
   applyingInitializerId = null,
   deletingInitializerId = null,
   onAdd,
   onSave,
+  onClearSaveError,
   onApply,
   onRemove,
 }: AdditionalInitializersProps) {
@@ -217,7 +233,9 @@ export default function AdditionalInitializers({
               isSaving={savingInitializerId === item.id}
               isApplying={applyingInitializerId === item.id}
               isDeleting={deletingInitializerId === item.id}
+              saveError={saveErrors[item.id] ?? null}
               onSave={onSave}
+              onClearSaveError={onClearSaveError}
               onApply={onApply}
               onRemove={onRemove}
             />
