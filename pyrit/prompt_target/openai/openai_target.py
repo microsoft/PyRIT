@@ -32,7 +32,7 @@ from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.openai._response_adapter import NoOpOpenAIResponseAdapter, OpenAIResponseAdapter
+from pyrit.prompt_target.openai._response_adapter import OpenAIResponseAdapter
 from pyrit.prompt_target.openai.openai_error_handling import (
     _extract_error_payload,
     _extract_request_id_from_exception,
@@ -57,7 +57,7 @@ class OpenAITarget(PromptTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(supports_multi_message_pieces=True)
     )
-    _response_adapter: OpenAIResponseAdapter[Any] = NoOpOpenAIResponseAdapter()
+    _response_adapter: OpenAIResponseAdapter[Any] = OpenAIResponseAdapter()
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
     # endpoint (see ``is_azure_openai_endpoint``), so they support both modes.
@@ -539,7 +539,7 @@ class OpenAITarget(PromptTarget):
         Returns:
             bool: True if content filter detected, False otherwise.
         """
-        return self._response_adapter.is_content_filter(response=response)
+        return self._response_adapter.is_content_filtered(response=response)
 
     def _handle_content_filter_response(self, response: Any, request: MessagePiece) -> Message:
         """

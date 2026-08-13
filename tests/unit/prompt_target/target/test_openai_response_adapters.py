@@ -17,6 +17,7 @@ from pyrit.models import MessagePiece
 from pyrit.prompt_target.openai._response_adapter import (
     ChatCompletionsResponseAdapter,
     CompletionsResponseAdapter,
+    OpenAIResponseAdapter,
     ResponsesResponseAdapter,
 )
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
@@ -80,6 +81,19 @@ def test_targets_select_explicit_response_format_adapters():
     assert isinstance(OpenAIResponseTarget._response_adapter, ResponsesResponseAdapter)
 
 
+def test_base_adapter_uses_no_op_defaults():
+    adapter = OpenAIResponseAdapter[object]()
+    response = object()
+    piece = _piece()
+
+    assert adapter.is_content_filtered(response=response) is False
+    assert adapter.extract_partial_content(response=response) is None
+    assert adapter.is_truncated(response=response) is False
+    adapter.capture_metadata(response=response, pieces=[piece])
+    adapter.validate(response=response, is_truncated=False)
+    assert piece.prompt_metadata == {}
+
+
 def test_chat_completions_adapter_contract():
     adapter = ChatCompletionsResponseAdapter()
     filtered = _chat_response(content="partial", finish_reason="content_filter")
@@ -87,7 +101,7 @@ def test_chat_completions_adapter_contract():
     malformed = _chat_response(content="ignored", finish_reason="stop")
     malformed.choices = []
 
-    assert adapter.is_content_filter(response=filtered) is True
+    assert adapter.is_content_filtered(response=filtered) is True
     assert adapter.extract_partial_content(response=filtered) == "partial"
     assert adapter.is_truncated(response=truncated) is True
     adapter.validate(response=truncated, is_truncated=adapter.is_truncated(response=truncated))
@@ -111,7 +125,7 @@ def test_completions_adapter_preserves_legacy_contract():
         usage=CompletionUsage(prompt_tokens=5, completion_tokens=3, total_tokens=8),
     )
 
-    assert adapter.is_content_filter(response=response) is False
+    assert adapter.is_content_filtered(response=response) is False
     assert adapter.extract_partial_content(response=response) is None
     assert adapter.is_truncated(response=response) is False
     adapter.validate(response=response, is_truncated=adapter.is_truncated(response=response))
@@ -128,7 +142,7 @@ def test_responses_adapter_contract():
     truncated = _responses_response(status="incomplete", incomplete_reason="max_output_tokens", text="")
     malformed = _responses_response(status="failed")
 
-    assert adapter.is_content_filter(response=filtered) is True
+    assert adapter.is_content_filtered(response=filtered) is True
     assert adapter.extract_partial_content(response=filtered) == "partial"
     assert adapter.is_truncated(response=truncated) is True
     adapter.validate(response=truncated, is_truncated=adapter.is_truncated(response=truncated))

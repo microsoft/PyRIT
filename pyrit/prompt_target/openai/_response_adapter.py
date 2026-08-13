@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Any, Protocol, TypeVar
+from typing import Any, Generic, TypeVar
 
 from openai.types.chat import ChatCompletion
 from openai.types.responses import Response, ResponseOutputText
@@ -29,56 +29,40 @@ logger = logging.getLogger(__name__)
 ResponseT = TypeVar("ResponseT", contravariant=True)
 
 
-class OpenAIResponseAdapter(Protocol[ResponseT]):
-    """The response-format contract used by ``OpenAITarget``."""
+class OpenAIResponseAdapter(Generic[ResponseT]):
+    """Base response-format behavior used by ``OpenAITarget``."""
 
-    def is_content_filter(self, *, response: ResponseT) -> bool:
+    def is_content_filtered(self, *, response: ResponseT) -> bool:
         """Return whether the response was blocked by a content filter."""
-        ...
+        return False
 
     def extract_partial_content(self, *, response: ResponseT) -> str | None:
-        """Extract content emitted before a content filter stopped generation."""
-        ...
+        """
+        Extract content emitted before a content filter stopped generation.
+
+        Args:
+            response (ResponseT): The provider response.
+
+        Returns:
+            str | None: Partial content, if available.
+        """
+        return None
 
     def capture_metadata(self, *, response: ResponseT, pieces: list[MessagePiece]) -> None:
         """Copy provider response metadata to PyRIT response pieces."""
-        ...
 
     def validate(self, *, response: ResponseT, is_truncated: bool) -> None:
         """Validate the provider response."""
-        ...
 
     def is_truncated(self, *, response: ResponseT) -> bool:
         """Return whether generation stopped at the output-token limit."""
-        ...
-
-
-class NoOpOpenAIResponseAdapter:
-    """Default behavior for OpenAI targets without a structured response format."""
-
-    def is_content_filter(self, *, response: Any) -> bool:
-        """Return False because this format has no content-filter signal."""
-        return False
-
-    def extract_partial_content(self, *, response: Any) -> str | None:
-        """Return no partial content because this format has no extraction rule."""
-        return None
-
-    def capture_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
-        """Leave response metadata unchanged."""
-
-    def validate(self, *, response: Any, is_truncated: bool) -> None:
-        """Accept the response without format-specific validation."""
-
-    def is_truncated(self, *, response: Any) -> bool:
-        """Return False because this format has no truncation signal."""
         return False
 
 
-class ChatCompletionsResponseAdapter:
+class ChatCompletionsResponseAdapter(OpenAIResponseAdapter[ChatCompletion]):
     """Response behavior for the OpenAI Chat Completions wire format."""
 
-    def is_content_filter(self, *, response: ChatCompletion) -> bool:
+    def is_content_filtered(self, *, response: ChatCompletion) -> bool:
         """Return whether ``finish_reason`` reports a content filter."""
         return is_content_filter_response(response)
 
@@ -110,7 +94,7 @@ class ChatCompletionsResponseAdapter:
         return get_finish_reason(response=response) == "length"
 
 
-class CompletionsResponseAdapter(NoOpOpenAIResponseAdapter):
+class CompletionsResponseAdapter(OpenAIResponseAdapter[Any]):
     """Response behavior for the legacy OpenAI Completions wire format."""
 
     def capture_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
@@ -123,10 +107,10 @@ class CompletionsResponseAdapter(NoOpOpenAIResponseAdapter):
             set_response_metadata(pieces=[piece], finish_reason=getattr(choice, "finish_reason", None))
 
 
-class ResponsesResponseAdapter:
+class ResponsesResponseAdapter(OpenAIResponseAdapter[Response]):
     """Response behavior for the OpenAI Responses API wire format."""
 
-    def is_content_filter(self, *, response: Response) -> bool:
+    def is_content_filtered(self, *, response: Response) -> bool:
         """Return whether the response reports content filtering."""
         error = getattr(response, "error", None)
         if error is not None and _is_content_filter_error(response.model_dump()):
