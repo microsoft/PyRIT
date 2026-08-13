@@ -9,6 +9,7 @@ from typing import cast
 from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
+from pyrit.common import get_mime_type
 from pyrit.converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.converter.converter import ConverterResult
 from pyrit.memory import data_serializer_factory
@@ -264,7 +265,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         updated_img = self._add_text_to_image(text=prompt)
 
         image_bytes = BytesIO()
-        mime_type = img_serializer.get_mime_type(self._img_to_add) or "image/png"
+        mime_type = get_mime_type(self._img_to_add) or "image/png"
         image_type = mime_type.split("/")[-1]
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue())
