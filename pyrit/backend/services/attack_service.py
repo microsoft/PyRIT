@@ -364,6 +364,7 @@ class AttackService:
                 # request.name absent means "objective" above is the generic
                 # placeholder, not something the user actually typed.
                 "objective_is_placeholder": not request.name,
+                "target_registry_name": request.target_registry_name,
             },
             labels=labels,
         )

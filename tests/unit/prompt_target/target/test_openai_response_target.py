@@ -1758,6 +1758,75 @@ async def test_construct_message_truncated_captures_token_usage(
     assert piece.prompt_metadata["token_usage_reasoning_tokens"] == 7
 
 
+async def test_construct_message_captures_completed_status(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """``status`` is the Responses equivalent of Chat Completions' ``finish_reason``."""
+    response = MagicMock()
+    response.status = "completed"
+    response.incomplete_details = None
+    response.output = [_make_message_section("Answer")]
+    response.usage = None
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    metadata = result.message_pieces[0].prompt_metadata
+    assert metadata["status"] == "completed"
+    assert "incomplete_reason" not in metadata
+
+
+async def test_construct_message_truncated_captures_status_and_incomplete_reason(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    response = _make_truncated_response(output=[_make_message_section("Partial answer")])
+    response.usage = None
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    metadata = result.message_pieces[0].prompt_metadata
+    assert metadata["status"] == "incomplete"
+    assert metadata["incomplete_reason"] == "max_output_tokens"
+
+
+async def test_construct_message_records_status_on_primary_piece_not_reasoning(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Status metadata must be written after the reasoning sort, like usage."""
+    response = _make_truncated_response(output=[_make_reasoning_section(), _make_message_section("Partial answer")])
+    response.usage = None
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    primary = result.message_pieces[0]
+    assert primary.converted_value_data_type == "text"
+    assert primary.prompt_metadata["status"] == "incomplete"
+    assert result.message_pieces[-1].converted_value_data_type == "reasoning"
+    assert "status" not in result.message_pieces[-1].prompt_metadata
+
+
+async def test_content_filter_captures_usage_status_and_incomplete_reason(target: OpenAIResponseTarget):
+    """A content-filtered response still reports what it consumed and why it stopped."""
+    request = MessagePiece(role="user", conversation_id="c", original_value="harmful")
+    response = MagicMock()
+    response.error = None
+    response.status = "incomplete"
+    incomplete_details = MagicMock()
+    incomplete_details.reason = "content_filter"
+    response.incomplete_details = incomplete_details
+    response.output = []
+    response.usage = _make_usage()
+    response.model_dump_json.return_value = "{}"
+
+    message = target._handle_content_filter_response(response, request)
+
+    piece = message.message_pieces[0]
+    assert piece.response_error == "blocked"
+    assert piece.prompt_metadata["status"] == "incomplete"
+    assert piece.prompt_metadata["incomplete_reason"] == "content_filter"
+    assert piece.prompt_metadata["token_usage_input_tokens"] == 11
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 22
+
+
 async def test_handle_openai_request_output_text(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     output_message = ResponseOutputMessage(
         id="text-message",

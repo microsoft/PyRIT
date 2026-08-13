@@ -713,6 +713,8 @@ class TestCreateAttack:
             assert result.conversation_id is not None
             assert result.created_at is not None
             mock_memory.add_attack_results_to_memory.assert_called_once()
+            stored_attack = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
+            assert stored_attack.metadata["target_registry_name"] == "target-1"
 
     async def test_create_attack_stores_prepended_conversation(self, attack_service, mock_memory) -> None:
         """Test that create_attack stores prepended conversation messages."""
