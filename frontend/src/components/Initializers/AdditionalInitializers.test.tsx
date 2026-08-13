@@ -227,7 +227,7 @@ describe('AdditionalInitializers', () => {
     expect(defaultProps.onApply).toHaveBeenCalledWith('additional-1', 'target', { tags: ['default'] })
   })
 
-  it('should call onRemove with the additional initializer id', async () => {
+  it('should call onRemove with the additional initializer id after confirming', async () => {
     const user = userEvent.setup()
 
     render(
@@ -238,7 +238,30 @@ describe('AdditionalInitializers', () => {
 
     await user.click(within(screen.getByTestId('initializer-row-additional-1')).getByRole('button', { name: 'Remove' }))
 
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/remove the/i)).toBeInTheDocument()
+    expect(within(dialog).getByText('target')).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
     expect(defaultProps.onRemove).toHaveBeenCalledWith('additional-1')
+  })
+
+  it('should not call onRemove when the confirmation dialog is cancelled', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TestWrapper>
+        <AdditionalInitializers {...defaultProps} />
+      </TestWrapper>,
+    )
+
+    await user.click(within(screen.getByTestId('initializer-row-additional-1')).getByRole('button', { name: 'Remove' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(defaultProps.onRemove).not.toHaveBeenCalled()
   })
 
   it('should show a validation error when a required parameter is missing', async () => {

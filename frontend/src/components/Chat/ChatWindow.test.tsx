@@ -507,6 +507,79 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
+  it("should disable sending while routed attack metadata is loading", () => {
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={mockTarget}
+          isLoadingAttack
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("chat-input")).toBeDisabled();
+  });
+
+  it("should keep an unverifiable historical target read-only and retryable", async () => {
+    const user = userEvent.setup();
+    const onRetryTargetResolution = jest.fn();
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: "Historical response",
+        timestamp: "2026-01-01T00:00:00Z",
+      },
+    ];
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedAttacksApi.getConversations.mockResolvedValue({
+      attack_result_id: "ar-unverifiable",
+      main_conversation_id: "conv-unverifiable",
+      conversations: [
+        {
+          conversation_id: "conv-unverifiable",
+          message_count: 1,
+        },
+        {
+          conversation_id: "conv-related",
+          message_count: 1,
+        },
+      ],
+    });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue(messages);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={null}
+          attackResultId="ar-unverifiable"
+          conversationId="conv-unverifiable"
+          activeConversationId="conv-unverifiable"
+          attackTarget={{
+            target_type: "TextTarget",
+            identifier_hash: "unverifiable-hash",
+          }}
+          targetResolutionStatus="error"
+          onRetryTargetResolution={onRetryTargetResolution}
+          relatedConversationCount={1}
+        />
+      </TestWrapper>
+    );
+
+    expect(await screen.findByTestId("target-resolution-error-banner")).toBeInTheDocument();
+    expect(await screen.findByText("Historical response")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.getByTestId("copy-to-input-btn-0")).toBeDisabled();
+    expect(screen.getByTestId("branch-conv-btn-0")).toBeDisabled();
+    expect(screen.getByTestId("branch-attack-btn-0")).toBeDisabled();
+    expect(await screen.findByTestId("star-btn-conv-related")).toBeDisabled();
+    expect(mockedAttacksApi.changeMainConversation).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+    expect(onRetryTargetResolution).toHaveBeenCalledTimes(1);
+  });
+
   // -----------------------------------------------------------------------
   // Target info display for various target types
   // -----------------------------------------------------------------------

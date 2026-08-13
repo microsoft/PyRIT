@@ -27,7 +27,7 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_response_pieces_async,
-    capture_token_usage,
+    capture_usage_and_finish_reason,
     detect_response_content,
     extract_partial_content,
     get_finish_reason,
@@ -276,6 +276,17 @@ class OpenAIChatTarget(OpenAITarget):
         """
         return extract_partial_content(response)
 
+    def _capture_response_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
+        """
+        Record token usage and ``finish_reason`` from a Chat Completions response.
+
+        Args:
+            response: A ChatCompletion object from the OpenAI SDK, or the synthetic stand-in used
+                when the SDK raises on a content filter.
+            pieces (list[MessagePiece]): The constructed response pieces.
+        """
+        capture_usage_and_finish_reason(pieces=pieces, response=response)
+
     def _validate_response(self, response: ChatCompletion, request: MessagePiece) -> None:
         """
         Validate a Chat Completions API response for errors.
@@ -403,13 +414,13 @@ class OpenAIChatTarget(OpenAITarget):
             # genuinely empty (non-truncated) responses.
             if truncated:
                 empty_message = build_empty_truncated_response(request=request)
-                capture_token_usage(pieces=empty_message.message_pieces, response=response)
+                self._capture_response_metadata(response=response, pieces=empty_message.message_pieces)
                 empty_message.message_pieces[0].mark_as_truncated()
                 return empty_message
             raise EmptyResponseException(message="Failed to extract any response content.")
 
-        # Capture token usage from the API response and store in the first piece's metadata
-        capture_token_usage(pieces=pieces, response=response)
+        # Capture token usage and the stop reason from the API response into the first piece.
+        self._capture_response_metadata(response=response, pieces=pieces)
         if truncated:
             pieces[0].mark_as_truncated()
 

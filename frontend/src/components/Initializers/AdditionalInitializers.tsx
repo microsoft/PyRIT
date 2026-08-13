@@ -1,6 +1,11 @@
 import { useState } from 'react'
 
-import { Button, Select, Text, Tooltip } from '@fluentui/react-components'
+import {
+  Button,
+  Select,
+  Text,
+  Tooltip,
+} from '@fluentui/react-components'
 import { AddRegular } from '@fluentui/react-icons'
 
 import type {
@@ -15,6 +20,7 @@ import { formatInitializerParameters, formatSupportedParameterSummary } from './
 import { resolveRegisteredInitializer } from './initializerLookup'
 import InitializerParametersDialog from './InitializerParametersDialog'
 import { useInitializersStyles } from './Initializers.styles'
+import ConfirmDialog from '../ConfirmDialog'
 
 interface AdditionalInitializersProps {
   items: AdditionalInitializerSetting[]
@@ -52,6 +58,7 @@ function AdditionalInitializerCard({
 }: AdditionalInitializerCardProps) {
   const styles = useAdditionalInitializersStyles()
   const [editOpen, setEditOpen] = useState(false)
+  const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false)
   const isBusy = isSaving || isApplying || isDeleting
 
   const handleEditSubmit = async (parameters: Record<string, unknown> | null): Promise<void> => {
@@ -98,10 +105,23 @@ function AdditionalInitializerCard({
         >
           {isApplying ? 'Applying...' : 'Apply now'}
         </Button>
-        <Button appearance="subtle" onClick={() => void onRemove(item.id)} disabled={isBusy}>
+        <Button appearance="subtle" onClick={() => setConfirmRemoveOpen(true)} disabled={isBusy}>
           {isDeleting ? 'Removing...' : 'Remove'}
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={confirmRemoveOpen}
+        title="Remove initializer"
+        confirmLabel="Remove"
+        onConfirm={() => {
+          setConfirmRemoveOpen(false)
+          void onRemove(item.id)
+        }}
+        onCancel={() => setConfirmRemoveOpen(false)}
+      >
+        Are you sure you want to remove the <Text weight="semibold">{item.initializer_name}</Text> initializer? This action cannot be undone.
+      </ConfirmDialog>
 
       {editOpen && (
         <InitializerParametersDialog
