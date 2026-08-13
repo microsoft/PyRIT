@@ -72,11 +72,6 @@ class NpEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
-def _filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
-    """Return options whose names use the ``mpa_`` prefix."""
-    return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
-
-
 def _initialize_attack_log(
     *,
     logfile: str | None,
@@ -1249,7 +1244,7 @@ class ProgressiveMultiPromptAttack:
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        return _filter_mpa_kwargs(**kwargs)
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
 
     def run(
         self,
@@ -1468,7 +1463,7 @@ class IndividualPromptAttack:
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        return _filter_mpa_kwargs(**kwargs)
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
 
     def run(
         self,
@@ -1662,7 +1657,7 @@ class EvaluateAttack:
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        return _filter_mpa_kwargs(**kwargs)
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def run(
