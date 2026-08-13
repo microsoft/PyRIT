@@ -53,7 +53,7 @@ System environment variables are always the baseline. If no AKV bootstrap docume
 
 **AKV behavior** (with `env_akv_ref`): The referenced secrets load in list order before local files. Unless custom `env_files` are configured, `~/.pyrit/.env` loads afterward and `~/.pyrit/.env.local` loads last. Later bootstrap documents and local files may override earlier values.
 
-PyRIT emits a warning when `env_akv_ref` is selected and default or explicit environment files coexist with it. The warning distinguishes files that are ignored from files that load afterward and override Key Vault values, making stale migration files visible at startup. When migrating to Key Vault, clear or remove `~/.pyrit/.env` and `~/.pyrit/.env.local`, remove explicit `env_files` when Key Vault should be the only source, and restart PyRIT so values already present in the process environment cannot mask the Key Vault configuration.
+PyRIT emits a warning when `env_akv_ref` is selected and default or explicit environment files coexist with it. The warning distinguishes files that are ignored from files that load afterward and override Key Vault values, making stale migration files visible at startup. When migrating to Key Vault, clear or remove `~/.pyrit/.env` and `~/.pyrit/.env.local`, remove explicit `env_files` when Key Vault should be the only source, and re-initialize PyRIT so values already present in the process environment cannot mask the Key Vault configuration.
 
 **Custom behavior** (with `env_files` field): Only your specified files are loaded, in order. They override Key Vault bootstrap values when both fields are configured, and default paths are completely ignored.
 
