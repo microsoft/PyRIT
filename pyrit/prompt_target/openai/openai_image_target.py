@@ -4,7 +4,7 @@ import base64
 import logging
 from typing import Any, Literal
 
-from pyrit.common import forward_init_parameters
+from pyrit.common import forward_init_parameters, get_mime_type
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
@@ -233,7 +233,7 @@ class OpenAIImageTarget(OpenAITarget):
 
             image_name = str(await img_serializer.get_data_filename_async())
             image_bytes = await img_serializer.read_data_async()
-            image_type = img_serializer.get_mime_type(image_path)
+            image_type = get_mime_type(image_path)
 
             image_files.append((image_name, image_bytes, image_type))
 
