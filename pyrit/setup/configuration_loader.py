@@ -96,6 +96,7 @@ class ConfigurationLoader(YamlLoadable):
             None means "use defaults", [] means "load nothing".
         env_files: List of environment file paths to load.
             None means "use defaults (.env, .env.local)", [] means "load nothing".
+        env_akv_ref: Ordered list of Key Vault bootstrap secret URLs.
         env_akv_strict: Whether malformed or valueless entries in a Key Vault
             bootstrap document should fail initialization.
         silent: Whether to suppress initialization messages.
@@ -136,7 +137,7 @@ class ConfigurationLoader(YamlLoadable):
     initializers: list[str | dict[str, Any]] = field(default_factory=list)
     initialization_scripts: list[str] | None = None
     env_files: list[str] | None = None
-    env_akv_ref: str | None = None
+    env_akv_ref: list[str] | None = None
     env_akv_strict: bool = True
     silent: bool = False
     operator: str | None = None
@@ -158,12 +159,14 @@ class ConfigurationLoader(YamlLoadable):
         Validate the Key Vault bootstrap secret reference.
 
         Raises:
-            ValueError: If env_akv_ref is not one non-empty string.
+            ValueError: If env_akv_ref is not a list of non-empty strings.
         """
         if self.env_akv_ref is None:
             return
-        if not isinstance(self.env_akv_ref, str) or not self.env_akv_ref.strip():
-            raise ValueError("env_akv_ref must be one non-empty Azure Key Vault secret URL.")
+        if not isinstance(self.env_akv_ref, list):
+            raise ValueError("env_akv_ref must be a list of Azure Key Vault secret URLs.")
+        if any(not isinstance(secret_url, str) or not secret_url.strip() for secret_url in self.env_akv_ref):
+            raise ValueError("env_akv_ref must contain only non-empty Azure Key Vault secret URLs.")
 
     def _normalize_memory_db_type(self) -> None:
         """
@@ -416,7 +419,7 @@ class ConfigurationLoader(YamlLoadable):
         initializers: Sequence[str | dict[str, Any]] | None = None,
         initialization_scripts: Sequence[str] | None = None,
         env_files: Sequence[str] | None = None,
-        env_akv_ref: str | None = None,
+        env_akv_ref: Sequence[str] | None = None,
         env_akv_strict: bool | None = None,
     ) -> "ConfigurationLoader":
         """
@@ -433,7 +436,7 @@ class ConfigurationLoader(YamlLoadable):
             initializers: Override for initializer list.
             initialization_scripts: Override for initialization script paths.
             env_files: Override for environment file paths.
-            env_akv_ref: Override for the Azure Key Vault bootstrap secret URL.
+            env_akv_ref: Override for the ordered Azure Key Vault bootstrap secret URLs.
             env_akv_strict: Override for strict Key Vault bootstrap validation.
 
         Returns:
@@ -495,7 +498,9 @@ class ConfigurationLoader(YamlLoadable):
             config_data["env_files"] = list(env_files)
 
         if env_akv_ref is not None:
-            config_data["env_akv_ref"] = env_akv_ref
+            if isinstance(env_akv_ref, str):
+                raise ValueError("env_akv_ref must be a sequence of Azure Key Vault secret URLs.")
+            config_data["env_akv_ref"] = list(env_akv_ref)
 
         if env_akv_strict is not None:
             config_data["env_akv_strict"] = env_akv_strict
@@ -601,12 +606,12 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def resolve_env_akv_ref(self) -> str | None:
+    def resolve_env_akv_ref(self) -> list[str] | None:
         """
-        Return the AKV bootstrap secret URL, or ``None`` when not configured.
+        Return the AKV bootstrap secret URLs, or ``None`` when not configured.
 
         Returns:
-            str | None: The configured AKV bootstrap secret URL, or ``None``.
+            list[str] | None: The configured AKV bootstrap secret URLs, or ``None``.
         """
         return self.env_akv_ref
 

@@ -5,12 +5,12 @@ import io
 import logging
 import os
 import pathlib
-from collections.abc import Mapping, Sequence
+import urllib.parse
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import dotenv
 from dotenv.parser import parse_stream
-from dotenv.variables import parse_variables
 
 from pyrit.common import path
 from pyrit.common.apply_defaults import reset_default_values
@@ -30,6 +30,7 @@ AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 
 _AKV_REFERENCE_PREFIXES = frozenset({"akv", "kv", "azure_key_vault", "env_akv_ref"})
+_AKV_VAULT_DNS_SUFFIXES = frozenset({"vault.azure.net", "vault.azure.cn", "vault.usgovcloudapi.net"})
 _AKV_RETRY_TOTAL = 3
 _AKV_RETRY_BACKOFF_FACTOR = 0.8
 
@@ -58,59 +59,17 @@ def _load_environment_files(
     Raises:
         ValueError: If any provided env_files do not exist.
     """
-    resolved_environment, files_selected = _resolve_environment_files(
-        env_files=env_files,
-        base_environment=dict(os.environ),
-        silent=silent,
-        include_default_base=include_default_base,
-    )
-    os.environ.update(resolved_environment)
-    return files_selected
-
-
-def _resolve_environment_files(
-    env_files: Sequence[pathlib.Path] | None,
-    *,
-    base_environment: Mapping[str, str],
-    silent: bool = False,
-    include_default_base: bool = True,
-) -> tuple[dict[str, str], bool]:
-    """
-    Resolve environment files without mutating ``os.environ``.
-
-    Args:
-        env_files: Optional sequence of environment file paths. If None, resolves
-            default files from the PyRIT configuration directory.
-        base_environment: Environment visible to interpolation before file values.
-        silent: If True, suppresses loading messages. Defaults to False.
-        include_default_base: If False and env_files is None, skips the default
-            .env file while still resolving .env.local. Defaults to True.
-
-    Returns:
-        tuple[dict[str, str], bool]: Resolved values and whether any file was selected.
-
-    Raises:
-        ValueError: If any explicitly provided environment file does not exist.
-    """
     selected_files = _select_environment_files(
         env_files=env_files,
         silent=silent,
         include_default_base=include_default_base,
     )
-    if _dotenv_loading_disabled():
-        return {}, bool(selected_files)
-
-    staged_environment = dict(base_environment)
-    resolved_environment: dict[str, str] = {}
     for env_file in selected_files:
-        raw_values = dotenv.dotenv_values(dotenv_path=env_file, interpolate=False)
-        file_values = _interpolate_dotenv_values(values=raw_values, base_environment=staged_environment)
-        staged_environment.update(file_values)
-        resolved_environment.update(file_values)
+        dotenv.load_dotenv(dotenv_path=env_file, override=True, interpolate=True)
         if not silent:
             _print_msg(f"Loaded environment file: {env_file}", quiet=silent, log=True)
 
-    return resolved_environment, bool(selected_files)
+    return bool(selected_files)
 
 
 def _select_environment_files(
@@ -161,36 +120,6 @@ def _select_environment_files(
         env_files = default_files
 
     return list(env_files)
-
-
-def _interpolate_dotenv_values(
-    *,
-    values: Mapping[str, str | None],
-    base_environment: Mapping[str, str],
-) -> dict[str, str]:
-    """
-    Resolve dotenv interpolation against a staged environment mapping.
-
-    Returns:
-        dict[str, str]: Interpolated assignments, excluding valueless entries.
-    """
-    visible_environment: dict[str, str | None] = dict(base_environment)
-    resolved_values: dict[str, str] = {}
-    for name, value in values.items():
-        if value is None:
-            visible_environment[name] = None
-            continue
-
-        resolved_value = "".join(atom.resolve(visible_environment) for atom in parse_variables(value))
-        visible_environment[name] = resolved_value
-        resolved_values[name] = resolved_value
-
-    return resolved_values
-
-
-def _dotenv_loading_disabled() -> bool:
-    value = os.environ.get("PYTHON_DOTENV_DISABLED", "")
-    return value.casefold() in {"1", "true", "t", "yes", "y"}
 
 
 def _print_msg(message: str, quiet: bool, log: bool) -> None:
@@ -262,17 +191,61 @@ def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
     Raises:
         ValueError: If the URL does not match the expected format.
     """
-    parts = secret_url.split("/secrets/")
-    if len(parts) != 2:
-        raise ValueError(
-            f"Invalid AKV secret URL: '{secret_url}'. "
-            "Expected format: https://{{vault}}.vault.azure.net/secrets/{{name}}[/{{version}}]"
-        )
-    vault_url = parts[0]
-    name_parts = parts[1].rstrip("/").split("/")
-    secret_name = name_parts[0]
-    secret_version = name_parts[1] if len(name_parts) > 1 else None
-    return vault_url, secret_name, secret_version
+    error_message = (
+        f"Invalid AKV secret URL: '{secret_url}'. Expected an HTTPS Azure Key Vault URL in the format "
+        "https://{vault}.{vault-dns-suffix}/secrets/{name}[/{version}]."
+    )
+    try:
+        parsed_url = urllib.parse.urlsplit(secret_url)
+        port = parsed_url.port
+    except (TypeError, ValueError) as error:
+        raise ValueError(error_message) from error
+
+    hostname = parsed_url.hostname
+    vault_name, separator, dns_suffix = hostname.partition(".") if hostname else ("", "", "")
+    valid_vault_name = (
+        1 <= len(vault_name) <= 63
+        and all(char.isascii() and (char.isalnum() or char == "-") for char in vault_name)
+    )
+    valid_authority = (
+        parsed_url.scheme.casefold() == "https"
+        and parsed_url.username is None
+        and parsed_url.password is None
+        and port is None
+        and separator == "."
+        and dns_suffix in _AKV_VAULT_DNS_SUFFIXES
+        and valid_vault_name
+    )
+    path_parts = parsed_url.path.split("/")
+    valid_path = (
+        len(path_parts) in {3, 4}
+        and path_parts[0] == ""
+        and path_parts[1] == "secrets"
+        and all(path_parts[2:])
+    )
+    if not valid_authority or not valid_path or parsed_url.query or parsed_url.fragment:
+        raise ValueError(error_message)
+
+    secret_name = path_parts[2]
+    secret_version = path_parts[3] if len(path_parts) == 4 else None
+    if not _is_valid_akv_identifier(secret_name) or (
+        secret_version is not None and not _is_valid_akv_identifier(secret_version)
+    ):
+        raise ValueError(error_message)
+
+    return f"https://{hostname}", secret_name, secret_version
+
+
+def _is_valid_akv_identifier(identifier: str) -> bool:
+    """
+    Check whether a Key Vault secret name or version uses URL-safe characters.
+
+    Returns:
+        bool: True when the identifier is valid.
+    """
+    return 1 <= len(identifier) <= 127 and all(
+        char.isascii() and (char.isalnum() or char == "-") for char in identifier
+    )
 
 
 def _create_akv_secret_client(*, vault_url: str, credential: Any) -> "SecretClient":
@@ -361,11 +334,12 @@ async def _load_env_from_akv_async(
     secret_url: str,
     strict: bool = True,
     silent: bool = False,
-) -> tuple[dict[str, str], str]:
+) -> None:
     """
-    Load a bootstrap environment document from an Azure Key Vault secret.
+    Load a bootstrap dotenv document and resolve its same-vault secret references.
 
-    References remain unresolved until all environment sources are merged.
+    References are resolved once. Referenced secret values are treated as terminal
+    strings and are not interpreted as additional references.
 
     Authentication uses ``DefaultAzureCredential``, which silently tries managed
     identity, Azure CLI, VS Code credentials, etc., and falls back to interactive
@@ -377,9 +351,6 @@ async def _load_env_from_akv_async(
         strict (bool): If True, reject malformed or valueless dotenv entries.
             If False, warn and skip those entries. Defaults to True.
         silent (bool): If True, suppresses print statements. Defaults to False.
-
-    Returns:
-        tuple[dict[str, str], str]: Parsed bootstrap values and the vault URL.
 
     Raises:
         ImportError: If ``azure-keyvault-secrets`` is not installed.
@@ -403,8 +374,41 @@ async def _load_env_from_akv_async(
                 parsed_environment = dotenv.dotenv_values(stream=io.StringIO(validated_document), interpolate=True)
                 if not parsed_environment:
                     raise ValueError(f"AKV environment secret contains no environment entries: {secret_url}")
+                loaded = dotenv.load_dotenv(
+                    stream=io.StringIO(validated_document),
+                    override=True,
+                    interpolate=True,
+                )
+                if not loaded:
+                    return
 
-        return {name: value for name, value in parsed_environment.items() if value is not None}, vault_url
+                for variable_name, value in parsed_environment.items():
+                    if value is None:
+                        continue
+                    target = _parse_akv_reference(value)
+                    if target is None:
+                        continue
+                    try:
+                        referenced_name, referenced_version = _resolve_akv_secret_reference(
+                            target=target,
+                            variable_name=variable_name,
+                            vault_url=vault_url,
+                        )
+                        referenced_secret = await client.get_secret(referenced_name, version=referenced_version)
+                        if referenced_secret.value is None:
+                            raise ValueError(
+                                f"AKV secret '{referenced_name}' referenced by environment variable "
+                                f"'{variable_name}' has no value."
+                            )
+                        os.environ[variable_name] = referenced_secret.value
+                    except KeyVaultInitializationException:
+                        raise
+                    except Exception as error:
+                        wrapped_error = _key_vault_initialization_error(
+                            message=f"Failed to resolve Key Vault reference for environment variable '{variable_name}'",
+                            error=error,
+                        )
+                        raise wrapped_error from error
     except KeyVaultInitializationException:
         raise
     except Exception as error:
@@ -415,200 +419,62 @@ async def _load_env_from_akv_async(
         raise wrapped_error from error
 
 
-async def _resolve_environment_references_async(
+async def _load_environment_async(
     *,
-    values: Mapping[str, str],
-    ambient_environment: Mapping[str, str],
-    bootstrap_vault_url: str | None = None,
-) -> dict[str, str]:
-    """
-    Resolve references after all environment sources have been merged.
-
-    Args:
-        values (Mapping[str, str]): Winning values after source precedence.
-        ambient_environment (Mapping[str, str]): Process environment visible to ``env:`` references.
-        bootstrap_vault_url (str | None): Vault URL imposed by the bootstrap document.
-
-    Returns:
-        dict[str, str]: Values with complete-value references resolved.
-
-    Raises:
-        KeyVaultInitializationException: If a Key Vault reference is invalid or uses another vault.
-        ValueError: If an environment reference cannot be resolved.
-    """
-    reference_environment = {**ambient_environment, **values}
-    vault_url = bootstrap_vault_url
-    reference_variable_name = "<unknown>"
-    try:
-        for variable_name, value in values.items():
-            reference_variable_name = variable_name
-            reference = _parse_environment_value_reference(value)
-            if reference is None or reference[0] != "akv":
-                continue
-            target = reference[1]
-            if not target.casefold().startswith("https://"):
-                _resolve_akv_secret_reference(
-                    target=target,
-                    variable_name=variable_name,
-                    vault_url=vault_url or "",
-                )
-            referenced_vault_url, _, _ = _parse_akv_secret_url(target)
-            if vault_url is None:
-                vault_url = referenced_vault_url
-            _resolve_akv_secret_reference(
-                target=target,
-                variable_name=variable_name,
-                vault_url=vault_url,
-            )
-    except KeyVaultInitializationException:
-        raise
-    except Exception as error:
-        wrapped_error = _key_vault_initialization_error(
-            message=f"Invalid Key Vault reference for environment variable '{reference_variable_name}'",
-            error=error,
-        )
-        raise wrapped_error from error
-
-    if vault_url is None:
-        return {
-            name: await _resolve_environment_value_async(
-                value=value,
-                variable_name=name,
-                secret_client=None,
-                vault_url=None,
-                reference_environment=reference_environment,
-            )
-            for name, value in values.items()
-        }
-
-    from azure.core.exceptions import AzureError
-    from azure.identity.aio import DefaultAzureCredential
-
-    try:
-        async with DefaultAzureCredential() as credential:
-            async with _create_akv_secret_client(vault_url=vault_url, credential=credential) as client:
-                return {
-                    name: await _resolve_environment_value_async(
-                        value=value,
-                        variable_name=name,
-                        secret_client=client,
-                        vault_url=vault_url,
-                        reference_environment=reference_environment,
-                    )
-                    for name, value in values.items()
-                }
-    except KeyVaultInitializationException:
-        raise
-    except AzureError as error:
-        wrapped_error = _key_vault_initialization_error(
-            message=f"Failed to connect to Key Vault '{vault_url}'",
-            error=error,
-        )
-        raise wrapped_error from error
-
-
-async def _prepare_environment_updates_async(
-    *,
-    env_akv_ref: str | None,
+    env_akv_ref: Sequence[str] | None,
     env_files: Sequence[pathlib.Path] | None,
     env_akv_strict: bool,
     silent: bool,
-) -> dict[str, str]:
+) -> None:
     """
-    Stage all environment sources and resolve references before committing.
+    Load environment sources in precedence order.
 
     Args:
-        env_akv_ref (str | None): Optional Key Vault bootstrap secret URL.
+        env_akv_ref (Sequence[str] | None): Optional ordered Key Vault bootstrap secret URLs.
         env_files (Sequence[pathlib.Path] | None): Optional ordered local environment files.
         env_akv_strict (bool): Whether bootstrap dotenv validation is strict.
         silent (bool): Whether initialization messages are suppressed.
 
-    Returns:
-        dict[str, str]: Fully resolved environment updates.
-
     Raises:
         ValueError: If a configured source or reference is invalid.
     """
-    ambient_environment = dict(os.environ)
-    merged_values: dict[str, str] = {}
-    bootstrap_vault_url: str | None = None
-
-    if env_akv_ref is not None:
-        if not env_akv_ref.strip():
-            raise ValueError("env_akv_ref must be a non-empty Azure Key Vault secret URL.")
+    if isinstance(env_akv_ref, str):
+        raise ValueError("env_akv_ref must be a sequence of Azure Key Vault secret URLs.")
+    if env_akv_ref:
+        if any(not isinstance(secret_url, str) or not secret_url.strip() for secret_url in env_akv_ref):
+            raise ValueError("env_akv_ref must contain only non-empty Azure Key Vault secret URLs.")
         await asyncio.to_thread(
             _warn_about_akv_environment_files,
             env_files=env_files,
             silent=silent,
         )
-        bootstrap_values, bootstrap_vault_url = await _load_env_from_akv_async(
-            secret_url=env_akv_ref,
-            strict=env_akv_strict,
-            silent=silent,
-        )
-        merged_values.update(bootstrap_values)
+        for secret_url in env_akv_ref:
+            await _load_env_from_akv_async(
+                secret_url=secret_url,
+                strict=env_akv_strict,
+                silent=silent,
+            )
 
-    local_values, _ = await asyncio.to_thread(
-        _resolve_environment_files,
+    await asyncio.to_thread(
+        _load_environment_files,
         env_files=env_files,
-        base_environment={**ambient_environment, **merged_values},
         silent=silent,
     )
-    merged_values.update(local_values)
-
-    return await _resolve_environment_references_async(
-        values=merged_values,
-        ambient_environment=ambient_environment,
-        bootstrap_vault_url=bootstrap_vault_url,
-    )
 
 
-def _parse_environment_value_reference(value: str) -> tuple[str, str] | None:
+def _parse_akv_reference(value: str) -> str | None:
     """
-    Parse an exact whole-value environment or Key Vault reference.
+    Parse an exact whole-value Key Vault reference.
 
     Returns:
-        The normalized reference type and target, or None for a literal value.
+        The referenced secret URL, or None for a literal value.
     """
     prefix, separator, target = value.partition(":")
-    if not separator:
-        return None
-    if prefix == "env":
-        return "env", target.strip()
-    if prefix in _AKV_REFERENCE_PREFIXES:
-        return "akv", target.strip()
-    if prefix == "literal":
-        return "literal", target
-    return None
-
-
-def _lookup_environment_value(*, environment: Mapping[str, str], name: str) -> str | None:
-    """
-    Look up an environment value using platform-appropriate name semantics.
-
-    Returns:
-        str | None: The matched value, or None when no name matches.
-    """
-    if name in environment:
-        return environment[name]
-    if os.name == "nt":
-        folded_name = name.casefold()
-        return next((value for key, value in environment.items() if key.casefold() == folded_name), None)
-    return None
-
-
-def _environment_names_equal(*, left: str, right: str) -> bool:
-    """
-    Compare environment variable names using platform semantics.
-
-    Returns:
-        bool: True when the names identify the same environment variable.
-    """
-    return left.casefold() == right.casefold() if os.name == "nt" else left == right
+    return target.strip() if separator and prefix in _AKV_REFERENCE_PREFIXES else None
 
 
 def _validate_akv_secret_name(*, secret_name: str, variable_name: str) -> None:
-    if not secret_name or len(secret_name) > 127 or any(not char.isalnum() and char != "-" for char in secret_name):
+    if not _is_valid_akv_identifier(secret_name):
         raise ValueError(
             f"Invalid same-vault secret name '{secret_name}' referenced by environment variable '{variable_name}'. "
             "Secret names must contain only letters, numbers, and hyphens."
@@ -650,80 +516,6 @@ def _resolve_akv_secret_reference(
 
     _validate_akv_secret_name(secret_name=secret_name, variable_name=variable_name)
     return secret_name, secret_version
-
-
-async def _resolve_environment_value_async(
-    *,
-    value: str,
-    variable_name: str,
-    secret_client: "SecretClient | None",
-    vault_url: str | None,
-    reference_environment: Mapping[str, str],
-) -> str:
-    """
-    Resolve one value from the bootstrap environment document.
-
-    Args:
-        value (str): The parsed bootstrap value.
-        variable_name (str): The environment variable receiving the resolved value.
-        secret_client (SecretClient | None): Client for Key Vault references, when needed.
-        vault_url (str | None): The allowed Key Vault URL, when one is needed.
-        reference_environment (Mapping[str, str]): Merged source values with ambient fallback.
-
-    Returns:
-        str: The literal, ambient, or same-vault scalar value.
-
-    Raises:
-        KeyVaultInitializationException: If a Key Vault reference cannot be resolved.
-        ValueError: If a reference is empty or cannot resolve to a value.
-    """
-    reference = _parse_environment_value_reference(value)
-    if reference is None:
-        return value
-
-    reference_type, target = reference
-    if reference_type == "literal":
-        return target
-    if not target:
-        raise ValueError(f"Empty {reference_type} reference for environment variable '{variable_name}'.")
-
-    if reference_type == "env":
-        if _environment_names_equal(left=target, right=variable_name):
-            raise ValueError(
-                f"Environment variable '{variable_name}' cannot reference itself. Use a distinct source variable name."
-            )
-        resolved_value = _lookup_environment_value(environment=reference_environment, name=target)
-        if resolved_value is None:
-            raise ValueError(
-                f"Environment variable '{target}' referenced by '{variable_name}' "
-                "is not available in the merged environment."
-            )
-        return resolved_value
-
-    try:
-        if secret_client is None or vault_url is None:
-            raise ValueError(f"AKV reference for environment variable '{variable_name}' has no available vault client.")
-
-        secret_name, secret_version = _resolve_akv_secret_reference(
-            target=target,
-            variable_name=variable_name,
-            vault_url=vault_url,
-        )
-
-        secret = await secret_client.get_secret(secret_name, version=secret_version)
-        if secret.value is None:
-            raise ValueError(
-                f"AKV secret '{secret_name}' referenced by environment variable '{variable_name}' has no value."
-            )
-        return secret.value
-    except KeyVaultInitializationException:
-        raise
-    except Exception as error:
-        wrapped_error = _key_vault_initialization_error(
-            message=f"Failed to resolve Key Vault reference for environment variable '{variable_name}'",
-            error=error,
-        )
-        raise wrapped_error from error
 
 
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
@@ -774,7 +566,7 @@ async def initialize_pyrit_async(
     initializers: Sequence["PyRITInitializer"] | None = None,
     load_defaults: bool = True,
     env_files: Sequence[pathlib.Path] | None = None,
-    env_akv_ref: str | None = None,
+    env_akv_ref: Sequence[str] | None = None,
     env_akv_strict: bool = True,
     silent: bool = False,
     **memory_instance_kwargs: Any,
@@ -802,9 +594,9 @@ async def initialize_pyrit_async(
         env_files (Sequence[pathlib.Path] | None): Optional sequence of environment file paths to load
             in order. If not provided, will load default .env and .env.local files from PyRIT home if they exist.
             All paths must be valid pathlib.Path objects.
-        env_akv_ref (str | None): Optional Azure Key Vault URL whose secret value contains the
-            bootstrap .env document. Loaded before ``env_files`` so local files take precedence
-            over AKV. Requires ``azure-keyvault-secrets``.
+        env_akv_ref (Sequence[str] | None): Optional ordered Azure Key Vault URLs whose secret values
+            contain bootstrap .env documents. Loaded before ``env_files`` so later bootstrap documents
+            and local files take precedence. Requires ``azure-keyvault-secrets``.
         env_akv_strict (bool): If True, reject malformed or valueless entries in the Key Vault
             bootstrap document. If False, warn and skip those entries. Defaults to True.
         silent (bool): If True, suppresses print statements about environment file loading and
@@ -814,13 +606,12 @@ async def initialize_pyrit_async(
     Raises:
         ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
     """
-    environment_updates = await _prepare_environment_updates_async(
+    await _load_environment_async(
         env_akv_ref=env_akv_ref,
         env_files=env_files,
         env_akv_strict=env_akv_strict,
         silent=silent,
     )
-    os.environ.update(environment_updates)
 
     # Reset all default values before executing initialization scripts
     # This ensures a clean state for each initialization
