@@ -418,8 +418,26 @@ test.describe("Mobile touch targets", () => {
   test("keeps Chat message, input, and conversation controls at least 44px", async ({
     page,
   }) => {
-    await page.goto("/");
-    await startChatWithMessages(page);
+    // Deep-link directly into the attack (rather than creating one through
+    // the chat flow) so the objective is actually hydrated from the backend:
+    // the create-attack flow seeds the objective as "" client-side and never
+    // loads the long mocked objective, so the disclosure toggle would never
+    // render and this test would silently skip checking it.
+    await page.goto("/attacks/mobile-attack-001");
+    await expect(
+      page.getByText("Deterministic assistant response for touch-target tests.")
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("toggle-objective-header-btn")
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Configuration", exact: true }).click();
+    await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
+    await page.getByRole("button", { name: "Set Active" }).first().click();
+    await page.goBack();
+    await expect(
+      page.getByTestId("toggle-objective-header-btn")
+    ).toBeVisible();
 
     await expectMinimumTouchTargets(
       page.locator(

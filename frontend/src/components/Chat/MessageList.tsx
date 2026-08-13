@@ -102,7 +102,6 @@ function MessageScore({ score, messageIndex }: { score: BackendScore; messageInd
           aria-label={`Score ${score.score_value} from ${score.scorer_type}`}
           data-testid={`message-score-${messageIndex}`}
         >
-          <Text size={200}>Score</Text>
           <Badge appearance="tint" color="brand" size="small">
             {score.score_value}
           </Badge>
