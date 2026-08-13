@@ -214,9 +214,7 @@ function App() {
           labels: attack.labels ?? {},
           target: attack.target ?? null,
           relatedConversationIds: attack.related_conversation_ids ?? [],
-          // Manual GUI attacks created without a name are persisted with a generic
-          // placeholder objective; hide it rather than surfacing it as a real one.
-          objective: attack.has_explicit_objective === false ? '' : attack.objective ?? '',
+          objective: attack.objective ?? '',
           status: 'success',
         })
       })

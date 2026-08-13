@@ -74,17 +74,16 @@ const MESSAGES = [
         converted_value_data_type: "text",
         original_value: "Deterministic assistant response for touch-target tests.",
         converted_value: "Deterministic assistant response for touch-target tests.",
-        scores: [
-          {
-            id: "mobile-assistant-score",
-            scorer_type: "SelfAskRefusalScorer",
-            score_type: "true_false",
-            score_value: "true",
-            score_category: ["refusal"],
-            score_rationale: "Deterministic rationale for touch-target tests.",
-            timestamp: "2026-07-22T13:10:01.500Z",
-          },
-        ],
+        scores: Array.from({ length: 9 }, (_unused: unknown, scoreIndex: number) => ({
+          id: `mobile-assistant-score-${scoreIndex}`,
+          scorer_type: `SelfAskRefusalScorer${scoreIndex}`,
+          score_type: "true_false",
+          score_value: scoreIndex === 0 ? "true" : "false",
+          is_objective_score: scoreIndex === 0,
+          score_category: ["refusal"],
+          score_rationale: `Deterministic rationale ${scoreIndex} for touch-target tests.`,
+          timestamp: `2026-07-22T13:10:0${scoreIndex}.500Z`,
+        })),
         response_error: "none",
       },
     ],
@@ -439,6 +438,13 @@ test.describe("Mobile touch targets", () => {
       page.getByTestId("toggle-objective-header-btn")
     ).toBeVisible();
 
+    const scoreChips = page.locator('[data-testid^="message-score-1-"]');
+    await expect(scoreChips).toHaveCount(1);
+    await expectMinimumTouchTargets(scoreChips);
+    const scoreMenu = page.getByTestId("message-score-menu-1");
+    await expect(scoreMenu).toBeVisible();
+    await expectMinimumTouchTarget(scoreMenu);
+
     await expectMinimumTouchTargets(
       page.locator(
         [
@@ -451,7 +457,6 @@ test.describe("Mobile touch targets", () => {
           '[data-testid="toggle-objective-header-btn"]',
           '[data-testid="chat-input"]',
           '[data-testid="send-message-btn"]',
-          '[data-testid="message-score-1"]',
           '[data-testid="copy-to-input-btn-1"]',
           '[data-testid="copy-to-new-conv-btn-1"]',
           '[data-testid="branch-conv-btn-1"]',

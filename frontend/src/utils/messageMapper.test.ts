@@ -122,7 +122,7 @@ describe("messageMapper", () => {
       expect(result.scores).toBeUndefined();
     });
 
-    it("should collect all scores across message pieces, newest first", () => {
+    it("should collect scores across text pieces, newest first", () => {
       // Newest score is on the second piece so a naive "first piece wins"
       // or "concatenation order" implementation would fail this assertion.
       const msg: BackendMessage = {
@@ -172,8 +172,62 @@ describe("messageMapper", () => {
       const result = backendMessageToFrontend(msg);
 
       expect(result.scores).toEqual([
-        msg.message_pieces[1].scores[0],
-        msg.message_pieces[0].scores[0],
+        expect.objectContaining({
+          ...msg.message_pieces[1].scores[0],
+          sourcePieceId: "p2",
+          pieceIndex: 1,
+          pieceType: "text",
+          sourceLabel: "Piece 2 · text",
+        }),
+        expect.objectContaining({
+          ...msg.message_pieces[0].scores[0],
+          sourcePieceId: "p1",
+          pieceIndex: 0,
+          pieceType: "text",
+          sourceLabel: "Piece 1 · text",
+        }),
+      ]);
+    });
+
+    it("should attach an image piece's scores to its attachment, not to message.scores", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p1",
+            original_value_data_type: "text",
+            converted_value_data_type: "image_path",
+            original_value: "generate an image",
+            converted_value: "/api/media?path=output%2Fimage.png",
+            converted_value_mime_type: "image/png",
+            scores: [
+              {
+                id: "score-image",
+                scorer_type: "ImageScorer",
+                score_type: "true_false",
+                score_value: "True",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.scores).toBeUndefined();
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments![0].scores).toEqual([
+        expect.objectContaining({
+          ...msg.message_pieces[0].scores[0],
+          sourcePieceId: "p1",
+          pieceIndex: 0,
+          pieceType: "image_path",
+          sourceLabel: "Piece 1 · image_path · image_path_p1",
+        }),
       ]);
     });
 

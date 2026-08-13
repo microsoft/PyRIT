@@ -10,11 +10,16 @@ import {
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
   Tooltip,
   Spinner,
   mergeClasses,
 } from '@fluentui/react-components'
-import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular } from '@fluentui/react-icons'
+import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular, AddRegular } from '@fluentui/react-icons'
 import type { BackendScore, Message, MessageAttachment } from '../../types'
 import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
@@ -88,7 +93,7 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
-function MessageScore({ score, messageIndex, scoreIndex }: { score: BackendScore; messageIndex: number; scoreIndex: number }) {
+function MessageScore({ score, groupId, scoreIndex }: { score: BackendScore; groupId: string | number; scoreIndex: number }) {
   const styles = useMessageListStyles()
   const categories = score.score_category?.filter(Boolean) ?? []
 
@@ -99,16 +104,16 @@ function MessageScore({ score, messageIndex, scoreIndex }: { score: BackendScore
           appearance="subtle"
           size="small"
           className={styles.scoreChip}
-          aria-label={`Score ${score.score_value} from ${score.scorer_type}`}
-          data-testid={`message-score-${messageIndex}-${scoreIndex}`}
+          aria-label={`Score ${score.score_value} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}`}
+          data-testid={`message-score-${groupId}-${scoreIndex}`}
         >
-          <Badge appearance="tint" color="brand" size="small">
+          <Badge appearance="tint" color="brand" size="medium">
             {score.score_value}
           </Badge>
         </Button>
       </PopoverTrigger>
       <PopoverSurface>
-        <div className={styles.scoreSurface} data-testid={`message-score-details-${messageIndex}-${scoreIndex}`}>
+        <div className={styles.scoreSurface} data-testid={`message-score-details-${groupId}-${scoreIndex}`}>
           <Text weight="semibold">Score details</Text>
           <div className={styles.scoreRow}>
             <Text size={200} weight="semibold" className={styles.scoreLabel}>Value</Text>
@@ -122,6 +127,12 @@ function MessageScore({ score, messageIndex, scoreIndex }: { score: BackendScore
             <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
             <Text size={200}>{score.scorer_type}</Text>
           </div>
+          {score.sourceLabel && (
+            <div className={styles.scoreRow}>
+              <Text size={200} weight="semibold" className={styles.scoreLabel}>Piece</Text>
+              <Text size={200}>{score.sourceLabel}</Text>
+            </div>
+          )}
           {categories.length > 0 && (
             <div className={styles.scoreRow}>
               <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
@@ -140,15 +151,52 @@ function MessageScore({ score, messageIndex, scoreIndex }: { score: BackendScore
   )
 }
 
-/** Renders one score chip per score attached to a message, newest first. */
-function MessageScores({ scores, messageIndex }: { scores: BackendScore[]; messageIndex: number }) {
+/**
+ * Renders the currently-selected score for a piece. When more than one score
+ * is present, a "+" button opens a dropdown listing every score so the user
+ * can pick which one to display in place of the chip.
+ */
+function MessageScores({ scores, groupId }: { scores: BackendScore[]; groupId: string | number }) {
   const styles = useMessageListStyles()
+  const defaultScore = scores.find((score) => score.is_objective_score) ?? scores[0]
+  const [selectedScoreId, setSelectedScoreId] = useState(defaultScore.id)
+  const selectedScore = scores.find((score) => score.id === selectedScoreId) ?? defaultScore
+  const selectedIndex = scores.indexOf(selectedScore)
 
   return (
     <div className={styles.scoreList}>
-      {scores.map((score, scoreIndex) => (
-        <MessageScore key={score.id} score={score} messageIndex={messageIndex} scoreIndex={scoreIndex} />
-      ))}
+      <MessageScore score={selectedScore} groupId={groupId} scoreIndex={selectedIndex} />
+      {scores.length > 1 && (
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
+            <Button
+              appearance="subtle"
+              size="small"
+              className={styles.scoreChip}
+              aria-label="View score details"
+              data-testid={`message-score-menu-${groupId}`}
+            >
+              <Badge appearance="tint" color="brand" size="medium">
+                <AddRegular />
+              </Badge>
+            </Button>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              {scores.map((score, scoreIndex) => (
+                <MenuItem
+                  key={score.id}
+                  onClick={() => setSelectedScoreId(score.id)}
+                  data-testid={`message-score-menu-item-${groupId}-${scoreIndex}`}
+                >
+                  {score.score_value}{score.is_objective_score ? ' *(attack objective)' : ''} — {score.scorer_type}
+                  {score.sourceLabel ? ` · ${score.sourceLabel}` : ''}
+                </MenuItem>
+              ))}
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+      )}
     </div>
   )
 }
@@ -303,43 +351,52 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                 </>
               )}
 
-              {/* Text content (converted / primary) */}
-              {message.content && (() => {
-                if (message.isLoading) {
-                  return (
-                    <Text className={styles.loadingEllipsis}>
-                      {message.content}
-                    </Text>
-                  )
-                }
-                // When Markdown rendering is enabled, it takes precedence over
-                // the JSON auto-format below.
-                if (globalMarkdown) {
-                  return (
-                    <MarkdownContent
-                      content={message.content}
-                      testId={`message-markdown-${index}`}
-                    />
-                  )
-                }
-                // For assistant / simulated_assistant messages, detect
-                // structured JSON responses (e.g. PromptShield verdicts) and
-                // render them pretty-printed inside a <pre> so the user can
-                // actually read them. User-typed JSON is left as-is.
-                const formatted = !isUser ? tryFormatJson(message.content) : null
-                if (formatted !== null) {
-                  return (
-                    <pre className={styles.messageJsonBlock} data-testid={`message-json-${index}`}>
-                      {formatted}
-                    </pre>
-                  )
-                }
-                return (
-                  <Text className={styles.messageText}>
-                    {message.content}
-                  </Text>
-                )
-              })()}
+              {/* Text content (converted / primary), with any scores for the
+                  text piece(s) shown alongside it at the same height rather
+                  than stacked above or below. */}
+              {message.content && (
+                <div className={styles.pieceRow}>
+                  {(() => {
+                    if (message.isLoading) {
+                      return (
+                        <Text className={styles.loadingEllipsis}>
+                          {message.content}
+                        </Text>
+                      )
+                    }
+                    // When Markdown rendering is enabled, it takes precedence over
+                    // the JSON auto-format below.
+                    if (globalMarkdown) {
+                      return (
+                        <MarkdownContent
+                          content={message.content}
+                          testId={`message-markdown-${index}`}
+                        />
+                      )
+                    }
+                    // For assistant / simulated_assistant messages, detect
+                    // structured JSON responses (e.g. PromptShield verdicts) and
+                    // render them pretty-printed inside a <pre> so the user can
+                    // actually read them. User-typed JSON is left as-is.
+                    const formatted = !isUser ? tryFormatJson(message.content) : null
+                    if (formatted !== null) {
+                      return (
+                        <pre className={styles.messageJsonBlock} data-testid={`message-json-${index}`}>
+                          {formatted}
+                        </pre>
+                      )
+                    }
+                    return (
+                      <Text className={styles.messageText}>
+                        {message.content}
+                      </Text>
+                    )
+                  })()}
+                  {message.scores && message.scores.length > 0 && (
+                    <MessageScores scores={message.scores} groupId={index} />
+                  )}
+                </div>
+              )}
 
               {/* Attachments (images, audio, video, files) */}
               {message.attachments && message.attachments.length > 0 && (
@@ -380,6 +437,11 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                             </Tooltip>
                           )}
                         </div>
+                      )}
+                      {/* Scores for this attachment's piece — shown beside the
+                          media at the same height, not stacked above/below. */}
+                      {att.scores && att.scores.length > 0 && (
+                        <MessageScores scores={att.scores} groupId={`${index}-att-${attIndex}`} />
                       )}
                     </div>
                   ))}
@@ -526,9 +588,6 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                 <Text className={styles.timestamp}>{timestamp}</Text>
                 <div className={styles.footerDetails}>
                   <Text className={styles.role}>{message.role}</Text>
-                  {message.scores && message.scores.length > 0 && (
-                    <MessageScores scores={message.scores} messageIndex={index} />
-                  )}
                 </div>
               </div>
             </div>

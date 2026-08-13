@@ -46,6 +46,8 @@ from pyrit.models import (
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_MANUAL_ATTACK_PLACEHOLDER = "Manual attack via GUI"
+
 if TYPE_CHECKING:
     from pyrit.models.conversation_stats import ConversationStats
 
@@ -213,6 +215,10 @@ async def attack_result_to_summary_async(
 
     data = {name: getattr(ar, name) for name in AttackResult.model_fields}
     data.update(
+        # Historical unnamed GUI attacks persisted this sentinel. Normalize it
+        # at the API boundary so clients can use the objective value directly,
+        # without a separate metadata or has_explicit_objective flag.
+        objective="" if ar.objective == _LEGACY_MANUAL_ATTACK_PLACEHOLDER else ar.objective,
         last_response=await _summary_last_response_async(ar.last_response),
         last_score=ScoreView.from_domain(ar.last_score) if ar.last_score else None,
         labels=labels,
@@ -325,6 +331,8 @@ async def _fetch_scores_by_piece_async(
 
 async def pyrit_messages_to_dto_async(
     pyrit_messages: list[Message],
+    *,
+    objective_score_id: uuid.UUID | None = None,
 ) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.
@@ -338,7 +346,8 @@ async def pyrit_messages_to_dto_async(
 
     Scores are fetched from ``CentralMemory`` (``MessagePiece`` no longer carries
     them) via a single batched ``get_prompt_scores`` call and attached to their
-    originating piece.
+    originating piece. When ``objective_score_id`` is provided, the matching
+    score is marked as the attack's canonical objective score.
 
     Returns:
         List of MessageView responses for the API.
@@ -360,6 +369,7 @@ async def pyrit_messages_to_dto_async(
                 MessagePieceView.from_domain(
                     p,
                     scores=piece_scores,
+                    objective_score_id=objective_score_id,
                     original_value_url=original_value_url,
                     converted_value_url=converted_value_url,
                 )

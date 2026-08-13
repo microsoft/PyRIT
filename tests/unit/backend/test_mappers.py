@@ -318,24 +318,34 @@ class TestAttackResultToSummary:
 
         assert summary.attack_specific_params == {"source": "gui"}
 
-    async def test_has_explicit_objective_defaults_true(self) -> None:
-        """Test that attacks without the placeholder metadata flag report an explicit objective."""
+    async def test_explicit_objective_is_preserved(self) -> None:
+        """A user-supplied objective passes through unchanged."""
         ar = _make_attack_result()
         stats = ConversationStats(message_count=0)
 
         summary = await attack_result_to_summary_async(ar, stats=stats)
 
-        assert summary.has_explicit_objective is True
+        assert summary.objective == ar.objective
 
-    async def test_has_explicit_objective_false_for_placeholder_metadata(self) -> None:
-        """Test that the placeholder-objective metadata flag surfaces as has_explicit_objective=False."""
+    async def test_empty_objective_is_preserved(self) -> None:
+        """An unnamed manual attack remains represented by an empty objective."""
         ar = _make_attack_result()
-        ar.metadata["objective_is_placeholder"] = True
+        ar.objective = ""
         stats = ConversationStats(message_count=0)
 
         summary = await attack_result_to_summary_async(ar, stats=stats)
 
-        assert summary.has_explicit_objective is False
+        assert summary.objective == ""
+
+    async def test_legacy_placeholder_objective_is_normalized_to_empty(self) -> None:
+        """Historical sentinel values are normalized at the API boundary."""
+        ar = _make_attack_result()
+        ar.objective = "Manual attack via GUI"
+        stats = ConversationStats(message_count=0)
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.objective == ""
 
     async def test_converters_extracted_from_identifier(self) -> None:
         """Test that converter class names are extracted into converters list."""

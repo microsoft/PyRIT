@@ -770,12 +770,11 @@ describe("App", () => {
     expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
   });
 
-  it("hides the placeholder objective of an unnamed manual attack on reload", async () => {
+  it("hides the normalized empty objective of an unnamed manual attack on reload", async () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
-      objective: "Manual attack via GUI",
-      has_explicit_objective: false,
+      objective: "",
       labels: {},
       related_conversation_ids: [],
     });

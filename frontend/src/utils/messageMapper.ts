@@ -115,6 +115,30 @@ function decodedBase64ByteCount(value: string): number {
   return Math.floor((stripped.length * 3) / 4)
 }
 
+function scoreWithProvenance(
+  score: BackendScore,
+  {
+    piece,
+    pieceIndex,
+    filename,
+  }: {
+    piece: BackendMessagePiece
+    pieceIndex: number
+    filename?: string
+  },
+): BackendScore {
+  const pieceType = piece.converted_value_data_type
+  const sourceLabel = [`Piece ${pieceIndex + 1}`, pieceType, filename].filter(Boolean).join(' · ')
+
+  return {
+    ...score,
+    sourcePieceId: piece.id,
+    pieceIndex,
+    pieceType,
+    sourceLabel,
+  }
+}
+
 /**
  * Build a frontend MessageAttachment from a backend piece.
  *
@@ -130,6 +154,7 @@ function decodedBase64ByteCount(value: string): number {
  */
 function pieceToAttachment(
   piece: BackendMessagePiece,
+  pieceIndex: number,
   source: 'converted' | 'original' = 'converted',
 ): MessageAttachment | null {
   const isOriginal = source === 'original'
@@ -160,6 +185,13 @@ function pieceToAttachment(
   // reference, not the payload), so size is omitted and the UI must hide it.
   const size = isBase64 && !valueUrl ? decodedBase64ByteCount(value) : undefined
 
+  // Scores belong to the piece, not to "converted" vs "original" — attach them
+  // only to the converted attachment (the one actually rendered by default) so
+  // a score chip isn't duplicated when both original and converted are shown.
+  const sortedScores = piece.scores
+    .map((score) => scoreWithProvenance(score, { piece, pieceIndex, filename: filename || fallbackName }))
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
   return {
     type: dataTypeToAttachmentType(dataType),
     name: filename || fallbackName,
@@ -168,6 +200,7 @@ function pieceToAttachment(
     size,
     pieceId: piece.id,
     metadata: piece.prompt_metadata || undefined,
+    scores: !isOriginal && sortedScores.length > 0 ? sortedScores : undefined,
   }
 }
 
@@ -185,10 +218,19 @@ function pieceToError(piece: BackendMessagePiece): MessageError | undefined {
 }
 
 /**
- * Collect all scores attached to any piece in a backend message, sorted newest first.
+ * Collect scores attached to the message's non-media (text) pieces, sorted
+ * newest first. Media piece scores are attached directly to their
+ * `MessageAttachment` in `pieceToAttachment` instead, so each score renders
+ * next to the piece it was actually computed on rather than all together.
  */
-function getAllScores(messagePieces: BackendMessagePiece[]): BackendScore[] {
-  const scores = messagePieces.flatMap((piece) => piece.scores)
+function getTextScores(messagePieces: BackendMessagePiece[]): BackendScore[] {
+  const scores = messagePieces
+    .flatMap((piece, pieceIndex) => {
+      if (isMediaDataType(piece.converted_value_data_type) || isReasoningDataType(piece.converted_value_data_type)) {
+        return []
+      }
+      return piece.scores.map((score) => scoreWithProvenance(score, { piece, pieceIndex }))
+    })
   return scores.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 }
 
@@ -203,7 +245,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
   const reasoningSummaries: string[] = []
   let error: MessageError | undefined
 
-  for (const piece of msg.message_pieces) {
+  for (const [pieceIndex, piece] of msg.message_pieces.entries()) {
     // Check for errors
     const pieceError = pieceToError(piece)
     if (pieceError && !error) {
@@ -230,13 +272,13 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     }
 
     // Extract media attachments (converted)
-    const att = pieceToAttachment(piece)
+    const att = pieceToAttachment(piece, pieceIndex)
     if (att) {
       attachments.push(att)
     }
 
     // Extract original media attachments
-    const origAtt = pieceToAttachment(piece, 'original')
+    const origAtt = pieceToAttachment(piece, pieceIndex, 'original')
     if (origAtt) {
       originalAttachments.push(origAtt)
     }
@@ -248,7 +290,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
 
   const convertedContent = textParts.join('\n')
   const originalContent = originalTextParts.join('\n')
-  const allScores = getAllScores(msg.message_pieces)
+  const textScores = getTextScores(msg.message_pieces)
 
   // Only include originalContent when it actually differs from converted
   const hasTextDiff = originalContent !== '' && originalContent !== convertedContent
@@ -259,7 +301,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     role: role as Message['role'],
     content: convertedContent,
     timestamp: msg.created_at,
-    scores: allScores.length > 0 ? allScores : undefined,
+    scores: textScores.length > 0 ? textScores : undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
     error,
     reasoningSummaries: reasoningSummaries.length > 0 ? reasoningSummaries : undefined,

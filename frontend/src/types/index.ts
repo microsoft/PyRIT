@@ -18,13 +18,19 @@ export interface MessageAttachment {
   pieceId?: string
   /** Backend prompt_metadata — preserved so video_id etc. carry over on remix/copy */
   metadata?: Record<string, unknown>
+  /** Scores attached to the piece this attachment came from, newest first. */
+  scores?: BackendScore[]
 }
 
 export interface Message {
   role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
   content: string
   timestamp: string
-  /** All scores attached to any backend piece in this message, newest first. */
+  /**
+   * Scores attached to the message's text piece(s), newest first. Scores for
+   * media pieces travel with their corresponding `attachments[].scores` entry
+   * instead, so each score renders next to the piece it was computed on.
+   */
   scores?: BackendScore[]
   attachments?: MessageAttachment[]
   /** If the backend returned an error for this message */
@@ -258,7 +264,6 @@ export interface AttackSummary {
   attack_type: string
   attack_specific_params?: Record<string, unknown> | null
   objective: string
-  has_explicit_objective?: boolean
   target?: TargetInfo | null
   converters: string[]
   outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null
@@ -293,6 +298,12 @@ export interface BackendScore {
   scorer_type: string
   score_type: string
   score_value: string
+  is_objective_score?: boolean
+  /** Frontend provenance retained when piece-level scores are flattened for display. */
+  sourcePieceId?: string
+  pieceIndex?: number
+  pieceType?: string
+  sourceLabel?: string
   score_category?: string[] | null
   score_rationale?: string | null
   timestamp: string

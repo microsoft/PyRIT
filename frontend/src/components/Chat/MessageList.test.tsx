@@ -122,6 +122,11 @@ describe("MessageList", () => {
             scorer_type: "SelfAskScaleScorer",
             score_type: "float_scale",
             score_value: "0.9",
+            is_objective_score: true,
+            sourcePieceId: "piece-1",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
             score_category: ["harmful"],
             score_rationale: "The response contains harmful content.",
             timestamp: "2026-02-15T00:01:00Z",
@@ -137,19 +142,22 @@ describe("MessageList", () => {
     );
 
     const scoreButton = screen.getByRole("button", {
-      name: /score 0.9 from selfaskscalescorer/i,
+      name: /score 0.9 from selfaskscalescorer, objective score/i,
     });
     expect(scoreButton).toBeInTheDocument();
+    expect(screen.getByText("0.9")).toBeInTheDocument();
 
     await user.click(scoreButton);
 
     expect(screen.getByText("float_scale")).toBeInTheDocument();
     expect(screen.getByText("SelfAskScaleScorer")).toBeInTheDocument();
+    expect(screen.getByText("Piece 1 · text")).toBeInTheDocument();
     expect(screen.getByText("harmful")).toBeInTheDocument();
     expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
   });
 
-  it("should show a chip for every score attached to the message", () => {
+  it("should show only the newest score chip plus a dropdown to view others", async () => {
+    const user = userEvent.setup();
     const scoredMessages: Message[] = [
       {
         role: "assistant",
@@ -161,6 +169,7 @@ describe("MessageList", () => {
             scorer_type: "NewScorer",
             score_type: "float_scale",
             score_value: "0.9",
+            sourceLabel: "Piece 2 · text",
             timestamp: "2026-02-15T00:01:00Z",
           },
           {
@@ -168,6 +177,68 @@ describe("MessageList", () => {
             scorer_type: "OldScorer",
             score_type: "true_false",
             score_value: "False",
+            is_objective_score: true,
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:00:00Z",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    // The canonical objective score is shown by default, even when a newer
+    // auxiliary score exists.
+    expect(
+      screen.getByRole("button", { name: /score false from oldscorer, objective score/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /score 0.9 from newscorer/i })
+    ).not.toBeInTheDocument();
+
+    // The "+" button opens a dropdown listing every score.
+    const menuButton = screen.getByRole("button", { name: /view score details/i });
+    expect(menuButton).toBeInTheDocument();
+
+    await user.click(menuButton);
+
+    expect(
+      screen.getByRole("menuitem", {
+        name: /false \*\(attack objective\) — oldscorer · piece 1 · text/i,
+      })
+    ).toBeInTheDocument();
+    const newScoreOption = await screen.findByRole("menuitem", {
+      name: /0.9 — newscorer · piece 2 · text/i,
+    });
+    expect(newScoreOption).toBeInTheDocument();
+
+    // Selecting a score from the dropdown replaces the displayed chip.
+    await user.click(newScoreOption);
+
+    expect(
+      screen.getByRole("button", { name: /score 0.9 from newscorer/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /score false from oldscorer/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("should not show a dropdown '+' button when the message has only one score", () => {
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Scored response",
+        timestamp: new Date().toISOString(),
+        scores: [
+          {
+            id: "score-1",
+            scorer_type: "SoleScorer",
+            score_type: "true_false",
+            score_value: "True",
             timestamp: "2026-02-15T00:00:00Z",
           },
         ],
@@ -181,11 +252,11 @@ describe("MessageList", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /score 0.9 from newscorer/i })
+      screen.getByRole("button", { name: /score true from solescorer/i })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /score false from oldscorer/i })
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /view score details/i })
+    ).not.toBeInTheDocument();
   });
 
   it("should not show a score chip when the message has no score", () => {
@@ -195,7 +266,47 @@ describe("MessageList", () => {
       </TestWrapper>
     );
 
-    expect(screen.queryByText("Score")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^score /i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("should show a score chip next to the attachment it was computed on", () => {
+    const messagesWithScoredAttachment: Message[] = [
+      {
+        role: "assistant",
+        content: "Here is a caption and a picture",
+        timestamp: new Date().toISOString(),
+        attachments: [
+          {
+            type: "image",
+            name: "test.png",
+            url: "data:image/png;base64,iVBORw0KGgo=",
+            mimeType: "image/png",
+            size: 1024,
+            scores: [
+              {
+                id: "score-image",
+                scorer_type: "ImageScorer",
+                score_type: "true_false",
+                score_value: "True",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={messagesWithScoredAttachment} />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.getByRole("button", { name: /score true from imagescorer/i })
+    ).toBeInTheDocument();
   });
 
   describe("structured JSON assistant responses", () => {
