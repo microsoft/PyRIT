@@ -276,6 +276,9 @@ describe('Initializers', () => {
     const row = await screen.findByTestId('initializer-row-additional-1')
     await user.click(within(row).getByRole('button', { name: 'Remove' }))
 
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
     await waitFor(() => {
       expect(mockedInitializersApi.deleteAdditional).toHaveBeenCalledWith('additional-1')
       expect(screen.getByText('Removed additional initializer.')).toBeInTheDocument()
