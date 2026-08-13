@@ -51,6 +51,7 @@ def _make_attack_result(
     conversation_id: str = "attack-1",
     has_target: bool = True,
     target_identifier: ComponentIdentifier | None = None,
+    target_registry_name: str | None = None,
     name: str = "Test Attack",
     outcome: AttackOutcome = AttackOutcome.UNDETERMINED,
 ) -> AttackResult:
@@ -86,6 +87,7 @@ def _make_attack_result(
         metadata={
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
+            **({"target_registry_name": target_registry_name} if target_registry_name else {}),
         },
         labels={"test_ar_label": "test_ar_value"},
     )
@@ -185,6 +187,24 @@ class TestAttackResultToSummary:
         assert summary.target.target_type == "RoundRobinTarget"
         assert summary.target.model_name is None
         assert summary.target.identifier_hash == target_identifier.hash
+
+    async def test_target_includes_persisted_registry_name(self) -> None:
+        """The registry alias is exposed as a lookup hint without changing canonical identity."""
+        ar = _make_attack_result(target_registry_name="configured-target")
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.target is not None
+        assert summary.target.target_registry_name == "configured-target"
+
+    async def test_legacy_target_omits_registry_name(self) -> None:
+        """Attacks created before registry aliases were persisted remain backward compatible."""
+        ar = _make_attack_result()
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.target is not None
+        assert summary.target.target_registry_name is None
 
     async def test_empty_pieces_gives_zero_messages(self) -> None:
         """Test mapping with no message pieces."""

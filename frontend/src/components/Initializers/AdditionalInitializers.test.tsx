@@ -227,7 +227,7 @@ describe('AdditionalInitializers', () => {
     expect(defaultProps.onApply).toHaveBeenCalledWith('additional-1', 'target', { tags: ['default'] })
   })
 
-  it('should call onRemove with the additional initializer id', async () => {
+  it('should call onRemove with the additional initializer id after confirming', async () => {
     const user = userEvent.setup()
 
     render(
@@ -238,7 +238,30 @@ describe('AdditionalInitializers', () => {
 
     await user.click(within(screen.getByTestId('initializer-row-additional-1')).getByRole('button', { name: 'Remove' }))
 
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/remove the/i)).toBeInTheDocument()
+    expect(within(dialog).getByText('target')).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
     expect(defaultProps.onRemove).toHaveBeenCalledWith('additional-1')
+  })
+
+  it('should not call onRemove when the confirmation dialog is cancelled', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <TestWrapper>
+        <AdditionalInitializers {...defaultProps} />
+      </TestWrapper>,
+    )
+
+    await user.click(within(screen.getByTestId('initializer-row-additional-1')).getByRole('button', { name: 'Remove' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(defaultProps.onRemove).not.toHaveBeenCalled()
   })
 
   it('should show a validation error when a required parameter is missing', async () => {
@@ -341,5 +364,36 @@ describe('AdditionalInitializers', () => {
     await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
 
     expect(defaultProps.onAdd).toHaveBeenCalledWith('load_default_datasets', null)
+  })
+
+  it('should show a server error inside the add dialog when onAdd fails', async () => {
+    const user = userEvent.setup()
+
+    const props = {
+      ...defaultProps,
+      registeredInitializers: [refreshInitializer],
+      onAdd: jest.fn().mockRejectedValue(new Error('Invalid days value.')),
+    }
+
+    render(
+      <TestWrapper>
+        <AdditionalInitializers {...props} />
+      </TestWrapper>,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Initializer to add' }), {
+      target: { value: 'refresh_datasets' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Add refresh_datasets initializer')
+    fireEvent.change(within(dialog).getByTestId('param-days'), { target: { value: '12' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
+
+    expect(await within(dialog).findByRole('alert', { hidden: true })).toHaveTextContent(
+      'Invalid days value.',
+    )
+    expect(dialog).toBeInTheDocument()
   })
 })

@@ -56,8 +56,8 @@ from pyrit.prompt_target.websocket_copilot_target import WebSocketCopilotTarget
 if TYPE_CHECKING:
     from pyrit.prompt_target.hugging_face.hugging_face_chat_target import HuggingFaceChatTarget
 
-# Lazy imports for modules with heavy third-party dependencies (PEP 562).
-# HuggingFaceChatTarget imports `transformers` which adds ~4s to startup.
+# Keep optional inference targets lazy so package imports do not load their
+# target-specific runtime modules.
 _LAZY_IMPORTS: dict[str, str] = {
     "HuggingFaceChatTarget": "pyrit.prompt_target.hugging_face.hugging_face_chat_target",
 }
