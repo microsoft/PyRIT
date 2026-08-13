@@ -303,7 +303,10 @@ class TrueFalseResponseHandler(ResponseHandler):
             objective=objective,
         )
 
-        normalized_value = score.raw_score_value.lower()
+        # Strip surrounding whitespace before comparing: a judge that returns
+        # "true\n" or " false" is giving a valid verdict, and should not be
+        # rejected as out-of-domain over incidental whitespace.
+        normalized_value = score.raw_score_value.strip().lower()
         if normalized_value not in {"true", "false"}:
             raise InvalidJsonException(
                 message=f"True/false score_value must be 'true' or 'false', not {score.raw_score_value!r}."
