@@ -173,7 +173,7 @@ class AcrosticConverter(Converter):
         Returns:
             str: The reconstructed message, with sentinel lines rendered as spaces.
         """
-        _, separator, body = acrostic_text.partition("\n\n")
+        _, separator, body = acrostic_text.rpartition("\n\n")
         if not separator:
             body = acrostic_text
 

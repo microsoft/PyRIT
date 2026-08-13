@@ -82,6 +82,12 @@ async def test_acrostic_custom_instruction():
     assert result.output_text.startswith("CUSTOM HEADER")
 
 
+async def test_acrostic_round_trip_with_multi_paragraph_instruction():
+    converter = AcrosticConverter(instruction="CUSTOM HEADER\n\nSECOND PARAGRAPH")
+    result = await converter.convert_async(prompt="hi", input_type="text")
+    assert AcrosticConverter.decode(result.output_text) == "HI"
+
+
 async def test_acrostic_custom_word_bank():
     bank = {"h": "Hawk", "i": "Iron"}
     converter = AcrosticConverter(word_bank=bank)
