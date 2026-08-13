@@ -259,6 +259,16 @@ describe('Initializers', () => {
     expect(within(baselineRow).queryByRole('button', { name: 'Apply now' })).not.toBeInTheDocument()
   })
 
+  it('should keep saved settings visible when catalog loading fails', async () => {
+    mockedInitializersApi.listRegistered.mockRejectedValue(new Error('Service Unavailable'))
+
+    renderInitializers()
+
+    expect(await screen.findByTestId('baseline-initializer-row-target')).toBeInTheDocument()
+    expect(screen.getByTestId('initializer-row-additional-1')).toBeInTheDocument()
+    expect(screen.getByText('Service Unavailable')).toBeInTheDocument()
+  })
+
   it('should remove an additional initializer and show success feedback', async () => {
     const user = userEvent.setup()
     renderInitializers()
