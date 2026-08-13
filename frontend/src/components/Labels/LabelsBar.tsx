@@ -4,6 +4,8 @@ import {
   Button,
   Input,
   Badge,
+  Combobox,
+  Option,
   Tooltip,
   Popover,
   PopoverTrigger,
@@ -28,6 +30,79 @@ interface LabelsBarProps {
   onLabelsChange: (labels: Record<string, string>) => void
 }
 
+interface OperationPickerProps {
+  currentValue: string
+  options: string[]
+  isLoading: boolean
+  onSelect: (operation: string) => void
+  onDismiss: () => void
+  inputRef: React.Ref<HTMLInputElement>
+  className?: string
+}
+
+/**
+ * Picker for the `operation` label. Opens with every known operation listed so
+ * a value can be chosen without typing, and accepts a new name via freeform entry.
+ * The search text starts empty — seeding it with the current value would filter
+ * the list down to nothing.
+ */
+function OperationPicker({
+  currentValue,
+  options,
+  isLoading,
+  onSelect,
+  onDismiss,
+  inputRef,
+  className,
+}: OperationPickerProps) {
+  const [search, setSearch] = useState('')
+
+  const matches = search ? options.filter(option => option.toLowerCase().includes(search)) : options
+  const canCreate = search.length > 0 && !options.some(option => option.toLowerCase() === search)
+
+  // Deferred so focus lands on whatever the user moved to before this unmounts.
+  const dismissAfterFocusMoves = () => { setTimeout(onDismiss, 0) }
+
+  return (
+    <Combobox
+      ref={inputRef}
+      className={className}
+      size="small"
+      freeform
+      defaultOpen
+      value={search}
+      placeholder={currentValue}
+      selectedOptions={options.includes(currentValue) ? [currentValue] : []}
+      onChange={e => setSearch(e.target.value.toLowerCase())}
+      onOptionSelect={(_, data) => { if (data.optionValue) onSelect(data.optionValue) }}
+      onKeyDownCapture={e => {
+        // Fluent commits the active option on Tab. Block that, but let the key
+        // through so focus still moves; onBlur then ends the edit.
+        if (e.key === 'Tab') e.stopPropagation()
+      }}
+      onKeyDown={e => { if (e.key === 'Escape') onDismiss() }}
+      onBlur={dismissAfterFocusMoves}
+      aria-label="Operation"
+      data-testid="edit-label-operation"
+    >
+      {isLoading && (
+        <Option disabled value="--loading" text="Loading operations">Loading operations...</Option>
+      )}
+      {!isLoading && matches.length === 0 && !canCreate && (
+        <Option disabled value="--empty" text="No operations">
+          No operations yet — type a name to create one
+        </Option>
+      )}
+      {matches.map(option => (
+        <Option key={option} value={option}>{option}</Option>
+      ))}
+      {canCreate && (
+        <Option key="__create" value={search} text={search}>{`Create "${search}"`}</Option>
+      )}
+    </Combobox>
+  )
+}
+
 export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const styles = useLabelsBarStyles()
   const [isPopoverOpen, setIsPopoverOpen] = useState(false)
@@ -37,6 +112,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const [editValue, setEditValue] = useState('')
   const [error, setError] = useState('')
   const [existingLabels, setExistingLabels] = useState<Record<string, string[]>>({})
+  const [labelsLoading, setLabelsLoading] = useState(true)
   const editInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch existing label keys/values for suggestions
@@ -44,6 +120,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     labelsApi.getLabels()
       .then(resp => setExistingLabels(resp.labels))
       .catch(() => { /* ignore */ })
+      .finally(() => setLabelsLoading(false))
   }, [])
 
   const isDummyValue = useCallback((key: string, value: string): boolean => {
@@ -95,6 +172,15 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     setTimeout(() => editInputRef.current?.focus(), 50)
   }
 
+  const handleStartEditKeyDown = (e: React.KeyboardEvent, key: string) => {
+    // Let focusable children (the remove button) handle their own keys.
+    if (e.target !== e.currentTarget) return
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      handleStartEdit(key)
+    }
+  }
+
   const handleSaveEdit = () => {
     if (!editingLabel) return
     const valueError = validateValue(editValue)
@@ -108,6 +194,25 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSaveEdit()
     if (e.key === 'Escape') { setEditingLabel(null); setError('') }
+  }
+
+  const handleCancelEdit = () => {
+    setEditingLabel(null)
+    setEditValue('')
+    setError('')
+  }
+
+  const handleSelectOperation = (operation: string) => {
+    // Values already in memory predate the current rules, so they are always
+    // selectable; only a newly typed name has to satisfy them.
+    if (!(existingLabels.operation || []).includes(operation)) {
+      const valueError = validateValue(operation)
+      if (valueError) { setError(valueError); return }
+    }
+    onLabelsChange({ ...labels, operation })
+    setEditingLabel(null)
+    setEditValue('')
+    setError('')
   }
 
   const handleAddKeyDown = (e: React.KeyboardEvent) => {
@@ -189,42 +294,69 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     return () => observer.disconnect()
   }, [labelEntries])
 
+  const renderValueEditor = (key: string, value: string) => {
+    if (key === 'operation') {
+      return (
+        <>
+          <Text size={200} weight="semibold">{key}:</Text>
+          <OperationPicker
+            className={styles.operationPicker}
+            currentValue={value}
+            options={suggestedValues}
+            isLoading={labelsLoading}
+            onSelect={handleSelectOperation}
+            onDismiss={handleCancelEdit}
+            inputRef={editInputRef}
+          />
+          {error && <Text size={200} className={styles.errorText}>{error}</Text>}
+        </>
+      )
+    }
+
+    const filteredSuggestions = suggestedValues
+      .filter(v => v !== value && v.includes(editValue))
+      .slice(0, 8)
+    return (
+      <>
+        <Text size={200} weight="semibold">{key}:</Text>
+        <Input
+          ref={editInputRef}
+          size="small"
+          value={editValue}
+          onChange={(_, d) => { setEditValue(d.value.toLowerCase()); setError('') }}
+          onKeyDown={handleEditKeyDown}
+          onBlur={() => { setTimeout(handleSaveEdit, 150) }}
+          style={{ width: '120px' }}
+          data-testid={`edit-label-${key}`}
+        />
+        {error && <Text size={200} className={styles.errorText}>{error}</Text>}
+        {filteredSuggestions.length > 0 && (
+          <div className={styles.editDropdown}>
+            {filteredSuggestions.map(v => (
+              <Badge
+                key={v}
+                appearance="outline"
+                size="small"
+                className={styles.suggestionChip}
+                onClick={() => { onLabelsChange({ ...labels, [key]: v }); setEditingLabel(null); setEditValue('') }}
+              >{v}</Badge>
+            ))}
+          </div>
+        )}
+      </>
+    )
+  }
+
   const renderLabelBadge = (key: string, value: string, idx: number) => {
     const isDummy = isDummyValue(key, value)
     const isRequired = key === 'operator' || key === 'operation'
-    const isEditing = editingLabel === key
+    // The popover renders its own editor, so only one is mounted at a time.
+    const isEditing = editingLabel === key && !isPopoverOpen
 
     if (isEditing) {
-      const filteredSuggestions = suggestedValues
-        .filter(v => v !== value && v.includes(editValue))
-        .slice(0, 8)
       return (
         <div key={key} data-label-idx={idx} className={styles.inputRow} style={{ display: 'inline-flex', position: 'relative', flexShrink: 0 }}>
-          <Text size={200} weight="semibold">{key}:</Text>
-          <Input
-            ref={editInputRef}
-            size="small"
-            value={editValue}
-            onChange={(_, d) => { setEditValue(d.value.toLowerCase()); setError('') }}
-            onKeyDown={handleEditKeyDown}
-            onBlur={() => { setTimeout(handleSaveEdit, 150) }}
-            style={{ width: '120px' }}
-            data-testid={`edit-label-${key}`}
-          />
-          {error && <Text size={200} className={styles.errorText}>{error}</Text>}
-          {filteredSuggestions.length > 0 && (
-            <div className={styles.editDropdown}>
-              {filteredSuggestions.map(v => (
-                <Badge
-                  key={v}
-                  appearance="outline"
-                  size="small"
-                  className={styles.suggestionChip}
-                  onClick={() => { onLabelsChange({ ...labels, [key]: v }); setEditingLabel(null); setEditValue('') }}
-                >{v}</Badge>
-              ))}
-            </div>
-          )}
+          {renderValueEditor(key, value)}
         </div>
       )
     }
@@ -239,6 +371,10 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           data-label-idx={idx}
           className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
           onClick={() => handleStartEdit(key)}
+          onKeyDown={e => handleStartEditKeyDown(e, key)}
+          role="button"
+          tabIndex={0}
+          aria-label={`Edit ${key} label, currently ${value}`}
           data-testid={`label-${key}`}
           style={{ flexShrink: 0 }}
         >
@@ -264,11 +400,22 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       {labelEntries.map(([key, value]) => {
         const isDummy = isDummyValue(key, value)
         const isRequired = key === 'operator' || key === 'operation'
+        if (editingLabel === key) {
+          return (
+            <div key={key} className={styles.inputRow} style={{ position: 'relative' }}>
+              {renderValueEditor(key, value)}
+            </div>
+          )
+        }
         return (
           <div
             key={key}
             className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
             onClick={() => handleStartEdit(key)}
+            onKeyDown={e => handleStartEditKeyDown(e, key)}
+            role="button"
+            tabIndex={0}
+            aria-label={`Edit ${key} label, currently ${value}`}
             data-testid={`popover-label-${key}`}
             style={{ flexShrink: 0 }}
           >
@@ -352,7 +499,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           </div>
         </>
       )}
-      {error && <Text size={200} className={styles.errorText}>{error}</Text>}
+      {error && !editingLabel && <Text size={200} className={styles.errorText}>{error}</Text>}
     </>
   )
 
@@ -394,7 +541,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         — so even when every chip fits, this is still the canonical
         entry point for editing/adding labels.
       */}
-      <Popover open={isPopoverOpen} onOpenChange={(_, d) => { setIsPopoverOpen(d.open); setError('') }}>
+      <Popover open={isPopoverOpen} onOpenChange={(_, d) => { setIsPopoverOpen(d.open); setError(''); if (!d.open) setEditingLabel(null) }}>
         <PopoverTrigger>
           <Tooltip
             content={

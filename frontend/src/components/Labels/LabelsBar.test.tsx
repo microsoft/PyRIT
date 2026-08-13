@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import LabelsBar from './LabelsBar'
 import { DEFAULT_GLOBAL_LABELS } from './labelDefaults'
@@ -640,4 +641,354 @@ describe('LabelsBar', () => {
     })
     expect(screen.getByTestId('popover-label-extra')).toBeInTheDocument()
   })
+
+  describe('operation picker', () => {
+    const OPERATIONS = ['op_2026_07_grok_45', 'op_2026_08_probe', 'validate-button-test']
+
+    function renderWithOperations(onChange: jest.Mock, operations: string[] = OPERATIONS) {
+      mockedLabelsApi.getLabels.mockResolvedValue({
+        source: 'attacks',
+        labels: { operation: operations, operator: ['alice'] },
+      })
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+    }
+
+    it('should list every operation without clearing the current value first', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(await screen.findByRole('option', { name: 'op_2026_08_probe' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'op_2026_07_grok_45' })).toBeInTheDocument()
+      const input = screen.getByTestId('edit-label-operation') as HTMLInputElement
+      expect(input.placeholder).toBe(DEFAULT_GLOBAL_LABELS.operation)
+      expect(input.value).toBe('')
+    })
+
+    it('should select an existing operation', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(await screen.findByRole('option', { name: 'op_2026_08_probe' }))
+
+      expect(onChange).toHaveBeenCalledWith({
+        ...DEFAULT_GLOBAL_LABELS,
+        operation: 'op_2026_08_probe',
+      })
+    })
+
+    it('should select an existing operation that predates the value rules', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(await screen.findByRole('option', { name: 'validate-button-test' }))
+
+      expect(onChange).toHaveBeenCalledWith({
+        ...DEFAULT_GLOBAL_LABELS,
+        operation: 'validate-button-test',
+      })
+    })
+
+    it('should filter the options by typed text', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      await screen.findByRole('option', { name: 'op_2026_08_probe' })
+      fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'grok' } })
+
+      expect(await screen.findByRole('option', { name: 'op_2026_07_grok_45' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'op_2026_08_probe' })).not.toBeInTheDocument()
+    })
+
+    it('should create a new operation from typed text', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      await screen.findByRole('option', { name: 'op_2026_08_probe' })
+      fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'op_2026_09_new' } })
+      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_2026_09_new"' }))
+
+      expect(onChange).toHaveBeenCalledWith({
+        ...DEFAULT_GLOBAL_LABELS,
+        operation: 'op_2026_09_new',
+      })
+    })
+
+    it('should reject a new operation that breaks the value rules', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      await screen.findByRole('option', { name: 'op_2026_08_probe' })
+      fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'bad name!' } })
+      fireEvent.click(await screen.findByRole('option', { name: 'Create "bad name!"' }))
+
+      expect(onChange).not.toHaveBeenCalled()
+      expect(screen.getByText('Only lowercase letters, numbers, underscores')).toBeInTheDocument()
+    })
+
+    it('should commit the highlighted option with the keyboard', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const input = await screen.findByTestId('edit-label-operation')
+      // Narrow to a single option so the active option is unambiguous.
+      fireEvent.change(input, { target: { value: 'grok' } })
+      await screen.findByRole('option', { name: 'op_2026_07_grok_45' })
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      expect(onChange).toHaveBeenCalledWith({
+        ...DEFAULT_GLOBAL_LABELS,
+        operation: 'op_2026_07_grok_45',
+      })
+    })
+
+    it('should dismiss the picker on Escape without committing', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const input = await screen.findByTestId('edit-label-operation')
+      fireEvent.keyDown(input, { key: 'Escape' })
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('edit-label-operation')).not.toBeInTheDocument()
+      })
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it('should offer creation when no operations exist yet', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange, [])
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      expect(await screen.findByRole('option', { name: /type a name to create one/i })).toBeInTheDocument()
+
+      fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'op_first' } })
+      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_first"' }))
+
+      expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS, operation: 'op_first' })
+    })
+
+    it('should show a loading option while operations are still being fetched', async () => {
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockImplementation(() => new Promise(() => {}))
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(await screen.findByRole('option', { name: /loading operations/i })).toBeInTheDocument()
+    })
+
+    it('should edit the operation from the popover list', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('labels-icon-btn'))
+      fireEvent.click(await screen.findByTestId('popover-label-operation'))
+
+      fireEvent.click(await screen.findByRole('option', { name: 'op_2026_08_probe' }))
+
+      expect(onChange).toHaveBeenCalledWith({
+        ...DEFAULT_GLOBAL_LABELS,
+        operation: 'op_2026_08_probe',
+      })
+    })
+
+    it('should dismiss the picker when the user clicks away', async () => {
+      const user = userEvent.setup()
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      await user.click(screen.getByTestId('label-operation'))
+      await screen.findByTestId('edit-label-operation')
+      await user.click(document.body)
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('edit-label-operation')).not.toBeInTheDocument()
+      })
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it('should move focus into the picker so it can be driven by keyboard', async () => {
+      const user = userEvent.setup()
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      // The chip must be a real, focusable control before it can be activated.
+      const chip = screen.getByTestId('label-operation')
+      expect(chip).toHaveAttribute('role', 'button')
+      expect(chip).toHaveAttribute('aria-label', expect.stringContaining(DEFAULT_GLOBAL_LABELS.operation))
+      chip.focus()
+      expect(chip).toHaveFocus()
+      await user.keyboard('{Enter}')
+
+      const input = await screen.findByTestId('edit-label-operation')
+      expect(await screen.findByRole('option', { name: 'op_2026_08_probe' })).toBeInTheDocument()
+      await waitFor(() => expect(input).toHaveFocus())
+    })
+
+    it('should end the edit when the popover is dismissed', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('labels-icon-btn'))
+      fireEvent.click(await screen.findByTestId('popover-label-operation'))
+      expect(await screen.findByTestId('edit-label-operation')).toBeInTheDocument()
+
+      // Toggle the popover shut; the edit must not reappear on the inline chip.
+      fireEvent.click(screen.getByTestId('labels-icon-btn'))
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('edit-label-operation')).not.toBeInTheDocument()
+      })
+      expect(screen.getByTestId('label-operation')).toBeInTheDocument()
+    })
+
+    it('should not commit an operation when the user tabs away', async () => {
+      const user = userEvent.setup()
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.keyDown(screen.getByTestId('label-operation'), { key: 'Enter' })
+      await screen.findByTestId('edit-label-operation')
+      await user.tab()
+
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it('should let focus advance to the next control when tabbing away', async () => {
+      const user = userEvent.setup()
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockResolvedValue({
+        source: 'attacks',
+        labels: { operation: OPERATIONS, operator: ['alice'] },
+      })
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+          <button data-testid="after">after</button>
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.keyDown(screen.getByTestId('label-operation'), { key: 'Enter' })
+      await screen.findByTestId('edit-label-operation')
+      await user.tab()
+
+      expect(onChange).not.toHaveBeenCalled()
+      await waitFor(() => expect(document.activeElement).not.toBe(document.body))
+    })
+
+    it('should match existing operations regardless of their casing', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange, ['op_Legacy_Run'])
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const input = await screen.findByTestId('edit-label-operation')
+
+      // A partial match still finds the differently-cased operation.
+      fireEvent.change(input, { target: { value: 'legacy' } })
+      expect(await screen.findByRole('option', { name: 'op_Legacy_Run' })).toBeInTheDocument()
+
+      // Typing its full name must not offer to create a case-duplicate.
+      fireEvent.change(input, { target: { value: 'op_legacy_run' } })
+      expect(await screen.findByRole('option', { name: 'op_Legacy_Run' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Create "op_legacy_run"' })).not.toBeInTheDocument()
+    })
+
+    it('should remove a custom label with the keyboard instead of starting an edit', async () => {
+      const user = userEvent.setup()
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockResolvedValue({ source: 'attacks', labels: {} })
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS, team: 'red' }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      screen.getByTestId('remove-label-team').focus()
+      await user.keyboard('{Enter}')
+
+      expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS })
+      expect(screen.queryByTestId('edit-label-team')).not.toBeInTheDocument()
+    })
+
+    it('should open the picker from the keyboard inside the popover', async () => {
+      const user = userEvent.setup()
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('labels-icon-btn'))
+      const row = await screen.findByTestId('popover-label-operation')
+      expect(row).toHaveAttribute('role', 'button')
+      row.focus()
+      expect(row).toHaveFocus()
+      await user.keyboard(' ')
+
+      expect(await screen.findByRole('option', { name: 'op_2026_08_probe' })).toBeInTheDocument()
+    })
+
+    it('should remove a custom label with the keyboard from the popover', async () => {
+      const user = userEvent.setup()
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockResolvedValue({ source: 'attacks', labels: {} })
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS, team: 'red' }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('labels-icon-btn'))
+      ;(await screen.findByTestId('popover-remove-label-team')).focus()
+      await user.keyboard('{Enter}')
+
+      expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS })
+      expect(screen.queryByTestId('edit-label-team')).not.toBeInTheDocument()
+    })
+
+    it('should keep the plain input for labels other than operation', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operator'))
+
+      expect(await screen.findByTestId('edit-label-operator')).toBeInTheDocument()
+      expect(screen.queryByRole('option')).not.toBeInTheDocument()
+    })
+  })
+
 })

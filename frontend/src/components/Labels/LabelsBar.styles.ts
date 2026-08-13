@@ -113,6 +113,9 @@ export const useLabelsBarStyles = makeStyles({
     overflowY: 'auto',
     minWidth: '120px',
   },
+  operationPicker: {
+    minWidth: '180px',
+  },
   suggestionChip: {
     cursor: 'pointer',
     ':hover': {
