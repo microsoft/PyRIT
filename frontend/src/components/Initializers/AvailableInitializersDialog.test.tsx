@@ -50,7 +50,7 @@ describe('AvailableInitializersDialog', () => {
 
     await user.click(screen.getByRole('button', { name: /browse available initializers/i }))
 
-    const dialog = await screen.findByRole('dialog')
+    const dialog = await screen.findByRole('dialog', { hidden: true })
     const refreshRow = within(dialog).getByTestId('available-initializer-row-refresh_datasets')
     expect(within(refreshRow).getByText('Refreshes datasets.')).toBeInTheDocument()
     expect(within(refreshRow).getByText(/HF_TOKEN/)).toBeInTheDocument()
@@ -71,7 +71,7 @@ describe('AvailableInitializersDialog', () => {
 
     await user.click(screen.getByRole('button', { name: /browse available initializers/i }))
 
-    const dialog = await screen.findByRole('dialog')
+    const dialog = await screen.findByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('No registered initializers were found.')).toBeInTheDocument()
   })
 })

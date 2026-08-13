@@ -14,6 +14,7 @@ import type {
   UpdateAdditionalInitializerRequest,
 } from '@/types'
 
+import { toApiError } from '@/services/errors'
 import { useAdditionalInitializersStyles } from './AdditionalInitializers.styles'
 import { formatInitializerParameters, formatSupportedParameterSummary } from './initializerFormatting'
 import { resolveRegisteredInitializer } from './initializerLookup'
@@ -171,6 +172,7 @@ export default function AdditionalInitializers({
   const listStyles = useAdditionalInitializersStyles()
   const [selectedInitializerName, setSelectedInitializerName] = useState('')
   const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [addError, setAddError] = useState<string | null>(null)
   const initializerName = selectedInitializerName || registeredInitializers[0]?.initializer_name || ''
   const selectedInitializer = registeredInitializers.find(
     (initializer) => initializer.initializer_name === initializerName,
@@ -180,9 +182,14 @@ export default function AdditionalInitializers({
     if (!initializerName) {
       return
     }
-    const added = await onAdd(initializerName, parameters)
-    if (added) {
-      setAddDialogOpen(false)
+    setAddError(null)
+    try {
+      const added = await onAdd(initializerName, parameters)
+      if (added) {
+        setAddDialogOpen(false)
+      }
+    } catch (e) {
+      setAddError(toApiError(e).detail)
     }
   }
 
@@ -251,8 +258,14 @@ export default function AdditionalInitializers({
           initializer={selectedInitializer}
           initialParameters={null}
           submitting={creating}
+          externalError={addError}
           onSubmit={handleAdd}
-          onOpenChange={setAddDialogOpen}
+          onOpenChange={(open) => {
+            setAddDialogOpen(open)
+            if (!open) {
+              setAddError(null)
+            }
+          }}
         />
       )}
     </section>
