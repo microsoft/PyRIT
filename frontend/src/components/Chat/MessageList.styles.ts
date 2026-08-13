@@ -75,6 +75,11 @@ export const useMessageListStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
   },
+  scoreList: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+  },
   scoreChip: {
     minWidth: 'auto',
     height: '24px',

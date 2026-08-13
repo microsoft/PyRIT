@@ -24,8 +24,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
   content: string
   timestamp: string
-  /** Most recent score attached to any backend piece in this message. */
-  score?: BackendScore
+  /** All scores attached to any backend piece in this message, newest first. */
+  scores?: BackendScore[]
   attachments?: MessageAttachment[]
   /** If the backend returned an error for this message */
   error?: MessageError

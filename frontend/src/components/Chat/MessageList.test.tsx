@@ -116,15 +116,17 @@ describe("MessageList", () => {
         role: "assistant",
         content: "Scored response",
         timestamp: new Date().toISOString(),
-        score: {
-          id: "score-1",
-          scorer_type: "SelfAskScaleScorer",
-          score_type: "float_scale",
-          score_value: "0.9",
-          score_category: ["harmful"],
-          score_rationale: "The response contains harmful content.",
-          timestamp: "2026-02-15T00:01:00Z",
-        },
+        scores: [
+          {
+            id: "score-1",
+            scorer_type: "SelfAskScaleScorer",
+            score_type: "float_scale",
+            score_value: "0.9",
+            score_category: ["harmful"],
+            score_rationale: "The response contains harmful content.",
+            timestamp: "2026-02-15T00:01:00Z",
+          },
+        ],
       },
     ];
 
@@ -145,6 +147,45 @@ describe("MessageList", () => {
     expect(screen.getByText("SelfAskScaleScorer")).toBeInTheDocument();
     expect(screen.getByText("harmful")).toBeInTheDocument();
     expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
+  });
+
+  it("should show a chip for every score attached to the message", () => {
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Scored response",
+        timestamp: new Date().toISOString(),
+        scores: [
+          {
+            id: "score-new",
+            scorer_type: "NewScorer",
+            score_type: "float_scale",
+            score_value: "0.9",
+            timestamp: "2026-02-15T00:01:00Z",
+          },
+          {
+            id: "score-old",
+            scorer_type: "OldScorer",
+            score_type: "true_false",
+            score_value: "False",
+            timestamp: "2026-02-15T00:00:00Z",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.getByRole("button", { name: /score 0.9 from newscorer/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /score false from oldscorer/i })
+    ).toBeInTheDocument();
   });
 
   it("should not show a score chip when the message has no score", () => {

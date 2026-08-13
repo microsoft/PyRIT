@@ -185,20 +185,11 @@ function pieceToError(piece: BackendMessagePiece): MessageError | undefined {
 }
 
 /**
- * Select the newest score attached to any piece in a backend message.
+ * Collect all scores attached to any piece in a backend message, sorted newest first.
  */
-function getLatestScore(messagePieces: BackendMessagePiece[]): BackendScore | undefined {
-  let latestScore: BackendScore | undefined
-
-  for (const piece of messagePieces) {
-    for (const score of piece.scores) {
-      if (!latestScore || new Date(score.timestamp).getTime() >= new Date(latestScore.timestamp).getTime()) {
-        latestScore = score
-      }
-    }
-  }
-
-  return latestScore
+function getAllScores(messagePieces: BackendMessagePiece[]): BackendScore[] {
+  const scores = messagePieces.flatMap((piece) => piece.scores)
+  return scores.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 }
 
 /**
@@ -257,6 +248,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
 
   const convertedContent = textParts.join('\n')
   const originalContent = originalTextParts.join('\n')
+  const allScores = getAllScores(msg.message_pieces)
 
   // Only include originalContent when it actually differs from converted
   const hasTextDiff = originalContent !== '' && originalContent !== convertedContent
@@ -267,7 +259,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     role: role as Message['role'],
     content: convertedContent,
     timestamp: msg.created_at,
-    score: getLatestScore(msg.message_pieces),
+    scores: allScores.length > 0 ? allScores : undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
     error,
     reasoningSummaries: reasoningSummaries.length > 0 ? reasoningSummaries : undefined,

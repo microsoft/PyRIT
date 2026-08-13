@@ -119,12 +119,12 @@ describe("messageMapper", () => {
       expect(result.content).toBe("Hello there");
       expect(result.attachments).toBeUndefined();
       expect(result.error).toBeUndefined();
-      expect(result.score).toBeUndefined();
+      expect(result.scores).toBeUndefined();
     });
 
-    it("should use the newest score across all message pieces", () => {
-      // Newest score is on the first piece so a naive "last piece wins"
-      // implementation (ignoring timestamps) would fail this assertion.
+    it("should collect all scores across message pieces, newest first", () => {
+      // Newest score is on the second piece so a naive "first piece wins"
+      // or "concatenation order" implementation would fail this assertion.
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
@@ -135,6 +135,23 @@ describe("messageMapper", () => {
             converted_value_data_type: "text",
             original_value: "Hello",
             converted_value: "Hello",
+            scores: [
+              {
+                id: "score-old",
+                scorer_type: "OldScorer",
+                score_type: "true_false",
+                score_value: "False",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+          {
+            id: "p2",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            original_value: "there",
+            converted_value: "there",
             scores: [
               {
                 id: "score-new",
@@ -148,30 +165,16 @@ describe("messageMapper", () => {
             ],
             response_error: "none",
           },
-          {
-            id: "p2",
-            original_value_data_type: "text",
-            converted_value_data_type: "text",
-            original_value: "there",
-            converted_value: "there",
-            scores: [
-              {
-                id: "score-old",
-                scorer_type: "OldScorer",
-                score_type: "true_false",
-                score_value: "False",
-                timestamp: "2026-02-15T00:00:00Z",
-              },
-            ],
-            response_error: "none",
-          },
         ],
         created_at: "2026-02-15T00:00:00Z",
       };
 
       const result = backendMessageToFrontend(msg);
 
-      expect(result.score).toEqual(msg.message_pieces[0].scores[0]);
+      expect(result.scores).toEqual([
+        msg.message_pieces[1].scores[0],
+        msg.message_pieces[0].scores[0],
+      ]);
     });
 
     it("should convert an image response", () => {

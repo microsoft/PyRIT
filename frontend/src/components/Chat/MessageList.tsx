@@ -88,7 +88,7 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
-function MessageScore({ score, messageIndex }: { score: BackendScore; messageIndex: number }) {
+function MessageScore({ score, messageIndex, scoreIndex }: { score: BackendScore; messageIndex: number; scoreIndex: number }) {
   const styles = useMessageListStyles()
   const categories = score.score_category?.filter(Boolean) ?? []
 
@@ -100,7 +100,7 @@ function MessageScore({ score, messageIndex }: { score: BackendScore; messageInd
           size="small"
           className={styles.scoreChip}
           aria-label={`Score ${score.score_value} from ${score.scorer_type}`}
-          data-testid={`message-score-${messageIndex}`}
+          data-testid={`message-score-${messageIndex}-${scoreIndex}`}
         >
           <Badge appearance="tint" color="brand" size="small">
             {score.score_value}
@@ -108,7 +108,7 @@ function MessageScore({ score, messageIndex }: { score: BackendScore; messageInd
         </Button>
       </PopoverTrigger>
       <PopoverSurface>
-        <div className={styles.scoreSurface} data-testid={`message-score-details-${messageIndex}`}>
+        <div className={styles.scoreSurface} data-testid={`message-score-details-${messageIndex}-${scoreIndex}`}>
           <Text weight="semibold">Score details</Text>
           <div className={styles.scoreRow}>
             <Text size={200} weight="semibold" className={styles.scoreLabel}>Value</Text>
@@ -137,6 +137,19 @@ function MessageScore({ score, messageIndex }: { score: BackendScore; messageInd
         </div>
       </PopoverSurface>
     </Popover>
+  )
+}
+
+/** Renders one score chip per score attached to a message, newest first. */
+function MessageScores({ scores, messageIndex }: { scores: BackendScore[]; messageIndex: number }) {
+  const styles = useMessageListStyles()
+
+  return (
+    <div className={styles.scoreList}>
+      {scores.map((score, scoreIndex) => (
+        <MessageScore key={score.id} score={score} messageIndex={messageIndex} scoreIndex={scoreIndex} />
+      ))}
+    </div>
   )
 }
 
@@ -513,7 +526,9 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                 <Text className={styles.timestamp}>{timestamp}</Text>
                 <div className={styles.footerDetails}>
                   <Text className={styles.role}>{message.role}</Text>
-                  {message.score && <MessageScore score={message.score} messageIndex={index} />}
+                  {message.scores && message.scores.length > 0 && (
+                    <MessageScores scores={message.scores} messageIndex={index} />
+                  )}
                 </div>
               </div>
             </div>
