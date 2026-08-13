@@ -138,7 +138,7 @@ describe('AdditionalInitializers', () => {
     registeredInitializers: [targetInitializer, scorerInitializer],
     creating: false,
     onAdd: jest.fn().mockResolvedValue(true),
-    onSave: jest.fn().mockResolvedValue(undefined),
+    onSave: jest.fn().mockResolvedValue(true),
     onApply: jest.fn().mockResolvedValue(undefined),
     onRemove: jest.fn().mockResolvedValue(undefined),
   }
@@ -335,6 +335,28 @@ describe('AdditionalInitializers', () => {
     await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
 
     expect(defaultProps.onAdd).toHaveBeenCalledWith('tagged_target', { tags: ['default', 'scorer'] })
+  })
+
+  it('should keep the edit dialog open when save fails', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockResolvedValue(false)
+
+    render(
+      <TestWrapper>
+        <AdditionalInitializers {...defaultProps} onSave={onSave} />
+      </TestWrapper>,
+    )
+
+    const row = screen.getByTestId('initializer-row-additional-1')
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }))
+
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Edit target initializer')
+    const editor = within(dialog).getByTestId('param-tags')
+    fireEvent.change(editor, { target: { value: 'modified' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it('should hide the parameters editor and submit null for a no-parameter initializer', async () => {

@@ -29,7 +29,7 @@ interface AdditionalInitializersProps {
   applyingInitializerId?: string | null
   deletingInitializerId?: string | null
   onAdd: (initializerName: string, parameters: Record<string, unknown> | null) => Promise<boolean>
-  onSave: (id: string, request: UpdateAdditionalInitializerRequest) => Promise<void>
+  onSave: (id: string, request: UpdateAdditionalInitializerRequest) => Promise<boolean>
   onApply: (id: string, initializerName: string, parameters?: Record<string, unknown> | null) => Promise<void>
   onRemove: (id: string) => Promise<void>
 }
@@ -40,7 +40,7 @@ interface AdditionalInitializerCardProps {
   isSaving: boolean
   isApplying: boolean
   isDeleting: boolean
-  onSave: (id: string, request: UpdateAdditionalInitializerRequest) => Promise<void>
+  onSave: (id: string, request: UpdateAdditionalInitializerRequest) => Promise<boolean>
   onApply: (id: string, initializerName: string, parameters?: Record<string, unknown> | null) => Promise<void>
   onRemove: (id: string) => Promise<void>
 }
@@ -61,8 +61,10 @@ function AdditionalInitializerCard({
   const isBusy = isSaving || isApplying || isDeleting
 
   const handleEditSubmit = async (parameters: Record<string, unknown> | null): Promise<void> => {
-    await onSave(item.id, { parameters, order_index: item.order_index ?? null })
-    setEditOpen(false)
+    const saved = await onSave(item.id, { parameters, order_index: item.order_index ?? null })
+    if (saved) {
+      setEditOpen(false)
+    }
   }
 
   return (

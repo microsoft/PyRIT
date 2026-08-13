@@ -104,14 +104,16 @@ export default function Initializers() {
   const handleSave = async (
     id: string,
     request: UpdateAdditionalInitializerRequest,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     setSavingInitializerId(id)
     try {
       await initializersApi.updateAdditional(id, request)
       setStatusMessage({ intent: 'success', text: 'Saved additional initializer.' })
       await refetchSettingsOnly()
+      return true
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+      return false
     } finally {
       setSavingInitializerId(null)
     }

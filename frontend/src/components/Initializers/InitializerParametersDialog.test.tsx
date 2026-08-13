@@ -207,4 +207,37 @@ describe('InitializerParametersDialog', () => {
     expect(screen.getByRole('button', { name: 'Add...' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
   })
+
+  it('displays externalError when provided', () => {
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog
+          {...baseProps}
+          initializer={numericInitializer}
+          externalError="Server error: something went wrong"
+        />
+      </TestWrapper>,
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Server error: something went wrong')
+  })
+
+  it('prefers validation error over externalError', async () => {
+    const user = userEvent.setup()
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog
+          {...baseProps}
+          onSubmit={onSubmit}
+          initializer={requiredInitializer}
+          externalError="Server error"
+        />
+      </TestWrapper>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('label is required.')
+  })
 })
