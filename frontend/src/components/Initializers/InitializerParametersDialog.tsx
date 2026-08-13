@@ -31,6 +31,7 @@ interface InitializerParametersDialogProps {
   initializer: RegisteredInitializer | null
   initialParameters?: Record<string, unknown> | null
   submitting?: boolean
+  externalError?: string | null
   onSubmit: (parameters: Record<string, unknown> | null) => void | Promise<void>
   onOpenChange: (open: boolean) => void
 }
@@ -41,6 +42,7 @@ export default function InitializerParametersDialog({
   initializer,
   initialParameters = null,
   submitting = false,
+  externalError = null,
   onSubmit,
   onOpenChange,
 }: InitializerParametersDialogProps) {
@@ -112,9 +114,9 @@ export default function InitializerParametersDialog({
                 This initializer takes no parameters.
               </Text>
             )}
-            {error && (
+            {(error || externalError) && (
               <Text role="alert" className={styles.errorText}>
-                {error}
+                {error || externalError}
               </Text>
             )}
           </DialogContent>
