@@ -26,9 +26,10 @@ from pyrit.models import (
 
 
 class TargetInfo(BaseModel):
-    """Target information extracted from the stored attack-strategy identifier."""
+    """Target identity plus an optional persisted registry lookup hint."""
 
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
+    target_registry_name: str | None = Field(None, description="Registry alias used to create the attack")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
@@ -247,8 +248,10 @@ class AttackSummary(AttackResult):
         target_id = identifier.get_child("objective_target") if identifier else None
         if not target_id:
             return None
+        target_registry_name = self.metadata.get("target_registry_name")
         return TargetInfo(
             target_type=target_id.class_name,
+            target_registry_name=target_registry_name if isinstance(target_registry_name, str) else None,
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,
