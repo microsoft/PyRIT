@@ -103,8 +103,7 @@ class SystemPromptExtraction(Scenario):
         *,
         objective_scorer: TrueFalseScorer | None = None,
         system_prompt_subsample: int = 50,
-        prompt_cap: int = _DEFAULT_PROMPT_CAP,
-        follow_prompt_cap: bool = True,
+        prompt_cap: int | None = _DEFAULT_PROMPT_CAP,
         random_seed: int | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -117,12 +116,10 @@ class SystemPromptExtraction(Scenario):
                 ``SystemPromptExtractionScorer`` (n=4) at threshold 0.5 (garak's ``eval_threshold``).
             system_prompt_subsample (int): Maximum number of system prompts to draw per dataset.
                 Defaults to 50 (garak's ``system_prompt_subsample``).
-            prompt_cap (int): Upper bound on the total number of (system prompt x template) sends per
-                run when ``follow_prompt_cap`` is set. The full combination set is randomly sampled
-                down to this size, mirroring garak's ``soft_probe_prompt_cap``. Defaults to 256.
-            follow_prompt_cap (bool): Whether to cap the total sends at ``prompt_cap``. When False,
-                every (system prompt x template) combination is run. Defaults to True (garak's
-                ``follow_prompt_cap``).
+            prompt_cap (int | None): Upper bound on the total number of (system prompt x template)
+                sends per run. The full combination set is randomly sampled down to this size,
+                mirroring garak's ``soft_probe_prompt_cap``. Set to None to run every combination.
+                Defaults to 256.
             random_seed (int | None): Seed for deterministic sampling of system prompts and the
                 prompt cap. Defaults to a fixed value for reproducibility.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
@@ -135,7 +132,6 @@ class SystemPromptExtraction(Scenario):
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
         self._system_prompt_subsample = system_prompt_subsample
         self._prompt_cap = prompt_cap
-        self._follow_prompt_cap = follow_prompt_cap
         self._random_seed = random_seed if random_seed is not None else 42
 
         super().__init__(
@@ -192,10 +188,10 @@ class SystemPromptExtraction(Scenario):
         Build the (system prompt x template) seed groups, keyed by technique category.
 
         Mirrors garak: every selected (system prompt x template) combination is enumerated across
-        all selected categories, then randomly sampled down to ``prompt_cap`` when
-        ``follow_prompt_cap`` is set. Surviving combinations are grouped by category so each becomes
-        one atomic attack. Resolving them here (rather than via the dataset config) means the base
-        owns the single seed sample shared across the atomic attacks.
+        all selected categories, then randomly sampled down to ``prompt_cap`` when it is set.
+        Surviving combinations are grouped by category so each becomes one atomic attack. Resolving
+        them here (rather than via the dataset config) means the base owns the single seed sample
+        shared across the atomic attacks.
 
         Args:
             apply_sampling (bool): Accepted for base-class compatibility but unused — the prompt-cap
@@ -228,7 +224,7 @@ class SystemPromptExtraction(Scenario):
                 f"{DATASET_EXTRACTION_TEMPLATES}) are loaded into CentralMemory before running."
             )
 
-        if self._follow_prompt_cap and len(combinations) > self._prompt_cap:
+        if self._prompt_cap is not None and len(combinations) > self._prompt_cap:
             combinations = random.Random(self._random_seed).sample(combinations, self._prompt_cap)
 
         seed_groups_by_category: dict[str, list[AttackSeedGroup]] = {}

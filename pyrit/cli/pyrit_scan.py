@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, get_args, get_origin
 from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
+    add_results_arguments,
     build_parameters_from_api,
     collapse_dataset_filters,
     non_negative_int,
@@ -295,6 +296,9 @@ def _build_base_parser(*, add_help: bool = True) -> ArgumentParser:
         help=ARG_HELP["dataset_filters"],
     )
 
+    # -- Scenario results (inspect a completed run and exit) --
+    add_results_arguments(parser=parser, include_id_flag=True)
+
     return parser
 
 
@@ -502,6 +506,7 @@ def _is_command_specified(*, parsed_args: Namespace) -> bool:
         or parsed_args.list_converters
         or parsed_args.list_datasets
         or parsed_args.add_initializer
+        or parsed_args.scenario_results
         or parsed_args.scenario_name
     )
 
@@ -604,6 +609,70 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
         except ServerNotAvailableError as exc:
             print(f"Error: {exc}")
             return 1
+    return 0
+
+
+def _validate_results_flags(*, parsed_args: Namespace) -> str | None:
+    """
+    Ensure the ``scenario-results`` sub-flags are only used with ``--scenario-results``.
+
+    ``--view`` / ``--attack-result-ids`` / ``--limit`` only mean something when a
+    run is being inspected. Because the flat parser accepts them regardless, this
+    check gives a clear error instead of the generic "no scenario specified"
+    fallthrough.
+
+    Args:
+        parsed_args (Namespace): The parsed CLI arguments.
+
+    Returns:
+        str | None: An error message when a sub-flag is misused, else None.
+    """
+    if parsed_args.scenario_results:
+        return None
+    misused: list[str] = []
+    if parsed_args.view is not None:
+        misused.append("--view")
+    if parsed_args.attack_result_ids:
+        misused.append("--attack-result-ids")
+    if parsed_args.limit is not None:
+        misused.append("--limit")
+    if not misused:
+        return None
+    return f"Error: {', '.join(misused)} require --scenario-results <id>."
+
+
+async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
+    """
+    Handle ``--scenario-results``: fetch a run and render the requested view.
+
+    Returns:
+        int: Exit code (``0`` on success, ``1`` on error).
+    """
+    from pyrit.cli import _output
+    from pyrit.cli._cli_args import ScenarioResultView
+    from pyrit.cli._results import apply_view_limit_policy, build_attacks_table_payload, resolve_view
+
+    scenario_result_id = parsed_args.scenario_results
+    view = resolve_view(view=parsed_args.view)
+    limit = apply_view_limit_policy(view=view, limit=parsed_args.limit)
+
+    try:
+        result = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
+    except Exception as exc:
+        _print_cli_exception(exc=exc)
+        return 1
+
+    if view is ScenarioResultView.OVERVIEW:
+        await _output.print_scenario_result_async(result=result)
+        return 0
+
+    payload = build_attacks_table_payload(
+        result=result,
+        scenario_result_id=scenario_result_id,
+        attack_result_ids=parsed_args.attack_result_ids,
+        limit=limit,
+    )
+    _output.print_attacks_table(payload=payload)
     return 0
 
 
@@ -795,6 +864,9 @@ async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) ->
     if parsed_args.add_initializer:
         return await _handle_add_initializer_async(client=client, parsed_args=parsed_args)
 
+    if parsed_args.scenario_results:
+        return await _handle_results_async(client=client, parsed_args=parsed_args)
+
     scenario_name = parsed_args.scenario_name
     if not scenario_name:
         print("Error: No scenario specified. Provide one positionally or use --list-scenarios.")
@@ -832,6 +904,11 @@ async def _run_async(*, parsed_args: Namespace) -> int:
 
     if parsed_args.stop_server:
         return await _handle_stop_server_async(parsed_args=parsed_args)
+
+    results_flag_error = _validate_results_flags(parsed_args=parsed_args)
+    if results_flag_error is not None:
+        print(results_flag_error, file=sys.stderr)
+        return 1
 
     if not (parsed_args.start_server or _is_command_specified(parsed_args=parsed_args)):
         _build_base_parser().print_help()

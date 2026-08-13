@@ -176,8 +176,8 @@ class TestSystemPromptExtractionAtomicAttacks:
         total = sum(len(a.seed_groups) for a in scenario._atomic_attacks)
         assert total == 5
 
-    async def test_follow_prompt_cap_false_runs_every_combination(self, mock_objective_target, mock_objective_scorer):
-        scenario = SystemPromptExtraction(objective_scorer=mock_objective_scorer, prompt_cap=5, follow_prompt_cap=False)
+    async def test_prompt_cap_none_runs_every_combination(self, mock_objective_target, mock_objective_scorer):
+        scenario = SystemPromptExtraction(objective_scorer=mock_objective_scorer, prompt_cap=None)
         await self._init(scenario, mock_objective_target)
 
         total = sum(len(a.seed_groups) for a in scenario._atomic_attacks)
