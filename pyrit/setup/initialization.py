@@ -203,9 +203,8 @@ def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
 
     hostname = parsed_url.hostname
     vault_name, separator, dns_suffix = hostname.partition(".") if hostname else ("", "", "")
-    valid_vault_name = (
-        1 <= len(vault_name) <= 63
-        and all(char.isascii() and (char.isalnum() or char == "-") for char in vault_name)
+    valid_vault_name = 1 <= len(vault_name) <= 63 and all(
+        char.isascii() and (char.isalnum() or char == "-") for char in vault_name
     )
     valid_authority = (
         parsed_url.scheme.casefold() == "https"
@@ -218,10 +217,7 @@ def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
     )
     path_parts = parsed_url.path.split("/")
     valid_path = (
-        len(path_parts) in {3, 4}
-        and path_parts[0] == ""
-        and path_parts[1] == "secrets"
-        and all(path_parts[2:])
+        len(path_parts) in {3, 4} and path_parts[0] == "" and path_parts[1] == "secrets" and all(path_parts[2:])
     )
     if not valid_authority or not valid_path or parsed_url.query or parsed_url.fragment:
         raise ValueError(error_message)
