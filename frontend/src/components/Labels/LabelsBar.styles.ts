@@ -119,9 +119,10 @@ export const useLabelsBarStyles = makeStyles({
   // Caps the list so it stays under the input instead of stretching to fill
   // the window. This only takes effect because the picker asks Fluent to
   // auto-size width alone; by default it writes its own max-height inline,
-  // which beats this rule.
+  // which beats this rule. Asking for width alone also gives up Fluent's
+  // vertical fitting, so the cap yields to the viewport when it has to.
   operationListbox: {
-    maxHeight: '240px',
+    maxHeight: 'min(240px, calc(100vh - 32px))',
   },
   // Fluent dims disabled options to ~1.9:1 contrast, which is too faint for
   // text the user has to read. These are messages, not choices.
