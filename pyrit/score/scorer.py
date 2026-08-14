@@ -318,8 +318,8 @@ class Scorer(Identifiable, abc.ABC):
             )
 
         if scorable is None:
-            # A supplied message maps to MessageScorable, never ConversationScorable: the
-            # caller asked about this message, not about everything stored alongside it.
+            # The caller asked about this message, not about everything stored alongside it,
+            # so the shim maps to the exact message rather than widening to its conversation.
             scorable = MessageScorable(
                 message=cast("Message", message),
                 role_filter=role_filter,

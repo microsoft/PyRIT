@@ -212,7 +212,7 @@ class MessageScorer(Scorer):
         if len(messages) != 1:
             raise ValueError(
                 f"Expected the referenced pieces to form exactly one message, got {len(messages)}. "
-                "Reference pieces from a single message, or use a ConversationScorable."
+                "Reference pieces from a single message."
             )
         return messages[0]
 

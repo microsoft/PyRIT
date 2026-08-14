@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import dataclasses
 import uuid
 
 import pytest
@@ -9,7 +10,6 @@ from pyrit.memory import MemoryInterface
 from pyrit.models import (
     ComponentIdentifier,
     ContentScorable,
-    ConversationScorable,
     Message,
     MessagePiece,
     MessageReferenceScorable,
@@ -19,6 +19,13 @@ from pyrit.models import (
 )
 from pyrit.score import ScorerPromptValidator, TrueFalseScorer
 from pyrit.score.message_scorer import extract_objective_from_previous_turn
+
+
+@dataclasses.dataclass(frozen=True)
+class UnsupportedScorable:
+    """A scorable kind no message scorer handles."""
+
+    uri: str
 
 
 class PermissiveValidator(ScorerPromptValidator):
@@ -135,8 +142,8 @@ class TestScorableResolution:
     async def test_unsupported_scorable_raises_type_error(self):
         scorer = RecordingScorer()
 
-        with pytest.raises(TypeError, match="cannot score ConversationScorable"):
-            await scorer.score_async(scorable=ConversationScorable(conversation_id=str(uuid.uuid4())))
+        with pytest.raises(TypeError, match="cannot score UnsupportedScorable"):
+            await scorer.score_async(scorable=UnsupportedScorable(uri="/tmp/out.txt"))  # type: ignore[arg-type]
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -234,7 +241,7 @@ class TestDeprecatedParameters:
         assert scorer.scored_messages == [message]
 
     async def test_message_does_not_widen_to_the_stored_conversation(self, sqlite_instance: MemoryInterface):
-        """A supplied message must map to MessageScorable, never ConversationScorable."""
+        """The shim scores the supplied message, never the whole conversation behind it."""
         conversation_id = str(uuid.uuid4())
         sqlite_instance.add_message_to_memory(
             request=MessagePiece(
