@@ -237,6 +237,22 @@ describe('Initializers', () => {
     })
   })
 
+  it('should show save errors in the edit dialog and preserve edits', async () => {
+    const user = userEvent.setup()
+    mockedInitializersApi.updateAdditional.mockRejectedValue(new Error('Mock save failure'))
+    renderInitializers()
+
+    await screen.findByTestId('initializer-row-additional-1')
+    const dialog = await openDialogByButton(user, 'Edit', 'Edit scorer initializer')
+    const editor = within(dialog).getByTestId('param-tags')
+    fireEvent.change(editor, { target: { value: 'relaxed' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
+
+    expect(screen.getByRole('dialog', { hidden: true })).toBeInTheDocument()
+    expect(await within(dialog).findByRole('alert', { hidden: true })).toHaveTextContent('Mock save failure')
+    expect(editor).toHaveValue('relaxed')
+  })
+
   it('should apply an additional initializer', async () => {
     const user = userEvent.setup()
     renderInitializers()
@@ -259,6 +275,16 @@ describe('Initializers', () => {
     expect(within(baselineRow).queryByRole('button', { name: 'Apply now' })).not.toBeInTheDocument()
   })
 
+  it('should keep saved settings visible when catalog loading fails', async () => {
+    mockedInitializersApi.listRegistered.mockRejectedValue(new Error('Service Unavailable'))
+
+    renderInitializers()
+
+    expect(await screen.findByTestId('baseline-initializer-row-target')).toBeInTheDocument()
+    expect(screen.getByTestId('initializer-row-additional-1')).toBeInTheDocument()
+    expect(screen.getByText('Service Unavailable')).toBeInTheDocument()
+  })
+
   it('should remove an additional initializer and show success feedback', async () => {
     const user = userEvent.setup()
     renderInitializers()
@@ -266,8 +292,8 @@ describe('Initializers', () => {
     const row = await screen.findByTestId('initializer-row-additional-1')
     await user.click(within(row).getByRole('button', { name: 'Remove' }))
 
-    const dialog = await screen.findByRole('dialog')
-    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+    const dialog = await screen.findByRole('dialog', { hidden: true })
+    await user.click(within(dialog).getByRole('button', { name: 'Remove', hidden: true }))
 
     await waitFor(() => {
       expect(mockedInitializersApi.deleteAdditional).toHaveBeenCalledWith('additional-1')

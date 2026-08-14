@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import datetime
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -69,6 +71,34 @@ async def test_drh_handles_missing_metadata_columns(mock_drh_rows):
 
     assert "creation_date" not in dataset.seeds[1].metadata
     assert dataset.seeds[1].metadata["agentname"] == "Pirate"
+
+
+async def test_drh_coerces_non_json_metadata_to_str():
+    """HuggingFace returns ``creation_date`` as a ``datetime``; it must be coerced so the
+    metadata stays JSON-serializable for persistence to memory."""
+    loader = _GarakDrhSystemPromptDataset()
+    created = datetime.datetime(2024, 1, 1, 12, 30, tzinfo=datetime.timezone.utc)
+    rows = [
+        {
+            "systemprompt": "You are a helpful assistant.",
+            "agentname": "Helper",
+            "creation_date": created,
+            "is-agent": True,
+            "is-single-turn": False,
+        }
+    ]
+
+    with patch.object(
+        loader,
+        "_fetch_from_huggingface_async",
+        new=AsyncMock(return_value=rows),
+    ):
+        dataset = await loader.fetch_dataset_async()
+
+    metadata = dataset.seeds[0].metadata
+    assert metadata["creation_date"] == str(created)
+    # The whole metadata dict must be JSON-serializable.
+    json.dumps(metadata)
 
 
 async def test_tm_fetch_maps_rows(mock_tm_rows):
