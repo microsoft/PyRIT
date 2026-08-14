@@ -10,7 +10,7 @@ cp .pyrit_conf_example ~/.pyrit/.pyrit_conf
 cp .env_example ~/.pyrit/.env
 ```
 
-Then edit both files for your environment. The `.pyrit_conf` tells PyRIT _how_ to initialize; the `.env` tells it _where_ your AI targets are.
+Then edit both files for your environment. The `.pyrit_conf` tells PyRIT _how_ to initialize; the `.env` tells it _where_ your targets are.
 
 ## File Location
 

@@ -104,9 +104,9 @@ class TestTargetInitializerInitialize:
         os.environ["PLATFORM_OPENAI_CHAT_MODEL"] = "gpt-4o"
 
         # Set up openai_image_platform (uses ENDPOINT2/KEY2/MODEL2)
-        os.environ["OPENAI_IMAGE_ENDPOINT2"] = "https://api.openai.com/v1"
-        os.environ["OPENAI_IMAGE_API_KEY2"] = "test_image_key"
-        os.environ["OPENAI_IMAGE_MODEL2"] = "dall-e-3"
+        os.environ["AZURE_OPENAI_IMAGE_ENDPOINT2"] = "https://api.openai.com/v1"
+        os.environ["AZURE_OPENAI_IMAGE_API_KEY2"] = "test_image_key"
+        os.environ["AZURE_OPENAI_IMAGE_MODEL2"] = "dall-e-3"
 
         init = TargetInitializer()
         await init.initialize_async()
