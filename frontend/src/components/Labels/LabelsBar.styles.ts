@@ -116,10 +116,10 @@ export const useLabelsBarStyles = makeStyles({
   operationPicker: {
     minWidth: '180px',
   },
-  // Keeps the list small enough that Fluent leaves it under the input rather
-  // than turning it into a full height column elsewhere on the page. Fluent
-  // writes its own max-height inline once positioned, so this is a floor on
-  // that decision rather than the height you end up seeing.
+  // Caps the list so it stays under the input instead of stretching to fill
+  // the window. This only takes effect because the picker asks Fluent to
+  // auto-size width alone; by default it writes its own max-height inline,
+  // which beats this rule.
   operationListbox: {
     maxHeight: '240px',
   },
