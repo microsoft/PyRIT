@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import LabelsBar from './LabelsBar'
@@ -1051,6 +1051,35 @@ describe('LabelsBar', () => {
 
       expect(await screen.findByRole('option', { name: 'op_2026_09_fresh' })).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: 'Create "op_2026_09_fresh"' })).not.toBeInTheDocument()
+    })
+
+    it('should keep an operation created while the list was still loading', async () => {
+      const onChange = jest.fn()
+      let resolveLabels: (value: { source: string; labels: Record<string, string[]> }) => void = () => {}
+      mockedLabelsApi.getLabels.mockReturnValue(
+        new Promise(resolve => { resolveLabels = resolve })
+      )
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.change(await screen.findByTestId('edit-label-operation'), {
+        target: { value: 'op_made_while_loading' },
+      })
+      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_made_while_loading"' }))
+
+      // The response was in flight and cannot know about the name just created.
+      await act(async () => {
+        resolveLabels({ source: 'attacks', labels: { operation: ['op_from_server'] } })
+      })
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(await screen.findByRole('option', { name: 'op_made_while_loading' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'op_from_server' })).toBeInTheDocument()
     })
 
     it('should keep the plain input for labels other than operation', async () => {

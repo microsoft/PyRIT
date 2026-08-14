@@ -155,7 +155,12 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   // Fetch existing label keys/values for suggestions
   useEffect(() => {
     labelsApi.getLabels()
-      .then(resp => setExistingLabels(resp.labels))
+      // A name created while this was in flight is not in the response yet,
+      // so keep anything already collected rather than replacing outright.
+      .then(resp => setExistingLabels(prev => ({
+        ...resp.labels,
+        operation: [...new Set([...(resp.labels.operation || []), ...(prev.operation || [])])],
+      })))
       .catch(() => setLabelsFailed(true))
       .finally(() => setLabelsLoading(false))
   }, [])
