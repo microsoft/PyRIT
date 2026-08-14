@@ -94,9 +94,11 @@ Examples:
   # Start the backend server
   pyrit_scan start-server
 
-  # List scenarios, targets, or converters
+  # List scenarios, initializers, targets, or converters
   pyrit_scan list-scenarios
+  pyrit_scan list-initializers
   pyrit_scan list-targets
+  pyrit_scan list-converters
 
   # Run single-turn cyber attacks against a target
   pyrit_scan run airt.cyber --target openai_chat --techniques single_turn
