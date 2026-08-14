@@ -299,7 +299,7 @@ class AttackService:
         pyrit_messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
         backend_messages = await pyrit_messages_to_dto_async(
             list(pyrit_messages),
-            objective_score_id=ar.last_score.id if ar.last_score else None,
+            objective_score_id=uuid.UUID(str(ar.last_score.id)) if ar.last_score else None,
         )
 
         return ConversationMessagesResponse(
