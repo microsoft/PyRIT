@@ -20,7 +20,7 @@ import { labelsApi } from '../../services/api'
 import { useLabelsBarStyles } from './LabelsBar.styles'
 
 
-const validateOperationValue = (value: string): string | null => {
+const validateValue = (value: string): string | null => {
   if (!value) return 'Value is required'
   if (value !== value.toLowerCase()) return 'Values must be lowercase'
   if (!/^[a-z0-9_]+$/.test(value)) return 'Only lowercase letters, numbers, underscores'
@@ -41,6 +41,7 @@ interface OperationPickerProps {
   currentValue: string
   options: string[]
   isLoading: boolean
+  loadFailed: boolean
   onSelect: (operation: string) => void
   onSearchChange: () => void
   onDismiss: () => void
@@ -61,6 +62,7 @@ function OperationPicker({
   currentValue,
   options,
   isLoading,
+  loadFailed,
   onSelect,
   onSearchChange,
   onDismiss,
@@ -76,7 +78,7 @@ function OperationPicker({
   const isNewName = search.length > 0 && !options.some(option => option.toLowerCase() === search)
   // Say why a name can't be created while it is being typed, rather than
   // rejecting it after the fact next to a bar that clips the message.
-  const searchError = isNewName ? validateOperationValue(search) : null
+  const searchError = isNewName ? validateValue(search) : null
   const canCreate = isNewName && !searchError
 
   // Deferred so focus lands on whatever the user moved to before this unmounts.
@@ -112,9 +114,15 @@ function OperationPicker({
         <Option disabled className={noteClassName} value="--loading" text="Loading operations">Loading operations...</Option>
       )}
       {!isLoading && matches.length === 0 && !canCreate && !searchError && (
-        <Option disabled className={noteClassName} value="--empty" text="No operations">
-          No operations yet — type a name to create one
-        </Option>
+        loadFailed ? (
+          <Option disabled className={noteErrorClassName} value="--failed" text="Could not load operations">
+            Could not load existing operations — type a name to use one
+          </Option>
+        ) : (
+          <Option disabled className={noteClassName} value="--empty" text="No operations">
+            No operations yet — type a name to create one
+          </Option>
+        )
       )}
       {matches.map(option => (
         <Option key={option} value={option}>{option}</Option>
@@ -141,13 +149,14 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const [error, setError] = useState('')
   const [existingLabels, setExistingLabels] = useState<Record<string, string[]>>({})
   const [labelsLoading, setLabelsLoading] = useState(true)
+  const [labelsFailed, setLabelsFailed] = useState(false)
   const editInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch existing label keys/values for suggestions
   useEffect(() => {
     labelsApi.getLabels()
       .then(resp => setExistingLabels(resp.labels))
-      .catch(() => { /* ignore */ })
+      .catch(() => setLabelsFailed(true))
       .finally(() => setLabelsLoading(false))
   }, [])
 
@@ -162,13 +171,6 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     if (key !== key.toLowerCase()) return 'Labels must be lowercase'
     if (!/^[a-z][a-z0-9_]*$/.test(key)) return 'Only lowercase letters, numbers, underscores'
     if (key in labels) return 'Label key already exists'
-    return null
-  }
-
-  const validateValue = (value: string): string | null => {
-    if (!value) return 'Value is required'
-    if (value !== value.toLowerCase()) return 'Values must be lowercase'
-    if (!/^[a-z0-9_]+$/.test(value)) return 'Only lowercase letters, numbers, underscores'
     return null
   }
 
@@ -239,7 +241,10 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       if (valueError) { setError(valueError); return }
       // A name only reaches the labels API once an attack has been stored under
       // it, so keep it listed here or the picker forgets what it just created.
-      setExistingLabels(prev => ({ ...prev, operation: [...known, operation] }))
+      setExistingLabels(prev => ({
+        ...prev,
+        operation: [...(prev.operation || []), operation],
+      }))
     }
     onLabelsChange({ ...labels, operation })
     setEditingLabel(null)
@@ -339,6 +344,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             currentValue={value}
             options={suggestedValues}
             isLoading={labelsLoading}
+            loadFailed={labelsFailed}
             onSelect={handleSelectOperation}
             onSearchChange={() => setError('')}
             onDismiss={handleCancelEdit}

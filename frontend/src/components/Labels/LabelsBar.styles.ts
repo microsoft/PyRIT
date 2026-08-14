@@ -116,8 +116,10 @@ export const useLabelsBarStyles = makeStyles({
   operationPicker: {
     minWidth: '180px',
   },
-  // Without a ceiling the list grows to the height of the viewport and Fluent
-  // parks it away from the input it belongs to.
+  // Keeps the list small enough that Fluent leaves it under the input rather
+  // than turning it into a full height column elsewhere on the page. Fluent
+  // writes its own max-height inline once positioned, so this is a floor on
+  // that decision rather than the height you end up seeing.
   operationListbox: {
     maxHeight: '240px',
   },

@@ -1000,6 +1000,41 @@ describe('LabelsBar', () => {
       expect(screen.queryByTestId('edit-label-team')).not.toBeInTheDocument()
     })
 
+    it('should say so when the operations could not be loaded', async () => {
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockRejectedValue(new Error('boom'))
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(
+        await screen.findByRole('option', { name: /could not load existing operations/i })
+      ).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /no operations yet/i })).not.toBeInTheDocument()
+    })
+
+    it('should create a typed name with the keyboard', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const input = await screen.findByTestId('edit-label-operation')
+      fireEvent.change(input, { target: { value: 'op_2026_09_typed' } })
+      await screen.findByRole('option', { name: 'Create "op_2026_09_typed"' })
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      expect(onChange).toHaveBeenCalledWith({
+        ...DEFAULT_GLOBAL_LABELS,
+        operation: 'op_2026_09_typed',
+      })
+    })
+
     it('should keep a newly created operation in the list', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange)
