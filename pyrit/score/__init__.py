@@ -33,6 +33,13 @@ from pyrit.score.float_scale.self_ask_likert_scorer import (
 from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer, render_scale_system_prompt
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.scorable import (
+    ContentScorable,
+    MessageReferenceScorable,
+    MessageScorable,
+    Scorable,
+    SingleMessageScorable,
+)
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior
 from pyrit.score.scorer_evaluation.scorer_metrics import (
@@ -159,6 +166,7 @@ __all__ = [
     "ContentClassifier",
     "ContentClassifierCategory",
     "ContentClassifierPaths",
+    "ContentScorable",
     "ConversationScorer",
     "CredentialLeakScorer",
     "DecodingScorer",
@@ -188,6 +196,8 @@ __all__ = [
     "LlamaGuardPolicy",
     "LlamaGuardScorer",
     "MarkdownInjectionScorer",
+    "MessageReferenceScorable",
+    "MessageScorable",
     "MessageScorer",
     "MethKeywordScorer",
     "MetricsType",
@@ -215,6 +225,7 @@ __all__ = [
     "render_shieldgemma_prompt",
     "render_true_false_system_prompt",
     "ResponseHandler",
+    "Scorable",
     "Scorer",
     "ScorerEvalDatasetFiles",
     "ScorerEvaluator",
@@ -234,6 +245,7 @@ __all__ = [
     "SelfAskRefusalScorer",
     "SelfAskScaleScorer",
     "SelfAskTrueFalseScorer",
+    "SingleMessageScorable",
     "ScorerPrinter",
     "SHIELDGEMMA_DEFAULT_POLICY_PATH",
     "ShieldGemmaGuideline",

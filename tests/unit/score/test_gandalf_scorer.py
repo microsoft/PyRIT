@@ -9,9 +9,9 @@ from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions.exception_classes import PyritException
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece, MessageScorable
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import GandalfLevel
-from pyrit.score import GandalfScorer
+from pyrit.score import GandalfScorer, MessageScorable
 
 
 def generate_password_extraction_response(response_text: str, conversation_id: str | None = None) -> Message:

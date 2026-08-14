@@ -7,8 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pyrit.memory import CentralMemory
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, MessageScorable, Score
-from pyrit.score import Scorer, SelfAskGeneralFloatScaleScorer, create_conversation_scorer
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.score import (
+    MessageScorable,
+    MessageScorer,
+    Scorer,
+    SelfAskGeneralFloatScaleScorer,
+    create_conversation_scorer,
+)
 from pyrit.score.conversation_scorer import ConversationScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -49,8 +55,8 @@ class MockTrueFalseScorer(TrueFalseScorer):
         return []
 
 
-class MockUnsupportedScorer(Scorer):
-    """Mock unsupported Scorer for testing error cases"""
+class MockUnsupportedScorer(MessageScorer):
+    """Mock scorer that is neither a FloatScaleScorer nor a TrueFalseScorer"""
 
     def __init__(self):
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))

@@ -10,8 +10,8 @@ from unit.mocks import get_image_message_piece
 from pyrit.analytics import ApproximateTextMatching, ExactTextMatching
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import MessagePiece, MessageScorable
-from pyrit.score import SubStringScorer
+from pyrit.models import MessagePiece
+from pyrit.score import MessageScorable, SubStringScorer
 
 
 @pytest.fixture

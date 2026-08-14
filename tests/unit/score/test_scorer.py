@@ -11,11 +11,12 @@ from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.memory import MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, MessageScorable, Score, ScoringExpectation
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     FloatScaleScorer,
     JsonSchemaResponseHandler,
+    MessageScorable,
     MessageScorer,
     Scorer,
     ScorerPromptValidator,

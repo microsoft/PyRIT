@@ -139,7 +139,7 @@ class ConversationScorer(MessageScorer, ABC):
         raise NotImplementedError("ConversationScorer uses _score_async, not _score_piece_async")
 
     @abstractmethod
-    def _get_wrapped_scorer(self) -> Scorer:
+    def _get_wrapped_scorer(self) -> MessageScorer:
         """
         Abstract method to enforce that ConversationScorer cannot be instantiated directly.
 
@@ -200,6 +200,9 @@ def create_conversation_scorer(
             f"Scorer must be an instance of FloatScaleScorer or TrueFalseScorer."
         )
 
+    # Both branches above narrow to a MessageScorer, which is what supplies _score_async.
+    wrapped_scorer: MessageScorer = scorer
+
     # Dynamically create a class that inherits from both ConversationScorer and the scorer's base class
     class DynamicConversationScorer(ConversationScorer, scorer_base_class):  # type: ignore[valid-type]  # type: ignore[ty:unsupported-base]
         """Dynamic ConversationScorer that inherits from both ConversationScorer and the wrapped scorer's base class."""
@@ -207,9 +210,9 @@ def create_conversation_scorer(
         def __init__(self) -> None:
             # Initialize with the validator and wrapped scorer
             Scorer.__init__(self, validator=validator or ConversationScorer._DEFAULT_VALIDATOR)
-            self._wrapped_scorer = scorer
+            self._wrapped_scorer = wrapped_scorer
 
-        def _get_wrapped_scorer(self) -> Scorer:
+        def _get_wrapped_scorer(self) -> MessageScorer:
             """Return the wrapped scorer."""
             return self._wrapped_scorer
 

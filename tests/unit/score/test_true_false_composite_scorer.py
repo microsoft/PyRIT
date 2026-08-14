@@ -6,8 +6,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import ComponentIdentifier, MessagePiece, MessageScorable, Score, ScoringExpectation
-from pyrit.score import FloatScaleScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator, TrueFalseScorer
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
+from pyrit.score import (
+    FloatScaleScorer,
+    MessageScorable,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:

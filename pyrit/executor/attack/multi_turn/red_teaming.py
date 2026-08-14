@@ -33,13 +33,13 @@ from pyrit.models import (
     ConversationReference,
     ConversationType,
     Message,
-    MessageScorable,
     Score,
     ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.score import MessageScorable
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -3,30 +3,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
-from pyrit.models import (
-    ContentScorable,
-    Message,
-    MessagePiece,
-    MessageReferenceScorable,
-    MessageScorable,
-    Scorable,
-    Score,
-    ScoringExpectation,
-    group_message_pieces_into_conversations,
-)
+from pyrit.score.scorable import Scorable, SingleMessageScorable
 from pyrit.score.scorer import Scorer
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
+    from pyrit.models import Message, MessagePiece, Score, ScoringExpectation
 
 logger = logging.getLogger(__name__)
-
-#: Scorable kinds a MessageScorer can reduce to a single Message.
-_SUPPORTED_SCORABLES = (MessageScorable, MessageReferenceScorable, ContentScorable)
 
 
 def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInterface) -> str:
@@ -70,10 +60,10 @@ class MessageScorer(Scorer):
     """
     Base class for scorers whose evidence is a single message.
 
-    Every message-shaped concern lives here: resolving a message scorable to a ``Message``,
-    substituting refusal and blocked content, validating pieces, applying the role and error
-    filters, and falling back to a neutral score. ``Scorer`` stays agnostic about what a
-    scorable is, so scorers over other kinds of evidence can sit beside this one.
+    Every message-shaped concern lives here: substituting refusal and blocked content,
+    validating pieces, applying the role and error filters, and falling back to a neutral
+    score. ``Scorer`` stays agnostic about what a scorable is, so scorers over other kinds of
+    evidence can sit beside this one. The scorable resolves itself to a ``Message``.
 
     Subclasses implement ``_score_async``, which still receives a ``Message``.
     """
@@ -89,8 +79,7 @@ class MessageScorer(Scorer):
         Resolve a message scorable and score the message it names.
 
         Args:
-            scorable (Scorable): A ``MessageScorable``, ``MessageReferenceScorable``, or
-                ``ContentScorable``.
+            scorable (Scorable): Any ``SingleMessageScorable``.
             expectation (ScoringExpectation | None): What to look for.
             infer_objective_from_request (bool): Deprecated; read the objective from the
                 previous turn when the expectation carries none.
@@ -105,15 +94,15 @@ class MessageScorer(Scorer):
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        if not isinstance(scorable, _SUPPORTED_SCORABLES):
+        if not isinstance(scorable, SingleMessageScorable):
             raise TypeError(
                 f"{self.__class__.__name__} scores messages, so it cannot score {type(scorable).__name__}. "
                 "Pass a MessageScorable, a MessageReferenceScorable, or a ContentScorable."
             )
 
-        message = self._resolve_message(scorable)
-        role_filter = getattr(scorable, "role_filter", None)
-        skip_on_error_result = getattr(scorable, "skip_on_error_result", False)
+        message = scorable.resolve_message(memory=self._memory)
+        role_filter = scorable.role_filter
+        skip_on_error_result = scorable.skip_on_error_result
         objective = expectation.objective if expectation else None
 
         # Structured refusals are persisted as blocked error pieces, but scorers should
@@ -178,43 +167,52 @@ class MessageScorer(Scorer):
 
         return scores
 
-    def _resolve_message(self, scorable: MessageScorable | MessageReferenceScorable | ContentScorable) -> Message:
+    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
-        Return the message a message-shaped scorable names.
+        Score the given request response asynchronously.
 
-        Loose content has no conversation behind it, so it becomes a message that is marked
-        as never persisted. Phase 2 gives scores a scorable of their own and removes this.
+        This default implementation scores all supported pieces in the message
+        and returns a flattened list of scores. Subclasses can override this method
+        to implement custom scoring logic (e.g., aggregating scores).
+
+        Args:
+            message (Message): The message to score.
+            objective (str | None): The objective to evaluate against. Defaults to None.
 
         Returns:
-            Message: The message to score.
-
-        Raises:
-            ValueError: If the referenced pieces are not in memory or do not form one message.
+            list[Score]: A list of Score objects.
         """
-        if isinstance(scorable, MessageScorable):
-            return scorable.message
+        if not message.message_pieces:
+            return []
 
-        if isinstance(scorable, ContentScorable):
-            piece = MessagePiece(
-                role="user",
-                original_value=scorable.value,
-                original_value_data_type=scorable.data_type,
-            )
-            piece.not_in_memory = True
-            return Message(message_pieces=[piece])
+        # Score only the supported pieces
+        supported_pieces = self._get_supported_pieces(message)
 
-        pieces = self._memory.get_message_pieces(prompt_ids=list(scorable.message_piece_ids))
-        if not pieces:
-            raise ValueError(f"No message pieces found in memory for ids {list(scorable.message_piece_ids)}.")
+        tasks = [self._score_piece_async(message_piece=piece, objective=objective) for piece in supported_pieces]
 
-        conversations = group_message_pieces_into_conversations(pieces)
-        messages = [message for conversation in conversations for message in conversation]
-        if len(messages) != 1:
-            raise ValueError(
-                f"Expected the referenced pieces to form exactly one message, got {len(messages)}. "
-                "Reference pieces from a single message."
-            )
-        return messages[0]
+        if not tasks:
+            return []
+
+        # Run all piece-level scorings concurrently
+        piece_score_lists = await asyncio.gather(*tasks)
+
+        # Flatten list[list[Score]] -> list[Score]
+        return [score for sublist in piece_score_lists for score in sublist]
+
+    @abstractmethod
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        raise NotImplementedError
+
+    def _get_supported_pieces(self, message: Message) -> list[MessagePiece]:
+        """
+        Get a list of supported message pieces for this scorer.
+
+        Returns:
+            list[MessagePiece]: List of message pieces that are supported by this scorer's validator.
+        """
+        return [
+            piece for piece in message.message_pieces if self._validator.is_message_piece_supported(message_piece=piece)
+        ]
 
     def _should_skip_on_error(self, message: Message) -> bool:
         """

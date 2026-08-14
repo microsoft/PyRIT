@@ -37,13 +37,12 @@ from pyrit.models import (
     ConversationType,
     Message,
     MessagePiece,
-    MessageScorable,
     Score,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, MessageScorable, Scorer, TrueFalseScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
 

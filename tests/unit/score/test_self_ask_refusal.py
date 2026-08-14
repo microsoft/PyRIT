@@ -19,10 +19,9 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
-    MessageScorable,
     SeedPrompt,
 )
-from pyrit.score import JsonSchemaResponseHandler, RefusalScorerPaths, SelfAskRefusalScorer
+from pyrit.score import JsonSchemaResponseHandler, MessageScorable, RefusalScorerPaths, SelfAskRefusalScorer
 
 
 @pytest.fixture

@@ -7,22 +7,22 @@ import uuid
 import pytest
 
 from pyrit.memory import MemoryInterface
-from pyrit.models import (
-    ComponentIdentifier,
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
+from pyrit.score import (
     ContentScorable,
-    Message,
-    MessagePiece,
     MessageReferenceScorable,
     MessageScorable,
-    Score,
-    ScoringExpectation,
+    MessageScorer,
+    Scorable,
+    Scorer,
+    ScorerPromptValidator,
+    TrueFalseScorer,
 )
-from pyrit.score import ScorerPromptValidator, TrueFalseScorer
 from pyrit.score.message_scorer import extract_objective_from_previous_turn
 
 
 @dataclasses.dataclass(frozen=True)
-class UnsupportedScorable:
+class UnsupportedScorable(Scorable):
     """A scorable kind no message scorer handles."""
 
     uri: str
@@ -108,6 +108,19 @@ class TestScorableResolution:
         with pytest.raises(ValueError, match="No message pieces found in memory"):
             await scorer.score_async(scorable=MessageReferenceScorable(message_piece_ids=(missing_id,)))
 
+    async def test_message_reference_scorable_partially_in_memory_raises(self, sqlite_instance: MemoryInterface):
+        """A partial resolution is a caller error, so it must not be scored silently."""
+        stored = _assistant_message("stored response")
+        sqlite_instance.add_message_to_memory(request=stored)
+        stored_id = stored.get_piece().id
+        missing_id = uuid.uuid4()
+        scorer = RecordingScorer()
+
+        with pytest.raises(ValueError, match=f"No message pieces found in memory for ids \\['{missing_id}'\\]"):
+            await scorer.score_async(scorable=MessageReferenceScorable(message_piece_ids=(stored_id, missing_id)))
+
+        assert scorer.scored_messages == []
+
     async def test_message_reference_scorable_spanning_messages_raises(self, sqlite_instance: MemoryInterface):
         conversation_id = str(uuid.uuid4())
         first = MessagePiece(
@@ -144,6 +157,24 @@ class TestScorableResolution:
 
         with pytest.raises(TypeError, match="cannot score UnsupportedScorable"):
             await scorer.score_async(scorable=UnsupportedScorable(uri="/tmp/out.txt"))  # type: ignore[arg-type]
+
+
+class TestScorerBaseIsScorableAgnostic:
+    """Scorer knows nothing about messages; the message hooks belong to MessageScorer."""
+
+    def test_scorer_requires_a_scorable_implementation(self):
+        # A scorer that implements only the message hooks cannot be instantiated. Without
+        # this, such a scorer builds fine and fails later with a confusing TypeError.
+        assert "_score_scorable_async" in Scorer.__abstractmethods__
+
+    @pytest.mark.parametrize("hook", ["_score_async", "_score_piece_async", "_get_supported_pieces"])
+    def test_message_hooks_live_on_message_scorer(self, hook):
+        assert not hasattr(Scorer, hook)
+        assert hasattr(MessageScorer, hook)
+
+    def test_message_scorer_satisfies_the_scorable_contract(self):
+        assert "_score_scorable_async" not in MessageScorer.__abstractmethods__
+        assert "_score_piece_async" in MessageScorer.__abstractmethods__
 
 
 @pytest.mark.usefixtures("patch_central_database")

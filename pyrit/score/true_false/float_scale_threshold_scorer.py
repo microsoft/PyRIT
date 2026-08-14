@@ -7,17 +7,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import (
-    ChatMessageRole,
-    ComponentIdentifier,
-    Message,
-    MessagePiece,
-    MessageScorable,
-    Score,
-    ScoringExpectation,
-)
+from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.scorable import MessageScorable
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer

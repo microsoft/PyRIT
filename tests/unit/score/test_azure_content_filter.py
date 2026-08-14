@@ -12,7 +12,8 @@ from unit.mocks import get_audio_message_piece, get_image_message_piece, get_tes
 
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece, MessageScorable
+from pyrit.models import Message, MessagePiece
+from pyrit.score import MessageScorable
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 

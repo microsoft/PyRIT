@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, MessagePiece, MessageScorable, Score, ScoringExpectation, UnvalidatedScore
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation, UnvalidatedScore
 from pyrit.prompt_target import PromptTarget
+from pyrit.score import MessageScorable
 from pyrit.score.true_false.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
 
 

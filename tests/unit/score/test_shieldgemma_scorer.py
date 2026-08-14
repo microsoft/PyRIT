@@ -9,9 +9,10 @@ from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece, MessageScorable
+from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
+    MessageScorable,
     ShieldGemmaGuideline,
     ShieldGemmaMessageRole,
     ShieldGemmaPolicy,

@@ -7,8 +7,8 @@ import pytest
 
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import MessagePiece, MessageScorable
-from pyrit.score import PlagiarismMetric, PlagiarismScorer
+from pyrit.models import MessagePiece
+from pyrit.score import MessageScorable, PlagiarismMetric, PlagiarismScorer
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -78,16 +78,7 @@ from pyrit.models.results.attack_result import AttackOutcome, AttackResult, Atta
 from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunState
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
-from pyrit.models.score import (
-    ContentScorable,
-    MessageReferenceScorable,
-    MessageScorable,
-    Scorable,
-    Score,
-    ScoreType,
-    ScoringExpectation,
-    UnvalidatedScore,
-)
+from pyrit.models.score import Score, ScoreType, ScoringExpectation, UnvalidatedScore
 
 # Seeds - import from new seeds submodule for forward compatibility
 # Also keep imports from old locations for backward compatibility
@@ -142,7 +133,6 @@ __all__ = [
     "ComponentType",
     "compute_eval_hash",
     "config_hash",
-    "ContentScorable",
     "ConverterIdentifier",
     "Conversation",
     "ConversationReference",
@@ -180,8 +170,6 @@ __all__ = [
     "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
-    "MessageReferenceScorable",
-    "MessageScorable",
     "Modality",
     "NextMessageSystemPromptPaths",
     "ObjectiveTargetEvaluationIdentifier",
@@ -195,7 +183,6 @@ __all__ = [
     "QuestionChoice",
     "REGISTRY_NAME_PATTERN",
     "ScaleDescription",
-    "Scorable",
     "Score",
     "ScoreType",
     "ScoringExpectation",

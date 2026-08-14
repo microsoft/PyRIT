@@ -14,13 +14,10 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
-    ContentScorable,
     Identifiable,
     Message,
     MessagePiece,
-    MessageScorable,
     PromptResponseError,
-    Scorable,
     Score,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
@@ -29,6 +26,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -331,6 +329,7 @@ class Scorer(Identifiable, abc.ABC):
 
         return scorable, expectation
 
+    @abstractmethod
     async def _score_scorable_async(
         self,
         *,
@@ -356,42 +355,6 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             TypeError: If the scorer does not support this kind of scorable.
         """
-        raise TypeError(f"{self.__class__.__name__} does not support scorable {type(scorable).__name__}.")
-
-    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
-        """
-        Score the given request response asynchronously.
-
-        This default implementation scores all supported pieces in the message
-        and returns a flattened list of scores. Subclasses can override this method
-        to implement custom scoring logic (e.g., aggregating scores).
-
-        Args:
-            message (Message): The message to score.
-            objective (str | None): The objective to evaluate against. Defaults to None.
-
-        Returns:
-            list[Score]: A list of Score objects.
-        """
-        if not message.message_pieces:
-            return []
-
-        # Score only the supported pieces
-        supported_pieces = self._get_supported_pieces(message)
-
-        tasks = [self._score_piece_async(message_piece=piece, objective=objective) for piece in supported_pieces]
-
-        if not tasks:
-            return []
-
-        # Run all piece-level scorings concurrently
-        piece_score_lists = await asyncio.gather(*tasks)
-
-        # Flatten list[list[Score]] -> list[Score]
-        return [score for sublist in piece_score_lists for score in sublist]
-
-    @abstractmethod
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         raise NotImplementedError
 
     @staticmethod
@@ -515,17 +478,6 @@ class Scorer(Identifiable, abc.ABC):
             return message
 
         return Message(message_pieces=new_pieces)
-
-    def _get_supported_pieces(self, message: Message) -> list[MessagePiece]:
-        """
-        Get a list of supported message pieces for this scorer.
-
-        Returns:
-            list[MessagePiece]: List of message pieces that are supported by this scorer's validator.
-        """
-        return [
-            piece for piece in message.message_pieces if self._validator.is_message_piece_supported(message_piece=piece)
-        ]
 
     @abstractmethod
     def _build_fallback_score(
