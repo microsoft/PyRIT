@@ -196,20 +196,23 @@ class ConverterService:
                 )
                 await serializer.save_b64_image_async(data=value)
                 original_value = str(serializer.value)
-            # Already an existing file on disk — keep as-is
-            elif Path(original_value).is_file():
-                pass
             else:
-                # Treat as raw base64
-                ext = DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
+                try:
+                    is_existing_file = Path(original_value).is_file()
+                except (OSError, ValueError):
+                    is_existing_file = False
 
-                serializer = data_serializer_factory(
-                    category="prompt-memory-entries",
-                    data_type=data_type,
-                    extension=ext,
-                )
-                await serializer.save_b64_image_async(data=original_value)
-                original_value = str(serializer.value)
+                if not is_existing_file:
+                    # Treat as raw base64
+                    ext = DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
+
+                    serializer = data_serializer_factory(
+                        category="prompt-memory-entries",
+                        data_type=data_type,
+                        extension=ext,
+                    )
+                    await serializer.save_b64_image_async(data=original_value)
+                    original_value = str(serializer.value)
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
         steps, final_value, final_type = await self._apply_converters_async(
