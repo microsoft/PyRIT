@@ -46,6 +46,7 @@ interface OperationPickerProps {
   onDismiss: () => void
   inputRef: React.Ref<HTMLInputElement>
   className?: string
+  listboxClassName?: string
   noteClassName?: string
   noteErrorClassName?: string
 }
@@ -65,6 +66,7 @@ function OperationPicker({
   onDismiss,
   inputRef,
   className,
+  listboxClassName,
   noteClassName,
   noteErrorClassName,
 }: OperationPickerProps) {
@@ -102,6 +104,7 @@ function OperationPicker({
       // Fluent sizes the dropdown to the input, which cuts off longer
       // operation names. Let it size to its own content instead.
       positioning={{ matchTargetSize: undefined }}
+      listbox={{ className: listboxClassName }}
       aria-label="Operation"
       data-testid="edit-label-operation"
     >
@@ -228,11 +231,15 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   }
 
   const handleSelectOperation = (operation: string) => {
+    const known = existingLabels.operation || []
     // Values already in memory predate the current rules, so they are always
     // selectable; only a newly typed name has to satisfy them.
-    if (!(existingLabels.operation || []).includes(operation)) {
+    if (!known.includes(operation)) {
       const valueError = validateValue(operation)
       if (valueError) { setError(valueError); return }
+      // A name only reaches the labels API once an attack has been stored under
+      // it, so keep it listed here or the picker forgets what it just created.
+      setExistingLabels(prev => ({ ...prev, operation: [...known, operation] }))
     }
     onLabelsChange({ ...labels, operation })
     setEditingLabel(null)
@@ -326,6 +333,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           <Text size={200} weight="semibold">{key}:</Text>
           <OperationPicker
             className={styles.operationPicker}
+            listboxClassName={styles.operationListbox}
             noteClassName={styles.operationNote}
             noteErrorClassName={styles.operationNoteError}
             currentValue={value}

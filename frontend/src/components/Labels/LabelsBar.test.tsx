@@ -1000,6 +1000,24 @@ describe('LabelsBar', () => {
       expect(screen.queryByTestId('edit-label-team')).not.toBeInTheDocument()
     })
 
+    it('should keep a newly created operation in the list', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.change(await screen.findByTestId('edit-label-operation'), {
+        target: { value: 'op_2026_09_fresh' },
+      })
+      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_2026_09_fresh"' }))
+
+      // Reopen: the name it just created has to still be selectable.
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(await screen.findByRole('option', { name: 'op_2026_09_fresh' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Create "op_2026_09_fresh"' })).not.toBeInTheDocument()
+    })
+
     it('should keep the plain input for labels other than operation', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange)

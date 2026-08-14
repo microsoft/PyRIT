@@ -116,6 +116,11 @@ export const useLabelsBarStyles = makeStyles({
   operationPicker: {
     minWidth: '180px',
   },
+  // Without a ceiling the list grows to the height of the viewport and Fluent
+  // parks it away from the input it belongs to.
+  operationListbox: {
+    maxHeight: '240px',
+  },
   // Fluent dims disabled options to ~1.9:1 contrast, which is too faint for
   // text the user has to read. These are messages, not choices.
   operationNote: {
