@@ -8,6 +8,10 @@ from typing import Any
 from pyrit.scenario.scenarios.garak.audio_achilles_heel import AudioAchillesHeel, AudioAchillesHeelTechnique
 from pyrit.scenario.scenarios.garak.doctor import Doctor, _build_doctor_technique
 from pyrit.scenario.scenarios.garak.encoding import Encoding, EncodingTechnique
+from pyrit.scenario.scenarios.garak.package_hallucination import (
+    PackageHallucination,
+    PackageHallucinationTechnique,
+)
 from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
@@ -37,6 +41,8 @@ __all__ = [
     "DoctorTechnique",
     "Encoding",
     "EncodingTechnique",
+    "PackageHallucination",
+    "PackageHallucinationTechnique",
     "SystemPromptExtraction",
     "SystemPromptExtractionTechnique",
     "WebInjection",

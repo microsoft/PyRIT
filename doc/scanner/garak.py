@@ -17,8 +17,9 @@
 # various formats), web-injection probes (which test whether a target emits markdown
 # data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
-# coaxed into revealing its own system prompt), and an audio probe (which delivers spoken
-# jailbreaks to multimodal targets).
+# coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
+# target recommends non-existent packages that an attacker could squat), and an audio probe (which
+# delivers spoken jailbreaks to multimodal targets).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -173,6 +174,32 @@ sysprompt_result = await sysprompt_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(sysprompt_result)
+
+# %% [markdown]
+# ## PackageHallucination
+#
+# Ports Garak's `packagehallucination` probe. Asks the target to write code for a given language
+# (rendered from Garak's `stub_prompts` × `code_tasks`) and scores each response for imports of
+# packages that do not exist in that language's registry. A hallucinated package name is a
+# supply-chain foothold: an attacker can register ("squat") it so the model's suggested code
+# silently pulls in a malicious dependency ("slopsquatting").
+#
+# Each language runs as its own atomic attack with a dedicated `PackageHallucinationScorer` loaded
+# with that ecosystem's registry (PyPI, npm, RubyGems, or crates.io). The scoring is deterministic
+# set-membership — no LLM judge is involved.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan garak.package_hallucination --target openai_chat --techniques python
+# ```
+#
+# **Available techniques** (4 languages): Python, JavaScript, Ruby, Rust.
+#
+# **Aggregate techniques:** `ALL` and `DEFAULT` both expand to all four languages.
+#
+# > **Note:** The package registries are loaded into memory only for the scorer; the raw package
+# > names are never sent as prompts.
 
 # %% [markdown]
 # ## AudioAchillesHeel
