@@ -580,9 +580,10 @@ class RealtimeTarget(OpenAITarget):
 
         result = RealtimeTargetResult()
         audio_buffer = bytearray()
-        audio_done_received = False
+        audio_done_deadline: float | None = None
         current_turn_event_count = 0
         grace_period_sec = 1.0  # Wait 1 second after audio.done before soft-finishing
+        loop = asyncio.get_running_loop()
 
         try:
             # Create event iterator
@@ -591,13 +592,13 @@ class RealtimeTarget(OpenAITarget):
             while True:
                 # If we've seen audio.done, wait with a short timeout for response.done
                 # Otherwise, wait indefinitely for events
-                timeout = grace_period_sec if audio_done_received else None
+                timeout = max(0.0, audio_done_deadline - loop.time()) if audio_done_deadline is not None else None
 
                 try:
                     event = await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
                 except asyncio.TimeoutError:
                     # Soft-finish: audio.done was received but no response.done after grace period
-                    if audio_done_received:
+                    if audio_done_deadline is not None:
                         logger.warning(
                             f"Soft-finishing: No response.done {grace_period_sec}s after audio.done. "
                             f"Audio bytes: {len(audio_buffer)}"
@@ -659,7 +660,8 @@ class RealtimeTarget(OpenAITarget):
 
                 elif event_kind is _OpenAIRealtimeEventKind.AUDIO_DONE:
                     logger.debug(f"Received audio.done - will soft-finish in {grace_period_sec}s if no response.done")
-                    audio_done_received = True
+                    if audio_done_deadline is None:
+                        audio_done_deadline = loop.time() + grace_period_sec
 
                 elif event_kind is _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA:
                     if getattr(event, "delta", ""):
