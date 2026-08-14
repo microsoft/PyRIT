@@ -48,12 +48,27 @@ def test_scorable_is_frozen(scorable, field_name):
     [
         MessageScorable(message=_message()),
         MessageReferenceScorable(message_piece_ids=(uuid.uuid4(),)),
-        ContentScorable(value="hello"),
     ],
 )
-def test_message_scorables_share_one_base(scorable):
+def test_scorables_naming_a_message_share_one_base(scorable):
     assert isinstance(scorable, SingleMessageScorable)
     assert isinstance(scorable, Scorable)
+
+
+def test_content_scorable_names_content_rather_than_a_message():
+    """Loose content has no message behind it, so it must not inherit message identity."""
+    scorable = ContentScorable(value="hello")
+
+    assert isinstance(scorable, Scorable)
+    assert not isinstance(scorable, SingleMessageScorable)
+
+
+@pytest.mark.parametrize("field_name", ["role_filter", "skip_on_error_result"])
+def test_content_scorable_rejects_message_filters(field_name):
+    # Loose content has no role and no error state. Accepting a role filter here used to
+    # score nothing at all, silently, because the adapted message is always role="user".
+    with pytest.raises(TypeError):
+        ContentScorable(value="hello", **{field_name: "assistant"})
 
 
 def test_single_message_scorable_cannot_be_instantiated():
@@ -142,19 +157,20 @@ class TestContentScorable:
     def test_defaults_to_text(self):
         assert ContentScorable(value="hello").data_type == "text"
 
-    def test_resolves_to_an_unpersisted_message_without_memory(self):
+    def test_adapts_to_an_unpersisted_message(self):
         """Loose scoring must stay usable with no memory behind it."""
-        memory = _no_memory()
-
-        message = ContentScorable(value="loose text").resolve_message(memory=memory)
+        message = ContentScorable(value="loose text").to_ephemeral_message()
 
         piece = message.get_piece()
         assert piece.original_value == "loose text"
         assert piece.role == "user"
         assert piece.not_in_memory is True
-        memory.get_message_pieces.assert_not_called()  # type: ignore[attr-defined]
 
-    def test_resolves_non_text_data_types(self):
-        message = ContentScorable(value="path/to.png", data_type="image_path").resolve_message(memory=_no_memory())
+    def test_adapts_non_text_data_types(self):
+        message = ContentScorable(value="path/to.png", data_type="image_path").to_ephemeral_message()
 
         assert message.get_piece().original_value_data_type == "image_path"
+
+    def test_does_not_resolve_a_message(self):
+        # It has no message to name, so it must not answer the resolution contract.
+        assert not hasattr(ContentScorable(value="hello"), "resolve_message")

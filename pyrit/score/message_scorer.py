@@ -9,7 +9,7 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
-from pyrit.score.scorable import Scorable, SingleMessageScorable
+from pyrit.score.scorable import ContentScorable, Scorable, SingleMessageScorable
 from pyrit.score.scorer import Scorer
 
 if TYPE_CHECKING:
@@ -79,7 +79,7 @@ class MessageScorer(Scorer):
         Resolve a message scorable and score the message it names.
 
         Args:
-            scorable (Scorable): Any ``SingleMessageScorable``.
+            scorable (Scorable): A ``SingleMessageScorable`` or a ``ContentScorable``.
             expectation (ScoringExpectation | None): What to look for.
             infer_objective_from_request (bool): Deprecated; read the objective from the
                 previous turn when the expectation carries none.
@@ -94,15 +94,22 @@ class MessageScorer(Scorer):
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        if not isinstance(scorable, SingleMessageScorable):
+        if isinstance(scorable, SingleMessageScorable):
+            message = scorable.resolve_message(memory=self._memory)
+            role_filter = scorable.role_filter
+            skip_on_error_result = scorable.skip_on_error_result
+        elif isinstance(scorable, ContentScorable):
+            # Loose content names no message, so there is nothing to filter on. Phase 2
+            # persists the content and this arm goes away.
+            message = scorable.to_ephemeral_message()
+            role_filter = None
+            skip_on_error_result = False
+        else:
             raise TypeError(
                 f"{self.__class__.__name__} scores messages, so it cannot score {type(scorable).__name__}. "
                 "Pass a MessageScorable, a MessageReferenceScorable, or a ContentScorable."
             )
 
-        message = scorable.resolve_message(memory=self._memory)
-        role_filter = scorable.role_filter
-        skip_on_error_result = scorable.skip_on_error_result
         objective = expectation.objective if expectation else None
 
         # Structured refusals are persisted as blocked error pieces, but scorers should

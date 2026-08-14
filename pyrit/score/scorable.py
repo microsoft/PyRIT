@@ -20,23 +20,27 @@ if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
 
 
-class Scorable(ABC):  # noqa: B024  root type; each scorer family declares its own resolution
+class Scorable(ABC):  # noqa: B024  root type; each scorer family declares its own contract
     """
     What a scorer looks at.
 
-    A scorable is a reference rather than a payload: it names the evidence instead of
-    carrying it. Each scorer accepts the scorable kinds it supports and rejects the rest.
+    A scorable is normally a reference: it names the evidence instead of carrying it, and
+    the scorer resolves it. ``ContentScorable`` is the exception, because loose content has
+    nothing behind it to point at. Each scorer accepts the scorable kinds it supports and
+    rejects the rest.
     """
 
 
 @dataclass(frozen=True, kw_only=True)
 class SingleMessageScorable(Scorable, ABC):
     """
-    A scorable that names exactly one message.
+    A scorable that names exactly one message that already exists.
 
-    Subclasses resolve themselves. Only identity resolution belongs here — returning the
-    thing the scorable names. A scorer that derives a different kind of evidence from the
-    same reference, such as trace ids or a file write, does that widening itself.
+    The message is in hand or in memory, so it has a real role and a real error state and
+    the filters below mean something. Subclasses resolve themselves, but only identity
+    resolution belongs here — returning the message the scorable names. A scorer that
+    derives a different kind of evidence from the same reference, such as trace ids or a
+    file write, does that widening itself.
     """
 
     role_filter: ChatMessageRole | None = None
@@ -122,21 +126,28 @@ class MessageReferenceScorable(SingleMessageScorable):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ContentScorable(SingleMessageScorable):
-    """Loose content with no conversation behind it."""
+class ContentScorable(Scorable):
+    """
+    Loose content with no conversation behind it.
+
+    This names content, not a message, so it is not a ``SingleMessageScorable``: there is no
+    role and no error state, and the filters those scorables carry would be meaningless here.
+    A message scorer adapts it with ``to_ephemeral_message``.
+    """
 
     value: str
     data_type: PromptDataType = "text"
 
-    def resolve_message(self, *, memory: MemoryInterface) -> Message:
+    def to_ephemeral_message(self) -> Message:
         """
-        Return a message holding the loose content, marked as never persisted.
+        Wrap the content as a message so a message scorer can read it.
 
-        Args:
-            memory (MemoryInterface): Unused; loose content has no conversation to read.
+        This is an adapter, not a resolution: no such message exists until this call builds
+        one, and it is marked as never persisted. Phase 2 stores loose content as a row of
+        its own and retires this.
 
         Returns:
-            Message: The message to score.
+            Message: A throwaway message holding the content.
         """
         piece = MessagePiece(
             role="user",
