@@ -124,7 +124,7 @@ class PlagiarismScorer(FloatScaleScorer):
         """
         return {tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)}
 
-    def _is_contiguous_sublist(self, sub: list[str], full: list[str]) -> bool:
+    def _is_contiguous_sublist(self, *, sub: list[str], full: list[str]) -> bool:
         """
         Check whether ``sub`` appears as a contiguous run of tokens inside ``full``.
 
@@ -136,7 +136,14 @@ class PlagiarismScorer(FloatScaleScorer):
         """
         if not sub or len(sub) > len(full):
             return False
-        return any(full[i : i + len(sub)] == sub for i in range(len(full) - len(sub) + 1))
+
+        # Join on a separator that cannot occur in whitespace-split tokens so the
+        # check stays O(n) and only matches on token boundaries (e.g. ["b"] must
+        # not match inside ["ab", "cd"]).
+        separator = "\0"
+        wrapped_sub = separator + separator.join(sub) + separator
+        wrapped_full = separator + separator.join(full) + separator
+        return wrapped_sub in wrapped_full
 
     def _plagiarism_score(
         self,
@@ -159,7 +166,7 @@ class PlagiarismScorer(FloatScaleScorer):
         # tokenization used below, and so a short reference that is merely a
         # substring of a longer response word (e.g. "cat" in "concatenate")
         # does not falsely score as fully plagiarized.
-        if self._is_contiguous_sublist(tokens_reference, tokens_response):
+        if self._is_contiguous_sublist(sub=tokens_reference, full=tokens_response):
             return 1.0
 
         # Compute the LCS metric (normalized by reference length)

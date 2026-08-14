@@ -398,10 +398,10 @@ class TestPlagiarismScorerUtilityFunctions:
 
     def test_is_contiguous_sublist(self, scorer):
         """Directly exercise the tokenized sublist helper."""
-        assert scorer._is_contiguous_sublist(["b", "c"], ["a", "b", "c", "d"]) is True
-        assert scorer._is_contiguous_sublist(["a", "c"], ["a", "b", "c"]) is False
-        assert scorer._is_contiguous_sublist([], ["a"]) is False
-        assert scorer._is_contiguous_sublist(["a", "b"], ["a"]) is False
+        assert scorer._is_contiguous_sublist(sub=["b", "c"], full=["a", "b", "c", "d"]) is True
+        assert scorer._is_contiguous_sublist(sub=["a", "c"], full=["a", "b", "c"]) is False
+        assert scorer._is_contiguous_sublist(sub=[], full=["a"]) is False
+        assert scorer._is_contiguous_sublist(sub=["a", "b"], full=["a"]) is False
 
 
 class TestPlagiarismMetricEnum:
