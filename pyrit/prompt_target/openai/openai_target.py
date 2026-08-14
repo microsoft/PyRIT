@@ -530,8 +530,9 @@ class OpenAITarget(PromptTarget):
         """
         Check if the response indicates content filtering.
 
-        Override this method in subclasses that need content filter detection.
-        Default implementation returns False (no content filter).
+        Response formats should implement this behavior in an ``OpenAIResponseAdapter`` and assign
+        it to ``_response_adapter``. Override this hook only for target-specific behavior that does
+        not belong to a reusable response format.
 
         Args:
             response: The response object from OpenAI SDK.
@@ -582,8 +583,9 @@ class OpenAITarget(PromptTarget):
         """
         Extract any partial content the model generated before the content filter triggered.
 
-        Override this in subclasses to extract partial content from API-specific response
-        structures. The base implementation returns None (no partial content).
+        Response formats should implement this behavior in an ``OpenAIResponseAdapter`` and assign
+        it to ``_response_adapter``. Override this hook only for target-specific behavior that does
+        not belong to a reusable response format.
 
         Args:
             response: The response object from OpenAI SDK.
@@ -597,8 +599,9 @@ class OpenAITarget(PromptTarget):
         """
         Record provider-reported response metadata (token usage, stop reason) onto the pieces.
 
-        Override this in subclasses to read API-specific response structures. The base
-        implementation is a no-op.
+        Response formats should implement this behavior in an ``OpenAIResponseAdapter`` and assign
+        it to ``_response_adapter``. Override this hook only for target-specific behavior that does
+        not belong to a reusable response format.
 
         Subclasses call this on their success path and the base class calls it on the
         content-filter path, so a single override covers both. A filtered response still reports
@@ -616,9 +619,10 @@ class OpenAITarget(PromptTarget):
         """
         Validate the response, raising if it is invalid.
 
-        Override this method in subclasses that need custom response validation. Validation only
-        inspects the response; constructing the resulting Message is the responsibility of
-        ``_construct_message_from_response_async``. The default implementation is a no-op.
+        Response formats should implement this behavior in an ``OpenAIResponseAdapter`` and assign
+        it to ``_response_adapter``. Override this hook only for target-specific behavior that does
+        not belong to a reusable response format. Validation only inspects the response; constructing
+        the resulting Message is the responsibility of ``_construct_message_from_response_async``.
 
         Args:
             response: The response object from OpenAI SDK.
@@ -635,10 +639,11 @@ class OpenAITarget(PromptTarget):
 
         Every API shape signals truncation differently (Chat Completions
         ``finish_reason == "length"``, Responses ``status == "incomplete"`` with
-        ``reason == "max_output_tokens"``), so subclasses that can detect it override this. A
-        truncated response is valid but incomplete: ``_validate_response`` warns instead of
-        raising, and ``_construct_message_from_response_async`` preserves whatever the model
-        produced. The base implementation reports no truncation.
+        ``reason == "max_output_tokens"``). Response formats should implement this behavior in an
+        ``OpenAIResponseAdapter`` and assign it to ``_response_adapter``. Override this hook only
+        for target-specific behavior that does not belong to a reusable response format. A truncated
+        response is valid but incomplete: ``_validate_response`` warns instead of raising, and
+        ``_construct_message_from_response_async`` preserves whatever the model produced.
 
         Args:
             response: The response object from OpenAI SDK.
