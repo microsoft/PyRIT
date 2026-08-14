@@ -187,7 +187,7 @@ class AudioTranscriptHelper:
 
         # Score the transcript
         transcript_scores = await self.text_scorer.score_async(
-            scorable=MessageScorable(message=text_message),
+            scorable=MessageScorable.from_message(text_message),
             expectation=ScoringExpectation(objective=objective) if objective is not None else None,
         )
 

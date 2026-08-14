@@ -19,6 +19,7 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
+from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.score import Scorer, TrueFalseScorer
@@ -279,8 +280,11 @@ class TestCrescendoMixedFailureRecovery:
         assert result.conversation_id == final_conversation_id
         assert len({attempt.conversation_id for attempt in adversarial_target.attempts}) == 1
 
+        # A scorable names piece ids rather than carrying the message, so read them back.
+        memory = CentralMemory.get_memory_instance()
         refusal_inputs = [
-            call.kwargs["scorable"].message.get_value() for call in refusal_scorer.score_async.await_args_list
+            call.kwargs["scorable"].resolve_message(memory=memory).get_value()
+            for call in refusal_scorer.score_async.await_args_list
         ]
         assert refusal_inputs == [
             "response-1",

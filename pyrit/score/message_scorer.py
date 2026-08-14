@@ -9,7 +9,7 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
-from pyrit.score.scorable import ContentScorable, Scorable, SingleMessageScorable
+from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
 from pyrit.score.scorer import Scorer
 
 if TYPE_CHECKING:
@@ -23,8 +23,12 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     """
     Read the text of the turn before an assistant message and use it as the objective.
 
-    This is what to look for, so it belongs to the caller that builds the expectation, not
-    to the scorer. It lives here because it is message-shaped.
+    .. deprecated::
+        This conflates scoring with building an expectation. What to look for belongs to
+        the caller that builds the ``ScoringExpectation``, not to the scorer. It exists only
+        to support the deprecated ``infer_objective_from_request`` parameter, and both are
+        removed in the next major release. Resolve the objective at the call site and pass
+        it on the expectation instead.
 
     Args:
         message (Message): The assistant message whose previous turn supplies the objective.
@@ -79,7 +83,7 @@ class MessageScorer(Scorer):
         Resolve a message scorable and score the message it names.
 
         Args:
-            scorable (Scorable): A ``SingleMessageScorable`` or a ``ContentScorable``.
+            scorable (Scorable): A ``MessageScorable`` or a ``ContentScorable``.
             expectation (ScoringExpectation | None): What to look for.
             infer_objective_from_request (bool): Deprecated; read the objective from the
                 previous turn when the expectation carries none.
@@ -94,7 +98,7 @@ class MessageScorer(Scorer):
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        if isinstance(scorable, SingleMessageScorable):
+        if isinstance(scorable, MessageScorable):
             message = scorable.resolve_message(memory=self._memory)
             role_filter = scorable.role_filter
             skip_on_error_result = scorable.skip_on_error_result
@@ -107,7 +111,7 @@ class MessageScorer(Scorer):
         else:
             raise TypeError(
                 f"{self.__class__.__name__} scores messages, so it cannot score {type(scorable).__name__}. "
-                "Pass a MessageScorable, a MessageReferenceScorable, or a ContentScorable."
+                "Pass a MessageScorable or a ContentScorable."
             )
 
         objective = expectation.objective if expectation else None

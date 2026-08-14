@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import store_message
 
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
@@ -260,7 +261,7 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     )
     blocked_message = Message(message_pieces=[blocked_piece])
 
-    scores = await threshold_scorer.score_async(scorable=MessageScorable(message=blocked_message))
+    scores = await threshold_scorer.score_async(scorable=MessageScorable.from_message(store_message(blocked_message)))
 
     assert len(scores) == 1
     binary_score = scores[0]

@@ -3,21 +3,16 @@
 
 import dataclasses
 import uuid
-from unittest.mock import MagicMock
 
 import pytest
 
 from pyrit.memory import MemoryInterface
-from pyrit.models import MessagePiece
-from pyrit.score import ContentScorable, MessageReferenceScorable, MessageScorable, Scorable, SingleMessageScorable
-
-
-def _message():
-    return MessagePiece(role="assistant", original_value="hello").to_message()
+from pyrit.models import Message, MessagePiece
+from pyrit.score import ContentScorable, MessageScorable, Scorable
 
 
 def _stored_message(value: str = "stored response"):
-    """Return a message that memory will accept, so it needs a conversation id."""
+    """Return a message memory will accept, so it needs a conversation id."""
     return MessagePiece(
         role="assistant",
         original_value=value,
@@ -25,16 +20,10 @@ def _stored_message(value: str = "stored response"):
     ).to_message()
 
 
-def _no_memory() -> MemoryInterface:
-    """Return a memory that the test can assert was never touched."""
-    return MagicMock(spec=MemoryInterface)
-
-
 @pytest.mark.parametrize(
     "scorable, field_name",
     [
-        (MessageScorable(message=_message()), "message"),
-        (MessageReferenceScorable(message_piece_ids=(uuid.uuid4(),)), "message_piece_ids"),
+        (MessageScorable(message_piece_ids=(uuid.uuid4(),)), "message_piece_ids"),
         (ContentScorable(value="hello"), "value"),
     ],
 )
@@ -46,21 +35,21 @@ def test_scorable_is_frozen(scorable, field_name):
 @pytest.mark.parametrize(
     "scorable",
     [
-        MessageScorable(message=_message()),
-        MessageReferenceScorable(message_piece_ids=(uuid.uuid4(),)),
+        MessageScorable(message_piece_ids=(uuid.uuid4(),)),
+        ContentScorable(value="hello"),
     ],
 )
-def test_scorables_naming_a_message_share_one_base(scorable):
-    assert isinstance(scorable, SingleMessageScorable)
+def test_every_scorable_is_a_scorable(scorable):
     assert isinstance(scorable, Scorable)
 
 
 def test_content_scorable_names_content_rather_than_a_message():
-    """Loose content has no message behind it, so it must not inherit message identity."""
+    """Loose content has no message behind it, so it must not answer the message contract."""
     scorable = ContentScorable(value="hello")
 
     assert isinstance(scorable, Scorable)
-    assert not isinstance(scorable, SingleMessageScorable)
+    assert not isinstance(scorable, MessageScorable)
+    assert not hasattr(scorable, "resolve_message")
 
 
 @pytest.mark.parametrize("field_name", ["role_filter", "skip_on_error_result"])
@@ -71,55 +60,40 @@ def test_content_scorable_rejects_message_filters(field_name):
         ContentScorable(value="hello", **{field_name: "assistant"})
 
 
-def test_single_message_scorable_cannot_be_instantiated():
-    # The base only declares the contract; a scorable must say how it resolves.
-    assert "resolve_message" in SingleMessageScorable.__abstractmethods__
-
-    with pytest.raises(TypeError):
-        SingleMessageScorable()  # type: ignore[abstract]
-
-
 def test_scorables_are_keyword_only():
     with pytest.raises(TypeError):
         ContentScorable("hello")  # type: ignore[misc]
 
 
 class TestMessageScorable:
-    def test_carries_the_message_and_filters(self):
-        message = _message()
-        scorable = MessageScorable(message=message, role_filter="assistant", skip_on_error_result=True)
-
-        assert scorable.message is message
-        assert scorable.role_filter == "assistant"
-        assert scorable.skip_on_error_result is True
-
-    def test_resolves_to_the_message_it_holds_without_memory(self):
-        message = _message()
-        memory = _no_memory()
-
-        assert MessageScorable(message=message).resolve_message(memory=memory) is message
-        memory.get_message_pieces.assert_not_called()  # type: ignore[attr-defined]
-
-
-class TestMessageReferenceScorable:
     def test_defaults(self):
         piece_id = uuid.uuid4()
-        scorable = MessageReferenceScorable(message_piece_ids=(piece_id,))
+        scorable = MessageScorable(message_piece_ids=(piece_id,))
 
         assert scorable.message_piece_ids == (piece_id,)
         assert scorable.role_filter is None
         assert scorable.skip_on_error_result is False
 
+    def test_from_message_names_the_pieces_rather_than_carrying_them(self):
+        """A scorable is a reference, so a message in hand becomes its piece ids."""
+        message = _stored_message()
+
+        scorable = MessageScorable.from_message(message, role_filter="assistant")
+
+        assert scorable.message_piece_ids == (message.get_piece().id,)
+        assert scorable.role_filter == "assistant"
+        assert not hasattr(scorable, "message")
+
     def test_resolves_from_memory(self, sqlite_instance: MemoryInterface):
         stored = _stored_message()
         sqlite_instance.add_message_to_memory(request=stored)
-        scorable = MessageReferenceScorable(message_piece_ids=(stored.get_piece().id,))
+        scorable = MessageScorable.from_message(stored)
 
         assert scorable.resolve_message(memory=sqlite_instance).get_value() == "stored response"
 
     def test_raises_when_nothing_is_in_memory(self, sqlite_instance: MemoryInterface):
         missing_id = uuid.uuid4()
-        scorable = MessageReferenceScorable(message_piece_ids=(missing_id,))
+        scorable = MessageScorable(message_piece_ids=(missing_id,))
 
         with pytest.raises(ValueError, match=f"No message pieces found in memory for ids \\['{missing_id}'\\]"):
             scorable.resolve_message(memory=sqlite_instance)
@@ -128,9 +102,8 @@ class TestMessageReferenceScorable:
         """A partial resolution is a caller error, and the error must point at the bad ids."""
         stored = _stored_message()
         sqlite_instance.add_message_to_memory(request=stored)
-        stored_id = stored.get_piece().id
         missing_id = uuid.uuid4()
-        scorable = MessageReferenceScorable(message_piece_ids=(stored_id, missing_id))
+        scorable = MessageScorable(message_piece_ids=(stored.get_piece().id, missing_id))
 
         with pytest.raises(ValueError, match=f"No message pieces found in memory for ids \\['{missing_id}'\\]"):
             scorable.resolve_message(memory=sqlite_instance)
@@ -145,9 +118,7 @@ class TestMessageReferenceScorable:
         ).to_message()
         sqlite_instance.add_message_to_memory(request=first)
         sqlite_instance.add_message_to_memory(request=second)
-        scorable = MessageReferenceScorable(
-            message_piece_ids=(first.get_piece().id, second.get_piece().id),
-        )
+        scorable = MessageScorable(message_piece_ids=(first.get_piece().id, second.get_piece().id))
 
         with pytest.raises(ValueError, match="exactly one message"):
             scorable.resolve_message(memory=sqlite_instance)
@@ -171,6 +142,34 @@ class TestContentScorable:
 
         assert message.get_piece().original_value_data_type == "image_path"
 
-    def test_does_not_resolve_a_message(self):
-        # It has no message to name, so it must not answer the resolution contract.
-        assert not hasattr(ContentScorable(value="hello"), "resolve_message")
+
+class TestFromMessage:
+    """A caller holding a persisted Message names its pieces rather than carrying it."""
+
+    def test_persisted_message_becomes_a_reference(self):
+        message = _stored_message()
+
+        scorable = MessageScorable.from_message(message)
+
+        assert isinstance(scorable, MessageScorable)
+        assert scorable.message_piece_ids == (message.get_piece().id,)
+
+    def test_filters_travel_onto_the_reference(self):
+        scorable = MessageScorable.from_message(_stored_message(), role_filter="assistant", skip_on_error_result=True)
+
+        assert isinstance(scorable, MessageScorable)
+        assert scorable.role_filter == "assistant"
+        assert scorable.skip_on_error_result is True
+
+
+def test_resolution_preserves_the_order_the_scorable_names(sqlite_instance: MemoryInterface):
+    """Memory returns its own order, but a multi-piece message reads differently if shuffled."""
+    conversation_id = str(uuid.uuid4())
+    first = MessagePiece(role="assistant", original_value="one", conversation_id=conversation_id, sequence=0)
+    second = MessagePiece(role="assistant", original_value="two", conversation_id=conversation_id, sequence=0)
+    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[first, second]))
+
+    reversed_scorable = MessageScorable(message_piece_ids=(second.id, first.id))
+
+    resolved = reversed_scorable.resolve_message(memory=sqlite_instance)
+    assert [piece.original_value for piece in resolved.message_pieces] == ["two", "one"]

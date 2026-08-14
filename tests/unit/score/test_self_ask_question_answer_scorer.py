@@ -4,6 +4,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import store_message
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation, UnvalidatedScore
 from pyrit.prompt_target import PromptTarget
@@ -42,7 +43,8 @@ async def test_score_async_returns_score_from_unvalidated(mock_chat_target):
             new=AsyncMock(return_value=unvalidated),
         ):
             scores = await scorer.score_async(
-                scorable=MessageScorable(message=message), expectation=ScoringExpectation(objective="2+2=?\nanswer: 4")
+                scorable=MessageScorable.from_message(store_message(message)),
+                expectation=ScoringExpectation(objective="2+2=?\nanswer: 4"),
             )
 
     assert len(scores) == 1

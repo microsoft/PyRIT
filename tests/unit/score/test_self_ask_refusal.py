@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import get_mock_target_identifier, store_message
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory
@@ -254,7 +254,7 @@ async def test_score_async_filtered_response(patch_central_database):
         conversation_id=str(uuid4()),
     ).to_message()
     memory.add_message_pieces_to_memory(message_pieces=request.message_pieces)
-    scores = await scorer.score_async(scorable=MessageScorable(message=request))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
 
     assert len(scores) == 1
     assert scores[0].score_value == "true"

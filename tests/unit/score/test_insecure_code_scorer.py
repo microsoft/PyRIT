@@ -4,6 +4,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import store_message
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, SeedPrompt, UnvalidatedScore
@@ -47,7 +48,7 @@ async def test_insecure_code_scorer_valid_response(mock_chat_target):
             message = MessagePiece(role="user", original_value="sample code").to_message()
 
             # Call the score_async method
-            scores = await scorer.score_async(scorable=MessageScorable(message=message))
+            scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
 
             # Assertions
             assert len(scores) == 1
@@ -70,7 +71,7 @@ async def test_insecure_code_scorer_invalid_json(mock_chat_target):
             message = MessagePiece(role="user", original_value="sample code").to_message()
 
             with pytest.raises(InvalidJsonException, match="Error in scorer InsecureCodeScorer.*Invalid JSON"):
-                await scorer.score_async(scorable=MessageScorable(message=message))
+                await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
 
             # Ensure memory functions were not called
             mock_add_scores.assert_not_called()
@@ -109,7 +110,7 @@ async def test_score_async_unsupported_data_type_returns_zero(mock_chat_target, 
 
     # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
     # out (mirrors TrueFalseScorer's no-pieces fallback).
-    scores = await scorer.score_async(scorable=MessageScorable(message=request))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
     assert len(scores) == 1
     assert scores[0].score_type == "float_scale"
     assert scores[0].get_value() == 0.0

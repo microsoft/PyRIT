@@ -5,7 +5,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from unit.mocks import get_image_message_piece
+from unit.mocks import get_image_message_piece, store_message
 
 from pyrit.analytics import ApproximateTextMatching, ExactTextMatching
 from pyrit.memory.central_memory import CentralMemory
@@ -27,7 +27,7 @@ async def test_score_async_unsupported_data_type_returns_false(
     scorer = SubStringScorer(substring="test", categories=["new_category"])
 
     # With raise_on_no_valid_pieces=False (default), returns False for unsupported data types
-    scores = await scorer.score_async(scorable=MessageScorable(message=request))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
     assert len(scores) == 1
     assert scores[0].get_value() is False
     assert "No supported pieces" in scores[0].score_rationale

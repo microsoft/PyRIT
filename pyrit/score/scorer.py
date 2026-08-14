@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Release in which the message-shaped ``score_async`` parameters are removed.
-LEGACY_SCORE_ASYNC_REMOVED_IN = "1.3.0"
+LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
 
 
 class Scorer(Identifiable, abc.ABC):
@@ -219,11 +219,10 @@ class Scorer(Identifiable, abc.ABC):
         ``expectation`` says what to look for. Keeping them separate is what lets an attack
         forward a question it does not understand to a scorer that does.
 
-        This signature is experimental for one release and may change.
 
         Args:
             message (Message | None): Deprecated. Pass
-                ``scorable=MessageScorable(message=...)`` instead.
+                ``scorable=MessageScorable.from_message(...)`` instead.
             scorable (Scorable | None): What to look at.
             expectation (ScoringExpectation | None): What to look for. Defaults to None.
             objective (str | None): Deprecated. Pass
@@ -243,7 +242,7 @@ class Scorer(Identifiable, abc.ABC):
                 parameters that do not apply to them.
             TypeError: If this scorer does not support this kind of scorable.
         """
-        resolved_scorable, resolved_expectation = self._resolve_score_inputs(
+        resolved_scorable, resolved_expectation = self._consolidate_legacy_inputs(
             message=message,
             scorable=scorable,
             expectation=expectation,
@@ -267,7 +266,7 @@ class Scorer(Identifiable, abc.ABC):
 
         return scores
 
-    def _resolve_score_inputs(
+    def _consolidate_legacy_inputs(
         self,
         *,
         message: Message | None,
@@ -318,11 +317,21 @@ class Scorer(Identifiable, abc.ABC):
         if scorable is None:
             # The caller asked about this message, not about everything stored alongside it,
             # so the shim maps to the exact message rather than widening to its conversation.
-            scorable = MessageScorable(
-                message=cast("Message", message),
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            )
+            # A message the caller built by hand has nothing in memory to name, so a single
+            # unpersisted piece becomes loose content. Both arms go away with the parameter.
+            legacy_message = cast("Message", message)
+            pieces = legacy_message.message_pieces
+            if len(pieces) == 1 and pieces[0].not_in_memory:
+                scorable = ContentScorable(
+                    value=pieces[0].original_value,
+                    data_type=pieces[0].original_value_data_type,
+                )
+            else:
+                scorable = MessageScorable.from_message(
+                    legacy_message,
+                    role_filter=role_filter,
+                    skip_on_error_result=skip_on_error_result,
+                )
 
         if objective is not None:
             expectation = ScoringExpectation(objective=objective)
@@ -665,7 +674,7 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         scorables = [
-            MessageScorable(message=message, role_filter=role_filter, skip_on_error_result=skip_on_error_result)
+            MessageScorable.from_message(message, role_filter=role_filter, skip_on_error_result=skip_on_error_result)
             for message in messages
         ]
         expectations = [ScoringExpectation(objective=objective) for objective in objectives]
@@ -815,8 +824,8 @@ class Scorer(Identifiable, abc.ABC):
                 skip_on_error_result=skip_on_error_result,
             )
             obj_task = objective_scorer.score_async(
-                scorable=MessageScorable(
-                    message=response, role_filter=role_filter, skip_on_error_result=skip_on_error_result
+                scorable=MessageScorable.from_message(
+                    response, role_filter=role_filter, skip_on_error_result=skip_on_error_result
                 ),
                 expectation=ScoringExpectation(objective=objective) if objective is not None else None,
             )
@@ -825,8 +834,8 @@ class Scorer(Identifiable, abc.ABC):
             result["objective_scores"] = obj_scores
         else:
             obj_scores = await objective_scorer.score_async(
-                scorable=MessageScorable(
-                    message=response, role_filter=role_filter, skip_on_error_result=skip_on_error_result
+                scorable=MessageScorable.from_message(
+                    response, role_filter=role_filter, skip_on_error_result=skip_on_error_result
                 ),
                 expectation=ScoringExpectation(objective=objective) if objective is not None else None,
             )
@@ -863,7 +872,9 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         # Create all scoring tasks, note TEMPORARY fix to prevent multi-piece responses from breaking scoring logic
-        scorable = MessageScorable(message=response, role_filter=role_filter, skip_on_error_result=skip_on_error_result)
+        scorable = MessageScorable.from_message(
+            response, role_filter=role_filter, skip_on_error_result=skip_on_error_result
+        )
         expectation = ScoringExpectation(objective=objective) if objective is not None else None
         tasks = [scorer.score_async(scorable=scorable, expectation=expectation) for scorer in scorers]
 

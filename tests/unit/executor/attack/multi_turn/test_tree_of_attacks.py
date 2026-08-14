@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from treelib.tree import Tree
+from unit.mocks import store_message
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack import (
@@ -391,7 +392,7 @@ class TestHelpers:
         )
 
         # Score using the actual FloatScaleThresholdScorer
-        scores = await threshold_scorer.score_async(scorable=MessageScorable(message=dummy_message))
+        scores = await threshold_scorer.score_async(scorable=MessageScorable.from_message(store_message(dummy_message)))
         return scores[0]
 
     @staticmethod

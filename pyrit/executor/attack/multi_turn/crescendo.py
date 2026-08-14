@@ -672,8 +672,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective=context.objective,
         ):
             scores = await self._refusal_scorer.score_async(
-                scorable=MessageScorable(message=context.last_response),
-                expectation=ScoringExpectation(objective=objective) if objective is not None else None,
+                scorable=MessageScorable.from_message(context.last_response),
+                expectation=ScoringExpectation(objective=objective),
             )
         return scores[0]
 

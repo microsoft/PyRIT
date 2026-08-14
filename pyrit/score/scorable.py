@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid  # noqa: TC003  (runtime-required by dataclass field annotations)
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -32,68 +32,23 @@ class Scorable(ABC):  # noqa: B024  root type; each scorer family declares its o
 
 
 @dataclass(frozen=True, kw_only=True)
-class SingleMessageScorable(Scorable, ABC):
-    """
-    A scorable that names exactly one message that already exists.
-
-    The message is in hand or in memory, so it has a real role and a real error state and
-    the filters below mean something. Subclasses resolve themselves, but only identity
-    resolution belongs here — returning the message the scorable names. A scorer that
-    derives a different kind of evidence from the same reference, such as trace ids or a
-    file write, does that widening itself.
-    """
-
-    role_filter: ChatMessageRole | None = None
-    skip_on_error_result: bool = False
-
-    @abstractmethod
-    def resolve_message(self, *, memory: MemoryInterface) -> Message:
-        """
-        Return the message this scorable names.
-
-        Args:
-            memory (MemoryInterface): Memory to resolve references against.
-
-        Returns:
-            Message: The message to score.
-        """
-
-
-@dataclass(frozen=True, kw_only=True)
-class MessageScorable(SingleMessageScorable):
-    """
-    A message the caller already holds.
-
-    Use this when the message is in hand — an attack scoring the response it just
-    received, or a caller scoring a message whose pieces were never persisted. Use
-    ``MessageReferenceScorable`` when only the piece ids are known.
-    """
-
-    message: Message
-
-    def resolve_message(self, *, memory: MemoryInterface) -> Message:
-        """
-        Return the message the caller supplied.
-
-        Args:
-            memory (MemoryInterface): Unused; the message is already in hand.
-
-        Returns:
-            Message: The message to score.
-        """
-        return self.message
-
-
-@dataclass(frozen=True, kw_only=True)
-class MessageReferenceScorable(SingleMessageScorable):
+class MessageScorable(Scorable):
     """
     Specific message pieces, resolved from memory by id.
 
-    Use this when the pieces are persisted and only their ids are known. Use
-    ``MessageScorable`` when the caller already holds the message.
+    This names one message, or a subset of its pieces. Loose content that was never
+    persisted has no ids to name, so it is a ``ContentScorable`` instead.
     """
 
     message_piece_ids: tuple[uuid.UUID | str, ...]
+
+    # The design proposal puts role_filter on ConversationScorable only and leaves this
+    # open as its phase-1 decision, on the grounds that naming pieces is already a
+    # selection and filtering them again is a second one. Attacks do filter a named
+    # response by role today, so both fields stay here until ConversationScorable arrives
+    # and can own the selection instead.
+    role_filter: ChatMessageRole | None = None
+    skip_on_error_result: bool = False
 
     def resolve_message(self, *, memory: MemoryInterface) -> Message:
         """
@@ -110,6 +65,9 @@ class MessageReferenceScorable(SingleMessageScorable):
                 exactly one message.
         """
         pieces = memory.get_message_pieces(prompt_ids=list(self.message_piece_ids))
+        wanted = {str(piece_id) for piece_id in self.message_piece_ids}
+        # Only the named pieces count, whatever else the filter happened to return.
+        pieces = [piece for piece in pieces if str(piece.id) in wanted]
         found = {str(piece.id) for piece in pieces}
         missing = [str(piece_id) for piece_id in self.message_piece_ids if str(piece_id) not in found]
         if missing:
@@ -122,7 +80,42 @@ class MessageReferenceScorable(SingleMessageScorable):
                 f"Expected the referenced pieces to form exactly one message, got {len(messages)}. "
                 "Reference pieces from a single message."
             )
-        return messages[0]
+
+        # Memory returns pieces in its own order, but the scorable names an ordered tuple,
+        # and a multi-piece message reads differently if its pieces are shuffled.
+        resolved = messages[0]
+        by_id = {str(piece.id): piece for piece in resolved.message_pieces}
+        resolved.message_pieces = [by_id[str(piece_id)] for piece_id in self.message_piece_ids]
+        return resolved
+
+    @classmethod
+    def from_message(
+        cls,
+        message: Message,
+        *,
+        role_filter: ChatMessageRole | None = None,
+        skip_on_error_result: bool = False,
+    ) -> MessageScorable:
+        """
+        Name the pieces of a persisted message.
+
+        A scorable is a reference, so a message in hand is scored by naming its pieces
+        rather than by travelling through the call. Use ``scorable_from_message`` instead
+        when the message may not be persisted.
+
+        Args:
+            message (Message): The message whose pieces to name.
+            role_filter (ChatMessageRole | None): Only score the message when it has this role.
+            skip_on_error_result (bool): Skip scoring when the message is an error result.
+
+        Returns:
+            MessageScorable: A scorable naming the message's pieces.
+        """
+        return cls(
+            message_piece_ids=tuple(piece.id for piece in message.message_pieces),
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -130,9 +123,9 @@ class ContentScorable(Scorable):
     """
     Loose content with no conversation behind it.
 
-    This names content, not a message, so it is not a ``SingleMessageScorable``: there is no
-    role and no error state, and the filters those scorables carry would be meaningless here.
-    A message scorer adapts it with ``to_ephemeral_message``.
+    This names content, not a message: there is no role and no error state, so the filters
+    a ``MessageScorable`` carries would be meaningless here. A message scorer adapts it
+    with ``to_ephemeral_message``.
     """
 
     value: str
@@ -156,3 +149,20 @@ class ContentScorable(Scorable):
         )
         piece.not_in_memory = True
         return Message(message_pieces=[piece])
+
+    @classmethod
+    def from_message(cls, message: Message) -> ContentScorable:
+        """
+        Take the content out of a message that was never persisted.
+
+        A message the caller built by hand has no ids to name, so it is content rather than
+        a reference. Only the first piece is taken, because loose content is a single value.
+
+        Args:
+            message (Message): The unpersisted message whose content to take.
+
+        Returns:
+            ContentScorable: A scorable holding the message's content.
+        """
+        piece = message.get_piece()
+        return cls(value=piece.original_value, data_type=piece.original_value_data_type)

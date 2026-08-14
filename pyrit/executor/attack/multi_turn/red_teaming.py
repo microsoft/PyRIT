@@ -525,7 +525,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         ):
             # score_async handles blocked, filtered, other errors
             scoring_results = await self._objective_scorer.score_async(
-                scorable=MessageScorable(message=context.last_response, role_filter="assistant"),
+                scorable=MessageScorable.from_message(context.last_response, role_filter="assistant"),
                 expectation=ScoringExpectation(objective=context.objective),
             )
 
