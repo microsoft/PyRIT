@@ -1236,6 +1236,70 @@ class TestMainExtraPaths:
         assert "disabled" in capsys.readouterr().out
 
 
+class TestScenarioResultsFlag:
+    """Tests for the ``--scenario-results`` mode flag, validation, and dispatch."""
+
+    def test_parse_args_recognizes_scenario_results(self):
+        args = pyrit_scan.parse_args(
+            ["--scenario-results", "SID", "--view", "attacks", "--attack-result-ids", "a", "b", "--limit", "2"]
+        )
+        assert args.scenario_results == "SID"
+        assert args.view.value == "attacks"
+        assert args.attack_result_ids == ["a", "b"]
+        assert args.limit == 2
+
+    def test_scenario_results_is_a_specified_command(self):
+        args = pyrit_scan.parse_args(["--scenario-results", "SID"])
+        assert pyrit_scan._is_command_specified(parsed_args=args) is True
+
+    def test_validate_results_flags_allows_bare_scenario_results(self):
+        args = pyrit_scan.parse_args(["--scenario-results", "SID"])
+        assert pyrit_scan._validate_results_flags(parsed_args=args) is None
+
+    def test_validate_results_flags_rejects_subflags_without_id(self):
+        args = pyrit_scan.parse_args(["test_scenario", "--view", "attacks", "--limit", "3"])
+        error = pyrit_scan._validate_results_flags(parsed_args=args)
+        assert error is not None
+        assert "--view" in error and "--limit" in error
+        assert "--scenario-results" in error
+
+    def test_validate_results_flags_ignores_when_no_subflags(self):
+        args = pyrit_scan.parse_args(["test_scenario"])
+        assert pyrit_scan._validate_results_flags(parsed_args=args) is None
+
+    def test_handle_results_overview_delegates_to_printer(self):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        parsed = pyrit_scan.parse_args(["--scenario-results", "SID"])
+        with patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock) as mock_print:
+            rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        client.get_scenario_run_results_async.assert_awaited_once_with(scenario_result_id="SID")
+        mock_print.assert_awaited_once()
+
+    def test_handle_results_attacks_prints_table(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        parsed = pyrit_scan.parse_args(["--scenario-results", "SID", "--view", "attacks"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        assert "extract data" in capsys.readouterr().out
+
+    def test_handle_results_reports_fetch_error(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.side_effect = RuntimeError("boom")
+        parsed = pyrit_scan.parse_args(["--scenario-results", "SID"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "boom" in capsys.readouterr().out
+
+
 class TestScenarioParamFlow:
     """Regression tests for scenario-declared parameters flowing through the CLI."""
 

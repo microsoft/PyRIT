@@ -207,4 +207,18 @@ describe('InitializerParametersDialog', () => {
     expect(screen.getByRole('button', { name: 'Add...' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
   })
+
+  it('displays an external error passed via externalError prop', () => {
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog
+          {...baseProps}
+          initializer={numericInitializer}
+          externalError="Server rejected the request."
+        />
+      </TestWrapper>,
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Server rejected the request.')
+  })
 })

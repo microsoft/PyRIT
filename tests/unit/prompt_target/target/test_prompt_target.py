@@ -275,7 +275,8 @@ async def test_response_preserves_metadata_after_history_squash():
     response_piece = response_messages[0].message_pieces[0]
 
     assert response_piece.conversation_id == _LINEAGE_CONVERSATION_ID
-    assert response_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
+    # Lineage metadata survives alongside the metadata captured from the API response.
+    assert response_piece.prompt_metadata == {**_LINEAGE_PROMPT_METADATA, "finish_reason": "stop"}
 
 
 @pytest.mark.usefixtures("patch_central_database")

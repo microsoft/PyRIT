@@ -8,10 +8,13 @@ from pyrit.common import forward_init_parameters
 from pyrit.exceptions.exception_classes import (
     pyrit_target_retry,
 )
-from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
+from pyrit.prompt_target.common.chat_completions_response_parser import (
+    capture_token_usage,
+)
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.common.utils import limit_requests_per_minute, set_response_metadata
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
@@ -155,6 +158,29 @@ class OpenAICompletionTarget(OpenAITarget):
         )
         return [response]
 
+    def _capture_response_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
+        """
+        Record token usage and each choice's ``finish_reason`` from a Completion response.
+
+        Usage is per-call and lands on the first piece, as everywhere else. ``finish_reason`` is
+        per-choice, and this is the one target that maps a piece to each choice, so each piece gets
+        its own: reading only ``choices[0]`` would report one generation's stop reason for all of
+        them and hide a content filter that tripped on a later choice.
+
+        Args:
+            response: A Completion object from the OpenAI SDK, or the synthetic stand-in used when
+                the SDK raises on a content filter.
+            pieces (list[MessagePiece]): The constructed response pieces.
+        """
+        # The Completions and Chat Completions APIs report the same ``usage`` schema, so the parser is shared.
+        capture_token_usage(pieces=pieces, response=response)
+
+        choices = getattr(response, "choices", None) or []
+        for index, piece in enumerate(pieces):
+            # Per piece, not per response: each piece is one choice, so each carries its own stop reason.
+            choice = choices[index] if index < len(choices) else None
+            set_response_metadata(pieces=[piece], finish_reason=getattr(choice, "finish_reason", None))
+
     async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
         Construct a Message from a Completion response.
@@ -171,4 +197,6 @@ class OpenAICompletionTarget(OpenAITarget):
         # Extract response text from validated choices
         extracted_response = [choice.text for choice in response.choices]
 
-        return construct_response_from_request(request=request, response_text_pieces=extracted_response)
+        message = construct_response_from_request(request=request, response_text_pieces=extracted_response)
+        self._capture_response_metadata(response=response, pieces=message.message_pieces)
+        return message
