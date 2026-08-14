@@ -672,6 +672,7 @@ class TestAdversarialReplyParsedConsistentlyAcrossAttacks:
 # ``RedTeamingAttack`` whose adversarial system prompt is the YAML) and the scam-scenario persuasion
 # persona (set as ``AttackAdversarialConfig.system_prompt``).
 _NON_ENUM_ADVERSARIAL_SYSTEM_PROMPTS = [
+    EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml",
     EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_simulated.yaml",
     EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_movie_director.yaml",
     EXECUTOR_SEED_PROMPT_PATH / "red_teaming" / "crescendo_history_lecture.yaml",

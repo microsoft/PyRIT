@@ -22,10 +22,6 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
     Returns:
         list[AttackTechniqueFactory]: The extra scenario techniques.
     """
-    split_payload_crescendo_prompt = SeedPrompt.from_yaml_file(
-        EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml"
-    )
-
     return [
         AttackTechniqueFactory(
             name="pair",
@@ -53,6 +49,8 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             name="split_payload",
             attack_class=CrescendoAttack,
             technique_tags=["multi_turn"],
-            adversarial_system_prompt=split_payload_crescendo_prompt,
+            adversarial_system_prompt=SeedPrompt.from_yaml_file(
+                EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml"
+            ),
         ),
     ]
