@@ -7,8 +7,9 @@ import {
   tokens,
   mergeClasses,
 } from '@fluentui/react-components'
-import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular } from '@fluentui/react-icons'
-import { MessageAttachment, TargetInstance } from '../../types'
+import { SendRegular, AttachRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowShuffleRegular, OpenRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import type { AttackTargetResolutionStatus, MessageAttachment, TargetInstance } from '../../types'
+import { isTargetResolutionBlocking } from '../../utils/targetIdentity'
 import { useChatInputAreaStyles } from './ChatInputArea.styles'
 import SystemPromptSetup from './SystemPromptSetup'
 import { PIECE_TYPE_TO_DATA_TYPE } from './converterTypes'
@@ -34,11 +35,12 @@ interface StatusBannerProps {
   textClassName: string
   buttonTestId?: string
   buttonClassName?: string
+  tourTarget?: string
 }
 
-function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId, buttonClassName }: StatusBannerProps) {
+function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testId, className, textClassName, buttonTestId, buttonClassName, tourTarget }: StatusBannerProps) {
   return (
-    <div className={className} data-testid={testId}>
+    <div className={className} data-testid={testId} data-tour={tourTarget}>
       {icon}
       <Text className={textClassName} size={300}>
         {text}
@@ -56,6 +58,102 @@ function StatusBanner({ icon, text, buttonText, buttonIcon, onButtonClick, testI
       )}
     </div>
   )
+}
+
+interface TargetResolutionBannerProps {
+  status: AttackTargetResolutionStatus
+  activeTarget?: TargetInstance | null
+  onRetry?: () => void
+  onConfigureTarget: () => void
+  onUseAsTemplate: () => void
+  styles: ReturnType<typeof useChatInputAreaStyles>
+}
+
+function TargetResolutionBanner({
+  status,
+  activeTarget,
+  onRetry,
+  onConfigureTarget,
+  onUseAsTemplate,
+  styles,
+}: TargetResolutionBannerProps) {
+  if (status === 'loading') {
+    return (
+      <StatusBanner
+        className={styles.statusBanner}
+        textClassName={styles.statusBannerText}
+        icon={<ArrowSyncRegular fontSize={18} />}
+        text="Verifying this attack's target before enabling changes..."
+        testId="target-resolution-loading-banner"
+      />
+    )
+  }
+  if (status === 'error') {
+    return (
+      <StatusBanner
+        className={styles.statusBanner}
+        textClassName={styles.statusBannerText}
+        icon={<WarningRegular fontSize={18} />}
+        text="Target verification failed. This conversation remains read-only."
+        buttonText="Retry"
+        buttonIcon={<ArrowSyncRegular />}
+        onButtonClick={onRetry}
+        testId="target-resolution-error-banner"
+        buttonTestId="retry-target-resolution-btn"
+        buttonClassName={styles.touchTarget}
+      />
+    )
+  }
+  if (status === 'unavailable') {
+    return (
+      <StatusBanner
+        className={styles.statusBanner}
+        textClassName={styles.statusBannerText}
+        icon={<WarningRegular fontSize={18} />}
+        text="The target used by this attack is not currently registered. This conversation is read-only."
+        buttonText="Retry"
+        buttonIcon={<ArrowSyncRegular />}
+        onButtonClick={onRetry}
+        testId="target-resolution-unavailable-banner"
+        buttonTestId="retry-target-resolution-btn"
+        buttonClassName={styles.touchTarget}
+      />
+    )
+  }
+  if (status === 'ambiguous') {
+    return (
+      <StatusBanner
+        className={styles.statusBanner}
+        textClassName={styles.statusBannerText}
+        icon={<WarningRegular fontSize={18} />}
+        text="Multiple registered targets have this attack's identity. Remove duplicate registrations, then retry."
+        buttonText="Retry"
+        buttonIcon={<ArrowSyncRegular />}
+        onButtonClick={onRetry}
+        testId="target-resolution-ambiguous-banner"
+        buttonTestId="retry-target-resolution-btn"
+        buttonClassName={styles.touchTarget}
+      />
+    )
+  }
+  if (status === 'legacy') {
+    const canUseAsTemplate = Boolean(activeTarget)
+    return (
+      <StatusBanner
+        className={styles.statusBanner}
+        textClassName={styles.statusBannerText}
+        icon={<WarningRegular fontSize={18} />}
+        text="This attack does not contain a complete target identity. The original conversation is read-only."
+        buttonText={canUseAsTemplate ? 'Continue with your target' : 'Configure Target'}
+        buttonIcon={canUseAsTemplate ? <CopyRegular /> : <SettingsRegular />}
+        onButtonClick={canUseAsTemplate ? onUseAsTemplate : onConfigureTarget}
+        testId="target-resolution-legacy-banner"
+        buttonTestId={canUseAsTemplate ? 'use-as-template-btn' : 'configure-target-input-btn'}
+        buttonClassName={styles.touchTarget}
+      />
+    )
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +412,8 @@ interface ChatInputAreaProps {
   onNewConversation: () => void
   operatorLocked?: boolean
   crossTargetLocked?: boolean
+  targetResolutionStatus?: AttackTargetResolutionStatus
+  onRetryTargetResolution?: () => void
   onUseAsTemplate: () => void
   attackOperator?: string
   noTargetSelected?: boolean
@@ -340,7 +440,7 @@ interface ChatInputAreaProps {
   onSystemPromptChange?: (value: string) => void
 }
 
-const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
+const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({ onSend, disabled = false, activeTarget, singleTurnLimitReached = false, onNewConversation, operatorLocked = false, crossTargetLocked = false, targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, noTargetSelected = false, onConfigureTarget, onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange, convertedValue, originalValue: _originalValue, onClearConversion, onConvertedValueChange, converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip, showSystemPrompt = false, supportsSystemPrompt = false, systemPrompt = '', onSystemPromptChange }, ref) {
   const styles = useChatInputAreaStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
@@ -495,7 +595,16 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   return (
     <div className={styles.root}>
       <div className={styles.inputContainer}>
-        {noTargetSelected ? (
+        {isTargetResolutionBlocking(targetResolutionStatus) ? (
+          <TargetResolutionBanner
+            status={targetResolutionStatus}
+            activeTarget={activeTarget}
+            onRetry={onRetryTargetResolution}
+            onConfigureTarget={onConfigureTarget}
+            onUseAsTemplate={onUseAsTemplate}
+            styles={styles}
+          />
+        ) : noTargetSelected ? (
           <StatusBanner
             className={styles.noTargetBanner}
             textClassName={styles.noTargetText}
@@ -507,6 +616,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             testId="no-target-banner"
             buttonTestId="configure-target-input-btn"
             buttonClassName={styles.touchTarget}
+            tourTarget="chat-prerequisite"
           />
         ) : operatorLocked ? (
           <StatusBanner
@@ -585,6 +695,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                   onClick={onToggleConverterPanel}
                   disabled={disabled}
                   data-testid="toggle-converter-panel-btn"
+                  data-tour="converter-toggle"
                   aria-label="Toggle converter panel"
                 />
               </Tooltip>

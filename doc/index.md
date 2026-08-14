@@ -42,9 +42,9 @@ Run standardized evaluation scenarios at large scale — covering content harms,
 A graphical user interface for human-led red teaming. Interact with AI systems directly, track findings, and collaborate with your team — all from a modern web UI.
 ::::
 
-```{image} roakey_peek.png
-:alt: Roakey peeking in
-:class: roakey-peek roakey-peek-left
+```{image} sprites/roakey-peek-and-scout.png
+:alt: Roakey rising up to peek over a ledge
+:class: roakey-sprite roakey-sprite-scout
 ```
 
 ::::{card}
@@ -72,6 +72,12 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 ## Getting Started
 1. Install PyRIT and verify installation.\
 For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page
+
+```{image} sprites/roakey-spyglass-scan.png
+:alt: Roakey raising a spyglass to scan the horizon
+:class: roakey-sprite roakey-sprite-spyglass
+```
+
 ```bash
 # note: for local installation, python version 3.13 is recommended: https://www.python.org/downloads/latest/python3.13
 pip install pyrit
@@ -110,11 +116,6 @@ initializers:
 ::::
 
 :::::
-
-```{image} roakey_tail.png
-:alt: Roakey's tail peeking in
-:class: roakey-peek roakey-peek-tail
-```
 
 3. Use PyRIT in any mode that best fits your use case: Scanner, GUI, or Framework.
 
@@ -170,3 +171,8 @@ await printer.write_async(result)
 
 For more details, see the [Framework](code/framework) page.
 ::::
+
+```{image} sprites/roakey-run-and-flag.png
+:alt: Roakey running in and planting a pirate flag
+:class: roakey-sprite roakey-sprite-flag
+```

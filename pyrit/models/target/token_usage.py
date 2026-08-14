@@ -3,16 +3,61 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-#: Prefix for all token-usage keys stored in a MessagePiece's ``prompt_metadata``.
-_METADATA_PREFIX = "token_usage_"
+#: Prefix for all token-usage keys stored in a MessagePiece's ``prompt_metadata``. Public because
+#: the targets that report usage reserve the whole prefix for the provider: they clear it before
+#: writing what the provider reported, so a caller-supplied count is not read back as if the API
+#: had returned it.
+TOKEN_USAGE_METADATA_PREFIX = "token_usage_"
 
 #: Metadata key suffixes that map to first-class ``TokenUsage`` fields. Every other integer
 #: ``token_usage_*`` key round-trips through ``extra``. ``cost`` is not listed because it is a
 #: currency amount stored as a string and is filtered out by the int guard regardless.
 _CORE_SUFFIXES = frozenset({"input_tokens", "output_tokens", "total_tokens", "reasoning_tokens", "cached_tokens"})
+
+
+def read_usage_value(*, source: Any, name: str) -> Any:
+    """
+    Read ``name`` from a provider usage payload, which may be a mapping or an attribute object.
+
+    Provider SDKs surface usage either as a typed object (OpenAI/LiteLLM ``Usage``) or as a
+    ``model_dump``'d mapping, so both access styles are supported. Use this to reach nested
+    breakdown objects (for example ``prompt_tokens_details``) before reading counts out of them
+    with ``read_usage_int``.
+
+    Args:
+        source (Any): The usage object or nested details object (may be None).
+        name (str): The field name to read.
+
+    Returns:
+        Any: The field value, or None when absent.
+    """
+    if isinstance(source, Mapping):
+        return source.get(name)
+    return getattr(source, name, None)
+
+
+def read_usage_int(*, source: Any, name: str) -> int | None:
+    """
+    Read ``name`` from a provider usage payload and return it only when it is an integer count.
+
+    Which field name holds which count is wire-format specific and therefore the caller's
+    concern; this helper only owns the read and the int guard, so a partial usage payload
+    contributes just the counts the provider actually reports. Booleans are rejected even though
+    ``bool`` is a subclass of ``int``.
+
+    Args:
+        source (Any): The usage object or nested details object (may be None).
+        name (str): The field name to read.
+
+    Returns:
+        int | None: The integer value, or None when absent or not an integer.
+    """
+    value = read_usage_value(source=source, name=name)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 @dataclass(frozen=True)
@@ -31,7 +76,9 @@ class TokenUsage:
     This is a pure value object: it holds counts and (de)serializes them to metadata. Turning a
     provider ``usage`` payload into a ``TokenUsage`` is the responsibility of the target/parser that
     knows which wire format it received (for example, the Chat Completions parser in
-    ``pyrit.prompt_target.common.chat_completions_response_parser``).
+    ``pyrit.prompt_target.common.chat_completions_response_parser``). Only the format-agnostic part
+    of that read -- mapping-or-attribute access and the integer guard -- is shared here, via
+    ``read_usage_value`` and ``read_usage_int``.
 
     Neither cost nor the responding model name is modeled here: cost is a currency amount (tracked
     separately under ``token_usage_cost``) and the model identity is already recorded on the
@@ -64,7 +111,9 @@ class TokenUsage:
             TokenUsage | None: The reconstructed usage, or None if no token-usage keys exist.
         """
         stripped = {
-            key[len(_METADATA_PREFIX) :]: value for key, value in metadata.items() if key.startswith(_METADATA_PREFIX)
+            key[len(TOKEN_USAGE_METADATA_PREFIX) :]: value
+            for key, value in metadata.items()
+            if key.startswith(TOKEN_USAGE_METADATA_PREFIX)
         }
         if not stripped:
             return None
@@ -100,15 +149,15 @@ class TokenUsage:
         """
         out: dict[str, int] = {}
         if self.input_tokens is not None:
-            out[_METADATA_PREFIX + "input_tokens"] = self.input_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "input_tokens"] = self.input_tokens
         if self.output_tokens is not None:
-            out[_METADATA_PREFIX + "output_tokens"] = self.output_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "output_tokens"] = self.output_tokens
         if self.total_tokens is not None:
-            out[_METADATA_PREFIX + "total_tokens"] = self.total_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "total_tokens"] = self.total_tokens
         if self.reasoning_tokens is not None:
-            out[_METADATA_PREFIX + "reasoning_tokens"] = self.reasoning_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "reasoning_tokens"] = self.reasoning_tokens
         if self.cached_tokens is not None:
-            out[_METADATA_PREFIX + "cached_tokens"] = self.cached_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "cached_tokens"] = self.cached_tokens
         for name, value in self.extra.items():
-            out[_METADATA_PREFIX + name] = value
+            out[TOKEN_USAGE_METADATA_PREFIX + name] = value
         return out

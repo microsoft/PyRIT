@@ -69,6 +69,7 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from pathlib import Path
 
     from pyrit.models.literals import PromptDataType
@@ -157,6 +158,35 @@ class TAPAttackScoringConfig(AttackScoringConfig):
         return self.objective_scorer.threshold  # type: ignore[ty:unresolved-attribute]
 
 
+@dataclass(frozen=True, slots=True)
+class _TAPAttackConfiguration:
+    """Immutable configuration for the TAP search and node execution."""
+
+    tree_width: int
+    tree_depth: int
+    branching_factor: int
+    on_topic_checking_enabled: bool
+    desired_response_prefix: str
+    batch_size: int
+
+    def __post_init__(self) -> None:
+        """
+        Validate the TAP search limits.
+
+        Raises:
+            ValueError: If a search limit is less than one.
+        """
+        validations = (
+            (self.tree_depth, "The tree depth must be at least 1."),
+            (self.tree_width, "The tree width must be at least 1."),
+            (self.branching_factor, "The branching factor must be at least 1."),
+            (self.batch_size, "The batch size must be at least 1."),
+        )
+        for value, message in validations:
+            if value < 1:
+                raise ValueError(message)
+
+
 @dataclass
 class TAPAttackContext(MultiTurnAttackContext[Any]):
     """
@@ -178,6 +208,18 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_conversation_id: str | None = None
     best_objective_score: Score | None = None
     best_adversarial_conversation_id: str | None = None
+
+    # Visualization parent for first-level nodes in this execution
+    visualization_root_id: str = "root"
+
+    @property
+    def conversation_id(self) -> str | None:
+        """The best objective-target conversation, or the first active branch."""
+        if self.best_conversation_id:
+            return self.best_conversation_id
+        if self.nodes:
+            return self.nodes[0].objective_target_conversation_id
+        return None
 
 
 class TAPAttackResult(AttackResult):
@@ -1220,6 +1262,72 @@ class _TreeOfAttacksNode:
     __repr__ = __str__
 
 
+class _TreeOfAttacksNodeExecutor:
+    """Execute independent tree nodes with bounded concurrency."""
+
+    def __init__(
+        self,
+        *,
+        batch_size: int,
+        logger: logging.Logger | logging.LoggerAdapter[logging.Logger],
+    ) -> None:
+        """
+        Initialize the node executor.
+
+        Args:
+            batch_size (int): Maximum number of nodes to execute concurrently.
+            logger (logging.Logger | logging.LoggerAdapter[logging.Logger]): Logger
+                used for execution progress.
+        """
+        self._batch_size = batch_size
+        self._logger = logger
+
+    async def execute_nodes_async(
+        self,
+        *,
+        nodes: list[_TreeOfAttacksNode],
+        objective: str,
+    ) -> AsyncIterator[tuple[int, list[_TreeOfAttacksNode]]]:
+        """
+        Execute nodes in ordered batches and yield each completed batch.
+
+        Node instances own all branch-specific mutable state. This executor only
+        schedules their existing execution protocol, so failures and cancellation
+        retain ``asyncio.gather`` semantics.
+
+        Args:
+            nodes (list[_TreeOfAttacksNode]): Nodes to execute.
+            objective (str): Objective passed to every node.
+
+        Yields:
+            tuple[int, list[_TreeOfAttacksNode]]: The batch start offset and nodes
+                after every node in that batch has completed.
+        """
+        for batch_start in range(0, len(nodes), self._batch_size):
+            batch_nodes = nodes[batch_start : batch_start + self._batch_size]
+            self._log_batch_start(batch_start=batch_start, batch_nodes=batch_nodes, total_nodes=len(nodes))
+
+            await asyncio.gather(*(node.send_prompt_async(objective=objective) for node in batch_nodes))
+
+            yield batch_start, batch_nodes
+
+    def _log_batch_start(
+        self,
+        *,
+        batch_start: int,
+        batch_nodes: list[_TreeOfAttacksNode],
+        total_nodes: int,
+    ) -> None:
+        """Log the batch and node dispatch order."""
+        batch_end = batch_start + len(batch_nodes)
+        self._logger.debug(
+            f"Processing batch {batch_start // self._batch_size + 1} "
+            f"(nodes {batch_start + 1}-{batch_end} of {total_nodes})"
+        )
+        for node_index in range(batch_start + 1, batch_end + 1):
+            self._logger.debug(f"Preparing prompt for node {node_index}/{total_nodes}")
+
+
 class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackResult]):
     """
     Implement the Tree of Attacks with Pruning (TAP) attack strategy.
@@ -1348,31 +1456,23 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             ``score_blocked_content=True`` on the objective scorer (requires
             ``prompt_metadata["partial_content"]`` on the blocked piece).
         """
-        # Validate tree parameters
-        if tree_depth < 1:
-            raise ValueError("The tree depth must be at least 1.")
-        if tree_width < 1:
-            raise ValueError("The tree width must be at least 1.")
-        if branching_factor < 1:
-            raise ValueError("The branching factor must be at least 1.")
-        if batch_size < 1:
-            raise ValueError("The batch size must be at least 1.")
+        self._configuration = _TAPAttackConfiguration(
+            tree_width=tree_width,
+            tree_depth=tree_depth,
+            branching_factor=branching_factor,
+            on_topic_checking_enabled=on_topic_checking_enabled,
+            desired_response_prefix=desired_response_prefix,
+            batch_size=batch_size,
+        )
 
         # Initialize base class
         super().__init__(objective_target=objective_target, logger=logger, context_type=TAPAttackContext)
 
         self._memory = CentralMemory.get_memory_instance()
-
-        # Store tree configuration
-        self._tree_width = tree_width
-        self._tree_depth = tree_depth
-        self._branching_factor = branching_factor
-        self._vis_root_id = "root"
-
-        # Store execution configuration
-        self._on_topic_checking_enabled = on_topic_checking_enabled
-        self._desired_response_prefix = desired_response_prefix
-        self._batch_size = batch_size
+        self._node_executor = _TreeOfAttacksNodeExecutor(
+            batch_size=self._configuration.batch_size,
+            logger=self._logger,
+        )
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
@@ -1473,7 +1573,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # Use the adversarial chat target for scoring, as in CrescendoAttack
         self._scoring_target = self._adversarial_chat
 
-        if self._on_topic_checking_enabled and not self._scoring_target:
+        if self._configuration.on_topic_checking_enabled and not self._scoring_target:
             raise ValueError("On-topic checking is enabled but no scoring target is available.")
 
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -1564,6 +1664,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         context.tree_visualization = Tree()
         context.tree_visualization.create_node("Root", "root")
+        context.visualization_root_id = "root"
 
         context.nodes = []
         context.best_conversation_id = None
@@ -1577,10 +1678,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         context.executed_turns = get_prepended_turn_count(context.prepended_conversation)
 
         # Validate that prepended conversation doesn't exceed tree_depth
-        if context.executed_turns >= self._tree_depth:
+        if context.executed_turns >= self._configuration.tree_depth:
             raise ValueError(
                 f"Prepended conversation has {context.executed_turns} turns, "
-                f"which equals or exceeds tree_depth={self._tree_depth}. "
+                f"which equals or exceeds tree_depth={self._configuration.tree_depth}. "
                 f"Reduce prepended turns or increase tree_depth."
             )
 
@@ -1592,7 +1693,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             node_id = f"prepended_{turn}"
             context.tree_visualization.create_node(f"{turn}: (prepended)", node_id, parent=vis_parent)
             vis_parent = node_id
-        self._vis_root_id = vis_parent
+        context.visualization_root_id = vis_parent
 
     async def _perform_async(self, *, context: TAPAttackContext) -> TAPAttackResult:
         """
@@ -1620,11 +1721,13 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         """
         self._logger.info(f"Starting TAP attack with objective: {context.objective}")
         self._logger.info(
-            f"Tree dimensions - Width: {self._tree_width}, Depth: {self._tree_depth}, "
-            f"Branching factor: {self._branching_factor}"
+            f"Tree dimensions - Width: {self._configuration.tree_width}, "
+            f"Depth: {self._configuration.tree_depth}, "
+            f"Branching factor: {self._configuration.branching_factor}"
         )
         self._logger.info(
-            f"Execution settings - Batch size: {self._batch_size}, On-topic checking: {self._on_topic_checking_enabled}"
+            f"Execution settings - Batch size: {self._configuration.batch_size}, "
+            f"On-topic checking: {self._configuration.on_topic_checking_enabled}"
         )
 
         # TAP Attack Execution Algorithm:
@@ -1647,9 +1750,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # Execute tree exploration iterations
         # Note: executed_turns is initialized in _setup_async with prepended conversation count
         # Start from executed_turns + 1 so prepended turns count toward tree_depth
-        for turn in range(context.executed_turns + 1, self._tree_depth + 1):
+        for turn in range(context.executed_turns + 1, self._configuration.tree_depth + 1):
             context.executed_turns = turn
-            self._logger.info(f"Starting TAP turn {turn}/{self._tree_depth}")
+            self._logger.info(f"Starting TAP turn {turn}/{self._configuration.tree_depth}")
 
             # Prepare nodes for current iteration
             await self._prepare_nodes_for_iteration_async(context)
@@ -1778,7 +1881,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             context.next_message is not None and self._modality_router.objective_target_requires_media_on_first_turn
         )
 
-        for i in range(self._tree_width):
+        for i in range(self._configuration.tree_width):
             # Historically only node 0 consumed next_message so sibling roots could
             # explore alternative starts. For edit-only objectives (no {text} path),
             # every root must receive seed media to build a valid first-turn request.
@@ -1795,7 +1898,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 )
 
             context.nodes.append(node)
-            node._vis_node_id = self._vis_root_id
+            node._vis_node_id = context.visualization_root_id
 
         # Clear next_message after initialization (it's been used by the first node)
         context.next_message = None
@@ -1815,7 +1918,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         cloned_nodes = []
 
         for node in context.nodes:
-            for _ in range(self._branching_factor - 1):
+            for _ in range(self._configuration.branching_factor - 1):
                 cloned_node = node.duplicate()
                 # Add the adversarial chat conversation ID of the duplicated node to the context's tracking
                 context.related_conversations.add(
@@ -1853,25 +1956,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             context.tree_visualization.create_node(f"{context.executed_turns}: ", vis_id, parent=node._vis_node_id)
             node._vis_node_id = vis_id
 
-        # Process nodes in batches
-        for batch_start in range(0, len(context.nodes), self._batch_size):
-            batch_end = min(batch_start + self._batch_size, len(context.nodes))
-            batch_nodes = context.nodes[batch_start:batch_end]
-
-            self._logger.debug(
-                f"Processing batch {batch_start // self._batch_size + 1} "
-                f"(nodes {batch_start + 1}-{batch_end} of {len(context.nodes)})"
-            )
-
-            # Create tasks for parallel execution
-            tasks = []
-            for node_index, node in enumerate(batch_nodes, start=batch_start + 1):
-                self._logger.debug(f"Preparing prompt for node {node_index}/{len(context.nodes)}")
-                task = node.send_prompt_async(objective=context.objective)
-                tasks.append(task)
-
-            await asyncio.gather(*tasks)
-
+        async for batch_start, batch_nodes in self._node_executor.execute_nodes_async(
+            nodes=context.nodes,
+            objective=context.objective,
+        ):
             # Update visualization with results after batch completes
             for node_index, node in enumerate(batch_nodes, start=batch_start + 1):
                 result_string = self._format_node_result(node)
@@ -1909,8 +1997,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         completed_nodes = self._get_completed_nodes_sorted_by_score(context.nodes)
 
         # Keep nodes up to width limit
-        nodes_to_keep = completed_nodes[: self._tree_width]
-        nodes_to_prune = completed_nodes[self._tree_width :]
+        nodes_to_keep = completed_nodes[: self._configuration.tree_width]
+        nodes_to_prune = completed_nodes[self._configuration.tree_width :]
 
         # Mark pruned nodes in visualization and track their conversation IDs
         for node in nodes_to_prune:
@@ -2003,7 +2091,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_strategy_name=self.__class__.__name__,
             modality_router=self._modality_router,
             memory_labels=context.memory_labels,
-            desired_response_prefix=self._desired_response_prefix,
+            desired_response_prefix=self._configuration.desired_response_prefix,
             parent_id=parent_id,
             prompt_normalizer=self._prompt_normalizer,
             initial_prompt=initial_prompt,
@@ -2100,7 +2188,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 - `None` if `on_topic_checking_enabled` is `False` or no scoring_target
                 is available
         """
-        if not self._on_topic_checking_enabled:
+        if not self._configuration.on_topic_checking_enabled:
             return None
 
         return TrueFalseInverterScorer(

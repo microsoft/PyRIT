@@ -41,7 +41,7 @@ Make your changes in `pyrit/memory/memory_models.py`. Follow these conventions:
 ### 2. Generate a migration
 
 ```bash
-python build_scripts/memory_migrations.py generate -m "short description of change"
+python -m build_scripts.memory_migrations generate -m "short description of change"
 ```
 
 This creates a new revision file under `pyrit/memory/alembic/versions/`. **Review the generated file carefully** — auto-generated migrations may need manual adjustments (e.g. for data migrations or default values).
@@ -49,7 +49,7 @@ This creates a new revision file under `pyrit/memory/alembic/versions/`. **Revie
 ### 3. Validate the migration
 
 ```bash
-python build_scripts/memory_migrations.py check
+python -m build_scripts.memory_migrations check
 ```
 
 This verifies the schema produced by running all migrations matches the current models. Both pre-commit hooks (see below) and CI run this check.

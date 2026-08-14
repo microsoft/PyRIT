@@ -58,7 +58,10 @@ describe("ChatInputArea", () => {
 
     expect(screen.getByRole("textbox")).toBeInTheDocument();
     expect(getSendButton()).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /convert/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /convert/i })).toHaveAttribute(
+      "data-tour",
+      "converter-toggle"
+    );
   });
 
   it("should call converter panel toggle handler when convert button is clicked", async () => {
@@ -77,6 +80,81 @@ describe("ChatInputArea", () => {
     await user.click(screen.getByRole("button", { name: /convert/i }));
 
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("should expose the visible target prerequisite to the tour", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea {...defaultProps} noTargetSelected />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("no-target-banner")).toHaveAttribute(
+      "data-tour",
+      "chat-prerequisite"
+    );
+    expect(
+      screen.queryByRole("button", { name: /toggle converter panel/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("should show a retry action when target verification fails", async () => {
+    const user = userEvent.setup();
+    const onRetryTargetResolution = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          targetResolutionStatus="error"
+          onRetryTargetResolution={onRetryTargetResolution}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("target-resolution-error-banner")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+    expect(onRetryTargetResolution).toHaveBeenCalledTimes(1);
+  });
+
+  it("should direct ambiguous target identities to remove duplicates and retry", async () => {
+    const user = userEvent.setup();
+    const onRetryTargetResolution = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          targetResolutionStatus="ambiguous"
+          onRetryTargetResolution={onRetryTargetResolution}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("target-resolution-ambiguous-banner")).toBeInTheDocument();
+    expect(screen.getByText(/remove duplicate registrations/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+    expect(onRetryTargetResolution).toHaveBeenCalledTimes(1);
+  });
+
+  it("should keep legacy attacks read-only while allowing a new-attack template", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={makeTarget({ target_registry_name: "explicit-target" })}
+          targetResolutionStatus="legacy"
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("target-resolution-legacy-banner")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /continue with your target/i }));
+    expect(defaultProps.onUseAsTemplate).toHaveBeenCalledTimes(1);
   });
 
   it("should call onSend with input value when send button clicked", async () => {

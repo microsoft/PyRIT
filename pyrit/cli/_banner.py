@@ -258,7 +258,7 @@ def _build_static_banner() -> StaticBannerData:
         "  • list-converters       - See all registered converter instances",
         "  • run <scenario> [opts] - Execute a security scenario",
         "  • scenario-history      - View your session history",
-        "  • print-scenario [N]    - Display detailed results",
+        "  • scenario-results [id] - Inspect a run's attack results",
         "  • help [command]        - Get help on any command",
         "  • clear                 - Clear the screen",
         "  • exit                  - Quit the shell",

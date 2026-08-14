@@ -4,6 +4,7 @@
 """Unit tests for the shared OpenAI Chat Completions wire-format helpers."""
 
 import base64
+import inspect
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions import EmptyResponseException, PyritException
-from pyrit.models import JsonResponseConfig, Message, MessagePiece
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, TokenUsage
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
@@ -25,12 +26,15 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_content_filter_message,
     build_response_pieces_async,
     capture_token_usage,
+    capture_usage_and_finish_reason,
     extract_partial_content,
+    get_finish_reason,
     is_content_filter_response,
     save_audio_response_async,
     token_usage_from_chat_completion,
     validate_chat_completion_response,
 )
+from pyrit.prompt_target.common.utils import RESERVED_RESPONSE_METADATA_KEYS, set_response_metadata
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -134,6 +138,16 @@ def test_validate_response_accepts_valid():
         validate_chat_completion_response(response=_mock_response(finish_reason=reason))
 
 
+def test_get_finish_reason_returns_first_choice_reason():
+    assert get_finish_reason(response=_mock_response(finish_reason="length")) == "length"
+
+
+def test_get_finish_reason_returns_none_without_choices():
+    resp = MagicMock()
+    resp.choices = []
+    assert get_finish_reason(response=resp) is None
+
+
 def test_capture_token_usage_populates_metadata():
     resp = _mock_response("ok")
     resp.usage.prompt_tokens = 3
@@ -152,12 +166,174 @@ def test_capture_token_usage_populates_metadata():
     assert "token_usage_model_name" not in metadata
 
 
-def test_capture_token_usage_noop_without_usage():
+def test_capture_token_usage_writes_nothing_without_usage():
     resp = _mock_response("ok")
     resp.usage = None
     pieces = [_request_piece("ok")]
     capture_token_usage(pieces=pieces, response=resp)
     assert "token_usage_total_tokens" not in pieces[0].prompt_metadata
+
+
+# ---------------------------------------------------------------------------
+# response metadata capture: token usage plus the stop reason
+# ---------------------------------------------------------------------------
+
+
+class _SyntheticContentFilterResponse:
+    """Mirrors ``OpenAITarget``'s synthetic stand-in: no ``usage``, no ``choices``."""
+
+    def model_dump_json(self) -> str:
+        return "{}"
+
+
+def test_capture_usage_and_finish_reason_captures_usage_and_finish_reason():
+    resp = _mock_response("ok", finish_reason="length")
+    resp.usage.prompt_tokens = 3
+    resp.usage.completion_tokens = 4
+    resp.usage.total_tokens = 7
+    resp.usage.prompt_tokens_details.cached_tokens = 1
+    resp.usage.completion_tokens_details.reasoning_tokens = 2
+    pieces = [_request_piece("ok")]
+
+    capture_usage_and_finish_reason(pieces=pieces, response=resp)
+
+    metadata = pieces[0].prompt_metadata
+    assert metadata["finish_reason"] == "length"
+    assert metadata["token_usage_input_tokens"] == 3
+    assert metadata["token_usage_output_tokens"] == 4
+    assert metadata["token_usage_reasoning_tokens"] == 2
+
+
+@pytest.mark.parametrize("finish_reason", ["stop", "length", "content_filter", "tool_calls"])
+def test_capture_usage_and_finish_reason_records_each_finish_reason(finish_reason):
+    pieces = [_request_piece("ok")]
+    capture_usage_and_finish_reason(pieces=pieces, response=_mock_response("ok", finish_reason=finish_reason))
+    assert pieces[0].prompt_metadata["finish_reason"] == finish_reason
+
+
+def test_capture_usage_and_finish_reason_stores_finish_reason_as_string():
+    """``prompt_metadata`` is persisted as JSON and queried as a string."""
+    pieces = [_request_piece("ok")]
+    capture_usage_and_finish_reason(pieces=pieces, response=_mock_response("ok"))
+    assert isinstance(pieces[0].prompt_metadata["finish_reason"], str)
+
+
+def test_capture_usage_and_finish_reason_writes_only_to_first_piece():
+    resp = _mock_response("ok")
+    resp.usage = None
+    pieces = [_request_piece("a"), _request_piece("b")]
+    capture_usage_and_finish_reason(pieces=pieces, response=resp)
+    assert pieces[0].prompt_metadata["finish_reason"] == "stop"
+    assert "finish_reason" not in pieces[1].prompt_metadata
+
+
+def test_capture_usage_and_finish_reason_clears_stale_metadata_from_every_piece():
+    """Request metadata is merged into every piece, so a stale value must not survive on any of them."""
+    stale = {"finish_reason": "caller_supplied", "status": "caller_supplied", "token_usage_input_tokens": 999999}
+    pieces = [_request_piece("a"), _request_piece("b")]
+    for piece in pieces:
+        piece.prompt_metadata.update(stale)
+    resp = _mock_response("ok", finish_reason="length")
+    resp.usage = _usage(prompt_tokens=3, completion_tokens=4, total_tokens=7)
+
+    capture_usage_and_finish_reason(pieces=pieces, response=resp)
+
+    assert pieces[0].prompt_metadata["finish_reason"] == "length"
+    assert pieces[0].prompt_metadata["token_usage_input_tokens"] == 3
+    assert "status" not in pieces[0].prompt_metadata
+    assert not any(key in pieces[1].prompt_metadata for key in stale)
+
+
+def test_capture_usage_and_finish_reason_tolerates_response_without_choices():
+    """The SDK-raised content-filter path passes an object with neither usage nor choices."""
+    pieces = [_request_piece("ok")]
+    capture_usage_and_finish_reason(pieces=pieces, response=_SyntheticContentFilterResponse())
+    assert pieces[0].prompt_metadata == {}
+
+
+def test_capture_usage_and_finish_reason_noop_without_pieces():
+    capture_usage_and_finish_reason(pieces=[], response=_mock_response("ok"))
+
+
+def test_capture_usage_and_finish_reason_clears_caller_supplied_finish_reason():
+    """``finish_reason`` is reserved for the provider, so an inherited value must not survive."""
+    piece = _request_piece("ok")
+    piece.prompt_metadata["finish_reason"] = "caller_supplied"
+    capture_usage_and_finish_reason(pieces=[piece], response=_SyntheticContentFilterResponse())
+    assert "finish_reason" not in piece.prompt_metadata
+
+
+def test_capture_usage_and_finish_reason_overwrites_caller_supplied_finish_reason():
+    piece = _request_piece("ok")
+    piece.prompt_metadata["finish_reason"] = "caller_supplied"
+    capture_usage_and_finish_reason(pieces=[piece], response=_mock_response("ok", finish_reason="length"))
+    assert piece.prompt_metadata["finish_reason"] == "length"
+
+
+@pytest.mark.parametrize("value", ["", None, 0, MagicMock()])
+def test_set_response_metadata_ignores_unreported_values(value):
+    """``prompt_metadata`` is JSON-serialized, so anything but a non-empty string is not reported."""
+    piece = _request_piece("ok")
+    set_response_metadata(pieces=[piece], status=value)
+    assert "status" not in piece.prompt_metadata
+
+
+@pytest.mark.parametrize("reserved_key", sorted(RESERVED_RESPONSE_METADATA_KEYS))
+def test_set_response_metadata_clears_every_reserved_key(reserved_key):
+    """A target only writes the keys its own API reports, so all of them must be cleared."""
+    piece = _request_piece("ok")
+    piece.prompt_metadata[reserved_key] = "caller_supplied"
+
+    set_response_metadata(pieces=[piece], finish_reason="stop")
+
+    assert piece.prompt_metadata.get(reserved_key) == ("stop" if reserved_key == "finish_reason" else None)
+
+
+def test_set_response_metadata_keeps_all_reported_values():
+    """Clearing runs once up front, so a second reported key must not wipe the first."""
+    piece = _request_piece("ok")
+
+    set_response_metadata(pieces=[piece], status="incomplete", incomplete_reason="max_output_tokens")
+
+    assert piece.prompt_metadata["status"] == "incomplete"
+    assert piece.prompt_metadata["incomplete_reason"] == "max_output_tokens"
+
+
+def test_set_response_metadata_leaves_unreserved_caller_metadata_untouched():
+    piece = _request_piece("ok")
+    piece.prompt_metadata["video_id"] = "caller_supplied"
+
+    set_response_metadata(pieces=[piece], finish_reason="stop")
+
+    assert piece.prompt_metadata["video_id"] == "caller_supplied"
+
+
+def test_reserved_response_metadata_keys_are_the_stop_reason_keys():
+    """Pinned explicitly: parametrizing over the set lets a dropped key delete its own test case."""
+    assert {"finish_reason", "status", "incomplete_reason"} == RESERVED_RESPONSE_METADATA_KEYS
+
+
+def test_capture_token_usage_clears_caller_supplied_counts_when_none_reported():
+    """The whole prefix is reserved, so a guess must not read back as what the provider charged."""
+    piece = _request_piece("ok")
+    piece.prompt_metadata.update({"token_usage_input_tokens": 999999, "token_usage_bogus": 777})
+
+    capture_token_usage(pieces=[piece], response=_SyntheticContentFilterResponse())
+
+    assert TokenUsage.from_metadata(piece.prompt_metadata) is None
+
+
+def test_capture_token_usage_replaces_stale_counts_the_provider_did_not_report():
+    """A reported payload must replace the caller's leftovers, not merge into them."""
+    piece = _request_piece("ok")
+    piece.prompt_metadata["token_usage_reasoning_tokens"] = 999999
+    resp = _mock_response("ok")
+    resp.usage = _usage(prompt_tokens=3, completion_tokens=4, total_tokens=7)
+
+    capture_token_usage(pieces=[piece], response=resp)
+
+    assert "token_usage_reasoning_tokens" not in piece.prompt_metadata
+    assert piece.prompt_metadata["token_usage_input_tokens"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -438,3 +614,25 @@ async def test_build_response_pieces_async_orders_text_audio_tool():
         pieces = await build_response_pieces_async(response=resp, request=_request_piece(), audio_format="wav")
 
     assert [p.converted_value_data_type for p in pieces] == ["text", "text", "audio_path", "function_call"]
+
+
+def test_set_response_metadata_records_every_reserved_key():
+    """Every reserved key must be reachable: named in the signature and written back to the piece."""
+    piece = _request_piece("ok")
+    reported = {key: f"reported_{key}" for key in RESERVED_RESPONSE_METADATA_KEYS}
+    parameters = inspect.signature(set_response_metadata).parameters
+    keyword_only = {name for name, p in parameters.items() if p.kind is inspect.Parameter.KEYWORD_ONLY}
+
+    assert keyword_only - {"pieces"} == RESERVED_RESPONSE_METADATA_KEYS
+
+    set_response_metadata(pieces=[piece], **reported)
+
+    assert piece.prompt_metadata == reported
+
+
+def test_set_response_metadata_rejects_an_unreserved_key():
+    """An unreserved key is drift or a typo, so it fails at the call site instead of being persisted."""
+    piece = _request_piece("ok")
+
+    with pytest.raises(TypeError, match="reasoning_status"):
+        set_response_metadata(pieces=[piece], reasoning_status="not_reserved")
