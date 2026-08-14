@@ -640,7 +640,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         return await self.score_async(
             scorable=ContentScorable(value=text),
-            expectation=ScoringExpectation(objective=objective) if objective is not None else None,
+            expectation=ScoringExpectation(objective=objective),
         )
 
     async def score_image_async(self, image_path: str, *, objective: str | None = None) -> list[Score]:
@@ -656,7 +656,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         return await self.score_async(
             scorable=ContentScorable(value=image_path, data_type="image_path"),
-            expectation=ScoringExpectation(objective=objective) if objective is not None else None,
+            expectation=ScoringExpectation(objective=objective),
         )
 
     async def score_prompts_batch_async(
@@ -852,7 +852,7 @@ class Scorer(Identifiable, abc.ABC):
                 scorable=MessageScorable.from_message(
                     response, role_filter=role_filter, skip_on_error_result=skip_on_error_result
                 ),
-                expectation=ScoringExpectation(objective=objective) if objective is not None else None,
+                expectation=ScoringExpectation(objective=objective),
             )
             aux_scores, obj_scores = await asyncio.gather(aux_task, obj_task)
             result["auxiliary_scores"] = aux_scores
@@ -862,7 +862,7 @@ class Scorer(Identifiable, abc.ABC):
                 scorable=MessageScorable.from_message(
                     response, role_filter=role_filter, skip_on_error_result=skip_on_error_result
                 ),
-                expectation=ScoringExpectation(objective=objective) if objective is not None else None,
+                expectation=ScoringExpectation(objective=objective),
             )
             result["objective_scores"] = obj_scores
         return result
@@ -900,7 +900,7 @@ class Scorer(Identifiable, abc.ABC):
         scorable = MessageScorable.from_message(
             response, role_filter=role_filter, skip_on_error_result=skip_on_error_result
         )
-        expectation = ScoringExpectation(objective=objective) if objective is not None else None
+        expectation = ScoringExpectation(objective=objective)
         tasks = [scorer.score_async(scorable=scorable, expectation=expectation) for scorer in scorers]
 
         if not tasks:

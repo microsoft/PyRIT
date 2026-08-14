@@ -98,13 +98,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             ValueError: If no scores are generated from the request response pieces.
         """
         scorable = self._scorable_for_message(message, role_filter=role_filter)
-        tasks = [
-            scorer.score_async(
-                scorable=scorable,
-                expectation=ScoringExpectation(objective=objective) if objective is not None else None,
-            )
-            for scorer in self._scorers
-        ]
+        expectation = ScoringExpectation(objective=objective)
+        tasks = [scorer.score_async(scorable=scorable, expectation=expectation) for scorer in self._scorers]
 
         # Run all response scorings concurrently
         score_list_results = await asyncio.gather(*tasks)

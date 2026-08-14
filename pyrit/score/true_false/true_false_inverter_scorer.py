@@ -75,7 +75,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         scores = await self._scorer.score_async(
             scorable=self._scorable_for_message(message, role_filter=role_filter),
-            expectation=ScoringExpectation(objective=objective) if objective is not None else None,
+            expectation=ScoringExpectation(objective=objective),
         )
         inv_score = scores[0]
 

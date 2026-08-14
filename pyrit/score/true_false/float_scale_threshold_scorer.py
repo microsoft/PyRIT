@@ -100,7 +100,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         scores = await self._scorer.score_async(
             scorable=self._scorable_for_message(message, role_filter=role_filter),
-            expectation=ScoringExpectation(objective=objective) if objective is not None else None,
+            expectation=ScoringExpectation(objective=objective),
         )
 
         # Aggregator handles 0-many scores and returns exactly one result (or raises if configured)
