@@ -116,6 +116,14 @@ export const useLabelsBarStyles = makeStyles({
   operationPicker: {
     minWidth: '180px',
   },
+  // Fluent dims disabled options to ~1.9:1 contrast, which is too faint for
+  // text the user has to read. These are messages, not choices.
+  operationNote: {
+    color: tokens.colorNeutralForeground2,
+  },
+  operationNoteError: {
+    color: tokens.colorPaletteRedForeground1,
+  },
   suggestionChip: {
     cursor: 'pointer',
     ':hover': {

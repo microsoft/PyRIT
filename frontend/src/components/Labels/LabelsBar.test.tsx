@@ -728,7 +728,7 @@ describe('LabelsBar', () => {
       })
     })
 
-    it('should reject a new operation that breaks the value rules', async () => {
+    it('should refuse to create a new operation that breaks the value rules', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
@@ -736,10 +736,31 @@ describe('LabelsBar', () => {
       fireEvent.click(screen.getByTestId('label-operation'))
       await screen.findByRole('option', { name: 'op_2026_08_probe' })
       fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'bad name!' } })
-      fireEvent.click(await screen.findByRole('option', { name: 'Create "bad name!"' }))
 
+      // The rules are stated while typing instead of offering a create that fails.
+      expect(
+        await screen.findByRole('option', { name: 'Only lowercase letters, numbers, underscores' })
+      ).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Create "bad name!"' })).not.toBeInTheDocument()
       expect(onChange).not.toHaveBeenCalled()
-      expect(screen.getByText('Only lowercase letters, numbers, underscores')).toBeInTheDocument()
+    })
+
+    it('should drop the rules note once the typed name becomes valid', async () => {
+      const onChange = jest.fn()
+      renderWithOperations(onChange)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const input = await screen.findByTestId('edit-label-operation')
+      fireEvent.change(input, { target: { value: 'bad name!' } })
+      await screen.findByRole('option', { name: 'Only lowercase letters, numbers, underscores' })
+
+      fireEvent.change(input, { target: { value: 'op_2026_09_ok' } })
+
+      expect(await screen.findByRole('option', { name: 'Create "op_2026_09_ok"' })).toBeInTheDocument()
+      expect(
+        screen.queryByRole('option', { name: 'Only lowercase letters, numbers, underscores' })
+      ).not.toBeInTheDocument()
     })
 
     it('should commit the highlighted option with the keyboard', async () => {

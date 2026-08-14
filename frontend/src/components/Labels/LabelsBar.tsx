@@ -20,6 +20,13 @@ import { labelsApi } from '../../services/api'
 import { useLabelsBarStyles } from './LabelsBar.styles'
 
 
+const validateOperationValue = (value: string): string | null => {
+  if (!value) return 'Value is required'
+  if (value !== value.toLowerCase()) return 'Values must be lowercase'
+  if (!/^[a-z0-9_]+$/.test(value)) return 'Only lowercase letters, numbers, underscores'
+  return null
+}
+
 const DUMMY_VALUES: Record<string, string> = {
   operator: 'roakey',
   operation: 'op_trash_panda',
@@ -35,9 +42,12 @@ interface OperationPickerProps {
   options: string[]
   isLoading: boolean
   onSelect: (operation: string) => void
+  onSearchChange: () => void
   onDismiss: () => void
   inputRef: React.Ref<HTMLInputElement>
   className?: string
+  noteClassName?: string
+  noteErrorClassName?: string
 }
 
 /**
@@ -51,14 +61,21 @@ function OperationPicker({
   options,
   isLoading,
   onSelect,
+  onSearchChange,
   onDismiss,
   inputRef,
   className,
+  noteClassName,
+  noteErrorClassName,
 }: OperationPickerProps) {
   const [search, setSearch] = useState('')
 
   const matches = search ? options.filter(option => option.toLowerCase().includes(search)) : options
-  const canCreate = search.length > 0 && !options.some(option => option.toLowerCase() === search)
+  const isNewName = search.length > 0 && !options.some(option => option.toLowerCase() === search)
+  // Say why a name can't be created while it is being typed, rather than
+  // rejecting it after the fact next to a bar that clips the message.
+  const searchError = isNewName ? validateOperationValue(search) : null
+  const canCreate = isNewName && !searchError
 
   // Deferred so focus lands on whatever the user moved to before this unmounts.
   const dismissAfterFocusMoves = () => { setTimeout(onDismiss, 0) }
@@ -73,7 +90,7 @@ function OperationPicker({
       value={search}
       placeholder={currentValue}
       selectedOptions={options.includes(currentValue) ? [currentValue] : []}
-      onChange={e => setSearch(e.target.value.toLowerCase())}
+      onChange={e => { setSearch(e.target.value.toLowerCase()); onSearchChange() }}
       onOptionSelect={(_, data) => { if (data.optionValue) onSelect(data.optionValue) }}
       onKeyDownCapture={e => {
         // Fluent commits the active option on Tab. Block that, but let the key
@@ -89,10 +106,10 @@ function OperationPicker({
       data-testid="edit-label-operation"
     >
       {isLoading && (
-        <Option disabled value="--loading" text="Loading operations">Loading operations...</Option>
+        <Option disabled className={noteClassName} value="--loading" text="Loading operations">Loading operations...</Option>
       )}
-      {!isLoading && matches.length === 0 && !canCreate && (
-        <Option disabled value="--empty" text="No operations">
+      {!isLoading && matches.length === 0 && !canCreate && !searchError && (
+        <Option disabled className={noteClassName} value="--empty" text="No operations">
           No operations yet — type a name to create one
         </Option>
       )}
@@ -101,6 +118,11 @@ function OperationPicker({
       ))}
       {canCreate && (
         <Option key="__create" value={search} text={search}>{`Create "${search}"`}</Option>
+      )}
+      {searchError && (
+        <Option disabled className={noteErrorClassName} key="__invalid" value="--invalid" text={searchError}>
+          {searchError}
+        </Option>
       )}
     </Combobox>
   )
@@ -304,10 +326,13 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           <Text size={200} weight="semibold">{key}:</Text>
           <OperationPicker
             className={styles.operationPicker}
+            noteClassName={styles.operationNote}
+            noteErrorClassName={styles.operationNoteError}
             currentValue={value}
             options={suggestedValues}
             isLoading={labelsLoading}
             onSelect={handleSelectOperation}
+            onSearchChange={() => setError('')}
             onDismiss={handleCancelEdit}
             inputRef={editInputRef}
           />
