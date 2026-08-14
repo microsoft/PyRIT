@@ -198,20 +198,12 @@ def test_shell_parser_rejects_non_positive_limit():
         parser.parse_args(["SID", "--limit", "0"])
 
 
-def test_add_results_arguments_registers_id_flag_when_requested():
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    add_results_arguments(parser=parser, include_id_flag=True)
-    parsed = parser.parse_args(["--scenario-results", "SID", "--view", "overview"])
-    assert parsed.scenario_results == "SID"
-    assert parsed.view is ScenarioResultView.OVERVIEW
-
-
-def test_add_results_arguments_omits_id_flag_by_default():
+def test_add_results_arguments_registers_view_flags():
     import argparse
 
     parser = argparse.ArgumentParser()
     add_results_arguments(parser=parser)
-    with pytest.raises(SystemExit):
-        parser.parse_args(["--scenario-results", "SID"])
+    parsed = parser.parse_args(["--view", "attacks", "--attack-result-ids", "a", "b", "--limit", "3"])
+    assert parsed.view is ScenarioResultView.ATTACKS
+    assert parsed.attack_result_ids == ["a", "b"]
+    assert parsed.limit == 3

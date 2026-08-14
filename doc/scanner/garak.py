@@ -42,7 +42,7 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.encoding --target openai_chat --techniques base64 --max-dataset-size 1
+# pyrit_scan run garak.encoding --target openai_chat --techniques base64 --max-dataset-size 1
 # ```
 #
 # **Available techniques** (17 encodings): Base64, Base2048, Base16, Base32, ASCII85, Hex,
@@ -89,7 +89,7 @@ await output_scenario_async(scenario_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.web_injection --target openai_chat --techniques xss --max-dataset-size 1
+# pyrit_scan run garak.web_injection --target openai_chat --techniques xss --max-dataset-size 1
 # ```
 #
 # **Available techniques** (8 probes): MarkdownImageExfil, ColabAIDataLeakage,
@@ -111,7 +111,7 @@ await output_scenario_async(scenario_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.doctor --target openai_chat --techniques policy_puppetry --max-dataset-size 1
+# pyrit_scan run garak.doctor --target openai_chat --techniques policy_puppetry --max-dataset-size 1
 # ```
 #
 # **Available techniques** (2 probes): `PolicyPuppetry` (wraps the objective in the Dr House

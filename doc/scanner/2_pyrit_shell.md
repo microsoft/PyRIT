@@ -18,17 +18,11 @@ With startup options:
 
 ```bash
 # Load configuration file (if not provided, defaults to ~/.pyrit/.pyrit_conf if it exists)
-# to set database preference, initializers, labels, env_file, and more.
+# to set database preference, initializers, custom initialization scripts, labels, env_file, and more.
 pyrit_shell --config-file ./.pyrit_conf
 
 # Set default log level
 pyrit_shell --log-level DEBUG
-
-# Load initializers at startup
-pyrit_shell --initializers target
-
-# Load custom initialization scripts
-pyrit_shell --initialization-scripts ./my_config.py
 ```
 
 ## Available Commands
@@ -102,7 +96,6 @@ pyrit> run garak.encoding --target my_target --initializers target --log-level D
 
 ```
 --initializers <name> ...       Built-in initializers to run before the scenario (REQUIRED)
---initialization-scripts <...>  Custom Python scripts to run before the scenario (alternative)
 --techniques, -t <s1> <s2> ...  Technique names to use
 --max-concurrency <N>           Maximum concurrent operations
 --max-retries <N>               Maximum retry attempts
