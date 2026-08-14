@@ -111,7 +111,6 @@ await output_scenario_async(scenario_result)
 # probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
 
 # %% [markdown]
-# %% [markdown]
 # ## Doctor
 #
 # Ports Garak's `doctor` probe, which implements the HiddenLayer Policy Puppetry universal bypass:
