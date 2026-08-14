@@ -41,6 +41,9 @@ class ZalgoConverter(WordLevelConverter):
         super().__init__(word_selection_strategy=word_selection_strategy)
         self._intensity = self._normalize_intensity(intensity)
         self._seed = seed
+        # Own the RNG rather than seeding the global one, so a seeded converter
+        # does not make every other `random`-based component reproducible.
+        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -83,12 +86,15 @@ class ZalgoConverter(WordLevelConverter):
             return word
 
         def glitch(char: str) -> str:
-            return char + "".join(random.choice(self.ZALGO_MARKS) for _ in range(random.randint(1, self._intensity)))
+            return char + "".join(
+                self._rng.choice(self.ZALGO_MARKS) for _ in range(self._rng.randint(1, self._intensity))
+            )
 
         return "".join(glitch(c) if c.isalnum() else c for c in word)
 
     def validate_input(self, prompt: str) -> None:
         """Validate the input prompt before conversion."""
-        # Initialize the random seed before processing any words
+        # Reset the converter's own RNG before processing any words, so a seeded
+        # converter yields the same output on every call.
         if self._seed is not None:
-            random.seed(self._seed)
+            self._rng.seed(self._seed)
