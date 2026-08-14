@@ -315,28 +315,53 @@ class Scorer(Identifiable, abc.ABC):
             )
 
         if scorable is None:
-            # The caller asked about this message, not about everything stored alongside it,
-            # so the shim maps to the exact message rather than widening to its conversation.
-            # A message the caller built by hand has nothing in memory to name, so a single
-            # unpersisted piece becomes loose content. Both arms go away with the parameter.
-            legacy_message = cast("Message", message)
-            pieces = legacy_message.message_pieces
-            if len(pieces) == 1 and pieces[0].not_in_memory:
-                scorable = ContentScorable(
-                    value=pieces[0].original_value,
-                    data_type=pieces[0].original_value_data_type,
-                )
-            else:
-                scorable = MessageScorable.from_message(
-                    legacy_message,
-                    role_filter=role_filter,
-                    skip_on_error_result=skip_on_error_result,
-                )
+            scorable = self._scorable_for_message(
+                cast("Message", message),
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
+            )
 
         if objective is not None:
             expectation = ScoringExpectation(objective=objective)
 
         return scorable, expectation
+
+    @staticmethod
+    def _scorable_for_message(
+        message: Message,
+        *,
+        role_filter: ChatMessageRole | None = None,
+        skip_on_error_result: bool = False,
+    ) -> Scorable:
+        """
+        Describe an in-hand message as the scorable that names it.
+
+        The caller asked about this message, not about everything stored alongside it, so this
+        maps to the exact message rather than widening to its conversation. A message built by
+        hand has nothing in memory to name, so a single unpersisted piece becomes loose content.
+
+        This bridges the two places that still hold a ``Message`` rather than the scorable it
+        came from: the deprecated ``message`` parameter, and the true/false wrappers that
+        forward to an inner scorer. Both go away in phase 2, and this goes with them.
+
+        Args:
+            message (Message): The message to describe.
+            role_filter (ChatMessageRole | None): Role the piece must have to be scored.
+            skip_on_error_result (bool): Whether to skip the message when it holds an error.
+
+        Returns:
+            Scorable: A ``ContentScorable`` for a single unpersisted piece, else a
+            ``MessageScorable`` naming the pieces.
+        """
+        pieces = message.message_pieces
+        if len(pieces) == 1 and pieces[0].not_in_memory:
+            return ContentScorable.from_message(message)
+
+        return MessageScorable.from_message(
+            message,
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result,
+        )
 
     @abstractmethod
     async def _score_scorable_async(

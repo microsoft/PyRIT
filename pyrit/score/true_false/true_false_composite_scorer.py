@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
 from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
-from pyrit.score.scorable import ContentScorable, MessageScorable
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -98,14 +97,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             ValueError: If any constituent scorer does not return exactly one score.
             ValueError: If no scores are generated from the request response pieces.
         """
-        # A message the caller built by hand has no ids to name, so it is content rather
-        # than a reference. Both arms go away when loose content is persisted in its own right.
-        pieces = message.message_pieces
-        scorable = (
-            ContentScorable.from_message(message)
-            if len(pieces) == 1 and pieces[0].not_in_memory
-            else MessageScorable.from_message(message, role_filter=role_filter)
-        )
+        scorable = self._scorable_for_message(message, role_filter=role_filter)
         tasks = [
             scorer.score_async(
                 scorable=scorable,
