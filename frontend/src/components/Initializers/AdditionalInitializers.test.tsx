@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { useState } from 'react'
 
 import type { AdditionalInitializerSetting, RegisteredInitializer } from '@/types'
 
@@ -138,7 +139,8 @@ describe('AdditionalInitializers', () => {
     registeredInitializers: [targetInitializer, scorerInitializer],
     creating: false,
     onAdd: jest.fn().mockResolvedValue(true),
-    onSave: jest.fn().mockResolvedValue(undefined),
+    onSave: jest.fn().mockResolvedValue(true),
+    onClearSaveError: jest.fn(),
     onApply: jest.fn().mockResolvedValue(undefined),
     onRemove: jest.fn().mockResolvedValue(undefined),
   }
@@ -238,11 +240,11 @@ describe('AdditionalInitializers', () => {
 
     await user.click(within(screen.getByTestId('initializer-row-additional-1')).getByRole('button', { name: 'Remove' }))
 
-    const dialog = await screen.findByRole('dialog')
+    const dialog = await screen.findByRole('dialog', { hidden: true })
     expect(within(dialog).getByText(/remove the/i)).toBeInTheDocument()
     expect(within(dialog).getByText('target')).toBeInTheDocument()
 
-    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Remove', hidden: true }))
 
     expect(defaultProps.onRemove).toHaveBeenCalledWith('additional-1')
   })
@@ -258,8 +260,8 @@ describe('AdditionalInitializers', () => {
 
     await user.click(within(screen.getByTestId('initializer-row-additional-1')).getByRole('button', { name: 'Remove' }))
 
-    const dialog = await screen.findByRole('dialog')
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    const dialog = await screen.findByRole('dialog', { hidden: true })
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel', hidden: true }))
 
     expect(defaultProps.onRemove).not.toHaveBeenCalled()
   })
@@ -335,6 +337,55 @@ describe('AdditionalInitializers', () => {
     await user.click(await within(dialog).findByRole('button', { name: 'Add', hidden: true }))
 
     expect(defaultProps.onAdd).toHaveBeenCalledWith('tagged_target', { tags: ['default', 'scorer'] })
+  })
+
+  it('should keep the edit dialog open and show an inline error when save fails', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn()
+    const onClearSaveError = jest.fn()
+
+    function TestComponent() {
+      const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
+
+      return (
+        <AdditionalInitializers
+          {...defaultProps}
+          saveErrors={saveErrors}
+          onSave={async (id, request) => {
+            onSave(id, request)
+            setSaveErrors({ [id]: 'Mock save failure' })
+            return false
+          }}
+          onClearSaveError={(id) => {
+            onClearSaveError(id)
+            setSaveErrors({})
+          }}
+        />
+      )
+    }
+
+    render(
+      <TestWrapper>
+        <TestComponent />
+      </TestWrapper>,
+    )
+
+    const row = screen.getByTestId('initializer-row-additional-1')
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }))
+
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 3000 })
+    await within(dialog).findByText('Edit target initializer')
+    const editor = within(dialog).getByTestId('param-tags')
+    fireEvent.change(editor, { target: { value: 'modified' } })
+    await user.click(await within(dialog).findByRole('button', { name: 'Save', hidden: true }))
+
+    expect(screen.getByRole('dialog', { hidden: true })).toBeInTheDocument()
+    expect(await within(dialog).findByRole('alert', { hidden: true })).toHaveTextContent('Mock save failure')
+    expect(editor).toHaveValue('modified')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel', hidden: true }))
+
+    expect(onClearSaveError).toHaveBeenCalledWith('additional-1')
   })
 
   it('should hide the parameters editor and submit null for a no-parameter initializer', async () => {

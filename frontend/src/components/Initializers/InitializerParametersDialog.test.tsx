@@ -95,7 +95,7 @@ describe('InitializerParametersDialog', () => {
 
     expect(screen.getByText('This initializer takes no parameters.')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
 
     expect(onSubmit).toHaveBeenCalledWith(null)
   })
@@ -109,7 +109,7 @@ describe('InitializerParametersDialog', () => {
       </TestWrapper>,
     )
 
-    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('label is required.')
     expect(onSubmit).not.toHaveBeenCalled()
@@ -126,7 +126,7 @@ describe('InitializerParametersDialog', () => {
 
     fireEvent.change(screen.getByTestId('param-days'), { target: { value: '7' } })
     fireEvent.change(screen.getByTestId('param-names'), { target: { value: 'x, y' } })
-    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
 
     expect(onSubmit).toHaveBeenCalledWith({ days: 7, names: ['x', 'y'] })
   })
@@ -142,9 +142,24 @@ describe('InitializerParametersDialog', () => {
 
     await user.click(screen.getByTestId('param-flag'))
     await user.click(screen.getByTestId('param-tags-a'))
-    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ flag: true, tags: ['a'] }))
+  })
+
+  it('toggles the intended multiselect option when clicking checkbox label text', async () => {
+    const user = userEvent.setup()
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog {...baseProps} onSubmit={onSubmit} initializer={allKindsInitializer} />
+      </TestWrapper>,
+    )
+
+    await user.click(screen.getByText('b'))
+    await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ tags: ['b'] }))
   })
 
   it('unchecks a multiselect choice and picks a select value', async () => {
@@ -159,7 +174,7 @@ describe('InitializerParametersDialog', () => {
     await user.click(screen.getByTestId('param-tags-a'))
     await user.click(screen.getByTestId('param-tags-a'))
     fireEvent.change(screen.getByTestId('param-level'), { target: { value: 'high' } })
-    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ level: 'high' }))
     expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('tags')
@@ -220,5 +235,24 @@ describe('InitializerParametersDialog', () => {
     )
 
     expect(screen.getByRole('alert')).toHaveTextContent('Server rejected the request.')
+  })
+
+  it('prefers validation error over externalError', async () => {
+    const user = userEvent.setup()
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog
+          {...baseProps}
+          onSubmit={onSubmit}
+          initializer={requiredInitializer}
+          externalError="Server error"
+        />
+      </TestWrapper>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('label is required.')
   })
 })

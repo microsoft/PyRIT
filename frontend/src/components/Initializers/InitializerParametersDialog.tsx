@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   Button,
   Checkbox,
@@ -52,6 +52,7 @@ export default function InitializerParametersDialog({
     getInitialFormValues(parameters, initialParameters),
   )
   const [error, setError] = useState<string | null>(null)
+  const submitInProgressRef = useRef(false)
 
   const acceptsParameters = parameters.length > 0
 
@@ -61,6 +62,15 @@ export default function InitializerParametersDialog({
   }
 
   const handleSubmit = async (): Promise<void> => {
+    submitInProgressRef.current = true
+    try {
+      await submitForm()
+    } finally {
+      submitInProgressRef.current = false
+    }
+  }
+
+  const submitForm = async (): Promise<void> => {
     if (!acceptsParameters) {
       setError(null)
       await onSubmit(null)
@@ -82,7 +92,15 @@ export default function InitializerParametersDialog({
   const submitLabel = mode === 'add' ? 'Add' : 'Save'
 
   return (
-    <Dialog open={open} onOpenChange={(_, data) => onOpenChange(data.open)}>
+    <Dialog
+      open={open}
+      onOpenChange={(_, data) => {
+        if (!data.open && submitInProgressRef.current) {
+          return
+        }
+        onOpenChange(data.open)
+      }}
+    >
       <DialogSurface>
         <DialogBody>
           <DialogTitle>{title}</DialogTitle>
@@ -173,6 +191,7 @@ function ParameterField({ parameter, value, disabled, onChange }: ParameterField
           {(parameter.choices ?? []).map((choice) => (
             <Checkbox
               key={choice}
+              id={`param-${parameter.name}-${choice}`}
               label={choice}
               checked={selected.includes(choice)}
               disabled={disabled}
