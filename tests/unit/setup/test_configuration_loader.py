@@ -43,6 +43,7 @@ class TestConfigurationLoader:
         assert config.env_files is None  # None means "use defaults"
         assert config.env_akv_ref is None
         assert config.env_akv_strict is True
+        assert config.env_akv_write_env is False
         assert config.silent is False
 
     def test_valid_memory_db_types_snake_case(self):
@@ -149,6 +150,7 @@ class TestConfigurationLoader:
             "env_files": ["/path/to/.env"],
             "env_akv_ref": ["https://vault.vault.azure.net/secrets/one"],
             "env_akv_strict": False,
+            "env_akv_write_env": True,
             "silent": True,
         }
         config = ConfigurationLoader.from_dict(data)
@@ -158,6 +160,7 @@ class TestConfigurationLoader:
         assert config.env_files == ["/path/to/.env"]
         assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
         assert config.env_akv_strict is False
+        assert config.env_akv_write_env is True
         assert config.silent is True
 
     def test_from_dict_filters_none_values(self):
@@ -346,6 +349,7 @@ class TestConfigurationLoaderInitialization:
         assert call_kwargs["env_files"] is None
         assert call_kwargs["env_akv_ref"] is None
         assert call_kwargs["env_akv_strict"] is True
+        assert call_kwargs["env_akv_write_env"] is False
         assert call_kwargs["silent"] is False
 
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
@@ -355,7 +359,12 @@ class TestConfigurationLoaderInitialization:
             "https://vault.vault.azure.net/secrets/first",
             "https://vault.vault.azure.net/secrets/second/version",
         ]
-        config = ConfigurationLoader(memory_db_type="in_memory", env_akv_ref=refs, env_akv_strict=False)
+        config = ConfigurationLoader(
+            memory_db_type="in_memory",
+            env_akv_ref=refs,
+            env_akv_strict=False,
+            env_akv_write_env=True,
+        )
 
         await config.initialize_pyrit_async()
 
@@ -363,6 +372,7 @@ class TestConfigurationLoaderInitialization:
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs["env_akv_ref"] == refs
         assert call_kwargs["env_akv_strict"] is False
+        assert call_kwargs["env_akv_write_env"] is True
 
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     @mock.patch("pyrit.registry.InitializerRegistry")
@@ -529,6 +539,14 @@ class TestLoadWithOverrides:
         )
 
         assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    def test_load_with_overrides_env_akv_write_env_override(self, mock_default_path):
+        mock_default_path.exists.return_value = False
+
+        config = ConfigurationLoader.load_with_overrides(env_akv_write_env=True)
+
+        assert config.env_akv_write_env is True
 
     @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
     def test_load_with_overrides_converts_sequence_to_list(self, mock_default_path):

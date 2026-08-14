@@ -27,7 +27,7 @@ from pathlib import Path
 from pyrit.executor.promptgen.gcg.config import GCGConfig, GCGDataConfig, GCGOutputConfig
 from pyrit.executor.promptgen.gcg.data import load_goals_and_targets
 from pyrit.executor.promptgen.gcg.generator import GCGGenerator
-from pyrit.setup.initialization import _load_environment_files
+from pyrit.setup.akv_initialization import _load_environment_files
 
 
 def _parse_arguments() -> argparse.Namespace:

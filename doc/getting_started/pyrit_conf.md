@@ -16,46 +16,39 @@ Then edit both files for your environment. The `.pyrit_conf` tells PyRIT _how_ t
 
 The default configuration file path is:
 
-```
+```text
 ~/.pyrit/.pyrit_conf
 ```
 
 PyRIT looks for this file automatically on startup (via the CLI, shell, or `ConfigurationLoader`). If the file does not exist, PyRIT falls back to built-in defaults.
 
-## Setting Up Secrets (.env files)
+## Environment Configuration
 
-The `.pyrit_conf` file works hand-in-hand with `.env` files for your API credentials. See [Populating Secrets](./populating_secrets.md) for provider-specific examples of what to put in your `.env` file.
-
-### Environment Variable Precedence
-
-When PyRIT initializes, environment variables are loaded in a specific order. **Later sources override earlier ones:**
-
-```{mermaid}
-flowchart LR
-  A["System environment"] --> B{"env_akv_ref configured?"}
-  B -->|Yes| C["AKV bootstrap documents in order"]
-  B -->|No| D{"Explicit env_files?"}
-  C --> D
-  D -->|Yes| E["Explicit files in order"]
-  D -->|No| F["~/.pyrit/.env"]
-  F --> G["~/.pyrit/.env.local"]
+```{important}
+Azure Key Vault is the recommended place for shared, CI/CD, and deployed PyRIT configuration. It avoids keeping credentials in a local `.env` file while preserving standard dotenv syntax. Existing `.env` configurations remain supported for backward compatibility and local development.
 ```
 
-System environment variables are always the baseline. If no AKV bootstrap document or environment file is available, PyRIT continues initialization using the existing process environment only.
+See [Populating Secrets](./populating_secrets.md) for provider-specific variable examples.
 
-**Default file behavior** (no `env_akv_ref` or `env_files` field in `.pyrit_conf`):
+### Loading Order
 
-| Priority | Source | Description |
-| ---------- | -------- | ------------- |
-| Lowest | System environment variables | Always loaded as the baseline |
-| Medium | `~/.pyrit/.env` | Default config file (loaded if it exists) |
-| Highest | `~/.pyrit/.env.local` | Local overrides (loaded if it exists) |
+PyRIT loads environment sources in this order. Each later source overrides matching values from earlier sources:
 
-**AKV behavior** (with `env_akv_ref`): The referenced secrets load in list order before local files. Unless custom `env_files` are configured, `~/.pyrit/.env` loads afterward and `~/.pyrit/.env.local` loads last. Later bootstrap documents and local files may override earlier values.
+1. Existing process environment variables.
+2. Key Vault bootstrap documents from `env_akv_ref`, in list order.
+3. Local dotenv files:
+   - If `env_files` is configured, those files load in list order.
+   - Otherwise, `~/.pyrit/.env` loads if present, followed by `~/.pyrit/.env.local`.
 
-PyRIT emits a warning when `env_akv_ref` is selected and default or explicit environment files coexist with it. The warning distinguishes files that are ignored from files that load afterward and override Key Vault values, making stale migration files visible at startup. When migrating to Key Vault, clear or remove `~/.pyrit/.env` and `~/.pyrit/.env.local`, remove explicit `env_files` when Key Vault should be the only source, and re-initialize PyRIT so values already present in the process environment cannot mask the Key Vault configuration.
+For a Key Vault-only setup, explicitly disable local dotenv loading:
 
-**Custom behavior** (with `env_files` field): Only your specified files are loaded, in order. They override Key Vault bootstrap values when both fields are configured, and default paths are completely ignored.
+```yaml
+env_akv_ref:
+  - https://my-vault.vault.azure.net/secrets/my-pyrit-env
+env_files: []
+```
+
+If Key Vault and local files are both configured, PyRIT warns that local values may override the fetched configuration. Remove stale local files when Key Vault should be authoritative.
 
 ### Using .env.local for Overrides
 
@@ -167,7 +160,7 @@ initialization_scripts:
 
 ### `env_files`
 
-Environment file paths to load during initialization. Later files override values from earlier files.
+Optional local dotenv paths. Key Vault is recommended for shared or deployed configuration; use local files for backward compatibility and deliberate local overrides.
 
 | Value             | Behavior                                                 |
 | ----------------- | -------------------------------------------------------- |
@@ -191,7 +184,7 @@ When `env_akv_ref` is not configured, an empty `env_files` list or missing defau
 
 ### `env_akv_ref`
 
-Ordered Azure Key Vault secret URLs used to obtain bootstrap environment documents. Each secret value must contain dotenv-formatted entries. Authentication uses `DefaultAzureCredential`.
+Ordered Azure Key Vault secret URLs used to obtain bootstrap environment documents. This is the recommended configuration path. Each secret value must contain dotenv-formatted entries. Authentication uses `DefaultAzureCredential`.
 
 ```yaml
 env_akv_ref:
@@ -226,7 +219,7 @@ LATEST_KEY_URI="kv:https://my-vault.vault.azure.net/secrets/openai-chat-key"
 PINNED_KEY="kv:https://my-vault.vault.azure.net/secrets/openai-chat-key/version-id"
 ```
 
-The bootstrap documents are held in memory and never written to disk. They load before explicit `env_files` or the default `~/.pyrit/.env` and `~/.pyrit/.env.local`, allowing local values to override shared configuration.
+Bootstrap documents stay in memory by default. They load before explicit `env_files` or the default `~/.pyrit/.env` and `~/.pyrit/.env.local`, allowing intentional local overrides.
 
 ### `env_akv_strict`
 
@@ -241,6 +234,18 @@ In strict mode, any malformed dotenv line or variable without an equals sign sto
 Non-strict mode does not suppress Key Vault or reference failures. Missing secrets, invalid `kv:` URLs, and bootstrap documents with no valid assignments still stop initialization. Because loading is non-transactional, values from earlier bootstrap documents remain if a later document fails, and raw values from the current document may remain if a child-secret lookup fails.
 
 Key Vault clients use an explicit Azure retry policy with up to three retries and exponential backoff. Bootstrap parsing, invalid or missing secrets, authentication, authorization, and Azure transport failures are raised as `KeyVaultInitializationException` with the original exception preserved as the cause. The exception remains `ValueError`-compatible for callers migrating from the previous contract.
+
+### `env_akv_write_env`
+
+Defaults to `false`. Set it to `true` to write the fetched bootstrap document to `~/.pyrit/.env` for inspecting configured targets and aliases:
+
+```yaml
+env_akv_write_env: true
+```
+
+The written file contains the bootstrap text before child `kv:` references are resolved. This makes target configuration readable without writing referenced child-secret values. However, any literal secret already present in the bootstrap document is written as-is, so treat the file as sensitive.
+
+Writing is opt-in and overwrites an existing `~/.pyrit/.env`. PyRIT does not load the generated `.env` during that same initialization, because its unresolved `kv:` references would otherwise replace resolved values. `.env.local` and other explicit local files still load afterward. The generated file is not a secure backup and should be removed when debugging is complete.
 
 ### `silent`
 
@@ -363,17 +368,14 @@ initializers:
 # initialization_scripts:
 #   - /path/to/my_custom_initializer.py
 
-# Environment files (optional)
-# Omit or set to null to use defaults (~/.pyrit/.env, ~/.pyrit/.env.local)
-# Set to [] to load no env files
-# env_files:
-#   - /path/to/.env
-#   - /path/to/.env.local
-
-# Optional ordered Azure Key Vault bootstrap environment documents
+# Recommended: ordered Azure Key Vault bootstrap environment documents
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
-# env_akv_strict: false  # Optional; defaults to true
+# env_akv_strict: true
+# env_akv_write_env: false  # Opt in to writing ~/.pyrit/.env for inspection
+
+# Recommended with Key Vault: disable local dotenv overrides
+# env_files: []
 
 # Suppress initialization messages
 silent: false

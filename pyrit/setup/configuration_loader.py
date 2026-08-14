@@ -99,6 +99,8 @@ class ConfigurationLoader(YamlLoadable):
         env_akv_ref: Ordered list of Key Vault bootstrap secret URLs.
         env_akv_strict: Whether malformed or valueless entries in a Key Vault
             bootstrap document should fail initialization.
+        env_akv_write_env: Whether to save fetched bootstrap documents to
+            ``~/.pyrit/.env`` for local inspection.
         silent: Whether to suppress initialization messages.
         operator: Name for the current operator, e.g. a team or username.
         operation: Name for the current operation.
@@ -139,6 +141,7 @@ class ConfigurationLoader(YamlLoadable):
     env_files: list[str] | None = None
     env_akv_ref: list[str] | None = None
     env_akv_strict: bool = True
+    env_akv_write_env: bool = False
     silent: bool = False
     operator: str | None = None
     operation: str | None = None
@@ -421,6 +424,7 @@ class ConfigurationLoader(YamlLoadable):
         env_files: Sequence[str] | None = None,
         env_akv_ref: Sequence[str] | None = None,
         env_akv_strict: bool | None = None,
+        env_akv_write_env: bool | None = None,
     ) -> "ConfigurationLoader":
         """
         Load configuration with optional overrides.
@@ -438,6 +442,7 @@ class ConfigurationLoader(YamlLoadable):
             env_files: Override for environment file paths.
             env_akv_ref: Override for the ordered Azure Key Vault bootstrap secret URLs.
             env_akv_strict: Override for strict Key Vault bootstrap validation.
+            env_akv_write_env: Override for writing the Key Vault bootstrap environment file.
 
         Returns:
             A merged ConfigurationLoader instance.
@@ -504,6 +509,9 @@ class ConfigurationLoader(YamlLoadable):
 
         if env_akv_strict is not None:
             config_data["env_akv_strict"] = env_akv_strict
+
+        if env_akv_write_env is not None:
+            config_data["env_akv_write_env"] = env_akv_write_env
 
         return cls.from_dict(config_data)
 
@@ -641,6 +649,7 @@ class ConfigurationLoader(YamlLoadable):
             env_files=resolved_env_files,
             env_akv_ref=self.env_akv_ref,
             env_akv_strict=self.env_akv_strict,
+            env_akv_write_env=self.env_akv_write_env,
             silent=self.silent,
         )
 

@@ -47,7 +47,7 @@ pytest.importorskip("azure.ai.ml", reason="azure-ai-ml not installed")
 pytest.importorskip("azure.identity", reason="azure-identity not installed")
 
 from pyrit.common.path import HOME_PATH  # noqa: E402
-from pyrit.setup.initialization import _load_environment_files  # noqa: E402
+from pyrit.setup.akv_initialization import _load_environment_files  # noqa: E402
 
 _REQUIRED_ENV_VARS = (
     "AZURE_ML_SUBSCRIPTION_ID",

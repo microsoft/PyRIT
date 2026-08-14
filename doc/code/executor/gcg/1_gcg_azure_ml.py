@@ -29,7 +29,7 @@
 # %%
 import os
 
-from pyrit.setup.initialization import _load_environment_files
+from pyrit.setup.akv_initialization import _load_environment_files
 
 _load_environment_files(env_files=None)
 
