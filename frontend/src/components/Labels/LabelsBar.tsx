@@ -82,6 +82,9 @@ function OperationPicker({
       }}
       onKeyDown={e => { if (e.key === 'Escape') onDismiss() }}
       onBlur={dismissAfterFocusMoves}
+      // Fluent sizes the dropdown to the input, which cuts off longer
+      // operation names. Let it size to its own content instead.
+      positioning={{ matchTargetSize: undefined }}
       aria-label="Operation"
       data-testid="edit-label-operation"
     >
