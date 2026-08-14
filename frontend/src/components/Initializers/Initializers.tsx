@@ -165,6 +165,7 @@ export default function Initializers() {
           <Button
             appearance="subtle"
             icon={<ArrowSyncRegular />}
+            className={styles.touchTarget}
             onClick={refreshSettings}
             disabled={loading}
           >

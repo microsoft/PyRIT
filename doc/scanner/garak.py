@@ -16,9 +16,10 @@
 # test whether a target can be tricked into producing harmful content when prompts are encoded in
 # various formats), web-injection probes (which test whether a target emits markdown
 # data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
-# Puppetry universal bypass), package-hallucination probes (which test whether a target recommends
-# non-existent packages that an attacker could squat), and an audio probe (which delivers spoken
-# jailbreaks to multimodal targets).
+# Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
+# coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
+# target recommends non-existent packages that an attacker could squat), and an audio probe (which
+# delivers spoken jailbreaks to multimodal targets).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -29,7 +30,12 @@ from pathlib import Path
 from pyrit.output import output_scenario_async
 from pyrit.prompt_target import RealtimeTarget
 from pyrit.registry import TargetRegistry
-from pyrit.scenario.garak import Encoding, EncodingTechnique
+from pyrit.scenario.garak import (
+    Encoding,
+    EncodingTechnique,
+    SystemPromptExtraction,
+    SystemPromptExtractionTechnique,
+)
 from pyrit.scenario.garak.audio_achilles_heel import AudioAchillesHeel, AudioAchillesHeelDatasetConfiguration
 from pyrit.scenario.garak.encoding import EncodingDatasetConfiguration
 from pyrit.setup import initialize_from_config_async
@@ -122,6 +128,51 @@ await output_scenario_async(scenario_result)
 # **Available techniques** (2 probes): `PolicyPuppetry` (wraps the objective in the Dr House
 # template) and `PolicyPuppetryLeet` (the same template, additionally leetspeak-encoded). Both are
 # tagged `default`, so `DEFAULT` and `ALL` currently coincide.
+
+# %% [markdown]
+# ## SystemPromptExtraction
+#
+# Ports Garak's `sysprompt_extraction` probe. A real system prompt (sourced from the
+# `garak_drh_system_prompts` / `garak_tm_system_prompts` libraries) is installed on the target, then
+# an extraction request asks the model to reveal it. Responses are scored deterministically by
+# `SystemPromptExtractionScorer`, a character n-gram containment overlap between the response and the
+# known system prompt (a faithful port of Garak's `PromptExtraction` detector), wrapped by a
+# `FloatScaleThresholdScorer` at threshold 0.5.
+#
+# Each of the 9 attack-template categories is a technique; across the selected categories the total
+# (system prompt × template) combinations are randomly sampled down to `prompt_cap` (Garak's
+# `soft_probe_prompt_cap`, default 256) so a default run stays bounded.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan garak.system_prompt_extraction --target openai_chat --techniques direct_requests
+# ```
+#
+# **Available techniques** (9 categories): DirectRequests, RolePlayingAttacks, EncodingBasedAttacks,
+# IndirectCreativeApproaches, CodeTechnicalFraming, ContinuationTricks, MultiLayeredApproaches,
+# AuthorityUrgencyFraming, ConfusionDistraction.
+#
+# The minimal run below installs a single system prompt and runs one category so it completes
+# quickly.
+
+# %%
+sysprompt_scenario = SystemPromptExtraction(system_prompt_subsample=1, prompt_cap=1)
+sysprompt_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [SystemPromptExtractionTechnique.DirectRequests],
+    }
+)
+await sysprompt_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {sysprompt_scenario.name}")
+print(f"Atomic attacks: {sysprompt_scenario.atomic_attack_count}")
+
+sysprompt_result = await sysprompt_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(sysprompt_result)
 
 # %% [markdown]
 # ## PackageHallucination

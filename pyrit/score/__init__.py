@@ -37,6 +37,7 @@ from pyrit.score.float_scale.self_ask_scale_scorer import (
     SelfAskScaleScorer,
     render_scale_system_prompt,
 )
+from pyrit.score.float_scale.system_prompt_extraction_scorer import SystemPromptExtractionScorer
 from pyrit.score.response_handler import (
     CallableResponseHandler,
     JsonSchemaResponseHandler,
@@ -267,6 +268,7 @@ __all__ = [
     "SSTIOutputScorer",
     "StaticPromptInjectionScorer",
     "SubStringScorer",
+    "SystemPromptExtractionScorer",
     "TrueFalseCompositeScorer",
     "TrueFalseInverterScorer",
     "TrueFalseQuestion",

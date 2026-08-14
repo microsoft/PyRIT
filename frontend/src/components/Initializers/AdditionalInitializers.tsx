@@ -203,6 +203,7 @@ export default function AdditionalInitializers({
         <Button
           appearance="primary"
           icon={<AddRegular />}
+          className={pageStyles.touchTarget}
           onClick={() => setAddDialogOpen(true)}
           disabled={creating || !initializerName}
         >
