@@ -10,6 +10,7 @@ from pyrit.score.message_scorer import MessageScorer
 
 if TYPE_CHECKING:
     from pyrit.prompt_target.common.prompt_target import PromptTarget
+    from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -35,7 +36,13 @@ class FloatScaleScorer(MessageScorer):
     "blocked = True") should override ``_score_piece_async`` or ``_build_fallback_score``.
     """
 
-    def __init__(self, *, validator: ScorerPromptValidator, chat_target: PromptTarget | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        validator: ScorerPromptValidator,
+        chat_target: PromptTarget | None = None,
+        message_resolver: MessageScorableResolver | None = None,
+    ) -> None:
         """
         Initialize the FloatScaleScorer.
 
@@ -43,8 +50,13 @@ class FloatScaleScorer(MessageScorer):
             validator: A validator object used to validate scores.
             chat_target: Optional chat target used by the scorer, forwarded to the base class
                 for validation against ``TARGET_REQUIREMENTS``.
+            message_resolver: Message evidence resolver.
         """
-        super().__init__(validator=validator, chat_target=chat_target)
+        super().__init__(
+            validator=validator,
+            chat_target=chat_target,
+            message_resolver=message_resolver,
+        )
 
     def _build_fallback_score(
         self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False

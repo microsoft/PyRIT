@@ -6,17 +6,39 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import abstractmethod
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
-from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
-from pyrit.score.scorer import Scorer
+from pyrit.models import (
+    ChatMessageRole,
+    ContentScorable,
+    Message,
+    MessagePiece,
+    MessageScorable,
+    PromptResponseError,
+    Scorable,
+    Score,
+    ScoringExpectation,
+)
+from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
-    from pyrit.models import Message, MessagePiece, Score, ScoringExpectation
+    from pyrit.prompt_target import PromptTarget
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, kw_only=True)
+class MessageScoringOptions:
+    """Message-only scoring policy that is not part of evidence identity."""
+
+    role_filter: ChatMessageRole | None = None
+    skip_on_error_result: bool = False
 
 
 def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInterface) -> str:
@@ -67,17 +89,163 @@ class MessageScorer(Scorer):
     Every message-shaped concern lives here: substituting refusal and blocked content,
     validating pieces, applying the role and error filters, and falling back to a neutral
     score. ``Scorer`` stays agnostic about what a scorable is, so scorers over other kinds of
-    evidence can sit beside this one. The scorable resolves itself to a ``Message``.
+    evidence can sit beside this one. A ``MessageScorableResolver`` acquires the message;
+    the scorable remains inert.
 
     Subclasses implement ``_score_async``, which still receives a ``Message``.
     """
+
+    #: When True, blocked responses that contain partial content are scored using that
+    #: content instead of being filtered out or short-circuited.
+    score_blocked_content: bool = False
+
+    #: When False, a blocked response from the scorer's own LLM produces the scorer
+    #: family's neutral fallback score instead of raising.
+    raise_if_scorer_blocks: bool = True
+
+    def __init__(
+        self,
+        *,
+        validator: ScorerPromptValidator,
+        chat_target: PromptTarget | None = None,
+        message_resolver: MessageScorableResolver | None = None,
+    ) -> None:
+        """
+        Initialize message-specific scoring dependencies.
+
+        Args:
+            validator (ScorerPromptValidator): Validator for message pieces.
+            chat_target (PromptTarget | None): Optional target used by the scorer.
+            message_resolver (MessageScorableResolver | None): Evidence resolver.
+        """
+        self._validator = validator
+        self._message_resolver = message_resolver or MessageScorableResolver()
+        super().__init__(chat_target=chat_target)
+
+    async def score_async(
+        self,
+        message: Message | None = None,
+        *,
+        scorable: Scorable | None = None,
+        expectation: ScoringExpectation | None = None,
+        message_options: MessageScoringOptions | None = None,
+        objective: str | None = None,
+        role_filter: ChatMessageRole | None = None,
+        skip_on_error_result: bool | None = None,
+        infer_objective_from_request: bool | None = None,
+    ) -> list[Score]:
+        """
+        Score message-shaped evidence, including the deprecated message API.
+
+        Args:
+            message (Message | None): Deprecated in-hand message.
+            scorable (Scorable | None): Message-shaped evidence to acquire.
+            expectation (ScoringExpectation | None): What to look for.
+            message_options (MessageScoringOptions | None): Message-family policy.
+            objective (str | None): Deprecated objective string.
+            role_filter (ChatMessageRole | None): Deprecated role policy.
+            skip_on_error_result (bool | None): Deprecated error policy. ``None`` means omitted.
+            infer_objective_from_request (bool | None): Deprecated inference policy.
+
+        Returns:
+            list[Score]: The persisted scores, or an empty list when policy skips the message.
+        """
+        resolved_scorable, resolved_expectation, options, infer_objective = self._consolidate_message_inputs(
+            message=message,
+            scorable=scorable,
+            expectation=expectation,
+            message_options=message_options,
+            objective=objective,
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result,
+            infer_objective_from_request=infer_objective_from_request,
+        )
+        scores = await self._score_message_scorable_async(
+            scorable=resolved_scorable,
+            expectation=resolved_expectation,
+            options=options,
+            infer_objective_from_request=infer_objective,
+        )
+        return self._validate_and_persist_scores(scores=scores)
+
+    def _consolidate_message_inputs(
+        self,
+        *,
+        message: Message | None,
+        scorable: Scorable | None,
+        expectation: ScoringExpectation | None,
+        message_options: MessageScoringOptions | None,
+        objective: str | None,
+        role_filter: ChatMessageRole | None,
+        skip_on_error_result: bool | None,
+        infer_objective_from_request: bool | None,
+    ) -> tuple[Scorable, ScoringExpectation | None, MessageScoringOptions, bool]:
+        if message is not None and scorable is not None:
+            raise ValueError("Pass either 'message' or 'scorable', not both.")
+        if message is None and scorable is None:
+            raise ValueError("Either 'message' or 'scorable' must be provided.")
+        if objective is not None and expectation is not None:
+            raise ValueError("Pass either 'objective' or 'expectation', not both.")
+        if message_options is not None and (role_filter is not None or skip_on_error_result is not None):
+            raise ValueError("Pass either 'message_options' or legacy message policy arguments, not both.")
+
+        uses_legacy_parameters = (
+            message is not None
+            or objective is not None
+            or role_filter is not None
+            or skip_on_error_result is not None
+            or infer_objective_from_request is not None
+        )
+        if uses_legacy_parameters:
+            print_deprecation_message(
+                old_item="Scorer.score_async(message=..., objective=..., role_filter=..., "
+                "skip_on_error_result=..., infer_objective_from_request=...)",
+                new_item="Scorer.score_async(scorable=..., expectation=..., message_options=...)",
+                removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+            )
+
+        if scorable is not None:
+            resolved_scorable = scorable
+        else:
+            legacy_message = cast("Message", message)
+            resolved_scorable = (
+                ContentScorable.from_message(legacy_message)
+                if len(legacy_message.message_pieces) == 1 and legacy_message.get_piece().not_in_memory
+                else MessageScorable.from_message(legacy_message)
+            )
+        resolved_expectation = ScoringExpectation(objective=objective) if objective is not None else expectation
+        options = message_options or MessageScoringOptions(
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result or False,
+        )
+        return resolved_scorable, resolved_expectation, options, bool(infer_objective_from_request)
 
     async def _score_scorable_async(
         self,
         *,
         scorable: Scorable,
         expectation: ScoringExpectation | None,
-        infer_objective_from_request: bool = False,
+    ) -> list[Score]:
+        """
+        Score message-shaped evidence with default message policy.
+
+        Returns:
+            list[Score]: The scores produced from the resolved message.
+        """
+        return await self._score_message_scorable_async(
+            scorable=scorable,
+            expectation=expectation,
+            options=MessageScoringOptions(),
+            infer_objective_from_request=False,
+        )
+
+    async def _score_message_scorable_async(
+        self,
+        *,
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        options: MessageScoringOptions,
+        infer_objective_from_request: bool,
     ) -> list[Score]:
         """
         Resolve a message scorable and score the message it names.
@@ -85,6 +253,7 @@ class MessageScorer(Scorer):
         Args:
             scorable (Scorable): A ``MessageScorable`` or a ``ContentScorable``.
             expectation (ScoringExpectation | None): What to look for.
+            options (MessageScoringOptions): Message-only scoring policy.
             infer_objective_from_request (bool): Deprecated; read the objective from the
                 previous turn when the expectation carries none.
 
@@ -98,21 +267,7 @@ class MessageScorer(Scorer):
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        if isinstance(scorable, MessageScorable):
-            message = scorable.resolve_message(memory=self._memory)
-            role_filter = scorable.role_filter
-            skip_on_error_result = scorable.skip_on_error_result
-        elif isinstance(scorable, ContentScorable):
-            # Loose content names no message, so there is nothing to filter on. Phase 2
-            # persists the content and this arm goes away.
-            message = scorable.to_ephemeral_message()
-            role_filter = None
-            skip_on_error_result = False
-        else:
-            raise TypeError(
-                f"{self.__class__.__name__} scores messages, so it cannot score {type(scorable).__name__}. "
-                "Pass a MessageScorable or a ContentScorable."
-            )
+        message = self._message_resolver.resolve(scorable=scorable, memory=self._memory)
 
         objective = expectation.objective if expectation else None
 
@@ -128,11 +283,11 @@ class MessageScorer(Scorer):
 
         self._validator.validate(scoring_message, objective=objective)
 
-        if role_filter is not None and message.get_piece().role != role_filter:
+        if options.role_filter is not None and message.get_piece().role != options.role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
 
-        if skip_on_error_result and self._should_skip_on_error(message):
+        if options.skip_on_error_result and self._should_skip_on_error(message):
             return []
 
         if infer_objective_from_request and (not objective):
@@ -268,3 +423,125 @@ class MessageScorer(Scorer):
         for score in scores:
             if score.message_piece_id in ephemeral_piece_ids:
                 score.message_piece_id = None  # type: ignore[ty:invalid-assignment]
+
+    @staticmethod
+    def _create_scoring_text_piece(
+        *,
+        piece: MessagePiece,
+        content: str,
+        response_error: PromptResponseError,
+    ) -> MessagePiece:
+        """
+        Create a text scoring view that retains the persisted piece identity.
+
+        Returns:
+            MessagePiece: The text scoring view.
+        """
+        return MessagePiece(
+            id=piece.id,
+            role=piece.api_role,
+            original_value=piece.original_value,
+            converted_value=content,
+            original_value_data_type=piece.original_value_data_type,
+            converted_value_data_type="text",
+            conversation_id=piece.conversation_id,
+            sequence=piece.sequence,
+            prompt_metadata=dict(piece.prompt_metadata),
+            converter_identifiers=list(piece.converter_identifiers),  # type: ignore[arg-type]
+            response_error=response_error,
+            timestamp=piece.timestamp,
+            original_prompt_id=piece.original_prompt_id,
+            not_in_memory=piece.not_in_memory,
+        )
+
+    @classmethod
+    def _create_text_piece_from_blocked(cls, piece: MessagePiece) -> MessagePiece | None:
+        """
+        Create a text scoring view from a blocked piece's partial content.
+
+        Returns:
+            MessagePiece | None: The scoring view, or None when content is unavailable.
+        """
+        partial_content = str(piece.prompt_metadata.get("partial_content", ""))
+        if not partial_content:
+            return None
+        return cls._create_scoring_text_piece(
+            piece=piece,
+            content=partial_content,
+            response_error="none",
+        )
+
+    @classmethod
+    def _create_text_piece_from_structured_refusal(cls, piece: MessagePiece) -> MessagePiece | None:
+        """
+        Create a blocked text scoring view for an SDK-provided refusal.
+
+        Returns:
+            MessagePiece | None: The scoring view, or None when there is no refusal.
+        """
+        refusal = piece.structured_refusal
+        if not refusal:
+            return None
+        return cls._create_scoring_text_piece(
+            piece=piece,
+            content=refusal,
+            response_error="blocked",
+        )
+
+    def _apply_structured_refusal_substitution(self, message: Message) -> Message:
+        """
+        Expose structured refusal explanations while preserving blocked semantics.
+
+        Returns:
+            Message: The substituted message, or the original message.
+        """
+        substituted = False
+        new_pieces: list[MessagePiece] = []
+        for piece in message.message_pieces:
+            substitute = self._create_text_piece_from_structured_refusal(piece)
+            if substitute:
+                new_pieces.append(substitute)
+                substituted = True
+                continue
+            new_pieces.append(piece)
+        return Message(message_pieces=new_pieces) if substituted else message
+
+    def _apply_blocked_content_substitution(self, message: Message) -> Message:
+        """
+        Replace blocked pieces that have partial content with text scoring views.
+
+        Returns:
+            Message: The substituted message, or the original message.
+        """
+        substituted = False
+        new_pieces: list[MessagePiece] = []
+        for piece in message.message_pieces:
+            if piece.is_blocked() and "partial_content" in piece.prompt_metadata:
+                substitute = self._create_text_piece_from_blocked(piece)
+                if substitute:
+                    new_pieces.append(substitute)
+                    substituted = True
+                    continue
+            new_pieces.append(piece)
+        return Message(message_pieces=new_pieces) if substituted else message
+
+    @abstractmethod
+    def _build_fallback_score(
+        self,
+        *,
+        message: Message,
+        objective: str | None,
+        scorer_response_blocked: bool = False,
+    ) -> list[Score]:
+        """
+        Return the scorer family's neutral result when message evidence is unscoreable.
+
+        Args:
+            message (Message): The message-shaped evidence.
+            objective (str | None): The objective associated with this call.
+            scorer_response_blocked (bool): Whether the scorer's own LLM was blocked.
+
+        Returns:
+            list[Score]: One or more fallback scores.
+        """
+        ...

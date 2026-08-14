@@ -7,7 +7,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    ContentScorable,
+    Message,
+    MessagePiece,
+    MessageScorable,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
@@ -99,7 +108,11 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             list[Score]: A list containing a single true/false Score object based on the threshold comparison.
         """
         scores = await self._scorer.score_async(
-            scorable=self._scorable_for_message(message, role_filter=role_filter),
+            scorable=(
+                ContentScorable.from_message(message)
+                if len(message.message_pieces) == 1 and message.get_piece().not_in_memory
+                else MessageScorable.from_message(message)
+            ),
             expectation=ScoringExpectation(objective=objective),
         )
 

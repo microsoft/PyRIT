@@ -7,7 +7,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    ContentScorable,
+    Message,
+    MessagePiece,
+    MessageScorable,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -97,7 +106,11 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             ValueError: If any constituent scorer does not return exactly one score.
             ValueError: If no scores are generated from the request response pieces.
         """
-        scorable = self._scorable_for_message(message, role_filter=role_filter)
+        scorable = (
+            ContentScorable.from_message(message)
+            if len(message.message_pieces) == 1 and message.get_piece().not_in_memory
+            else MessageScorable.from_message(message)
+        )
         expectation = ScoringExpectation(objective=objective)
         tasks = [scorer.score_async(scorable=scorable, expectation=expectation) for scorer in self._scorers]
 

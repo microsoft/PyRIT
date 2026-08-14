@@ -11,8 +11,7 @@ import av
 
 from pyrit.converter import AzureSpeechAudioToTextConverter
 from pyrit.memory import CentralMemory
-from pyrit.models import MessagePiece, Score, ScoringExpectation
-from pyrit.score.scorable import MessageScorable
+from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)

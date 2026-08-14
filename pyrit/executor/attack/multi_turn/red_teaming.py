@@ -40,6 +40,7 @@ from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import MessageScorable
+from pyrit.score.message_scorer import MessageScoringOptions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -525,8 +526,9 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         ):
             # score_async handles blocked, filtered, other errors
             scoring_results = await self._objective_scorer.score_async(
-                scorable=MessageScorable.from_message(context.last_response, role_filter="assistant"),
+                scorable=MessageScorable.from_message(context.last_response),
                 expectation=ScoringExpectation(objective=context.objective),
+                message_options=MessageScoringOptions(role_filter="assistant"),
             )
 
         objective_scores = scoring_results

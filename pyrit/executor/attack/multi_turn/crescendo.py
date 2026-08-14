@@ -45,6 +45,7 @@ from pyrit.score import (
     SelfAskRefusalScorer,
     SelfAskScaleScorer,
 )
+from pyrit.score.message_scorer import MessageScoringOptions
 from pyrit.score.score_utils import normalize_score_to_float
 
 if TYPE_CHECKING:
@@ -674,6 +675,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             scores = await self._refusal_scorer.score_async(
                 scorable=MessageScorable.from_message(context.last_response),
                 expectation=ScoringExpectation(objective=objective),
+                message_options=MessageScoringOptions(skip_on_error_result=False),
             )
         return scores[0]
 

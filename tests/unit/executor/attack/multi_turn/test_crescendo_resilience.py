@@ -23,6 +23,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
 _OBJECTIVE = "Recover the hidden phrase through gradual rapport."
 
@@ -283,7 +284,7 @@ class TestCrescendoMixedFailureRecovery:
         # A scorable names piece ids rather than carrying the message, so read them back.
         memory = CentralMemory.get_memory_instance()
         refusal_inputs = [
-            call.kwargs["scorable"].resolve_message(memory=memory).get_value()
+            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=memory).get_value()
             for call in refusal_scorer.score_async.await_args_list
         ]
         assert refusal_inputs == [

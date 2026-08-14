@@ -209,7 +209,7 @@ def create_conversation_scorer(
 
         def __init__(self) -> None:
             # Initialize with the validator and wrapped scorer
-            Scorer.__init__(self, validator=validator or ConversationScorer._DEFAULT_VALIDATOR)
+            MessageScorer.__init__(self, validator=validator or ConversationScorer._DEFAULT_VALIDATOR)
             self._wrapped_scorer = wrapped_scorer
 
         def _get_wrapped_scorer(self) -> MessageScorer:

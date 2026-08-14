@@ -11,6 +11,7 @@ from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregat
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -47,6 +48,7 @@ class TrueFalseScorer(MessageScorer):
         validator: ScorerPromptValidator,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         chat_target: PromptTarget | None = None,
+        message_resolver: MessageScorableResolver | None = None,
     ) -> None:
         """
         Initialize the TrueFalseScorer.
@@ -57,6 +59,7 @@ class TrueFalseScorer(MessageScorer):
                 Defaults to TrueFalseScoreAggregator.OR.
             chat_target (PromptTarget | None): Optional chat target used by the scorer,
                 forwarded to the base class for validation against ``TARGET_REQUIREMENTS``.
+            message_resolver (MessageScorableResolver | None): Message evidence resolver.
         """
         self._score_aggregator = score_aggregator
 
@@ -69,7 +72,11 @@ class TrueFalseScorer(MessageScorer):
                 result_file="objective/objective_achieved_metrics.jsonl",
             )
 
-        super().__init__(validator=validator, chat_target=chat_target)
+        super().__init__(
+            validator=validator,
+            chat_target=chat_target,
+            message_resolver=message_resolver,
+        )
 
     def validate_return_scores(self, scores: list[Score]) -> None:
         """
