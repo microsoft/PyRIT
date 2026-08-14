@@ -10,7 +10,7 @@ from unit.mocks import get_image_message_piece
 
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, MessageScorable
 from pyrit.score import QuestionAnswerScorer
 
 
@@ -39,7 +39,7 @@ async def test_score_async_unsupported_image_type_returns_false(
     message = Message(message_pieces=[image_message_piece])
 
     # With raise_on_no_valid_pieces=False (default), returns False for unsupported data types
-    scores = await scorer.score_async(message)
+    scores = await scorer.score_async(scorable=MessageScorable(message=message))
     assert len(scores) == 1
     assert scores[0].get_value() is False
     assert "No supported pieces" in scores[0].score_rationale
@@ -58,7 +58,7 @@ async def test_score_async_missing_metadata_returns_false(patch_central_database
     scorer = QuestionAnswerScorer(category=["new_category"])
 
     # With raise_on_no_valid_pieces=False (default), returns False for missing metadata
-    scores = await scorer.score_async(request)
+    scores = await scorer.score_async(scorable=MessageScorable(message=request))
     assert len(scores) == 1
     assert scores[0].get_value() is False
     assert "No supported pieces" in scores[0].score_rationale
@@ -80,7 +80,7 @@ async def test_question_answer_scorer_score(response: str, expected_score: bool,
     scorer = QuestionAnswerScorer(category=["new_category"])
     message = Message(message_pieces=[text_message_piece])
 
-    scores = await scorer.score_async(message)
+    scores = await scorer.score_async(scorable=MessageScorable(message=message))
 
     assert len(scores) == 1
     result_score = scores[0]
@@ -101,7 +101,7 @@ async def test_question_answer_scorer_adds_to_memory():
             prompt_metadata={"correct_answer_index": "0", "correct_answer": "Paris"},
         ).to_message()
 
-        await scorer.score_async(message)
+        await scorer.score_async(scorable=MessageScorable(message=message))
 
         memory.add_scores_to_memory.assert_called_once()
 
@@ -117,6 +117,6 @@ async def test_question_answer_scorer_no_category():
             converted_value_data_type="text",
             prompt_metadata={"correct_answer_index": "0", "correct_answer": "Paris"},
         ).to_message()
-        await scorer.score_async(message)
+        await scorer.score_async(scorable=MessageScorable(message=message))
 
         memory.add_scores_to_memory.assert_called_once()

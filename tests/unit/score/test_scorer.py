@@ -10,17 +10,19 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
-from pyrit.memory import CentralMemory
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.memory import MemoryInterface
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     FloatScaleScorer,
     JsonSchemaResponseHandler,
+    MessageScorer,
     Scorer,
     ScorerPromptValidator,
     TrueFalseScorer,
 )
 from pyrit.score.llm_scoring import _run_llm_scoring_async
+from pyrit.score.message_scorer import extract_objective_from_previous_turn
 
 
 @pytest.fixture
@@ -113,7 +115,7 @@ class SelectiveValidator(ScorerPromptValidator):
         )
 
 
-class MockFloatScorer(Scorer):
+class MockFloatScorer(MessageScorer):
     """Mock scorer that tracks which pieces were scored."""
 
     def __init__(self, *, validator: ScorerPromptValidator):
@@ -406,13 +408,12 @@ async def test_score_value_with_llm_prepended_text_works_with_audio(good_json, p
     assert audio_piece.original_value == str(audio_path)
 
 
-def test_scorer_extract_task_from_response(patch_central_database):
+def test_extract_objective_from_previous_turn(patch_central_database):
     """
-    Test that _extract_task_from_response properly gathers text from the
+    Test that extract_objective_from_previous_turn properly gathers text from the
     last turn. We'll mock out the memory's get_message_pieces method.
     """
-    scorer = MockScorer()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
 
     response_piece = MessagePiece(original_value="og prompt", role="assistant", conversation_id="xyz", sequence=2)
 
@@ -428,9 +429,8 @@ def test_scorer_extract_task_from_response(patch_central_database):
         response_piece,
     ]
 
-    with patch.object(CentralMemory, "get_memory_instance", return_value=mock_memory):
-        extracted_task = scorer._extract_objective_from_response(response_piece.to_message())
-        assert "User's question about the universe" in extracted_task
+    extracted_task = extract_objective_from_previous_turn(message=response_piece.to_message(), memory=mock_memory)
+    assert "User's question about the universe" in extracted_task
 
 
 async def test_scorer_score_responses_batch_async(patch_central_database):
@@ -447,9 +447,7 @@ async def test_scorer_score_responses_batch_async(patch_central_database):
         user_req = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
         assistant_resp = MessagePiece(role="assistant", original_value="Hello from assistant", sequence=2).to_message()
 
-        results = await scorer.score_prompts_batch_async(
-            messages=[user_req, assistant_resp], batch_size=10, infer_objective_from_request=True
-        )
+        results = await scorer.score_prompts_batch_async(messages=[user_req, assistant_resp], batch_size=10)
 
         # Verify mock_score_async was called twice
         assert mock_score_async.call_count == 2
@@ -457,10 +455,8 @@ async def test_scorer_score_responses_batch_async(patch_central_database):
         # Get the call_args for the first call
         _, first_call_kwargs = mock_score_async.call_args_list[0]
 
-        assert "message" in first_call_kwargs
-        assert "objective" in first_call_kwargs
-        assert "infer_objective_from_request" in first_call_kwargs
-        assert first_call_kwargs["message"] == user_req
+        assert first_call_kwargs["scorable"] == MessageScorable(message=user_req)
+        assert first_call_kwargs["expectation"] == ScoringExpectation(objective="")
 
         assert fake_scores[0] in results
         assert len(fake_scores) == 2
@@ -494,7 +490,7 @@ async def test_score_prompts_batch_async_defaults_objectives_when_none(patch_cen
         await scorer.score_prompts_batch_async(messages=[message])
 
         _, call_kwargs = mock_score_async.call_args
-        assert call_kwargs["objective"] == ""
+        assert call_kwargs["expectation"] == ScoringExpectation(objective="")
 
 
 async def test_score_image_batch_async_works_when_objectives_none(patch_central_database):
@@ -571,17 +567,14 @@ async def test_score_response_async_parallel_execution():
 
     assert score1_1 in result["auxiliary_scores"]
     assert score2_1 in result["auxiliary_scores"]
+    expected_scorable = MessageScorable(message=response, role_filter="assistant", skip_on_error_result=True)
     scorer1.score_async.assert_any_call(
-        message=response,
-        objective="test task",
-        role_filter="assistant",
-        skip_on_error_result=True,
+        scorable=expected_scorable,
+        expectation=ScoringExpectation(objective="test task"),
     )
     scorer2.score_async.assert_any_call(
-        message=response,
-        objective="test task",
-        role_filter="assistant",
-        skip_on_error_result=True,
+        scorable=expected_scorable,
+        expectation=ScoringExpectation(objective="test task"),
     )
 
 
@@ -600,7 +593,10 @@ async def test_score_async_no_matching_role():
     """Test that score_response_select_first_success_async returns None when no pieces match role filter."""
     response = Message(message_pieces=[MessagePiece(role="user", original_value="test", conversation_id="test-convo")])
     scorer = MockScorer()
-    result = await scorer.score_async(message=response, role_filter="assistant", objective="test task")
+    result = await scorer.score_async(
+        scorable=MessageScorable(message=response, role_filter="assistant"),
+        expectation=ScoringExpectation(objective="test task"),
+    )
 
     assert result == []
 
@@ -691,14 +687,14 @@ async def test_score_response_success_async_parallel_scoring_per_piece():
     # Track call order
     call_order = []
 
-    async def mock_score_async_1(message: Message, **kwargs) -> list[Score]:
-        call_order.append(("scorer1", message.message_pieces[0].original_value))
+    async def mock_score_async_1(*, scorable: MessageScorable, **kwargs) -> list[Score]:
+        call_order.append(("scorer1", scorable.message.message_pieces[0].original_value))
         score = MagicMock(spec=Score)
         score.get_value.return_value = False
         return [score]
 
-    async def mock_score_async_2(message: Message, **kwargs) -> list[Score]:
-        call_order.append(("scorer2", message.message_pieces[0].original_value))
+    async def mock_score_async_2(*, scorable: MessageScorable, **kwargs) -> list[Score]:
+        call_order.append(("scorer2", scorable.message.message_pieces[0].original_value))
         score = MagicMock(spec=Score)
         score.get_value.return_value = False
         return [score]
@@ -966,14 +962,14 @@ async def test_score_response_async_concurrent_execution():
     # Track call order to verify concurrent execution
     call_order = []
 
-    async def mock_aux_score_async(message: Message, **kwargs) -> list[Score]:
+    async def mock_aux_score_async(**kwargs) -> list[Score]:
         call_order.append("aux_start")
         # Yield so the other scorer can interleave (proves concurrent execution).
         await asyncio.sleep(0)
         call_order.append("aux_end")
         return [MagicMock(spec=Score)]
 
-    async def mock_obj_score_async(message: Message, **kwargs) -> list[Score]:
+    async def mock_obj_score_async(**kwargs) -> list[Score]:
         call_order.append("obj_start")
         # Yield so the other scorer can interleave (proves concurrent execution).
         await asyncio.sleep(0)
@@ -1053,7 +1049,7 @@ async def test_get_supported_pieces_filters_unsupported_data_types(patch_central
     response = Message(message_pieces=[text_piece, image_piece, audio_piece])
 
     # Score the response
-    scores = await scorer.score_async(response)
+    scores = await scorer.score_async(scorable=MessageScorable(message=response))
 
     # Should only score the text piece
     assert len(scorer.scored_piece_ids) == 1
@@ -1087,7 +1083,7 @@ async def test_unsupported_pieces_ignored_when_enforce_all_pieces_valid_false(pa
     response = Message(message_pieces=[image_piece, text_piece])
 
     # Should not raise an error, just skip the image piece
-    scores = await scorer.score_async(response)
+    scores = await scorer.score_async(scorable=MessageScorable(message=response))
 
     assert len(scores) == 1
     assert len(scorer.scored_piece_ids) == 1
@@ -1119,7 +1115,7 @@ async def test_all_unsupported_pieces_raises_error(patch_central_database):
 
     # Should raise error from validator because no valid pieces to score
     with pytest.raises(ValueError, match="There are no valid pieces to score"):
-        await scorer.score_async(response)
+        await scorer.score_async(scorable=MessageScorable(message=response))
 
     # No pieces should have been scored
     assert len(scorer.scored_piece_ids) == 0
@@ -1176,7 +1172,7 @@ async def test_true_false_scorer_uses_supported_pieces_only(patch_central_databa
     response = Message(message_pieces=[text_piece, image_piece])
 
     # Score the response
-    scores = await scorer.score_async(response)
+    scores = await scorer.score_async(scorable=MessageScorable(message=response))
 
     # Should only score the text piece
     assert len(scorer.scored_piece_ids) == 1
@@ -1212,7 +1208,7 @@ async def test_base_scorer_score_async_implementation(patch_central_database):
     response = Message(message_pieces=[text_piece1, text_piece2])
 
     # Score the response
-    scores = await scorer.score_async(response)
+    scores = await scorer.score_async(scorable=MessageScorable(message=response))
 
     # Should score both pieces
     assert len(scorer.scored_piece_ids) == 2
@@ -1344,7 +1340,7 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         )
         response = Message(message_pieces=[blocked_piece])
 
-        scores = await true_false_scorer_returns_empty.score_async(response)
+        scores = await true_false_scorer_returns_empty.score_async(scorable=MessageScorable(message=response))
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -1366,7 +1362,7 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         )
         response = Message(message_pieces=[error_piece])
 
-        scores = await true_false_scorer_returns_empty.score_async(response)
+        scores = await true_false_scorer_returns_empty.score_async(scorable=MessageScorable(message=response))
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -1388,7 +1384,7 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         )
         response = Message(message_pieces=[normal_piece])
 
-        scores = await true_false_scorer_returns_empty.score_async(response)
+        scores = await true_false_scorer_returns_empty.score_async(scorable=MessageScorable(message=response))
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -1411,7 +1407,7 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         )
         response = Message(message_pieces=[blocked_piece])
 
-        scores = await true_false_scorer_returns_empty.score_async(response)
+        scores = await true_false_scorer_returns_empty.score_async(scorable=MessageScorable(message=response))
 
         # Should specifically mention blocked, not generic error
         assert "blocked" in scores[0].score_rationale.lower()
@@ -1470,7 +1466,7 @@ class TestFloatScaleScorerEmptyScoreListRationale:
         )
         response = Message(message_pieces=[blocked_piece])
 
-        scores = await float_scale_scorer_returns_empty.score_async(response)
+        scores = await float_scale_scorer_returns_empty.score_async(scorable=MessageScorable(message=response))
 
         assert len(scores) == 1
         assert scores[0].score_type == "float_scale"
@@ -1492,7 +1488,7 @@ class TestFloatScaleScorerEmptyScoreListRationale:
         )
         response = Message(message_pieces=[error_piece])
 
-        scores = await float_scale_scorer_returns_empty.score_async(response)
+        scores = await float_scale_scorer_returns_empty.score_async(scorable=MessageScorable(message=response))
 
         assert len(scores) == 1
         assert scores[0].get_value() == 0.0
@@ -1513,7 +1509,7 @@ class TestFloatScaleScorerEmptyScoreListRationale:
         )
         response = Message(message_pieces=[normal_piece])
 
-        scores = await float_scale_scorer_returns_empty.score_async(response)
+        scores = await float_scale_scorer_returns_empty.score_async(scorable=MessageScorable(message=response))
 
         assert len(scores) == 1
         assert scores[0].get_value() == 0.0
@@ -1539,7 +1535,7 @@ class TestFloatScaleScorerEmptyScoreListRationale:
         with patch.object(
             float_scale_scorer_returns_empty, "_score_piece_async", new_callable=AsyncMock
         ) as mock_score_piece:
-            scores = await float_scale_scorer_returns_empty.score_async(response)
+            scores = await float_scale_scorer_returns_empty.score_async(scorable=MessageScorable(message=response))
 
         mock_score_piece.assert_not_called()
         assert len(scores) == 1
@@ -1821,14 +1817,14 @@ class TestScorerResponseBlocked:
         scorer = _ForwarderTrueFalseScorer(chat_target=_make_scorer_blocking_target())
 
         with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
-            await scorer.score_async(_make_normal_input_message())
+            await scorer.score_async(scorable=MessageScorable(message=_make_normal_input_message()))
 
     async def test_returns_false_when_flag_disabled(self):
         target = _make_scorer_blocking_target()
         scorer = _ForwarderTrueFalseScorer(chat_target=target)
         scorer.raise_if_scorer_blocks = False
 
-        scores = await scorer.score_async(_make_normal_input_message())
+        scores = await scorer.score_async(scorable=MessageScorable(message=_make_normal_input_message()))
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -1840,7 +1836,7 @@ class TestScorerResponseBlocked:
         scorer = _ForwarderFloatScaleScorer(chat_target=_make_scorer_blocking_target())
         scorer.raise_if_scorer_blocks = False
 
-        scores = await scorer.score_async(_make_normal_input_message())
+        scores = await scorer.score_async(scorable=MessageScorable(message=_make_normal_input_message()))
 
         assert len(scores) == 1
         assert scores[0].score_value == "0.0"
@@ -1852,13 +1848,13 @@ class TestScorerResponseBlocked:
         scorer = _DirectTransportTrueFalseScorer(chat_target=_make_scorer_blocking_target())
 
         with pytest.raises(ScorerLLMResponseBlockedException, match="blocked by content filtering"):
-            await scorer.score_async(_make_normal_input_message())
+            await scorer.score_async(scorable=MessageScorable(message=_make_normal_input_message()))
 
     async def test_direct_transport_caller_returns_false_when_flag_disabled(self):
         scorer = _DirectTransportTrueFalseScorer(chat_target=_make_scorer_blocking_target())
         scorer.raise_if_scorer_blocks = False
 
-        scores = await scorer.score_async(_make_normal_input_message())
+        scores = await scorer.score_async(scorable=MessageScorable(message=_make_normal_input_message()))
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -2062,7 +2058,7 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg))
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -2074,7 +2070,7 @@ class TestScoreAsyncWithBlockedContent:
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         scorer.score_blocked_content = True
-        scores = await scorer.score_async(msg)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg))
 
         assert len(scores) == 1
         assert scores[0].score_value == "true"
@@ -2087,7 +2083,7 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _MockRefusalScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg))
 
         assert len(scores) == 1
         assert scores[0].score_value == "true"
@@ -2099,7 +2095,7 @@ class TestScoreAsyncWithBlockedContent:
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         scorer.score_blocked_content = True
-        scores = await scorer.score_async(msg)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg))
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -2112,7 +2108,7 @@ class TestScoreAsyncWithBlockedContent:
         msg = Message(message_pieces=[_make_blocked_piece()])
 
         scorer.score_blocked_content = True
-        scores = await scorer.score_async(msg)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg))
 
         assert len(scores) == 1
         assert scores[0].score_value == "false"
@@ -2123,10 +2119,10 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_normal_piece()])
 
-        scores_off = await scorer.score_async(msg)
+        scores_off = await scorer.score_async(scorable=MessageScorable(message=msg))
         scorer.scored_pieces.clear()
         scorer.score_blocked_content = True
-        scores_on = await scorer.score_async(msg)
+        scores_on = await scorer.score_async(scorable=MessageScorable(message=msg))
 
         assert scores_off[0].score_value == scores_on[0].score_value
 
@@ -2136,7 +2132,7 @@ class TestScoreAsyncWithBlockedContent:
         msg = Message(message_pieces=[_make_normal_piece(), _make_blocked_piece(partial_content="partial harmful")])
 
         scorer.score_blocked_content = True
-        scores = await scorer.score_async(msg)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg))
 
         assert len(scores) == 1  # TrueFalseScorer aggregates
         assert len(scorer.scored_pieces) == 2
@@ -2154,7 +2150,7 @@ class TestSkipOnErrorWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg, skip_on_error_result=True))
         assert scores == []
 
     async def test_skip_on_error_true_with_flag_does_not_skip_when_partial_content(self):
@@ -2162,7 +2158,7 @@ class TestSkipOnErrorWithBlockedContent:
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         scorer.score_blocked_content = True
-        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg, skip_on_error_result=True))
         assert len(scores) == 1
         assert scores[0].score_value == "true"
 
@@ -2171,7 +2167,7 @@ class TestSkipOnErrorWithBlockedContent:
         msg = Message(message_pieces=[_make_blocked_piece()])
 
         scorer.score_blocked_content = True
-        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg, skip_on_error_result=True))
         assert scores == []
 
     async def test_skip_on_error_skips_error_type_without_response_error_flag(self):
@@ -2188,7 +2184,7 @@ class TestSkipOnErrorWithBlockedContent:
             ]
         )
 
-        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg, skip_on_error_result=True))
 
         assert scores == []
         assert scorer.scored_pieces == []
@@ -2206,7 +2202,7 @@ class TestSkipOnErrorWithBlockedContent:
         piece = _make_blocked_piece(structured_refusal=refusal)
         msg = Message(message_pieces=[piece])
 
-        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg, skip_on_error_result=True))
 
         assert len(scores) == 1
         assert scorer.scored_pieces[0].id == piece.id
@@ -2234,7 +2230,7 @@ class TestSkipOnErrorWithBlockedContent:
             ]
         )
 
-        scores = await scorer.score_async(msg, skip_on_error_result=True)
+        scores = await scorer.score_async(scorable=MessageScorable(message=msg, skip_on_error_result=True))
 
         assert scores == []
         assert scorer.scored_pieces == []

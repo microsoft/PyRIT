@@ -7,7 +7,15 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    MessageScorable,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -74,12 +82,9 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             list[Score]: A list containing a single Score object with the inverted true/false value.
         """
         scores = await self._scorer.score_async(
-            message,
-            objective=objective,
-            role_filter=role_filter,
+            scorable=MessageScorable(message=message, role_filter=role_filter),
+            expectation=ScoringExpectation(objective=objective) if objective is not None else None,
         )
-
-        # TrueFalseScorers only have a single score
         inv_score = scores[0]
 
         inv_score.score_value = str(True) if not inv_score.get_value() else str(False)

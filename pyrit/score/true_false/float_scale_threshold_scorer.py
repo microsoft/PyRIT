@@ -7,11 +7,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.score.float_scale.float_scale_score_aggregator import (
-    FloatScaleAggregatorFunc,
-    FloatScaleScoreAggregator,
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    MessageScorable,
+    Score,
+    ScoringExpectation,
 )
+from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -102,9 +107,8 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             list[Score]: A list containing a single true/false Score object based on the threshold comparison.
         """
         scores = await self._scorer.score_async(
-            message,
-            objective=objective,
-            role_filter=role_filter,
+            scorable=MessageScorable(message=message, role_filter=role_filter),
+            expectation=ScoringExpectation(objective=objective) if objective is not None else None,
         )
 
         # Aggregator handles 0-many scores and returns exactly one result (or raises if configured)

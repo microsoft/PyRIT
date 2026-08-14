@@ -10,21 +10,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.exceptions import (
-    ComponentRole,
-    execution_context,
-)
-from pyrit.executor.attack.component import (
-    ConversationManager,
-    PrependedConversationConfig,
-)
+from pyrit.exceptions import ComponentRole, execution_context
+from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
-from pyrit.executor.attack.core import (
-    AttackAdversarialConfig,
-    AttackConverterConfig,
-    AttackScoringConfig,
-)
+from pyrit.executor.attack.core import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -41,18 +31,14 @@ from pyrit.models import (
     ConversationType,
     Message,
     MessagePiece,
+    MessageScorable,
     Score,
+    ScoringExpectation,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, TargetRequirements
-from pyrit.score import (
-    FloatScaleThresholdScorer,
-    NumericRubric,
-    Scorer,
-    SelfAskRefusalScorer,
-    SelfAskScaleScorer,
-)
+from pyrit.score import FloatScaleThresholdScorer, NumericRubric, Scorer, SelfAskRefusalScorer, SelfAskScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
 
 if TYPE_CHECKING:
@@ -680,9 +666,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective=context.objective,
         ):
             scores = await self._refusal_scorer.score_async(
-                message=context.last_response,
-                objective=objective,
-                skip_on_error_result=False,
+                scorable=MessageScorable(message=context.last_response),
+                expectation=ScoringExpectation(objective=objective) if objective is not None else None,
             )
         return scores[0]
 

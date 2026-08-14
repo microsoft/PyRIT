@@ -7,12 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pyrit.memory import CentralMemory
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.score import (
-    Scorer,
-    SelfAskGeneralFloatScaleScorer,
-    create_conversation_scorer,
-)
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, MessageScorable, Score
+from pyrit.score import Scorer, SelfAskGeneralFloatScaleScorer, create_conversation_scorer
 from pyrit.score.conversation_scorer import ConversationScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -143,7 +139,7 @@ async def test_conversation_history_scorer_score_async_success(patch_central_dat
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    scores = await scorer.score_async(message)
+    scores = await scorer.score_async(scorable=MessageScorable(message=message))
 
     assert len(scores) == 1
     result_score = scores[0]
@@ -183,7 +179,7 @@ async def test_conversation_history_scorer_conversation_not_found(patch_central_
     message.message_pieces = [message_piece]
 
     with pytest.raises(RuntimeError, match=f"Conversation with ID {nonexistent_conversation_id} not found in memory"):
-        await scorer.score_async(message)
+        await scorer.score_async(scorable=MessageScorable(message=message))
 
 
 async def test_conversation_history_scorer_filters_roles_correctly(patch_central_database):
@@ -233,7 +229,7 @@ async def test_conversation_history_scorer_filters_roles_correctly(patch_central
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    await scorer.score_async(message)
+    await scorer.score_async(scorable=MessageScorable(message=message))
 
     call_args = mock_scorer._score_async.call_args
     called_message = call_args.kwargs["message"]
@@ -278,7 +274,7 @@ async def test_conversation_history_scorer_preserves_metadata(patch_central_data
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
 
-    await scorer.score_async(message)
+    await scorer.score_async(scorable=MessageScorable(message=message))
 
     call_args = mock_scorer._score_async.call_args
     called_message = call_args.kwargs["message"]
@@ -329,7 +325,7 @@ async def test_conversation_scorer_persists_scores_exactly_once(patch_central_da
     conv_scorer = create_conversation_scorer(scorer=mock_scorer)
     message = MagicMock()
     message.message_pieces = [message_piece]
-    result_scores = await conv_scorer.score_async(message)
+    result_scores = await conv_scorer.score_async(scorable=MessageScorable(message=message))
 
     assert len(result_scores) == 1
     assert result_scores[0].id == original_id, (
@@ -549,7 +545,7 @@ async def test_conversation_scorer_uses_partial_content_when_score_blocked_conte
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
     scorer.score_blocked_content = True
-    scores = await scorer.score_async(message)
+    scores = await scorer.score_async(scorable=MessageScorable(message=message))
 
     assert len(scores) == 1
 
@@ -621,7 +617,7 @@ async def test_conversation_scorer_uses_error_json_when_score_blocked_content_di
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
     # score_blocked_content defaults to False
-    scores = await scorer.score_async(message)
+    scores = await scorer.score_async(scorable=MessageScorable(message=message))
 
     assert len(scores) == 1
 
@@ -689,7 +685,7 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
     scorer = create_conversation_scorer(scorer=mock_scorer)
 
     # Must not raise — previously raised ValueError on the blocked piece.
-    scores = await scorer.score_async(blocked_message)
+    scores = await scorer.score_async(scorable=MessageScorable(message=blocked_message))
 
     assert len(scores) == 1
     mock_scorer._score_async.assert_awaited_once()
@@ -783,7 +779,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
     inner_scorer = HarmfulContentDetector()
     scorer = create_conversation_scorer(scorer=inner_scorer)
 
-    scores = await scorer.score_async(blocked_message)
+    scores = await scorer.score_async(scorable=MessageScorable(message=blocked_message))
 
     assert len(scores) == 1
     # Must be 1.0 (real score from prior turns), NOT 0.0 (fallback from rejected synthetic piece)

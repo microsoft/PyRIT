@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, MessageScorable, Score
 from pyrit.score import FloatScaleThresholdScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -170,9 +170,7 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
     Test that FloatScaleThresholdScorer raises ValueError when using RAISE_ON_EMPTY aggregator
     and the underlying scorer returns no scores.
     """
-    from pyrit.score.float_scale.float_scale_score_aggregator import (
-        FloatScaleScoreAggregator,
-    )
+    from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleScoreAggregator
 
     memory = MagicMock(MemoryInterface)
 
@@ -262,7 +260,7 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     )
     blocked_message = Message(message_pieces=[blocked_piece])
 
-    scores = await threshold_scorer.score_async(blocked_message)
+    scores = await threshold_scorer.score_async(scorable=MessageScorable(message=blocked_message))
 
     assert len(scores) == 1
     binary_score = scores[0]

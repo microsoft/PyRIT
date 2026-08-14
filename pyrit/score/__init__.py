@@ -19,10 +19,7 @@ from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-from pyrit.score.float_scale.insecure_code_scorer import (
-    InsecureCodeScorer,
-    render_insecure_code_system_prompt,
-)
+from pyrit.score.float_scale.insecure_code_scorer import InsecureCodeScorer, render_insecure_code_system_prompt
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
 from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
 from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
@@ -33,15 +30,9 @@ from pyrit.score.float_scale.self_ask_likert_scorer import (
     SelfAskLikertScorer,
     render_likert_system_prompt,
 )
-from pyrit.score.float_scale.self_ask_scale_scorer import (
-    SelfAskScaleScorer,
-    render_scale_system_prompt,
-)
-from pyrit.score.response_handler import (
-    CallableResponseHandler,
-    JsonSchemaResponseHandler,
-    ResponseHandler,
-)
+from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer, render_scale_system_prompt
+from pyrit.score.message_scorer import MessageScorer
+from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior
 from pyrit.score.scorer_evaluation.scorer_metrics import (
@@ -62,11 +53,7 @@ from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresh
 from pyrit.score.true_false.gandalf_scorer import GandalfScorer
 from pyrit.score.true_false.llamaguard_parser import LLAMAGUARD_3_CATEGORY_CODES, parse_llamaguard_response
 from pyrit.score.true_false.llamaguard_policy import LlamaGuardCategory, LlamaGuardPolicy
-from pyrit.score.true_false.llamaguard_scorer import (
-    LlamaGuardMessageRole,
-    LlamaGuardScorer,
-    render_llamaguard_prompt,
-)
+from pyrit.score.true_false.llamaguard_scorer import LlamaGuardMessageRole, LlamaGuardScorer, render_llamaguard_prompt
 from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
 from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
 from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
@@ -109,10 +96,7 @@ from pyrit.score.true_false.shieldgemma_policy import (
     ShieldGemmaMessageRole,
     ShieldGemmaPolicy,
 )
-from pyrit.score.true_false.shieldgemma_scorer import (
-    ShieldGemmaScorer,
-    render_shieldgemma_prompt,
-)
+from pyrit.score.true_false.shieldgemma_scorer import ShieldGemmaScorer, render_shieldgemma_prompt
 from pyrit.score.true_false.substring_scorer import SubStringScorer
 from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
@@ -204,6 +188,7 @@ __all__ = [
     "LlamaGuardPolicy",
     "LlamaGuardScorer",
     "MarkdownInjectionScorer",
+    "MessageScorer",
     "MethKeywordScorer",
     "MetricsType",
     "NerveAgentKeywordScorer",

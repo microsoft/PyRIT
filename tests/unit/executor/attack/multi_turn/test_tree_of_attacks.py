@@ -37,6 +37,7 @@ from pyrit.models import (
     ConversationType,
     Message,
     MessagePiece,
+    MessageScorable,
     Score,
     SeedPrompt,
 )
@@ -391,7 +392,7 @@ class TestHelpers:
         )
 
         # Score using the actual FloatScaleThresholdScorer
-        scores = await threshold_scorer.score_async(dummy_message)
+        scores = await threshold_scorer.score_async(scorable=MessageScorable(message=dummy_message))
         return scores[0]
 
     @staticmethod

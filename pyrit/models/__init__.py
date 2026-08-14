@@ -69,27 +69,34 @@ from pyrit.models.messages import (
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
-from pyrit.models.messages.chat_message import (
-    ALLOWED_CHAT_MESSAGE_ROLES,
-    ChatMessage,
-    ChatMessagesDataset,
-    ToolCall,
-)
+from pyrit.models.messages.chat_message import ALLOWED_CHAT_MESSAGE_ROLES, ChatMessage, ChatMessagesDataset, ToolCall
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
-from pyrit.models.parameter import (
-    ComponentType,
-    Parameter,
-    ParameterDestination,
-    RegistryReference,
-    display_choices,
-)
+from pyrit.models.parameter import ComponentType, Parameter, ParameterDestination, RegistryReference, display_choices
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunState
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
-from pyrit.models.score import Score, ScoreType, UnvalidatedScore
+from pyrit.models.score import (
+    Condition,
+    ContentScorable,
+    ConversationScorable,
+    MessageReferenceScorable,
+    MessageScorable,
+    OutputMatches,
+    Scorable,
+    Score,
+    ScoreType,
+    ScoringExpectation,
+    ScoringScope,
+    SurfaceScorable,
+    ToolCalled,
+    ToolSequence,
+    TraceScorable,
+    UnvalidatedScore,
+    Volatility,
+)
 
 # Seeds - import from new seeds submodule for forward compatibility
 # Also keep imports from old locations for backward compatibility
@@ -144,11 +151,14 @@ __all__ = [
     "ComponentType",
     "compute_eval_hash",
     "config_hash",
+    "Condition",
+    "ContentScorable",
     "ConverterIdentifier",
     "Conversation",
     "ConversationReference",
     "ConversationRetry",
     "ConversationRetryReason",
+    "ConversationScorable",
     "ConversationStats",
     "ConversationType",
     "construct_response_from_request",
@@ -181,9 +191,12 @@ __all__ = [
     "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
+    "MessageReferenceScorable",
+    "MessageScorable",
     "Modality",
     "NextMessageSystemPromptPaths",
     "ObjectiveTargetEvaluationIdentifier",
+    "OutputMatches",
     "Parameter",
     "ParameterDestination",
     "PromptDataType",
@@ -194,8 +207,11 @@ __all__ = [
     "QuestionChoice",
     "REGISTRY_NAME_PATTERN",
     "ScaleDescription",
+    "Scorable",
     "Score",
     "ScoreType",
+    "ScoringExpectation",
+    "ScoringScope",
     "ScenarioEvaluationIdentifier",
     "ScorerEvaluationIdentifier",
     "ScorerIdentifier",
@@ -218,6 +234,7 @@ __all__ = [
     "sort_message_pieces",
     "StrategyResult",
     "StrategyResultT",
+    "SurfaceScorable",
     "TARGET_EVAL_PARAM_FALLBACKS",
     "TARGET_EVAL_PARAMS",
     "TargetCapabilities",
@@ -226,7 +243,11 @@ __all__ = [
     "TOKEN_USAGE_METADATA_PREFIX",
     "TokenUsage",
     "ToolCall",
+    "ToolCalled",
+    "ToolSequence",
+    "TraceScorable",
     "UnvalidatedScore",
+    "Volatility",
     "read_usage_int",
     "read_usage_value",
     "validate_registry_name",

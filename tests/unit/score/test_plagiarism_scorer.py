@@ -7,11 +7,8 @@ import pytest
 
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import MessagePiece
-from pyrit.score import (
-    PlagiarismMetric,
-    PlagiarismScorer,
-)
+from pyrit.models import MessagePiece, MessageScorable
+from pyrit.score import PlagiarismMetric, PlagiarismScorer
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -55,7 +52,7 @@ class TestPlagiarismScorer:
 
         request = message_piece.to_message()
 
-        scores = await scorer.score_async(message=request)
+        scores = await scorer.score_async(scorable=MessageScorable(message=request))
 
         assert len(scores) == 1
         score = scores[0]
@@ -185,7 +182,7 @@ class TestPlagiarismScorer:
         ).to_message()
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-            await scorer.score_async(request)
+            await scorer.score_async(scorable=MessageScorable(message=request))
             memory.add_scores_to_memory.assert_called_once()
 
     async def test_score_async_unsupported_data_type_returns_zero(self, patch_central_database):
@@ -202,7 +199,7 @@ class TestPlagiarismScorer:
 
         # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
         # out (mirrors TrueFalseScorer's no-pieces fallback).
-        scores = await scorer.score_async(request)
+        scores = await scorer.score_async(scorable=MessageScorable(message=request))
         assert len(scores) == 1
         assert scores[0].score_type == "float_scale"
         assert scores[0].get_value() == 0.0

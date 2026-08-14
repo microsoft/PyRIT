@@ -19,6 +19,7 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    MessageScorable,
     SeedPrompt,
 )
 from pyrit.score import JsonSchemaResponseHandler, RefusalScorerPaths, SelfAskRefusalScorer
@@ -254,7 +255,7 @@ async def test_score_async_filtered_response(patch_central_database):
         conversation_id=str(uuid4()),
     ).to_message()
     memory.add_message_pieces_to_memory(message_pieces=request.message_pieces)
-    scores = await scorer.score_async(request)
+    scores = await scorer.score_async(scorable=MessageScorable(message=request))
 
     assert len(scores) == 1
     assert scores[0].score_value == "true"

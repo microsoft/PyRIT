@@ -18,11 +18,7 @@ from pyrit.executor.attack.component import (
     get_adversarial_chat_messages,
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
-from pyrit.executor.attack.core.attack_config import (
-    AttackAdversarialConfig,
-    AttackConverterConfig,
-    AttackScoringConfig,
-)
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -37,7 +33,9 @@ from pyrit.models import (
     ConversationReference,
     ConversationType,
     Message,
+    MessageScorable,
     Score,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
@@ -527,9 +525,8 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         ):
             # score_async handles blocked, filtered, other errors
             scoring_results = await self._objective_scorer.score_async(
-                message=context.last_response,
-                role_filter="assistant",
-                objective=context.objective,
+                scorable=MessageScorable(message=context.last_response, role_filter="assistant"),
+                expectation=ScoringExpectation(objective=context.objective),
             )
 
         objective_scores = scoring_results

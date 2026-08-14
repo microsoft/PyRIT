@@ -6,11 +6,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.models import Message, Score
-from pyrit.score.scorer import Scorer
-from pyrit.score.true_false.true_false_score_aggregator import (
-    TrueFalseAggregatorFunc,
-    TrueFalseScoreAggregator,
-)
+from pyrit.score.message_scorer import MessageScorer
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -19,7 +16,7 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
-class TrueFalseScorer(Scorer):
+class TrueFalseScorer(MessageScorer):
     """
     Base class for scorers that return true/false binary scores.
 
@@ -65,9 +62,7 @@ class TrueFalseScorer(Scorer):
 
         # Set default evaluation file mapping if not already set by subclass
         if self.evaluation_file_mapping is None:
-            from pyrit.score.scorer_evaluation.scorer_evaluator import (
-                ScorerEvalDatasetFiles,
-            )
+            from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
 
             self.evaluation_file_mapping = ScorerEvalDatasetFiles(
                 human_labeled_datasets_files=["objective/*.csv"],
@@ -101,9 +96,7 @@ class TrueFalseScorer(Scorer):
             ObjectiveScorerMetrics: The metrics for this scorer, or None if not found or not configured.
         """
         from pyrit.common.path import SCORER_EVALS_PATH
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_objective_metrics_by_eval_hash,
-        )
+        from pyrit.score.scorer_evaluation.scorer_metrics_io import find_objective_metrics_by_eval_hash
 
         if self.evaluation_file_mapping is None:
             return None

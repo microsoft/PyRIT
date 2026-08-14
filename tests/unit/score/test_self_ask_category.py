@@ -11,13 +11,8 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
-from pyrit.score import (
-    ContentClassifier,
-    ContentClassifierCategory,
-    ContentClassifierPaths,
-    SelfAskCategoryScorer,
-)
+from pyrit.models import Message, MessagePiece, MessageScorable
+from pyrit.score import ContentClassifier, ContentClassifierCategory, ContentClassifierPaths, SelfAskCategoryScorer
 
 HARM_CLASSIFIER = ContentClassifier.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value)
 
@@ -298,7 +293,7 @@ async def test_blocked_response_returns_false_without_invoking_llm(patch_central
     )
     blocked_message = Message(message_pieces=[blocked_piece])
 
-    scores = await scorer.score_async(blocked_message)
+    scores = await scorer.score_async(scorable=MessageScorable(message=blocked_message))
 
     chat_target.send_prompt_async.assert_not_called()
     assert len(scores) == 1

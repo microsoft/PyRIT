@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, cast
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from uuid import UUID
 
 
-class ConversationScorer(Scorer, ABC):
+class ConversationScorer(MessageScorer, ABC):
     """
     Scorer that evaluates entire conversation history rather than individual messages.
 
