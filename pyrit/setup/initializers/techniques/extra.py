@@ -9,8 +9,8 @@ Opt-in techniques that are not part of the default ``core`` set. Exposes
 ``build_technique_factories``.
 """
 
-from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
-from pyrit.executor.attack import PAIRAttack, RedTeamingAttack, SkeletonKeyAttack
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
+from pyrit.executor.attack import CrescendoAttack, PAIRAttack, RedTeamingAttack, SkeletonKeyAttack
 from pyrit.models import SeedPrompt
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
@@ -43,6 +43,14 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             adversarial_system_prompt=SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml"),
             adversarial_seed_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml"
+            ),
+        ),
+        AttackTechniqueFactory(
+            name="split_payload",
+            attack_class=CrescendoAttack,
+            technique_tags=["multi_turn"],
+            adversarial_system_prompt=SeedPrompt.from_yaml_file(
+                EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml"
             ),
         ),
     ]

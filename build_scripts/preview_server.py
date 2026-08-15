@@ -10,7 +10,7 @@ in-site links (e.g. the "API Reference" nav link, which points at
 
 Run from the directory you want to serve:
 
-    python build_scripts/preview_server.py [--port 8000] [--directory dist]
+    python -m build_scripts.preview_server [--port 8000] [--directory dist]
 
 Resolution rules, in order:
     1. If the requested path is a file, serve it.
