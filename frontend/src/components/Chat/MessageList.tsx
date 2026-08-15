@@ -352,9 +352,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                 </>
               )}
 
-              {/* Text content (converted / primary), with any scores for the
-                  text piece(s) shown alongside it at the same height rather
-                  than stacked above or below. */}
+              {/* Text content (converted / primary), with its scores below it. */}
               {Boolean(message.content || message.scores?.length) && (
                 <div className={styles.pieceRow}>
                   {(() => {
@@ -439,8 +437,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           )}
                         </div>
                       )}
-                      {/* Scores for this attachment's piece — shown beside the
-                          media at the same height, not stacked above/below. */}
+                      {/* Scores for this attachment's piece — shown directly below it. */}
                       {att.scores && att.scores.length > 0 && (
                         <MessageScores scores={att.scores} groupId={`${index}-att-${attIndex}`} />
                       )}
