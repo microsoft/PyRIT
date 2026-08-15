@@ -189,6 +189,21 @@ def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     return value
 
 
+def _normalize_summary_objective(ar: AttackResult) -> str:
+    """
+    Normalize the placeholder only for legacy unnamed manual attacks.
+
+    Returns:
+        The summary objective, with legacy manual placeholders converted to an empty string.
+    """
+    identifier = ar.get_attack_strategy_identifier()
+    is_manual_attack = identifier is not None and identifier.class_name == "ManualAttack"
+    has_placeholder_metadata = ar.metadata.get("objective_is_placeholder") is True
+    if ar.objective == _LEGACY_MANUAL_ATTACK_PLACEHOLDER and (is_manual_attack or has_placeholder_metadata):
+        return ""
+    return ar.objective
+
+
 async def attack_result_to_summary_async(
     ar: AttackResult,
     *,
@@ -215,12 +230,9 @@ async def attack_result_to_summary_async(
 
     data = {name: getattr(ar, name) for name in AttackResult.model_fields}
     data.update(
-        # Historical unnamed GUI attacks persisted this sentinel. Normalize it
-        # at the API boundary so clients can use the objective value directly,
-        # without a separate metadata or has_explicit_objective flag.
-        objective="" if ar.objective == _LEGACY_MANUAL_ATTACK_PLACEHOLDER else ar.objective,
+        objective=_normalize_summary_objective(ar),
         last_response=await _summary_last_response_async(ar.last_response),
-        last_score=ScoreView.from_domain(ar.last_score) if ar.last_score else None,
+        last_score=ScoreView.from_domain(ar.last_score, is_objective_score=True) if ar.last_score else None,
         labels=labels,
         message_count=stats.message_count,
         last_message_preview=format_last_message_preview(

@@ -338,14 +338,33 @@ class TestAttackResultToSummary:
         assert summary.objective == ""
 
     async def test_legacy_placeholder_objective_is_normalized_to_empty(self) -> None:
-        """Historical sentinel values are normalized at the API boundary."""
-        ar = _make_attack_result()
+        """Historical unnamed manual attacks are normalized at the API boundary."""
+        ar = _make_attack_result(name="ManualAttack")
         ar.objective = "Manual attack via GUI"
         stats = ConversationStats(message_count=0)
 
         summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.objective == ""
+
+    async def test_legacy_placeholder_metadata_is_normalized_to_empty(self) -> None:
+        """The former placeholder metadata flag remains supported."""
+        ar = _make_attack_result(name="LegacyNamedAttack")
+        ar.objective = "Manual attack via GUI"
+        ar.metadata["objective_is_placeholder"] = True
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == ""
+
+    async def test_non_manual_attack_preserves_placeholder_text_as_explicit_objective(self) -> None:
+        """A non-manual attack may legitimately use the legacy placeholder text."""
+        ar = _make_attack_result(name="CrescendoAttack")
+        ar.objective = "Manual attack via GUI"
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == "Manual attack via GUI"
 
     async def test_converters_extracted_from_identifier(self) -> None:
         """Test that converter class names are extracted into converters list."""
@@ -435,6 +454,17 @@ class TestAttackResultToSummary:
         summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.message_count == 5
+
+    async def test_last_score_is_marked_as_objective(self) -> None:
+        """The summary identifies ``last_score`` as the canonical objective score."""
+        ar = _make_attack_result()
+        ar.last_score = _make_score()
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.last_score is not None
+        assert summary.last_score.is_objective_score is True
+        assert summary.model_dump()["last_score"]["is_objective_score"] is True
 
     async def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
         """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""

@@ -46,7 +46,7 @@ class ScoreView(Score):
 
     is_objective_score: bool = Field(
         default=False,
-        description="Whether this is the attack's canonical objective score.",
+        description="Whether this is the score referenced by AttackResult.last_score.",
     )
 
     @computed_field  # type: ignore[prop-decorator]

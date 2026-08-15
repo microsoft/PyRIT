@@ -76,6 +76,7 @@ const MESSAGES = [
         converted_value: "Deterministic assistant response for touch-target tests.",
         scores: Array.from({ length: 9 }, (_unused: unknown, scoreIndex: number) => ({
           id: `mobile-assistant-score-${scoreIndex}`,
+          message_piece_id: "mobile-assistant-piece",
           scorer_type: `SelfAskRefusalScorer${scoreIndex}`,
           score_type: "true_false",
           score_value: scoreIndex === 0 ? "true" : "false",
@@ -444,6 +445,12 @@ test.describe("Mobile touch targets", () => {
     const scoreMenu = page.getByTestId("message-score-menu-1");
     await expect(scoreMenu).toBeVisible();
     await expectMinimumTouchTarget(scoreMenu);
+    await scoreMenu.click();
+    const scoreMenuItems = page.locator(
+      '[data-testid^="message-score-menu-item-1-"]'
+    );
+    await expect(scoreMenuItems).toHaveCount(9);
+    await expectMinimumTouchTargets(scoreMenuItems);
 
     await expectMinimumTouchTargets(
       page.locator(

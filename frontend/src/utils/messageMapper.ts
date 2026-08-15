@@ -2,6 +2,7 @@ import type {
   BackendMessage,
   BackendMessagePiece,
   BackendScore,
+  DisplayScore,
   Message,
   MessageAttachment,
   MessageError,
@@ -126,13 +127,12 @@ function scoreWithProvenance(
     pieceIndex: number
     filename?: string
   },
-): BackendScore {
+): DisplayScore {
   const pieceType = piece.converted_value_data_type
   const sourceLabel = [`Piece ${pieceIndex + 1}`, pieceType, filename].filter(Boolean).join(' · ')
 
   return {
     ...score,
-    sourcePieceId: piece.id,
     pieceIndex,
     pieceType,
     sourceLabel,
@@ -223,7 +223,7 @@ function pieceToError(piece: BackendMessagePiece): MessageError | undefined {
  * `MessageAttachment` in `pieceToAttachment` instead, so each score renders
  * next to the piece it was actually computed on rather than all together.
  */
-function getTextScores(messagePieces: BackendMessagePiece[]): BackendScore[] {
+function getTextScores(messagePieces: BackendMessagePiece[]): DisplayScore[] {
   const scores = messagePieces
     .flatMap((piece, pieceIndex) => {
       if (isMediaDataType(piece.converted_value_data_type) || isReasoningDataType(piece.converted_value_data_type)) {

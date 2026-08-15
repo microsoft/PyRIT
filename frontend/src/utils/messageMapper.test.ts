@@ -138,6 +138,7 @@ describe("messageMapper", () => {
             scores: [
               {
                 id: "score-old",
+                message_piece_id: "p1",
                 scorer_type: "OldScorer",
                 score_type: "true_false",
                 score_value: "False",
@@ -155,6 +156,7 @@ describe("messageMapper", () => {
             scores: [
               {
                 id: "score-new",
+                message_piece_id: "p2",
                 scorer_type: "NewScorer",
                 score_type: "float_scale",
                 score_value: "0.9",
@@ -174,19 +176,19 @@ describe("messageMapper", () => {
       expect(result.scores).toEqual([
         expect.objectContaining({
           ...msg.message_pieces[1].scores[0],
-          sourcePieceId: "p2",
           pieceIndex: 1,
           pieceType: "text",
           sourceLabel: "Piece 2 · text",
         }),
         expect.objectContaining({
           ...msg.message_pieces[0].scores[0],
-          sourcePieceId: "p1",
           pieceIndex: 0,
           pieceType: "text",
           sourceLabel: "Piece 1 · text",
         }),
       ]);
+      expect(result.scores?.map((score) => score.message_piece_id)).toEqual(["p2", "p1"]);
+      expect(result.scores?.[0]).not.toHaveProperty("sourcePieceId");
     });
 
     it("should attach an image piece's scores to its attachment, not to message.scores", () => {
@@ -204,6 +206,7 @@ describe("messageMapper", () => {
             scores: [
               {
                 id: "score-image",
+                message_piece_id: "p1",
                 scorer_type: "ImageScorer",
                 score_type: "true_false",
                 score_value: "True",
@@ -223,7 +226,6 @@ describe("messageMapper", () => {
       expect(result.attachments![0].scores).toEqual([
         expect.objectContaining({
           ...msg.message_pieces[0].scores[0],
-          sourcePieceId: "p1",
           pieceIndex: 0,
           pieceType: "image_path",
           sourceLabel: "Piece 1 · image_path · image_path_p1",

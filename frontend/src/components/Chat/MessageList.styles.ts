@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { NARROW_VIEWPORT_QUERY, mobileTouchTarget } from '../../styles/touchTargets'
+import { NARROW_VIEWPORT_QUERY, mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
 export const useMessageListStyles = makeStyles({
   root: {
@@ -97,6 +97,9 @@ export const useMessageListStyles = makeStyles({
     height: '32px',
     padding: `0 ${tokens.spacingHorizontalXS}`,
     ...mobileTouchTarget,
+  },
+  scoreMenuItem: {
+    ...mobileTouchTargetHeight,
   },
   scoreSurface: {
     display: 'flex',

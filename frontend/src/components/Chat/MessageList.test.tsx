@@ -2,7 +2,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import MessageList from "./MessageList";
-import { Message } from "../../types";
+import { BackendScore, Message } from "../../types";
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -119,11 +119,11 @@ describe("MessageList", () => {
         scores: [
           {
             id: "score-1",
+            message_piece_id: "piece-1",
             scorer_type: "SelfAskScaleScorer",
             score_type: "float_scale",
             score_value: "0.9",
             is_objective_score: true,
-            sourcePieceId: "piece-1",
             pieceIndex: 0,
             pieceType: "text",
             sourceLabel: "Piece 1 · text",
@@ -166,18 +166,24 @@ describe("MessageList", () => {
         scores: [
           {
             id: "score-new",
+            message_piece_id: "piece-2",
             scorer_type: "NewScorer",
             score_type: "float_scale",
             score_value: "0.9",
+            pieceIndex: 1,
+            pieceType: "text",
             sourceLabel: "Piece 2 · text",
             timestamp: "2026-02-15T00:01:00Z",
           },
           {
             id: "score-old",
+            message_piece_id: "piece-1",
             scorer_type: "OldScorer",
             score_type: "true_false",
             score_value: "False",
             is_objective_score: true,
+            pieceIndex: 0,
+            pieceType: "text",
             sourceLabel: "Piece 1 · text",
             timestamp: "2026-02-15T00:00:00Z",
           },
@@ -236,9 +242,13 @@ describe("MessageList", () => {
         scores: [
           {
             id: "score-1",
+            message_piece_id: "piece-1",
             scorer_type: "SoleScorer",
             score_type: "true_false",
             score_value: "True",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
             timestamp: "2026-02-15T00:00:00Z",
           },
         ],
@@ -259,6 +269,82 @@ describe("MessageList", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("should distinguish text and attachment score controls by source label", () => {
+    const sharedScores: Array<Omit<BackendScore, "message_piece_id">> = [
+      {
+        id: "score-objective",
+        scorer_type: "SharedScorer",
+        score_type: "true_false",
+        score_value: "True",
+        is_objective_score: true,
+        timestamp: "2026-02-15T00:00:00Z",
+      },
+      {
+        id: "score-auxiliary",
+        scorer_type: "AuxiliaryScorer",
+        score_type: "float_scale",
+        score_value: "0.5",
+        timestamp: "2026-02-15T00:01:00Z",
+      },
+    ];
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Scored text",
+        timestamp: new Date().toISOString(),
+        scores: sharedScores.map((score) => ({
+          ...score,
+          id: `${score.id}-text`,
+          message_piece_id: "piece-1",
+          pieceIndex: 0,
+          pieceType: "text",
+          sourceLabel: "Piece 1 · text",
+        })),
+        attachments: [
+          {
+            type: "image",
+            name: "test.png",
+            url: "data:image/png;base64,iVBORw0KGgo=",
+            mimeType: "image/png",
+            scores: sharedScores.map((score) => ({
+              ...score,
+              id: `${score.id}-image`,
+              message_piece_id: "piece-2",
+              pieceIndex: 1,
+              pieceType: "image_path",
+              sourceLabel: "Piece 2 · image_path · test.png",
+            })),
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: "Score True from SharedScorer, objective score, Piece 1 · text",
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Score True from SharedScorer, objective score, Piece 2 · image_path · test.png",
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "View score details for Piece 1 · text" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "View score details for Piece 2 · image_path · test.png",
+      })
+    ).toBeInTheDocument();
+  });
+
   it("should not show a score chip when the message has no score", () => {
     render(
       <TestWrapper>
@@ -269,6 +355,41 @@ describe("MessageList", () => {
     expect(
       screen.queryByRole("button", { name: /^score /i })
     ).not.toBeInTheDocument();
+  });
+
+  it("should show a text score when the converted response is empty", () => {
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        scores: [
+          {
+            id: "score-empty-response",
+            message_piece_id: "piece-empty-response",
+            scorer_type: "EmptyResponseScorer",
+            score_type: "true_false",
+            score_value: "True",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:00:00Z",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: "Score True from EmptyResponseScorer, Piece 1 · text",
+      })
+    ).toBeInTheDocument();
   });
 
   it("should show a score chip next to the attachment it was computed on", () => {
@@ -287,9 +408,13 @@ describe("MessageList", () => {
             scores: [
               {
                 id: "score-image",
+                message_piece_id: "piece-image",
                 scorer_type: "ImageScorer",
                 score_type: "true_false",
                 score_value: "True",
+                pieceIndex: 0,
+                pieceType: "image_path",
+                sourceLabel: "Piece 1 · image_path · test.png",
                 timestamp: "2026-02-15T00:00:00Z",
               },
             ],

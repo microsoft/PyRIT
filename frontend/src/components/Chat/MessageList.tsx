@@ -20,7 +20,7 @@ import {
   mergeClasses,
 } from '@fluentui/react-components'
 import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular, AddRegular } from '@fluentui/react-icons'
-import type { BackendScore, Message, MessageAttachment } from '../../types'
+import type { DisplayScore, Message, MessageAttachment } from '../../types'
 import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
 
@@ -93,7 +93,7 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
-function MessageScore({ score, groupId, scoreIndex }: { score: BackendScore; groupId: string | number; scoreIndex: number }) {
+function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
   const styles = useMessageListStyles()
   const categories = score.score_category?.filter(Boolean) ?? []
 
@@ -104,7 +104,7 @@ function MessageScore({ score, groupId, scoreIndex }: { score: BackendScore; gro
           appearance="subtle"
           size="small"
           className={styles.scoreChip}
-          aria-label={`Score ${score.score_value} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}`}
+          aria-label={`Score ${score.score_value} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`}
           data-testid={`message-score-${groupId}-${scoreIndex}`}
         >
           <Badge appearance="tint" color="brand" size="medium">
@@ -156,7 +156,7 @@ function MessageScore({ score, groupId, scoreIndex }: { score: BackendScore; gro
  * is present, a "+" button opens a dropdown listing every score so the user
  * can pick which one to display in place of the chip.
  */
-function MessageScores({ scores, groupId }: { scores: BackendScore[]; groupId: string | number }) {
+function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: string | number }) {
   const styles = useMessageListStyles()
   const defaultScore = scores.find((score) => score.is_objective_score) ?? scores[0]
   const [selectedScoreId, setSelectedScoreId] = useState(defaultScore.id)
@@ -173,7 +173,7 @@ function MessageScores({ scores, groupId }: { scores: BackendScore[]; groupId: s
               appearance="subtle"
               size="small"
               className={styles.scoreChip}
-              aria-label="View score details"
+              aria-label={`View score details${selectedScore.sourceLabel ? ` for ${selectedScore.sourceLabel}` : ''}`}
               data-testid={`message-score-menu-${groupId}`}
             >
               <Badge appearance="tint" color="brand" size="medium">
@@ -186,6 +186,7 @@ function MessageScores({ scores, groupId }: { scores: BackendScore[]; groupId: s
               {scores.map((score, scoreIndex) => (
                 <MenuItem
                   key={score.id}
+                  className={styles.scoreMenuItem}
                   onClick={() => setSelectedScoreId(score.id)}
                   data-testid={`message-score-menu-item-${groupId}-${scoreIndex}`}
                 >
@@ -354,7 +355,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
               {/* Text content (converted / primary), with any scores for the
                   text piece(s) shown alongside it at the same height rather
                   than stacked above or below. */}
-              {message.content && (
+              {Boolean(message.content || message.scores?.length) && (
                 <div className={styles.pieceRow}>
                   {(() => {
                     if (message.isLoading) {
