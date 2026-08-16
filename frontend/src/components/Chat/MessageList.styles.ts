@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { NARROW_VIEWPORT_QUERY, mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
+import { NARROW_VIEWPORT_QUERY, mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useMessageListStyles = makeStyles({
   root: {
@@ -99,8 +99,95 @@ export const useMessageListStyles = makeStyles({
     padding: `0 ${tokens.spacingHorizontalXS}`,
     ...mobileTouchTarget,
   },
-  scoreMenuItem: {
-    ...mobileTouchTargetHeight,
+  stackedScoreButton: {
+    minWidth: '48px',
+    height: '40px',
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+    overflow: 'visible',
+    ...mobileTouchTarget,
+  },
+  scoreStack: {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'flex-start',
+    minWidth: '42px',
+    minHeight: '30px',
+  },
+  scoreStackOvalBack: {
+    position: 'absolute',
+    inset: '6px 0 4px 8px',
+    borderRadius: '999px',
+    border: `1px solid ${tokens.colorBrandStroke2}`,
+    backgroundColor: tokens.colorBrandBackground2,
+    zIndex: 0,
+  },
+  scoreStackOvalMiddle: {
+    position: 'absolute',
+    inset: '3px 4px 7px 4px',
+    borderRadius: '999px',
+    border: `1px solid ${tokens.colorBrandStroke2}`,
+    backgroundColor: tokens.colorBrandBackground2,
+    zIndex: 1,
+  },
+  scoreStackOvalFront: {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '30px',
+    minHeight: '20px',
+    padding: `0 ${tokens.spacingHorizontalXS}`,
+    borderRadius: '999px',
+    border: `1px solid ${tokens.colorBrandStroke2}`,
+    backgroundColor: tokens.colorBrandBackground2,
+    color: tokens.colorBrandForeground1,
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightSemibold,
+    lineHeight: tokens.lineHeightBase200,
+    zIndex: 2,
+  },
+  multiScorePopover: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: tokens.spacingVerticalM,
+    minWidth: '320px',
+    width: 'min(560px, calc(100vw - 32px))',
+    maxWidth: 'calc(100vw - 32px)',
+  },
+  scoreTabBar: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: tokens.spacingHorizontalXS,
+    minWidth: 0,
+  },
+  scoreTabs: {
+    flex: '1 1 0',
+    width: 0,
+    minWidth: 0,
+    maxWidth: '100%',
+    overflowX: 'auto',
+    overflowY: 'hidden',
+    scrollbarGutter: 'stable',
+  },
+  scoreOverflowButton: {
+    position: 'relative',
+    zIndex: 1,
+    minWidth: '32px',
+    flexShrink: 0,
+    ...mobileTouchTarget,
+  },
+  scoreTabContent: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+    whiteSpace: 'nowrap',
+  },
+  objectiveScoreLabel: {
+    color: tokens.colorBrandForeground1,
+    fontSize: tokens.fontSizeBase100,
+    fontWeight: tokens.fontWeightSemibold,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
   },
   scoreSurface: {
     display: 'flex',

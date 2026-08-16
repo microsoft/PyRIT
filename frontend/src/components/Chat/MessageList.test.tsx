@@ -156,7 +156,7 @@ describe("MessageList", () => {
     expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
   });
 
-  it("should show only the newest score chip plus a dropdown to view others", async () => {
+  it("should show a stacked score control with tabs for multiple scores", async () => {
     const user = userEvent.setup();
     const scoredMessages: Message[] = [
       {
@@ -197,43 +197,38 @@ describe("MessageList", () => {
       </TestWrapper>
     );
 
-    // The canonical objective score is shown by default, even when a newer
-    // auxiliary score exists.
-    expect(
-      screen.getByRole("button", { name: /score false from oldscorer, objective score/i })
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /score 0.9 from newscorer/i })
-    ).not.toBeInTheDocument();
+    const stackedScoreButton = screen.getByRole("button", {
+      name: /view 2 scores, selected score false from oldscorer, objective score/i,
+    });
+    expect(stackedScoreButton).toBeInTheDocument();
 
-    // The "+" button opens a dropdown listing every score.
-    const menuButton = screen.getByRole("button", { name: /view score details/i });
-    expect(menuButton).toBeInTheDocument();
+    await user.click(stackedScoreButton);
 
-    await user.click(menuButton);
+    expect(screen.getByRole("tablist", { name: "Scores" })).toBeInTheDocument();
+    const objectiveTab = screen.getByRole("tab", {
+      name: /false oldscorer objective/i,
+    });
+    const auxiliaryTab = screen.getByRole("tab", {
+      name: /0.9 newscorer/i,
+    });
+    expect(screen.getAllByRole("tab")).toEqual([objectiveTab, auxiliaryTab]);
+    expect(objectiveTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", objectiveTab.id);
+    expect(screen.getByText("true_false")).toBeInTheDocument();
 
+    await user.click(auxiliaryTab);
+
+    expect(auxiliaryTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", auxiliaryTab.id);
+    expect(screen.getByText("float_scale")).toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", {
-        name: /false \*\(attack objective\) — oldscorer · piece 1 · text/i,
+      screen.getByRole("button", {
+        name: /view 2 scores, selected score 0.9 from newscorer/i,
       })
     ).toBeInTheDocument();
-    const newScoreOption = await screen.findByRole("menuitem", {
-      name: /0.9 — newscorer · piece 2 · text/i,
-    });
-    expect(newScoreOption).toBeInTheDocument();
-
-    // Selecting a score from the dropdown replaces the displayed chip.
-    await user.click(newScoreOption);
-
-    expect(
-      screen.getByRole("button", { name: /score 0.9 from newscorer/i })
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /score false from oldscorer/i })
-    ).not.toBeInTheDocument();
   });
 
-  it("should not show a dropdown '+' button when the message has only one score", () => {
+  it("should not show a stacked control when the message has only one score", () => {
     const scoredMessages: Message[] = [
       {
         role: "assistant",
@@ -265,8 +260,76 @@ describe("MessageList", () => {
       screen.getByRole("button", { name: /score true from solescorer/i })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /view score details/i })
+      screen.queryByTestId("message-score-stack-0")
     ).not.toBeInTheDocument();
+  });
+
+  it("should list only scores beyond the first three in the More menu", async () => {
+    const user = userEvent.setup();
+    const scores = ["FirstScorer", "ObjectiveScorer", "ThirdScorer", "OverflowScorer"].map(
+      (scorerType, index) => ({
+        id: `score-${index}`,
+        message_piece_id: "piece-1",
+        scorer_type: scorerType,
+        score_type: "float_scale",
+        score_value: `${index}`,
+        is_objective_score: index === 1,
+        pieceIndex: 0,
+        pieceType: "text",
+        sourceLabel: "Piece 1 · text",
+        timestamp: `2026-02-15T00:0${index}:00Z`,
+      })
+    );
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[
+            {
+              role: "assistant",
+              content: "Scored response",
+              timestamp: new Date().toISOString(),
+              scores,
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /view 4 scores/i }));
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(
+      screen.queryByRole("tab", { name: /overflowscorer/i })
+    ).not.toBeInTheDocument();
+    const objectiveTab = screen.getByRole("tab", { name: /objectivescorer/i });
+    expect(objectiveTab).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("button", { name: "Choose from 1 scores" }));
+    expect(objectiveTab).toHaveAttribute("aria-selected", "true");
+
+    const overflowScore = screen.getByRole("menuitem", {
+      name: /3 · overflowscorer/i,
+    });
+    expect(overflowScore).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /objectivescorer/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /firstscorer/i })
+    ).not.toBeInTheDocument();
+
+    await user.click(overflowScore);
+
+    expect(
+      screen.getByRole("tab", { name: /3 overflowscorer/i })
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.queryByRole("tab", { name: /2 thirdscorer/i })
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Choose from 1 scores" }));
+    expect(
+      screen.getByRole("menuitem", { name: /2 · thirdscorer/i })
+    ).toBeInTheDocument();
   });
 
   it("should distinguish text and attachment score controls by source label", () => {
@@ -327,20 +390,12 @@ describe("MessageList", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "Score True from SharedScorer, objective score, Piece 1 · text",
+        name: "View 2 scores, selected score True from SharedScorer, objective score, Piece 1 · text",
       })
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Score True from SharedScorer, objective score, Piece 2 · image_path · test.png",
-      })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "View score details for Piece 1 · text" })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "View score details for Piece 2 · image_path · test.png",
+        name: "View 2 scores, selected score True from SharedScorer, objective score, Piece 2 · image_path · test.png",
       })
     ).toBeInTheDocument();
   });

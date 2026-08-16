@@ -7,19 +7,29 @@ import {
   MessageBarBody,
   Button,
   Badge,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   Popover,
   PopoverSurface,
   PopoverTrigger,
-  Menu,
-  MenuTrigger,
-  MenuPopover,
-  MenuList,
-  MenuItem,
+  Tab,
+  TabList,
   Tooltip,
   Spinner,
   mergeClasses,
 } from '@fluentui/react-components'
-import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular, AddRegular } from '@fluentui/react-icons'
+import {
+  ArrowDownloadRegular,
+  ArrowForwardRegular,
+  ArrowReplyRegular,
+  BranchForkRegular,
+  ChatAddRegular,
+  MoreHorizontalRegular,
+  OpenRegular,
+} from '@fluentui/react-icons'
 import type { DisplayScore, Message, MessageAttachment } from '../../types'
 import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
@@ -93,9 +103,49 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
-function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
+function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }) {
   const styles = useMessageListStyles()
   const categories = score.score_category?.filter(Boolean) ?? []
+
+  return (
+    <div className={styles.scoreSurface} data-testid={testId}>
+      <Text weight="semibold">Score details</Text>
+      <div className={styles.scoreRow}>
+        <Text size={200} weight="semibold" className={styles.scoreLabel}>Value</Text>
+        <Badge appearance="tint" color="brand" size="small">{score.score_value}</Badge>
+      </div>
+      <div className={styles.scoreRow}>
+        <Text size={200} weight="semibold" className={styles.scoreLabel}>Type</Text>
+        <Text size={200}>{score.score_type}</Text>
+      </div>
+      <div className={styles.scoreRow}>
+        <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
+        <Text size={200}>{score.scorer_type}</Text>
+      </div>
+      {score.sourceLabel && (
+        <div className={styles.scoreRow}>
+          <Text size={200} weight="semibold" className={styles.scoreLabel}>Piece</Text>
+          <Text size={200}>{score.sourceLabel}</Text>
+        </div>
+      )}
+      {categories.length > 0 && (
+        <div className={styles.scoreRow}>
+          <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
+          <Text size={200}>{categories.join(', ')}</Text>
+        </div>
+      )}
+      {score.score_rationale && (
+        <div className={styles.scoreRationale}>
+          <Text size={200} weight="semibold">Rationale</Text>
+          <Text size={200} className={styles.scoreRationaleText}>{score.score_rationale}</Text>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
+  const styles = useMessageListStyles()
 
   return (
     <Popover withArrow>
@@ -113,48 +163,66 @@ function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; gro
         </Button>
       </PopoverTrigger>
       <PopoverSurface>
-        <div className={styles.scoreSurface} data-testid={`message-score-details-${groupId}-${scoreIndex}`}>
-          <Text weight="semibold">Score details</Text>
-          <div className={styles.scoreRow}>
-            <Text size={200} weight="semibold" className={styles.scoreLabel}>Value</Text>
-            <Badge appearance="tint" color="brand" size="small">{score.score_value}</Badge>
-          </div>
-          <div className={styles.scoreRow}>
-            <Text size={200} weight="semibold" className={styles.scoreLabel}>Type</Text>
-            <Text size={200}>{score.score_type}</Text>
-          </div>
-          <div className={styles.scoreRow}>
-            <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
-            <Text size={200}>{score.scorer_type}</Text>
-          </div>
-          {score.sourceLabel && (
-            <div className={styles.scoreRow}>
-              <Text size={200} weight="semibold" className={styles.scoreLabel}>Piece</Text>
-              <Text size={200}>{score.sourceLabel}</Text>
-            </div>
-          )}
-          {categories.length > 0 && (
-            <div className={styles.scoreRow}>
-              <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
-              <Text size={200}>{categories.join(', ')}</Text>
-            </div>
-          )}
-          {score.score_rationale && (
-            <div className={styles.scoreRationale}>
-              <Text size={200} weight="semibold">Rationale</Text>
-              <Text size={200} className={styles.scoreRationaleText}>{score.score_rationale}</Text>
-            </div>
-          )}
-        </div>
+        <ScoreDetails score={score} testId={`message-score-details-${groupId}-${scoreIndex}`} />
       </PopoverSurface>
     </Popover>
   )
 }
 
+interface ScoreOverflowMenuItemProps {
+  score: DisplayScore
+  onSelect: (scoreId: string) => void
+}
+
+function ScoreOverflowMenuItem({ score, onSelect }: ScoreOverflowMenuItemProps) {
+  return (
+    <MenuItem
+      onClick={() => onSelect(score.id)}
+    >
+      {score.score_value} · {score.scorer_type}{score.is_objective_score ? ' (Objective)' : ''}
+    </MenuItem>
+  )
+}
+
+interface ScoreOverflowMenuProps {
+  scores: DisplayScore[]
+  onSelect: (scoreId: string) => void
+}
+
+function ScoreOverflowMenu({ scores, onSelect }: ScoreOverflowMenuProps) {
+  const styles = useMessageListStyles()
+
+  return (
+    <Menu>
+      <MenuTrigger disableButtonEnhancement>
+        <Button
+          appearance="subtle"
+          size="small"
+          icon={<MoreHorizontalRegular />}
+          className={styles.scoreOverflowButton}
+          aria-label={`Choose from ${scores.length} scores`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        />
+      </MenuTrigger>
+      <MenuPopover>
+        <MenuList>
+          {scores.map((score) => (
+            <ScoreOverflowMenuItem
+              key={score.id}
+              score={score}
+              onSelect={onSelect}
+            />
+          ))}
+        </MenuList>
+      </MenuPopover>
+    </Menu>
+  )
+}
+
 /**
- * Renders the currently-selected score for a piece. When more than one score
- * is present, a "+" button opens a dropdown listing every score so the user
- * can pick which one to display in place of the chip.
+ * Renders a single score chip or, for multiple scores, a stacked trigger whose
+ * popover uses tabs to switch the visible score details.
  */
 function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: string | number }) {
   const styles = useMessageListStyles()
@@ -162,42 +230,99 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
   const [selectedScoreId, setSelectedScoreId] = useState(defaultScore.id)
   const selectedScore = scores.find((score) => score.id === selectedScoreId) ?? defaultScore
   const selectedIndex = scores.indexOf(selectedScore)
+  const orderedScores = [
+    ...scores.filter((score) => score.is_objective_score),
+    ...scores.filter((score) => !score.is_objective_score),
+  ]
+  const initialVisibleScores = orderedScores.slice(0, 3)
+  const visibleScores = initialVisibleScores.some((score) => score.id === selectedScore.id)
+    ? initialVisibleScores
+    : [...initialVisibleScores.slice(0, 2), selectedScore]
+  const overflowScores = orderedScores.filter(
+    (score) => !visibleScores.some((visibleScore) => visibleScore.id === score.id)
+  )
+
+  if (scores.length === 1) {
+    return (
+      <div className={styles.scoreList}>
+        <MessageScore score={selectedScore} groupId={groupId} scoreIndex={selectedIndex} />
+      </div>
+    )
+  }
 
   return (
     <div className={styles.scoreList}>
-      <MessageScore score={selectedScore} groupId={groupId} scoreIndex={selectedIndex} />
-      {scores.length > 1 && (
-        <Menu>
-          <MenuTrigger disableButtonEnhancement>
-            <Button
-              appearance="subtle"
+      <Popover withArrow>
+        <PopoverTrigger disableButtonEnhancement>
+          <Button
+            appearance="subtle"
+            size="small"
+            className={styles.stackedScoreButton}
+            aria-label={`View ${scores.length} scores, selected score ${selectedScore.score_value} from ${selectedScore.scorer_type}${selectedScore.is_objective_score ? ', objective score' : ''}${selectedScore.sourceLabel ? `, ${selectedScore.sourceLabel}` : ''}`}
+            data-testid={`message-score-stack-${groupId}`}
+          >
+            <span className={styles.scoreStack} aria-hidden="true">
+              <span className={styles.scoreStackOvalBack} />
+              <span className={styles.scoreStackOvalMiddle} />
+              <span className={styles.scoreStackOvalFront}>
+                {selectedScore.score_value}
+              </span>
+            </span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverSurface className={styles.multiScorePopover}>
+          <div className={styles.scoreTabBar}>
+            <TabList
+              selectedValue={selectedScore.id}
+              onTabSelect={(_event: unknown, data: { value: unknown }) => setSelectedScoreId(String(data.value))}
+              selectTabOnFocus={false}
               size="small"
-              className={styles.scoreChip}
-              aria-label={`View score details${selectedScore.sourceLabel ? ` for ${selectedScore.sourceLabel}` : ''}`}
-              data-testid={`message-score-menu-${groupId}`}
+              className={styles.scoreTabs}
+              aria-label="Scores"
             >
-              <Badge appearance="tint" color="brand" size="medium">
-                <AddRegular />
-              </Badge>
-            </Button>
-          </MenuTrigger>
-          <MenuPopover>
-            <MenuList>
-              {scores.map((score, scoreIndex) => (
-                <MenuItem
-                  key={score.id}
-                  className={styles.scoreMenuItem}
-                  onClick={() => setSelectedScoreId(score.id)}
-                  data-testid={`message-score-menu-item-${groupId}-${scoreIndex}`}
-                >
-                  {score.score_value}{score.is_objective_score ? ' *(attack objective)' : ''} — {score.scorer_type}
-                  {score.sourceLabel ? ` · ${score.sourceLabel}` : ''}
-                </MenuItem>
-              ))}
-            </MenuList>
-          </MenuPopover>
-        </Menu>
-      )}
+              {visibleScores.map((score) => {
+                const scoreIndex = scores.indexOf(score)
+                return (
+                  <Tab
+                    key={score.id}
+                    value={score.id}
+                    id={`message-score-tab-${groupId}-${scoreIndex}`}
+                    aria-controls={`message-score-panel-${groupId}`}
+                    data-testid={`message-score-tab-${groupId}-${scoreIndex}`}
+                  >
+                    <span className={styles.scoreTabContent}>
+                      <Badge
+                        appearance={score.is_objective_score ? 'filled' : 'tint'}
+                        color="brand"
+                        size="small"
+                      >
+                        {score.score_value}
+                      </Badge>
+                      <span>{score.scorer_type}</span>
+                      {score.is_objective_score && (
+                        <span className={styles.objectiveScoreLabel}>Objective</span>
+                      )}
+                    </span>
+                  </Tab>
+                )
+              })}
+            </TabList>
+            {overflowScores.length > 0 && (
+              <ScoreOverflowMenu
+                scores={overflowScores}
+                onSelect={setSelectedScoreId}
+              />
+            )}
+          </div>
+          <div
+            role="tabpanel"
+            id={`message-score-panel-${groupId}`}
+            aria-labelledby={`message-score-tab-${groupId}-${selectedIndex}`}
+          >
+            <ScoreDetails score={selectedScore} testId={`message-score-details-${groupId}-${selectedIndex}`} />
+          </div>
+        </PopoverSurface>
+      </Popover>
     </div>
   )
 }
