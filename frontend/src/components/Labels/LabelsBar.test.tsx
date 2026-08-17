@@ -1084,6 +1084,33 @@ describe('LabelsBar', () => {
       ).not.toBeInTheDocument()
     })
 
+    it('should let you re-select the operation in use even if it breaks the naming rules', async () => {
+      // A legacy name can be in use without being in the labels API — from a
+      // config file, or a session where nothing was stored under it yet.
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockResolvedValue({
+        source: 'attacks',
+        labels: { operation: OPERATIONS, operator: ['alice'] },
+      })
+      render(
+        <TestWrapper>
+          <LabelsBar
+            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'legacy-op-name.2024' }}
+            onLabelsChange={onChange}
+          />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(await screen.findByRole('option', { name: 'legacy-op-name.2024' }))
+
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: 'legacy-op-name.2024' })
+      )
+      expect(screen.queryByText(/Only lowercase letters/)).not.toBeInTheDocument()
+    })
+
     it('should still say the operations could not be loaded when one is already set', async () => {
       // The value in use is listed, but that must not read as a loaded list.
       const onChange = jest.fn()

@@ -249,9 +249,11 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
 
   const handleSelectOperation = (operation: string) => {
     const known = existingLabels.operation || []
-    // Values already in memory predate the current rules, so they are always
-    // selectable; only a newly typed name has to satisfy them.
-    if (!known.includes(operation)) {
+    // Values already in memory predate the current rules, and so may the one
+    // already in use, so both are always selectable; only a newly typed name
+    // has to satisfy them.
+    const inUse = operation === labels.operation
+    if (!known.includes(operation) && !inUse) {
       const valueError = validateValue(operation)
       if (valueError) { setError(valueError); return }
       // A name only reaches the labels API once an attack has been stored under
