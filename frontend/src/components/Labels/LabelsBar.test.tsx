@@ -1111,6 +1111,28 @@ describe('LabelsBar', () => {
       expect(screen.queryByText(/Only lowercase letters/)).not.toBeInTheDocument()
     })
 
+    it('should not say there are no operations while showing the one in use', async () => {
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockResolvedValue({
+        source: 'attacks',
+        labels: { operation: [], operator: ['alice'] },
+      })
+      render(
+        <TestWrapper>
+          <LabelsBar
+            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_only_one' }}
+            onLabelsChange={onChange}
+          />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(await screen.findByRole('option', { name: 'op_only_one' })).toBeInTheDocument()
+      expect(screen.queryByText(/No operations yet/)).not.toBeInTheDocument()
+    })
+
     it('should still say the operations could not be loaded when one is already set', async () => {
       // The value in use is listed, but that must not read as a loaded list.
       const onChange = jest.fn()
