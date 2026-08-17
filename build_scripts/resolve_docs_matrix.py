@@ -7,7 +7,7 @@ Reads ``.github/docs-versions.yml`` and writes GitHub Actions step outputs
 or to stdout when ``--github-output`` is not provided (for local testing).
 
 Usage:
-    python build_scripts/resolve_docs_matrix.py \\
+    python -m build_scripts.resolve_docs_matrix \\
         --config .github/docs-versions.yml \\
         --github-output "$GITHUB_OUTPUT"
 

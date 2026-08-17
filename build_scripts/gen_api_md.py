@@ -13,7 +13,7 @@ Reads the JSON files produced by pydoc2json.py and generates clean
 MyST markdown pages suitable for Jupyter Book 2.
 
 Usage:
-    python build_scripts/gen_api_md.py
+    python -m build_scripts.gen_api_md
 """
 
 import json
@@ -22,9 +22,8 @@ import sys
 from pathlib import Path
 
 # Import sibling script for post-generation TOC validation.
-sys.path.insert(0, str(Path(__file__).parent))
-import validate_docs
-from example_index import ExampleReference, SymbolEntry, _build_example_index
+from build_scripts import validate_docs
+from build_scripts.example_index import ExampleReference, SymbolEntry, _build_example_index
 
 DOC_ROOT = Path("doc")
 API_JSON_DIR = DOC_ROOT / "_api"
