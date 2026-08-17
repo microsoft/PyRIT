@@ -74,8 +74,17 @@ function OperationPicker({
 }: OperationPickerProps) {
   const [search, setSearch] = useState('')
 
-  const matches = search ? options.filter(option => option.toLowerCase().includes(search)) : options
-  const isNewName = search.length > 0 && !options.some(option => option.toLowerCase() === search)
+  // Each labels bar fetches its own list, and the popover and ribbon mount
+  // separately, so a name created a moment ago may not be in `options` here.
+  // List it anyway, or the picker offers to create the value already in use.
+  // The placeholder is not a real operation, so it stays off the list.
+  const listed = useMemo(() => {
+    const inUse = currentValue && currentValue !== DUMMY_VALUES.operation
+    return inUse && !options.includes(currentValue) ? [...options, currentValue] : options
+  }, [options, currentValue])
+
+  const matches = search ? listed.filter(option => option.toLowerCase().includes(search)) : listed
+  const isNewName = search.length > 0 && !listed.some(option => option.toLowerCase() === search)
   // Say why a name can't be created while it is being typed, rather than
   // rejecting it after the fact next to a bar that clips the message.
   const searchError = isNewName ? validateValue(search) : null
@@ -93,7 +102,7 @@ function OperationPicker({
       defaultOpen
       value={search}
       placeholder={currentValue}
-      selectedOptions={options.includes(currentValue) ? [currentValue] : []}
+      selectedOptions={listed.includes(currentValue) ? [currentValue] : []}
       onChange={e => { setSearch(e.target.value.toLowerCase()); onSearchChange() }}
       onOptionSelect={(_, data) => { if (data.optionValue) onSelect(data.optionValue) }}
       onKeyDownCapture={e => {
@@ -114,7 +123,7 @@ function OperationPicker({
       {isLoading && (
         <Option disabled className={noteClassName} value="--loading" text="Loading operations">Loading operations...</Option>
       )}
-      {!isLoading && matches.length === 0 && !canCreate && !searchError && (
+      {!isLoading && options.length === 0 && !canCreate && !searchError && (
         loadFailed ? (
           <Option disabled className={noteErrorClassName} value="--failed" text="Could not load operations">
             Could not load existing operations — type a name to use one

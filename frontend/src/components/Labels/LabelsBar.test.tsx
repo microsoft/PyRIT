@@ -1053,6 +1053,59 @@ describe('LabelsBar', () => {
       expect(screen.queryByRole('option', { name: 'Create "op_2026_09_fresh"' })).not.toBeInTheDocument()
     })
 
+    it('should list the operation in use even when the saved list has not caught up', async () => {
+      // The labels bar in the ribbon and the one on Home each fetch their own
+      // list, so a name chosen in the other one is not in this response yet.
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockResolvedValue({
+        source: 'attacks',
+        labels: { operation: OPERATIONS, operator: ['alice'] },
+      })
+      render(
+        <TestWrapper>
+          <LabelsBar
+            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_chosen_elsewhere' }}
+            onLabelsChange={onChange}
+          />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(await screen.findByRole('option', { name: 'op_chosen_elsewhere' })).toBeInTheDocument()
+
+      // Typing it must not offer to create the name that is already set.
+      fireEvent.change(screen.getByTestId('edit-label-operation'), {
+        target: { value: 'op_chosen_elsewhere' },
+      })
+      expect(
+        screen.queryByRole('option', { name: 'Create "op_chosen_elsewhere"' })
+      ).not.toBeInTheDocument()
+    })
+
+    it('should still say the operations could not be loaded when one is already set', async () => {
+      // The value in use is listed, but that must not read as a loaded list.
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockRejectedValue(new Error('boom'))
+      render(
+        <TestWrapper>
+          <LabelsBar
+            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_already_set' }}
+            onLabelsChange={onChange}
+          />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(
+        await screen.findByRole('option', { name: /Could not load existing operations/ })
+      ).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'op_already_set' })).toBeInTheDocument()
+    })
+
     it('should keep an operation created while the list was still loading', async () => {
       const onChange = jest.fn()
       let resolveLabels: (value: { source: string; labels: Record<string, string[]> }) => void = () => {}
