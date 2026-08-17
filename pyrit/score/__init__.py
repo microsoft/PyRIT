@@ -58,6 +58,7 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
 )
 from pyrit.score.scorer_info import get_scorer_info
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score.true_false.agent_threat_rules_scorer import AgentThreatRulesScorer
 from pyrit.score.true_false.decoding_scorer import DecodingScorer
 from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
 from pyrit.score.true_false.gandalf_scorer import GandalfScorer
@@ -171,6 +172,7 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
+    "AgentThreatRulesScorer",
     "AnthraxKeywordScorer",
     "AudioFloatScaleScorer",
     "AudioTrueFalseScorer",
