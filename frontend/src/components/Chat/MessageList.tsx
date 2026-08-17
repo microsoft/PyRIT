@@ -175,8 +175,11 @@ interface ScoreOverflowMenuItemProps {
 }
 
 function ScoreOverflowMenuItem({ score, onSelect }: ScoreOverflowMenuItemProps) {
+  const styles = useMessageListStyles()
+
   return (
     <MenuItem
+      className={styles.scoreMenuItem}
       onClick={() => onSelect(score.id)}
     >
       {score.score_value} · {score.scorer_type}{score.is_objective_score ? ' (Objective)' : ''}
@@ -288,6 +291,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
                     value={score.id}
                     id={`message-score-tab-${groupId}-${scoreIndex}`}
                     aria-controls={`message-score-panel-${groupId}`}
+                    className={styles.scoreTab}
                     data-testid={`message-score-tab-${groupId}-${scoreIndex}`}
                   >
                     <span className={styles.scoreTabContent}>

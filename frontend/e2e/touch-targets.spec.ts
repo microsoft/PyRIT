@@ -439,17 +439,24 @@ test.describe("Mobile touch targets", () => {
       page.getByTestId("toggle-objective-header-btn")
     ).toBeVisible();
 
-    const scoreChips = page.locator('[data-testid^="message-score-1-"]');
-    await expect(scoreChips).toHaveCount(1);
-    await expectMinimumTouchTargets(scoreChips);
-    const scoreMenu = page.getByTestId("message-score-menu-1");
-    await expect(scoreMenu).toBeVisible();
-    await expectMinimumTouchTarget(scoreMenu);
-    await scoreMenu.click();
-    const scoreMenuItems = page.locator(
-      '[data-testid^="message-score-menu-item-1-"]'
-    );
-    await expect(scoreMenuItems).toHaveCount(9);
+    const scoreStack = page.getByTestId("message-score-stack-1");
+    await expect(scoreStack).toBeVisible();
+    await expectMinimumTouchTarget(scoreStack);
+    await scoreStack.click();
+
+    const scoreTabs = page.locator('[data-testid^="message-score-tab-1-"]');
+    await expect(scoreTabs).toHaveCount(3);
+    await expectMinimumTouchTargets(scoreTabs);
+
+    const moreScores = page.getByRole("button", {
+      name: "Choose from 6 scores",
+    });
+    await expect(moreScores).toBeVisible();
+    await expectMinimumTouchTarget(moreScores);
+    await moreScores.click();
+
+    const scoreMenuItems = page.getByRole("menuitem");
+    await expect(scoreMenuItems).toHaveCount(6);
     await expectMinimumTouchTargets(scoreMenuItems);
 
     await expectMinimumTouchTargets(

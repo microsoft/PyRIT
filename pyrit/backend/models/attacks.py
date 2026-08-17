@@ -126,7 +126,7 @@ class MessagePieceView(MessagePiece):
         piece: MessagePiece,
         *,
         scores: list[Score] | None = None,
-        objective_score_id: uuid.UUID | None = None,
+        objective_score_id: uuid.UUID | str | None = None,
         original_value_url: str | None = None,
         converted_value_url: str | None = None,
     ) -> "MessagePieceView":
@@ -156,7 +156,10 @@ class MessagePieceView(MessagePiece):
         conv_dtype = piece.converted_value_data_type or "text"
         data.update(
             scores=[
-                ScoreView.from_domain(score, is_objective_score=score.id == objective_score_id)
+                ScoreView.from_domain(
+                    score,
+                    is_objective_score=objective_score_id is not None and str(score.id) == str(objective_score_id),
+                )
                 for score in (scores or [])
             ],
             original_value_url=original_value_url,

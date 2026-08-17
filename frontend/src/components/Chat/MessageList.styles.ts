@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { NARROW_VIEWPORT_QUERY, mobileTouchTarget } from '../../styles/touchTargets'
+import { NARROW_VIEWPORT_QUERY, mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
 export const useMessageListStyles = makeStyles({
   root: {
@@ -169,12 +169,18 @@ export const useMessageListStyles = makeStyles({
     overflowY: 'hidden',
     scrollbarGutter: 'stable',
   },
+  scoreTab: {
+    ...mobileTouchTargetHeight,
+  },
   scoreOverflowButton: {
     position: 'relative',
     zIndex: 1,
     minWidth: '32px',
     flexShrink: 0,
     ...mobileTouchTarget,
+  },
+  scoreMenuItem: {
+    ...mobileTouchTargetHeight,
   },
   scoreTabContent: {
     display: 'inline-flex',

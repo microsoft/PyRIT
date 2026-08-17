@@ -122,6 +122,21 @@ class TestMessagePieceViewContract:
         assert dumped["scores"][0]["scorer_type"] == "FloatScaleScorer"
         assert dumped["scores"][0]["is_objective_score"] is True
 
+    def test_string_score_id_matches_uuid_objective_score_id(self) -> None:
+        """Test that equivalent string and UUID score IDs identify the objective score."""
+        piece = _make_piece()
+        score = _make_score()
+        objective_score_id = uuid.UUID(str(score.id))
+        score.id = str(score.id)
+
+        view = MessagePieceView.from_domain(
+            piece,
+            scores=[score],
+            objective_score_id=objective_score_id,
+        )
+
+        assert view.scores[0].is_objective_score is True
+
 
 class TestMessageViewContract:
     """JSON contract for MessageView."""

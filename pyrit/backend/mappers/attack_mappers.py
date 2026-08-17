@@ -344,7 +344,7 @@ async def _fetch_scores_by_piece_async(
 async def pyrit_messages_to_dto_async(
     pyrit_messages: list[Message],
     *,
-    objective_score_id: uuid.UUID | None = None,
+    objective_score_id: uuid.UUID | str | None = None,
 ) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.

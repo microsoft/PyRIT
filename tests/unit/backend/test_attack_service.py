@@ -679,6 +679,27 @@ class TestGetConversationMessages:
 
         mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
 
+    async def test_get_conversation_messages_preserves_string_objective_score_id(
+        self, attack_service, mock_memory
+    ) -> None:
+        """The message mapper receives string score IDs without UUID conversion."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = str(uuid.uuid4())
+        ar.last_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
+
     async def test_get_conversation_messages_raises_for_unrelated_conversation(
         self, attack_service, mock_memory
     ) -> None:
