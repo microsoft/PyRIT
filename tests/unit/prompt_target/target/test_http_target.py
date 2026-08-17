@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from pyrit.models import Message
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_json_response_callback_function,
@@ -183,6 +183,39 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
             content="",
         )
         assert http_target._client is None
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_rejects_prompt_destination_change(mock_request, patch_central_database):
+    target = HTTPTarget(http_request="GET {PROMPT} HTTP/1.1\nHost: example.com\n\n")
+    message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="https://attacker.example/path",
+                converted_value="https://attacker.example/path",
+                converted_value_data_type="text",
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="cannot change the configured HTTP destination"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_awaited()
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_allows_configured_internal_destination(mock_request, patch_central_database):
+    target = HTTPTarget(http_request="POST /api/{PROMPT} HTTP/1.1\nHost: 10.0.0.8:8080\n\n")
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="jobs", converted_value="jobs")])
+    mock_response = MagicMock()
+    mock_response.content = b"ok"
+    mock_request.return_value = mock_response
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["url"] == "https://10.0.0.8:8080/api/jobs"
 
 
 async def test_send_prompt_async_validation(mock_http_target):

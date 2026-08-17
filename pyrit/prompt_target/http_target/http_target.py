@@ -7,6 +7,7 @@ import logging
 import re
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -72,6 +73,7 @@ class HTTPTarget(PromptTarget):
         # Parse the URL early to use as endpoint identifier
         # This will fail early if the http_request is malformed
         _, _, endpoint, _, _ = self.parse_raw_http_request(http_request)
+        self._destination_origin = self._get_destination_origin(endpoint)
 
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
@@ -169,6 +171,7 @@ class HTTPTarget(PromptTarget):
         http_request_w_prompt = self._inject_prompt_into_request(request)
 
         header_dict, http_body, url, http_method, http_version = self.parse_raw_http_request(http_request_w_prompt)
+        self._validate_destination(url)
 
         if "Content-Length" in header_dict:
             header_dict["Content-Length"] = str(len(http_body))
@@ -296,3 +299,17 @@ class HTTPTarget(PromptTarget):
 
         host = headers_dict["host"]
         return f"{http_protocol}{host}{path}"
+
+    def _validate_destination(self, url: str) -> None:
+        destination_origin = self._get_destination_origin(url)
+        if destination_origin != self._destination_origin:
+            raise ValueError("Prompt substitution cannot change the configured HTTP destination.")
+
+    @staticmethod
+    def _get_destination_origin(url: str) -> tuple[str, str | None, int | None]:
+        parsed_url = urlsplit(url)
+        try:
+            port = parsed_url.port
+        except ValueError as exc:
+            raise ValueError(f"Invalid port in HTTP destination: {url}") from exc
+        return parsed_url.scheme.lower(), parsed_url.hostname, port
