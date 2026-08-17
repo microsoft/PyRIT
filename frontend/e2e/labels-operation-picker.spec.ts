@@ -20,7 +20,7 @@ function operations(count: number): string[] {
 async function setupMocks(
   page: Page,
   operationLabels: string[],
-  options: { versionDelayMs?: number } = {},
+  options: { versionDelayMs?: number; defaultLabels?: Record<string, string> } = {},
 ): Promise<void> {
   // Everything the app calls while booting, so the run does not depend on a
   // dev-server proxy with no backend behind it.
@@ -37,7 +37,11 @@ async function setupMocks(
       if (options.versionDelayMs) {
         await new Promise((resolve) => setTimeout(resolve, options.versionDelayMs));
       }
-      return route.fulfill(json({ version: "picker-test", display: "picker-test" }));
+      return route.fulfill(json({
+        version: "picker-test",
+        display: "picker-test",
+        ...(options.defaultLabels ? { default_labels: options.defaultLabels } : {}),
+      }));
     }
     if (path === "/labels") {
       return route.fulfill(json({
@@ -241,5 +245,30 @@ test.describe("operation picker persistence", () => {
     await expect(page.getByTestId("label-operation")).toContainText(
       "op_picked_early",
     );
+  });
+
+  test("lets the backend still name the operator after you pick an operation", async ({
+    page,
+  }) => {
+    // Picking an operation must not freeze the placeholder operator into
+    // storage, where it would outrank a deployment's configured default.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await openOperationPicker(page);
+
+    await page.getByRole("option", { name: "op_beta", exact: true }).click();
+    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+
+    // A later visit, once the deployment configures an operator.
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await setupMocks(page, ["op_alpha", "op_beta"], {
+      defaultLabels: { operator: "configured_user" },
+    });
+    await page.reload();
+
+    await expect(page.getByTestId("label-operator")).toContainText(
+      "configured_user",
+    );
+    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
   });
 });

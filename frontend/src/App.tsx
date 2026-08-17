@@ -114,7 +114,13 @@ function App() {
 
   const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
     setGlobalLabels(labels)
-    persistGlobalLabels(labels)
+    // A placeholder is not a choice. Storing one would outrank whatever the
+    // backend is configured to hand out, on every later visit.
+    persistGlobalLabels(
+      Object.fromEntries(
+        Object.entries(labels).filter(([key, value]) => value !== DEFAULT_GLOBAL_LABELS[key]),
+      ),
+    )
   }, [])
 
   // History filters live in the URL query string so they are shareable and
