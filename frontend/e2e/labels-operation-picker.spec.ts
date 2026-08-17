@@ -17,7 +17,11 @@ function operations(count: number): string[] {
   );
 }
 
-async function setupMocks(page: Page, operationLabels: string[]): Promise<void> {
+async function setupMocks(
+  page: Page,
+  operationLabels: string[],
+  options: { versionDelayMs?: number } = {},
+): Promise<void> {
   // Everything the app calls while booting, so the run does not depend on a
   // dev-server proxy with no backend behind it.
   await page.route(/\/api\//, async (route) => {
@@ -30,6 +34,9 @@ async function setupMocks(page: Page, operationLabels: string[]): Promise<void> 
       return route.fulfill(json({ clientId: "", tenantId: "", allowedGroupIds: "" }));
     }
     if (path === "/version") {
+      if (options.versionDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.versionDelayMs));
+      }
       return route.fulfill(json({ version: "picker-test", display: "picker-test" }));
     }
     if (path === "/labels") {
@@ -203,5 +210,36 @@ test.describe("operation picker persistence", () => {
     await page.reload();
 
     await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+  });
+
+  test("keeps an operation picked while the app was still starting up", async ({
+    page,
+  }) => {
+    // The version request carries the backend's default labels and can land
+    // well after the bar is usable.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.addInitScript(() => {
+      window.localStorage.setItem(
+        "pyrit.globalLabels",
+        JSON.stringify({ operator: "roakey", operation: "op_from_storage" }),
+      );
+    });
+    await setupMocks(page, ["op_from_storage", "op_picked_early"], {
+      versionDelayMs: 4000,
+    });
+    await openOperationPicker(page);
+
+    await page
+      .getByRole("option", { name: "op_picked_early", exact: true })
+      .click();
+    await expect(page.getByTestId("label-operation")).toContainText(
+      "op_picked_early",
+    );
+
+    // Let the slow response land; it must not undo the choice.
+    await page.waitForTimeout(5000);
+    await expect(page.getByTestId("label-operation")).toContainText(
+      "op_picked_early",
+    );
   });
 });

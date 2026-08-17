@@ -171,9 +171,18 @@ function App() {
       const alias = account?.username ? account.username.split('@')[0].toLowerCase() : null
 
       setGlobalLabels(prev => {
-        // What the user picked last beats the backend defaults; the signed-in
-        // account still decides who the operator is.
-        const next = { ...prev, ...defaultLabels, ...storedLabels }
+        const next = { ...prev }
+        for (const [key, value] of Object.entries(defaultLabels)) {
+          // These defaults only fill in what you have not chosen. `prev`
+          // already carries what was stored and anything picked while this
+          // request was in flight, so neither gets overwritten by a late
+          // response.
+          const untouched = prev[key] === DEFAULT_GLOBAL_LABELS[key]
+          if (!(key in storedLabels) && untouched) {
+            next[key] = value
+          }
+        }
+        // The signed-in account still decides who the operator is.
         if (alias) {
           next.operator = alias
         }
