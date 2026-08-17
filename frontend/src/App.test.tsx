@@ -721,6 +721,48 @@ describe("App", () => {
     });
   });
 
+  it("prefers the labels you last picked over the backend defaults", async () => {
+    window.localStorage.setItem(
+      "pyrit.globalLabels",
+      JSON.stringify({ operator: "roakey", operation: "op_i_picked" }),
+    );
+    mockedVersionApi.getVersion.mockResolvedValueOnce({
+      version: "2.0.0",
+      default_labels: { operation: "op_from_backend", custom: "value" },
+    });
+
+    renderApp();
+
+    await waitFor(() => {
+      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      expect(labels).toContain('"custom":"value"');
+    });
+    const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+    expect(labels).toContain('"operation":"op_i_picked"');
+  });
+
+  it("still takes the operator from the signed-in account over a stored one", async () => {
+    window.localStorage.setItem(
+      "pyrit.globalLabels",
+      JSON.stringify({ operator: "stored_user", operation: "op_i_picked" }),
+    );
+    mockGetActiveAccount.mockReturnValue({ username: "Real.User@contoso.com" });
+    mockedVersionApi.getVersion.mockResolvedValueOnce({
+      version: "2.0.0",
+      default_labels: { custom: "value" },
+    });
+
+    renderApp();
+
+    await waitFor(() => {
+      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      expect(labels).toContain('"custom":"value"');
+    });
+    const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+    expect(labels).toContain('"operator":"real.user"');
+    expect(labels).toContain('"operation":"op_i_picked"');
+  });
+
   it("stores attack target when conversation is created with active target", () => {
     renderApp();
 
