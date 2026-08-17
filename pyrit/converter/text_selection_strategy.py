@@ -4,7 +4,121 @@
 import abc
 import random
 import re
+import string
+from collections.abc import Collection
 from re import Pattern
+
+# Common English function words used by ContentWordSelectionStrategy. This is a
+# dependency-free stand-in for POS filtering (no NLTK / tagger download).
+DEFAULT_CONTENT_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "else",
+        "when",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "of",
+        "on",
+        "to",
+        "with",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "am",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "have",
+        "has",
+        "had",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "i",
+        "you",
+        "he",
+        "she",
+        "we",
+        "they",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them",
+        "my",
+        "your",
+        "our",
+        "their",
+        "not",
+        "no",
+        "nor",
+        "so",
+        "than",
+        "too",
+        "very",
+        "can",
+        "will",
+        "just",
+        "about",
+        "up",
+        "out",
+        "how",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "why",
+        "where",
+        "all",
+        "each",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "only",
+        "own",
+        "same",
+        "also",
+        "over",
+        "after",
+        "before",
+        "between",
+        "through",
+        "during",
+        "above",
+        "below",
+        "again",
+        "further",
+        "once",
+        "here",
+        "there",
+        "any",
+        "both",
+        "please",
+    }
+)
 
 
 class TextSelectionStrategy(abc.ABC):
@@ -603,3 +717,108 @@ class AllWordsSelectionStrategy(WordSelectionStrategy):
             list[int]: All word indices.
         """
         return list(range(len(words)))
+
+
+class ContentWordSelectionStrategy(WordSelectionStrategy):
+    """
+    Selects content words with a deterministic, dependency-free heuristic.
+
+    A token is treated as a content word when, after stripping punctuation, it
+    contains letters, meets ``min_word_length``, and is not in the stopword
+    list. Selection is left-to-right. This approximates POS-based noun/verb
+    masking used by Simple Assistive Task Linkage (SATA) without downloading
+    an NLTK tagger.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_words: int = 2,
+        skip_first: int = 1,
+        min_word_length: int = 3,
+        stopwords: Collection[str] | None = None,
+        candidate_words: Collection[str] | None = None,
+    ) -> None:
+        """
+        Initialize the content-word selection strategy.
+
+        Args:
+            max_words (int): Maximum number of content words to select. Defaults to 2.
+            skip_first (int): Number of leading content words to leave unmasked.
+                Defaults to 1, approximating SATA's skip-first-verb/noun behavior.
+            min_word_length (int): Minimum alphabetic length after punctuation is
+                stripped. Defaults to 3.
+            stopwords (Collection[str] | None): Function words to ignore. Defaults
+                to ``DEFAULT_CONTENT_STOPWORDS``.
+            candidate_words (Collection[str] | None): Optional allowlist. When set,
+                only these words (case-insensitive, punctuation-stripped) are
+                eligible. Defaults to None (all content words).
+
+        Raises:
+            ValueError: If ``max_words`` is less than 1, or ``skip_first`` or
+                ``min_word_length`` is negative.
+        """
+        if max_words < 1:
+            raise ValueError(f"max_words must be >= 1, got {max_words}")
+        if skip_first < 0:
+            raise ValueError(f"skip_first must be >= 0, got {skip_first}")
+        if min_word_length < 0:
+            raise ValueError(f"min_word_length must be >= 0, got {min_word_length}")
+
+        self._max_words = max_words
+        self._skip_first = skip_first
+        self._min_word_length = min_word_length
+        self._stopwords = (
+            frozenset(word.lower() for word in stopwords) if stopwords is not None else DEFAULT_CONTENT_STOPWORDS
+        )
+        self._candidate_words = (
+            frozenset(self._normalize_word(word) for word in candidate_words) if candidate_words is not None else None
+        )
+
+    @staticmethod
+    def _normalize_word(word: str) -> str:
+        """
+        Strip punctuation and lowercase a token for classification.
+
+        Args:
+            word (str): The raw token.
+
+        Returns:
+            str: The normalized token.
+        """
+        return word.strip(string.punctuation).lower()
+
+    def _is_content_word(self, word: str) -> bool:
+        """
+        Return whether a token is an eligible content word.
+
+        Args:
+            word (str): The raw token.
+
+        Returns:
+            bool: True if the token should be considered for selection.
+        """
+        normalized = self._normalize_word(word)
+        if not normalized or not any(char.isalpha() for char in normalized):
+            return False
+        if len(normalized) < self._min_word_length:
+            return False
+        if normalized in self._stopwords:
+            return False
+        return self._candidate_words is None or normalized in self._candidate_words
+
+    def select_words(self, *, words: list[str]) -> list[int]:
+        """
+        Select up to ``max_words`` content-word indices, skipping the first few.
+
+        Args:
+            words (list[str]): The list of words to select from.
+
+        Returns:
+            list[int]: Indices of selected content words, in left-to-right order.
+        """
+        if not words:
+            return []
+
+        content_indices = [index for index, word in enumerate(words) if self._is_content_word(word)]
+        return content_indices[self._skip_first : self._skip_first + self._max_words]

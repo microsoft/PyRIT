@@ -71,6 +71,7 @@ from pyrit.converter.random_capital_letters_converter import RandomCapitalLetter
 from pyrit.converter.random_translation_converter import RandomTranslationConverter
 from pyrit.converter.repeat_token_converter import RepeatTokenConverter
 from pyrit.converter.rot13_converter import ROT13Converter
+from pyrit.converter.sata_masking_converter import SATA_TASK_TEMPLATE, SATAMaskingConverter
 from pyrit.converter.scientific_translation_converter import ScientificTranslationConverter
 from pyrit.converter.search_replace_converter import SearchReplaceConverter
 from pyrit.converter.selective_text_converter import SelectiveTextConverter
@@ -83,6 +84,7 @@ from pyrit.converter.template_segment_converter import TemplateSegmentConverter
 from pyrit.converter.tense_converter import TenseConverter
 from pyrit.converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
+    ContentWordSelectionStrategy,
     IndexSelectionStrategy,
     KeywordSelectionStrategy,
     PositionSelectionStrategy,
@@ -178,6 +180,7 @@ __all__ = [
     "CharacterSpaceConverter",
     "CodeChameleonConverter",
     "ColloquialWordswapConverter",
+    "ContentWordSelectionStrategy",
     "ConverterResult",
     "DecompositionConverter",
     "DenylistConverter",
@@ -220,6 +223,8 @@ __all__ = [
     "RangeSelectionStrategy",
     "RegexSelectionStrategy",
     "RepeatTokenConverter",
+    "SATA_TASK_TEMPLATE",
+    "SATAMaskingConverter",
     "ScientificTranslationConverter",
     "SearchReplaceConverter",
     "SelectiveTextConverter",
