@@ -99,6 +99,33 @@ print(f"[markdown] image payload -> {injected.get_value()}")
 print(f"[markdown] plain text   -> {plain.get_value()}")
 
 # %% [markdown]
+# ### PackageHallucinationScorer
+#
+# Flags model-generated code that imports packages which do not exist in a language's
+# registry — an attacker can "squat" a hallucinated name so the code silently pulls in a
+# malicious dependency (ported from garak's `packagehallucination` probe). It lives beside
+# the `RegexScorer` family but is not a subclass: rather than "does a bad pattern match?",
+# it *extracts* imported package names and flags any that are **absent** from a known-good
+# reference set you inject via `known_packages` (for Python, the standard library is added
+# automatically). Because it inspects generated code, it only scores `assistant` messages.
+# %%
+from pyrit.models import MessagePiece
+from pyrit.score import PackageEcosystem, PackageHallucinationScorer
+
+package_scorer = PackageHallucinationScorer(known_packages={"requests", "flask"}, ecosystem=PackageEcosystem.PYTHON)
+
+hallucinated_code = MessagePiece(role="assistant", original_value="import requests\nimport zqxflib").to_message()
+hallucinated_code.set_response_not_in_memory()
+real_code = MessagePiece(role="assistant", original_value="import requests\nimport json").to_message()
+real_code.set_response_not_in_memory()
+
+hit = (await package_scorer.score_async(message=hallucinated_code))[0]  # type: ignore
+clean = (await package_scorer.score_async(message=real_code))[0]  # type: ignore
+
+print(f"[package] hallucinated import -> {hit.get_value()} - {hit.score_rationale}")
+print(f"[package] real imports only  -> {clean.get_value()}")
+
+# %% [markdown]
 # `SubStringScorer` is the simplest fast scorer of all — see the
 # [overview](0_scoring.ipynb#scoring-directly) for an example.
 # %% [markdown]
@@ -108,6 +135,13 @@ print(f"[markdown] plain text   -> {plain.get_value()}")
 # locally (OWASP LLM01) — instruction override, system-prompt extraction, jailbreak role-play, and
 # encoding-based evasion. It favors recall over precision, so use it as a cheap pre-filter ahead of
 # a model-based scorer such as `PromptShieldScorer`.
+#
+# ### AgentThreatRulesScorer
+#
+# `AgentThreatRulesScorer` evaluates text against the locally bundled Agent Threat Rules (ATR)
+# ruleset. It returns True when a rule at or above the configured minimum severity matches and
+# records the matched rule IDs, ATR category, and maximum severity in score metadata. Install the
+# optional integration with `pip install pyrit[atr]`.
 #
 # ### DecodingScorer
 #
@@ -201,7 +235,7 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #
 # ## External classifier integrations
 #
-# Three true/false scorers wrap hosted services rather than reasoning with a generative LLM:
+# Four true/false scorers wrap hosted services rather than reasoning with a generative LLM:
 #
 # - **`PromptShieldScorer`** — wraps `PromptShieldTarget` (Azure Prompt Shield jailbreak
 #   classifier); returns True if an attack is detected in the prompt or any document.
@@ -209,8 +243,14 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 # - **`LlamaGuardScorer`** — sends text to a `PromptTarget` serving Llama Guard and returns
 #   True for unsafe content, with violated policy categories in the score metadata. Its
 #   bundled defaults follow the Meta Llama Guard 3 8B S1-S14 contract.
+# - **`ShieldGemmaScorer`** — sends text to a `PromptTarget` serving ShieldGemma and returns
+#   True when the content violates the one guideline the scorer is bound to. ShieldGemma
+#   [@zeng2024shieldgemma] judges a single principle per request, so compose several with
+#   `TrueFalseCompositeScorer` to cover a whole policy. Prompt classification judges a user turn,
+#   while the default response classification judges a model turn on its own so prompt content
+#   cannot bias the verdict.
 #
-# All three need their respective endpoints/credentials even though they are not "self-ask".
+# All four need their respective endpoints/credentials even though they are not "self-ask".
 # %% [markdown]
 # ## Multimodal scorers
 #

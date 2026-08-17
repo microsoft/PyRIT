@@ -7,8 +7,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-#: Prefix for all token-usage keys stored in a MessagePiece's ``prompt_metadata``.
-_METADATA_PREFIX = "token_usage_"
+#: Prefix for all token-usage keys stored in a MessagePiece's ``prompt_metadata``. Public because
+#: the targets that report usage reserve the whole prefix for the provider: they clear it before
+#: writing what the provider reported, so a caller-supplied count is not read back as if the API
+#: had returned it.
+TOKEN_USAGE_METADATA_PREFIX = "token_usage_"
 
 #: Metadata key suffixes that map to first-class ``TokenUsage`` fields. Every other integer
 #: ``token_usage_*`` key round-trips through ``extra``. ``cost`` is not listed because it is a
@@ -108,7 +111,9 @@ class TokenUsage:
             TokenUsage | None: The reconstructed usage, or None if no token-usage keys exist.
         """
         stripped = {
-            key[len(_METADATA_PREFIX) :]: value for key, value in metadata.items() if key.startswith(_METADATA_PREFIX)
+            key[len(TOKEN_USAGE_METADATA_PREFIX) :]: value
+            for key, value in metadata.items()
+            if key.startswith(TOKEN_USAGE_METADATA_PREFIX)
         }
         if not stripped:
             return None
@@ -144,15 +149,15 @@ class TokenUsage:
         """
         out: dict[str, int] = {}
         if self.input_tokens is not None:
-            out[_METADATA_PREFIX + "input_tokens"] = self.input_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "input_tokens"] = self.input_tokens
         if self.output_tokens is not None:
-            out[_METADATA_PREFIX + "output_tokens"] = self.output_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "output_tokens"] = self.output_tokens
         if self.total_tokens is not None:
-            out[_METADATA_PREFIX + "total_tokens"] = self.total_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "total_tokens"] = self.total_tokens
         if self.reasoning_tokens is not None:
-            out[_METADATA_PREFIX + "reasoning_tokens"] = self.reasoning_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "reasoning_tokens"] = self.reasoning_tokens
         if self.cached_tokens is not None:
-            out[_METADATA_PREFIX + "cached_tokens"] = self.cached_tokens
+            out[TOKEN_USAGE_METADATA_PREFIX + "cached_tokens"] = self.cached_tokens
         for name, value in self.extra.items():
-            out[_METADATA_PREFIX + name] = value
+            out[TOKEN_USAGE_METADATA_PREFIX + name] = value
         return out

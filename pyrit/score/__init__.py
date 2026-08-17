@@ -37,6 +37,7 @@ from pyrit.score.float_scale.self_ask_scale_scorer import (
     SelfAskScaleScorer,
     render_scale_system_prompt,
 )
+from pyrit.score.float_scale.system_prompt_extraction_scorer import SystemPromptExtractionScorer
 from pyrit.score.response_handler import (
     CallableResponseHandler,
     JsonSchemaResponseHandler,
@@ -78,6 +79,10 @@ from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionSco
 from pyrit.score.true_false.regex.meth_keyword_scorer import MethKeywordScorer
 from pyrit.score.true_false.regex.nerve_agent_keyword_scorer import NerveAgentKeywordScorer
 from pyrit.score.true_false.regex.open_redirect_output_scorer import OpenRedirectOutputScorer
+from pyrit.score.true_false.regex.package_hallucination_scorer import (
+    PackageEcosystem,
+    PackageHallucinationScorer,
+)
 from pyrit.score.true_false.regex.path_traversal_output_scorer import PathTraversalOutputScorer
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer
 from pyrit.score.true_false.regex.shell_command_output_scorer import ShellCommandOutputScorer
@@ -102,6 +107,17 @@ from pyrit.score.true_false.self_ask_true_false_scorer import (
     TrueFalseQuestion,
     TrueFalseQuestionPaths,
     render_true_false_system_prompt,
+)
+from pyrit.score.true_false.shieldgemma_parser import parse_shieldgemma_response
+from pyrit.score.true_false.shieldgemma_policy import (
+    SHIELDGEMMA_DEFAULT_POLICY_PATH,
+    ShieldGemmaGuideline,
+    ShieldGemmaMessageRole,
+    ShieldGemmaPolicy,
+)
+from pyrit.score.true_false.shieldgemma_scorer import (
+    ShieldGemmaScorer,
+    render_shieldgemma_prompt,
 )
 from pyrit.score.true_false.substring_scorer import SubStringScorer
 from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
@@ -204,7 +220,10 @@ __all__ = [
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
     "OpenRedirectOutputScorer",
+    "PackageEcosystem",
+    "PackageHallucinationScorer",
     "parse_llamaguard_response",
+    "parse_shieldgemma_response",
     "PathTraversalOutputScorer",
     "PlagiarismMetric",
     "PlagiarismScorer",
@@ -217,6 +236,7 @@ __all__ = [
     "render_llamaguard_prompt",
     "render_likert_system_prompt",
     "render_scale_system_prompt",
+    "render_shieldgemma_prompt",
     "render_true_false_system_prompt",
     "ResponseHandler",
     "Scorer",
@@ -239,12 +259,18 @@ __all__ = [
     "SelfAskScaleScorer",
     "SelfAskTrueFalseScorer",
     "ScorerPrinter",
+    "SHIELDGEMMA_DEFAULT_POLICY_PATH",
+    "ShieldGemmaGuideline",
+    "ShieldGemmaMessageRole",
+    "ShieldGemmaPolicy",
+    "ShieldGemmaScorer",
     "ShellCommandOutputScorer",
     "SQLInjectionOutputScorer",
     "SSRFOutputScorer",
     "SSTIOutputScorer",
     "StaticPromptInjectionScorer",
     "SubStringScorer",
+    "SystemPromptExtractionScorer",
     "TrueFalseCompositeScorer",
     "TrueFalseInverterScorer",
     "TrueFalseQuestion",

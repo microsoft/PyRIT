@@ -12,6 +12,7 @@ from pyrit.models import ComponentIdentifier, Message, construct_response_from_r
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.openai._response_adapter import CompletionsResponseAdapter
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ class OpenAICompletionTarget(OpenAITarget):
     """A prompt target for OpenAI completion endpoints."""
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+    _response_adapter = CompletionsResponseAdapter()
 
     @forward_init_parameters
     def __init__(
@@ -171,4 +173,6 @@ class OpenAICompletionTarget(OpenAITarget):
         # Extract response text from validated choices
         extracted_response = [choice.text for choice in response.choices]
 
-        return construct_response_from_request(request=request, response_text_pieces=extracted_response)
+        message = construct_response_from_request(request=request, response_text_pieces=extracted_response)
+        self._capture_response_metadata(response=response, pieces=message.message_pieces)
+        return message

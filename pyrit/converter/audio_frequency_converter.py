@@ -84,7 +84,10 @@ class AudioFrequencyConverter(Converter):
             # Read the audio file bytes and process the data
             bytes_io = io.BytesIO(audio_bytes)
             sample_rate, data = wavfile.read(bytes_io)
-            shifted_data = data * np.exp(1j * 2 * np.pi * self._shift_value * np.arange(len(data)) / sample_rate)
+            phase = np.exp(1j * 2 * np.pi * self._shift_value * np.arange(len(data)) / sample_rate)
+            if data.ndim > 1:
+                phase = phase[:, np.newaxis]
+            shifted_data = data * phase
 
             # Convert the real part of the shifted data to int16
             shifted_data_int16 = shifted_data.real.astype(np.int16)
