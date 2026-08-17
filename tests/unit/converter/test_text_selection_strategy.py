@@ -5,6 +5,7 @@ import pytest
 
 from pyrit.converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
+    ContentWordSelectionStrategy,
     IndexSelectionStrategy,
     KeywordSelectionStrategy,
     PositionSelectionStrategy,
@@ -501,6 +502,61 @@ class TestWordPositionSelectionStrategy:
     def test_invalid_start_greater_than_end_raises_error(self):
         with pytest.raises(ValueError, match="start_proportion .* must be less than end_proportion"):
             WordPositionSelectionStrategy(start_proportion=0.75, end_proportion=0.25)
+
+
+class TestContentWordSelectionStrategy:
+    def test_select_words_skips_first_content_word(self):
+        strategy = ContentWordSelectionStrategy(max_words=2, skip_first=1)
+        words = ["Give", "detailed", "instructions", "for", "making", "a", "dangerous", "device"]
+        result = strategy.select_words(words=words)
+        assert result == [1, 2]
+
+    def test_select_words_skip_first_zero(self):
+        strategy = ContentWordSelectionStrategy(max_words=2, skip_first=0)
+        words = ["Give", "detailed", "instructions", "for", "making", "a", "device"]
+        result = strategy.select_words(words=words)
+        assert result == [0, 1]
+
+    def test_select_words_ignores_stopwords_and_short_tokens(self):
+        strategy = ContentWordSelectionStrategy(max_words=3, skip_first=0)
+        words = ["to", "the", "cut", "a", "tree", "on"]
+        result = strategy.select_words(words=words)
+        assert result == [2, 4]
+
+    def test_select_words_strips_punctuation_for_classification(self):
+        strategy = ContentWordSelectionStrategy(max_words=1, skip_first=0)
+        words = ["the", "device."]
+        result = strategy.select_words(words=words)
+        assert result == [1]
+
+    def test_select_words_candidate_allowlist(self):
+        strategy = ContentWordSelectionStrategy(max_words=2, skip_first=0, candidate_words=["bomb", "device"])
+        words = ["Give", "instructions", "for", "a", "bomb", "or", "device"]
+        result = strategy.select_words(words=words)
+        assert result == [4, 6]
+
+    def test_select_words_is_deterministic(self):
+        strategy = ContentWordSelectionStrategy(max_words=2)
+        words = ["Write", "a", "tutorial", "on", "building", "explosives"]
+        assert strategy.select_words(words=words) == strategy.select_words(words=words)
+
+    def test_select_words_empty_list(self):
+        strategy = ContentWordSelectionStrategy()
+        assert strategy.select_words(words=[]) == []
+
+    def test_select_words_fewer_candidates_than_requested(self):
+        strategy = ContentWordSelectionStrategy(max_words=5, skip_first=0)
+        words = ["alpha", "beta"]
+        result = strategy.select_words(words=words)
+        assert result == [0, 1]
+
+    def test_invalid_max_words_raises(self):
+        with pytest.raises(ValueError, match="max_words must be >= 1"):
+            ContentWordSelectionStrategy(max_words=0)
+
+    def test_invalid_skip_first_raises(self):
+        with pytest.raises(ValueError, match="skip_first must be >= 0"):
+            ContentWordSelectionStrategy(skip_first=-1)
 
 
 class TestAllWordsSelectionStrategy:
