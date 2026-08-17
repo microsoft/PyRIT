@@ -234,6 +234,46 @@ async def test_send_prompt_async_follows_redirects_when_enabled(mock_request, pa
     assert mock_request.call_args.kwargs["follow_redirects"] is True
 
 
+@pytest.mark.parametrize(
+    ("http_request", "prompt"),
+    [
+        ("GET /search?q={PROMPT} HTTP/1.1\nHost: example.com\n\n", "first\nsecond"),
+        ("GET / HTTP/1.1\nHost: example.com\nX-Prompt: {PROMPT}\n\n", "first\nsecond"),
+        ("GET /search?q={PROMPT} HTTP/1.1\nHost: example.com\n\n", "first\rsecond"),
+        ("GET / HTTP/1.1\nHost: example.com\nX-Prompt: {PROMPT}\n\n", "first\rsecond"),
+    ],
+)
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_rejects_newlines_outside_body(
+    mock_request,
+    patch_central_database,
+    http_request,
+    prompt,
+):
+    target = HTTPTarget(http_request=http_request)
+    message = Message(message_pieces=[MessagePiece(role="user", original_value=prompt)])
+
+    with pytest.raises(ValueError, match="cannot contain CR or LF"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_awaited()
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_allows_multiline_body_prompt(mock_request, patch_central_database):
+    target = HTTPTarget(
+        http_request="POST / HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n\nbefore:{PROMPT}:after"
+    )
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="first\nsecond")])
+    mock_response = MagicMock()
+    mock_response.content = b"ok"
+    mock_request.return_value = mock_response
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["content"] == "before:first\nsecond:after"
+
+
 async def test_send_prompt_async_validation(mock_http_target):
     # Creating a Message with no pieces raises immediately
     with pytest.raises(ValueError, match="must have at least one message piece"):

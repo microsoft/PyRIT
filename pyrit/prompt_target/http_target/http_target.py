@@ -151,8 +151,12 @@ class HTTPTarget(PromptTarget):
 
         Returns:
             str: the http request with the prompt added in
+
+        Raises:
+            ValueError: If a multiline prompt would be substituted into the request line or headers.
         """
         re_pattern = re.compile(self.prompt_regex_string)
+        self._validate_prompt_for_template_context(prompt=request.converted_value, pattern=re_pattern)
         if re.search(self.prompt_regex_string, self.http_request):
             http_request_w_prompt = re_pattern.sub(lambda m: request.converted_value, self.http_request)
         else:
@@ -311,6 +315,14 @@ class HTTPTarget(PromptTarget):
         destination_origin = self._get_destination_origin(url)
         if destination_origin != self._destination_origin:
             raise ValueError("Prompt substitution cannot change the configured HTTP destination.")
+
+    def _validate_prompt_for_template_context(self, *, prompt: str, pattern: re.Pattern[str]) -> None:
+        if "\r" not in prompt and "\n" not in prompt:
+            return
+
+        header_section = self.http_request.replace("\r\n", "\n").split("\n\n", 1)[0]
+        if pattern.search(header_section):
+            raise ValueError("Prompts substituted into the HTTP request line or headers cannot contain CR or LF.")
 
     @staticmethod
     def _get_destination_origin(url: str) -> tuple[str, str | None, int | None]:
