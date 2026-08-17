@@ -375,6 +375,34 @@ class TestPlagiarismScorerUtilityFunctions:
         score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.JACCARD, n=3)
         assert score == 1.0  # Should be perfect match when reference is contained
 
+    def test_plagiarism_score_reference_substring_of_word_not_plagiarism(self, scorer):
+        """A reference that is only a substring of a longer response word is not plagiarism.
+
+        The verbatim-match fast path must operate on word-level tokens, not raw
+        characters. Otherwise a short reference such as "cat" would falsely score
+        1.0 against a response containing "concatenate".
+        """
+        reference = "cat"
+        response = "concatenate the results"
+        for metric in PlagiarismMetric:
+            score = scorer._plagiarism_score(response, reference, metric=metric)
+            assert score == 0.0, f"{metric.value} should not treat a sub-word match as plagiarism"
+
+    def test_plagiarism_score_verbatim_match_ignores_case_and_punctuation(self, scorer):
+        """The verbatim fast path should still fire across case and punctuation differences."""
+        reference = "The Secret Plan"
+        response = "the secret plan!"
+        for metric in PlagiarismMetric:
+            score = scorer._plagiarism_score(response, reference, metric=metric)
+            assert score == 1.0, f"{metric.value} should treat a word-level verbatim copy as plagiarism"
+
+    def test_is_contiguous_sublist(self, scorer):
+        """Directly exercise the tokenized sublist helper."""
+        assert scorer._is_contiguous_sublist(sub=["b", "c"], full=["a", "b", "c", "d"]) is True
+        assert scorer._is_contiguous_sublist(sub=["a", "c"], full=["a", "b", "c"]) is False
+        assert scorer._is_contiguous_sublist(sub=[], full=["a"]) is False
+        assert scorer._is_contiguous_sublist(sub=["a", "b"], full=["a"]) is False
+
 
 class TestPlagiarismMetricEnum:
     """Test cases for the PlagiarismMetric enum."""

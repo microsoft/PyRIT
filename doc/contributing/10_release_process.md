@@ -55,7 +55,7 @@ for private vulnerability reporting.
 - **Verify build pipelines.** Confirm that all integration tests and end-to-end tests are passing in the CI pipelines. If any tests are failing, fix them before proceeding.
   - **Partner integration tests.** Ensure the partner integration tests are also passing. These tests validate that we are not breaking contracts with partner teams (e.g., Foundry). If any are failing, coordinate with the affected partner teams before proceeding with the release.
   - **Azure key-based auth is disabled in our tenant.** Our Azure subscription has API-key (local) auth turned off, so Azure target integration tests authenticate with Microsoft Entra ID. Tests that run notebooks requiring Azure API keys are deliberately skipped; otherwise they fail with HTTP 403 `AuthenticationTypeDisabled` ("Key based authentication is disabled for this resource"). Do not re-enable key auth for our tenant. When validating a release manually, authenticate Azure targets with Entra (`az login`) rather than API keys.
-- **Update scorer metrics.** Run `python .\build_scripts\evaluate_scorers.py` and commit the results so that scorer evaluation metrics are up to date.
+- **Update scorer metrics.** Run `python -m build_scripts.evaluate_scorers` and commit the results so that scorer evaluation metrics are up to date.
 
 ## 2. Decide the Next Version
 
@@ -155,7 +155,7 @@ The PyRIT package includes a web-based frontend that must be built before packag
 Run the prepare script to build the frontend and copy it into the package structure:
 
 ```bash
-python build_scripts/prepare_package.py
+python -m build_scripts.prepare_package
 ```
 
 This will:
@@ -237,7 +237,7 @@ uv run python -c "import pyrit; print(pyrit.__version__)"  # verify: x.y.z (no .
 **Run the migration** (reads `AZURE_SQL_DB_CONNECTION_STRING_PROD` from `~/.pyrit/.env`):
 
 ```bash
-uv run python build_scripts/migrate_prod_memory_schema.py
+uv run python -m build_scripts.migrate_prod_memory_schema
 ```
 
 The script validates the environment (release branch, clean tree, no `.dev` version),
