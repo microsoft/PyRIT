@@ -113,8 +113,16 @@ export const useLabelsBarStyles = makeStyles({
     overflowY: 'auto',
     minWidth: '120px',
   },
+  // The picker is wider than the plain input it replaces, and the labels bar
+  // clips what overflows. Let it shrink rather than lose its chevron: Fluent
+  // puts an intrinsic min-width on both the root and the inner input.
   operationPicker: {
-    minWidth: '180px',
+    width: '180px',
+    minWidth: 0,
+    maxWidth: '100%',
+    '& input': {
+      minWidth: 0,
+    },
   },
   // Caps the list so it stays under the input instead of stretching to fill
   // the window. This only takes effect because the picker asks Fluent to

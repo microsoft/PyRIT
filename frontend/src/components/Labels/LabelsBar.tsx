@@ -402,8 +402,21 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     const isEditing = editingLabel === key && !isPopoverOpen
 
     if (isEditing) {
+      // The picker is wider than a plain input, so let its row give way rather
+      // than push the control past the edge the bar clips at.
+      const canShrink = key === 'operation'
       return (
-        <div key={key} data-label-idx={idx} className={styles.inputRow} style={{ display: 'inline-flex', position: 'relative', flexShrink: 0 }}>
+        <div
+          key={key}
+          data-label-idx={idx}
+          className={styles.inputRow}
+          style={{
+            display: 'inline-flex',
+            position: 'relative',
+            flexShrink: canShrink ? 1 : 0,
+            minWidth: canShrink ? 0 : undefined,
+          }}
+        >
           {renderValueEditor(key, value)}
         </div>
       )
