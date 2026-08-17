@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import mimetypes
 from collections.abc import Callable
@@ -54,6 +55,7 @@ class HTTPXAPITarget(HTTPTarget):
         http_url: str,
         method: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] = "POST",
         file_path: str | None = None,
+        allowed_upload_directory: str | Path | None = None,
         json_data: dict[str, Any] | None = None,
         form_data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
@@ -73,6 +75,8 @@ class HTTPXAPITarget(HTTPTarget):
             method (str): The HTTP method to use (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS). Defaults to "POST".
             file_path (str, Optional): Path to a file to upload. If not provided, we attempt to pull it from the
             prompt's `converted_value`.
+            allowed_upload_directory (str | Path | None): Directory containing files this target may upload.
+                Required when uploading files. Defaults to None.
             json_data (dict, Optional): JSON data to send in the request body (for POST/PUT/PATCH).
             form_data (dict, Optional): Form data to send in the request body (for POST/PUT/PATCH).
             params (dict, Optional): Query parameters to include in the request URL (for GET/HEAD).
@@ -89,6 +93,7 @@ class HTTPXAPITarget(HTTPTarget):
         Raises:
             ValueError: If the HTTP method is invalid.
             ValueError: If file uploads are attempted with an HTTP method that does not support them.
+            ValueError: If the allowed upload directory does not exist or is not a directory.
         """
         super().__init__(
             http_request="",
@@ -104,6 +109,7 @@ class HTTPXAPITarget(HTTPTarget):
         self.http_url = http_url
         self.method = method
         self.file_path = file_path
+        self.allowed_upload_directory = self._resolve_allowed_upload_directory(allowed_upload_directory)
         self.json_data = json_data
         self.form_data = form_data
         self.params = params
@@ -138,15 +144,7 @@ class HTTPXAPITarget(HTTPTarget):
         """
         message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
-
-        # If user didn't set file_path, see if the PDF path is in converted_value
-        if not self.file_path:
-            possible_path = message_piece.converted_value
-            if isinstance(possible_path, str) and Path(possible_path).exists():
-                logger.info(f"HTTPXApiTarget: auto-using file_path from {possible_path}")
-                self.file_path = possible_path
-        elif not Path(self.file_path).exists():
-            raise FileNotFoundError(f"File not found: {self.file_path}")
+        upload_path = await self._get_upload_path_async(message_piece=message_piece)
 
         if not self.http_url:
             raise ValueError("No `http_url` provided for HTTPXApiTarget.")
@@ -155,12 +153,12 @@ class HTTPXAPITarget(HTTPTarget):
 
         async with httpx.AsyncClient(http2=http2_version, **self.httpx_client_kwargs) as client:
             try:
-                if self.file_path and Path(self.file_path).exists():
+                if upload_path:
                     # Handle file upload (only for POST & PUT)
-                    filename = Path(self.file_path).name
+                    filename = upload_path.name
                     mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
-                    async with aiofiles.open(self.file_path, "rb") as fp:
+                    async with aiofiles.open(upload_path, "rb") as fp:
                         file_bytes = await fp.read()
 
                     files = {"file": (filename, file_bytes, mime_type)}
@@ -210,3 +208,36 @@ class HTTPXAPITarget(HTTPTarget):
         )
 
         return [response_entry]
+
+    async def _get_upload_path_async(self, *, message_piece: MessagePiece) -> Path | None:
+        candidate = Path(self.file_path) if self.file_path else Path(message_piece.converted_value)
+        exists = await asyncio.to_thread(candidate.exists)
+        if not exists:
+            if self.file_path:
+                raise FileNotFoundError(f"File not found: {self.file_path}")
+            return None
+
+        if not self.file_path:
+            logger.info(f"HTTPXApiTarget: auto-using file_path from {candidate}")
+        return await asyncio.to_thread(self._validate_upload_path, path=candidate)
+
+    def _validate_upload_path(self, *, path: Path) -> Path:
+        if self.allowed_upload_directory is None:
+            raise ValueError("File uploads require an explicit `allowed_upload_directory`.")
+
+        resolved_path = path.resolve()
+        try:
+            resolved_path.relative_to(self.allowed_upload_directory)
+        except ValueError as exc:
+            raise ValueError(f"File upload path is outside the allowed upload directory: {resolved_path}") from exc
+        return resolved_path
+
+    @staticmethod
+    def _resolve_allowed_upload_directory(allowed_directory: str | Path | None) -> Path | None:
+        if allowed_directory is None:
+            return None
+
+        resolved_directory = Path(allowed_directory).resolve()
+        if not resolved_directory.is_dir():
+            raise ValueError(f"Allowed upload directory does not exist or is not a directory: {allowed_directory}")
+        return resolved_directory

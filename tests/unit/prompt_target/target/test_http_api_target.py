@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,7 +29,13 @@ async def test_send_prompt_async_file_upload(mock_request, patch_central_databas
     mock_request.return_value = mock_response
 
     # Create HTTPXAPITarget without passing a transport.
-    target = HTTPXAPITarget(http_url="http://example.com/upload/", method="POST", timeout=180)
+    target = HTTPXAPITarget(
+        http_url="http://example.com/upload/",
+        method="POST",
+        file_path=file_path,
+        allowed_upload_directory=Path(file_path).parent,
+        timeout=180,
+    )
     response = await target.send_prompt_async(message=message)
 
     # Our mock transport returns a JSON string containing "File uploaded successfully".
@@ -61,6 +68,7 @@ async def test_send_prompt_async_file_upload_preserves_query_params(mock_request
     target = HTTPXAPITarget(
         http_url="http://example.com/upload/",
         method="POST",
+        allowed_upload_directory=Path(file_path).parent,
         params={"alpha": "1"},
         timeout=180,
     )
@@ -195,7 +203,12 @@ async def test_send_prompt_async_binary_path_upload(mock_request, patch_central_
     mock_response.content = b'{"message": "File uploaded successfully", "filename": "mock.pdf"}'
     mock_request.return_value = mock_response
 
-    target = HTTPXAPITarget(http_url="http://example.com/upload/", method="POST", timeout=180)
+    target = HTTPXAPITarget(
+        http_url="http://example.com/upload/",
+        method="POST",
+        allowed_upload_directory=Path(file_path).parent,
+        timeout=180,
+    )
 
     # Must not raise "This target supports only the following data types: ..."
     response = await target.send_prompt_async(message=message)
@@ -207,3 +220,40 @@ async def test_send_prompt_async_binary_path_upload(mock_request, patch_central_
     assert files["file"][0] == os.path.basename(file_path)
 
     os.unlink(file_path)
+
+
+@patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_file_upload_requires_allowed_directory(mock_request, patch_central_database, tmp_path):
+    file_path = tmp_path / "document.pdf"
+    file_path.write_bytes(b"content")
+    message_piece = MessagePiece(role="user", original_value=str(file_path), converted_value=str(file_path))
+    message = Message(message_pieces=[message_piece])
+    target = HTTPXAPITarget(http_url="http://example.com/upload/", method="POST")
+
+    with pytest.raises(ValueError, match="require an explicit `allowed_upload_directory`"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_called()
+
+
+@patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_rejects_upload_outside_allowed_directory(
+    mock_request, patch_central_database, tmp_path
+):
+    allowed_directory = tmp_path / "allowed"
+    allowed_directory.mkdir()
+    file_path = tmp_path / "outside.pdf"
+    file_path.write_bytes(b"content")
+    message_piece = MessagePiece(role="user", original_value="prompt", converted_value="prompt")
+    message = Message(message_pieces=[message_piece])
+    target = HTTPXAPITarget(
+        http_url="http://example.com/upload/",
+        method="POST",
+        file_path=str(allowed_directory / ".." / file_path.name),
+        allowed_upload_directory=allowed_directory,
+    )
+
+    with pytest.raises(ValueError, match="outside the allowed upload directory"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_called()
