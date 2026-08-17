@@ -30,6 +30,9 @@ class _JailbreakTemplatesDataset(SeedDatasetProvider):
     Unlike ``TextJailBreak`` (which selects a single template for rendering), this
     provider returns all templates at once without rendering them, leaving the
     ``{{ prompt }}`` placeholders intact.
+
+    Every successful fetch warns that mutations to returned seed objects are not
+    written back to the local template files.
     """
 
     # Metadata used for SeedDatasetFilter discovery (mirrors the remote loaders'
@@ -60,6 +63,9 @@ class _JailbreakTemplatesDataset(SeedDatasetProvider):
         """
         Load every local jailbreak template into a single SeedDataset.
 
+        Emits a warning after a successful load because the template files remain
+        authoritative and mutations to returned seed objects are not written back.
+
         Args:
             cache (bool): Ignored for local datasets (included for interface consistency).
 
@@ -73,6 +79,12 @@ class _JailbreakTemplatesDataset(SeedDatasetProvider):
         if not seeds:
             raise ValueError(f"No jailbreak templates found in {self._templates_path}")
         logger.info(f"Loaded {len(seeds)} jailbreak templates from {self._templates_path}")
+        logger.warning(
+            "Local jailbreak dataset provider loaded templates from '%s'. Later mutations to returned seeds are "
+            "not written back to disk automatically, and callers control any PyRIT seed-memory persistence; save "
+            "edits to the source files before reloading or they will be lost.",
+            self._templates_path,
+        )
         return SeedDataset(seeds=cast("list[SeedUnion]", seeds), dataset_name=self.dataset_name)
 
     def _load_templates(self) -> list[SeedPrompt]:

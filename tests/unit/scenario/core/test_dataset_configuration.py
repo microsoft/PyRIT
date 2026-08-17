@@ -3,6 +3,8 @@
 
 """Tests for the DatasetConfiguration base class and DatasetAttackConfiguration."""
 
+import logging
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -74,6 +76,14 @@ def sample_seed_groups() -> list[SeedGroup]:
 def make_objectives(*values: str) -> list[SeedObjective]:
     """Build a list of SeedObjective seeds (each becomes its own attack group)."""
     return [SeedObjective(value=v) for v in values]
+
+
+def write_objective_dataset(*, file_path: Path, dataset_name: str, objectives: list[str]) -> None:
+    """Write a minimal objective dataset for local-file resolution tests."""
+    lines = [f"dataset_name: {dataset_name}", "seeds:"]
+    for objective in objectives:
+        lines.extend(["  - seed_type: objective", f"    value: {objective}"])
+    file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 class TestDatasetConfigurationInit:
@@ -471,6 +481,202 @@ class TestResolvedDatasetNames:
         config = DatasetAttackConfiguration(dataset_names=["d1"], validators=[restrict_dataset_names({"d1", "d2"})])
         groups = await config.get_attack_seed_groups_async()
         assert [g.objective.value for g in groups] == ["a"]
+
+
+class TestLocalFileDatasetAttackConfiguration:
+    """Resolution of local YAML files without seed-memory synchronization."""
+
+    def test_rejects_subclass_factory_call(self, *, tmp_path: Path) -> None:
+        class CustomDatasetAttackConfiguration(DatasetAttackConfiguration):
+            pass
+
+        with pytest.raises(TypeError, match="would discard subclass behavior"):
+            CustomDatasetAttackConfiguration.from_yaml_file(file_path=tmp_path / "dataset.prompt")
+
+    async def test_preserves_dataset_name_and_grouping(self, *, tmp_path: Path, mock_memory: MagicMock) -> None:
+        file_path = tmp_path / "rapid-response.prompt"
+        file_path.write_text(
+            """dataset_name: copilot_generated
+seeds:
+  - seed_type: objective
+    value: Test the generated objective
+    prompt_group_alias: group_1
+  - seed_type: prompt
+    value: Use this system context
+    role: system
+    sequence: 0
+    prompt_group_alias: group_1
+""",
+            encoding="utf-8",
+        )
+
+        config = DatasetAttackConfiguration.from_yaml_file(file_path=file_path)
+        groups_by_dataset = await config.get_attack_groups_by_dataset_async()
+
+        assert list(groups_by_dataset) == ["copilot_generated"]
+        assert config.dataset_names == ["copilot_generated"]
+        assert config.source_kind is DatasetSourceKind.INLINE
+        assert len(groups_by_dataset["copilot_generated"]) == 1
+        assert {seed.value for seed in groups_by_dataset["copilot_generated"][0].seeds} == {
+            "Test the generated objective",
+            "Use this system context",
+        }
+        mock_memory.get_seeds.assert_not_called()
+        mock_memory.add_seed_datasets_to_memory_async.assert_not_awaited()
+
+    async def test_warns_on_every_resolution_that_disk_is_authoritative(
+        self,
+        *,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        file_path = tmp_path / "rapid-response.prompt"
+        write_objective_dataset(
+            file_path=file_path,
+            dataset_name="local_iteration",
+            objectives=["first objective"],
+        )
+        config = DatasetAttackConfiguration.from_yaml_file(file_path=file_path)
+
+        with caplog.at_level(logging.WARNING, logger="pyrit.scenario.core.dataset_configuration"):
+            await config.get_attack_groups_by_dataset_async()
+            await config.get_attack_groups_by_dataset_async()
+
+        warnings = [
+            record.message
+            for record in caplog.records
+            if record.name == "pyrit.scenario.core.dataset_configuration"
+            and "Local file-backed dataset" in record.message
+        ]
+        assert len(warnings) == 2
+        assert all(str(file_path) in message for message in warnings)
+        assert all("not persisted to PyRIT seed memory" in message for message in warnings)
+        assert all(
+            "save edits to disk before the next resolution or they will be lost" in message for message in warnings
+        )
+
+    async def test_rereads_file_on_every_resolution(self, *, tmp_path: Path) -> None:
+        file_path = tmp_path / "rapid-response.prompt"
+        write_objective_dataset(
+            file_path=file_path,
+            dataset_name="local_iteration",
+            objectives=["first objective", "remove me"],
+        )
+        config = DatasetAttackConfiguration.from_yaml_file(file_path=file_path)
+
+        first = await config.get_attack_groups_by_dataset_async()
+        write_objective_dataset(
+            file_path=file_path,
+            dataset_name="local_iteration",
+            objectives=["updated objective"],
+        )
+        second = await config.get_attack_groups_by_dataset_async()
+
+        assert sorted(group.objective.value for group in first["local_iteration"]) == [
+            "first objective",
+            "remove me",
+        ]
+        assert [group.objective.value for group in second["local_iteration"]] == ["updated objective"]
+
+    async def test_file_backed_inline_source_exposes_dataset_name_to_validators(self, *, tmp_path: Path) -> None:
+        file_path = tmp_path / "rapid-response.prompt"
+        write_objective_dataset(
+            file_path=file_path,
+            dataset_name="local_iteration",
+            objectives=["first objective"],
+        )
+        seen: list[ResolvedDataset] = []
+        config = DatasetAttackConfiguration.from_yaml_file(
+            file_path=file_path,
+            validators=[seen.append, restrict_dataset_names({"local_iteration"})],
+        )
+
+        await config.get_attack_seed_groups_async()
+
+        assert seen[0].is_inline
+        assert seen[0].dataset_names == ("local_iteration",)
+
+    async def test_file_backed_dataset_name_is_rejected_by_validator(self, *, tmp_path: Path) -> None:
+        file_path = tmp_path / "rapid-response.prompt"
+        write_objective_dataset(
+            file_path=file_path,
+            dataset_name="local_iteration",
+            objectives=["first objective"],
+        )
+        config = DatasetAttackConfiguration.from_yaml_file(
+            file_path=file_path,
+            validators=[restrict_dataset_names({"allowed"})],
+        )
+
+        with pytest.raises(DatasetConstraintError, match=r"local_iteration.*not allowed"):
+            await config.get_attack_seed_groups_async()
+
+    async def test_validates_full_file_before_sampling(self, *, tmp_path: Path) -> None:
+        file_path = tmp_path / "rapid-response.prompt"
+        write_objective_dataset(
+            file_path=file_path,
+            dataset_name="local_iteration",
+            objectives=["first objective", "second objective"],
+        )
+        config = DatasetAttackConfiguration.from_yaml_file(
+            file_path=file_path,
+            max_dataset_size=1,
+            validators=[require_min_size(2)],
+        )
+
+        groups = await config.get_attack_seed_groups_async()
+
+        assert len(groups) == 1
+
+    async def test_invalid_file_raises_without_persistence_warning(
+        self,
+        *,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        file_path = tmp_path / "invalid.prompt"
+        file_path.write_text("dataset_name: invalid\nseeds: []\n", encoding="utf-8")
+        config = DatasetAttackConfiguration.from_yaml_file(file_path=file_path)
+
+        with caplog.at_level(logging.WARNING, logger="pyrit.scenario.core.dataset_configuration"):
+            with pytest.raises(DatasetConstraintError, match=r"invalid\.prompt.*could not be loaded") as exc_info:
+                await config.get_attack_groups_by_dataset_async()
+        assert exc_info.value.__cause__ is not None
+        assert "cannot be empty" in str(exc_info.value.__cause__)
+        assert "Local file-backed dataset" not in caplog.text
+
+    async def test_deleted_file_raises_dataset_constraint_error(self, *, tmp_path: Path) -> None:
+        file_path = tmp_path / "deleted.prompt"
+        write_objective_dataset(
+            file_path=file_path,
+            dataset_name="local_iteration",
+            objectives=["first objective"],
+        )
+        config = DatasetAttackConfiguration.from_yaml_file(file_path=str(file_path))
+        await config.get_attack_groups_by_dataset_async()
+        file_path.unlink()
+
+        with pytest.raises(DatasetConstraintError, match=r"deleted\.prompt.*could not be loaded"):
+            await config.get_attack_groups_by_dataset_async()
+
+    async def test_missing_objective_raises_grouping_error_with_file_context(self, *, tmp_path: Path) -> None:
+        file_path = tmp_path / "missing-objective.prompt"
+        file_path.write_text(
+            """dataset_name: local_iteration
+seeds:
+  - value: This defaults to a prompt instead of an objective
+""",
+            encoding="utf-8",
+        )
+        config = DatasetAttackConfiguration.from_yaml_file(file_path=file_path)
+
+        with pytest.raises(
+            DatasetConstraintError,
+            match=r"missing-objective\.prompt.*exactly one 'seed_type: objective'",
+        ) as exc_info:
+            await config.get_attack_groups_by_dataset_async()
+        assert exc_info.value.__cause__ is not None
+        assert "Found 0" in str(exc_info.value.__cause__)
 
 
 class TestCompoundDatasetAttackConfiguration:

@@ -19,7 +19,10 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+)
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import (
@@ -244,6 +247,39 @@ class TestRapidResponseBasic:
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(ValueError, match="could not be loaded"):
                 await scenario.initialize_async()
+
+    async def test_local_file_dataset_drives_identity_and_display_group(
+        self,
+        *,
+        tmp_path: pathlib.Path,
+        mock_objective_target,
+        mock_objective_scorer,
+    ):
+        file_path = tmp_path / "rapid-response.prompt"
+        file_path.write_text(
+            """dataset_name: copilot_local
+seeds:
+  - seed_type: objective
+    value: Test local iteration
+""",
+            encoding="utf-8",
+        )
+        config = DatasetAttackConfiguration.from_yaml_file(file_path=file_path)
+        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": config,
+                "scenario_techniques": [_technique_class()("role_play_movie_script")],
+                "include_baseline": False,
+            }
+        )
+
+        await scenario.initialize_async()
+
+        stored_result = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])[0]
+        assert stored_result.scenario_identifier.datasets == ["copilot_local"]
+        assert {attack.display_group for attack in scenario._atomic_attacks} == {"copilot_local"}
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     @patch.object(

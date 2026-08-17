@@ -23,23 +23,31 @@ Memory is the source of truth. When a configured dataset name is not yet in memo
 from the registered ``SeedDatasetProvider`` into memory. If a configured dataset
 name still yields nothing, the resolver raises loudly rather than silently skipping it.
 Inline configs (``seeds=`` / ``seed_groups=``) never touch memory.
+File-backed configs created by ``DatasetAttackConfiguration.from_yaml_file`` also bypass
+memory and reread their local YAML file whenever the configuration resolves. They use
+``DatasetSourceKind.INLINE`` while retaining the YAML dataset name for result grouping.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import random
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, Seed, SeedGroup, group_seeds_into_attack_groups
+from pyrit.models import AttackSeedGroup, Seed, SeedDataset, SeedGroup, group_seeds_into_attack_groups
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from pyrit.memory import MemoryInterface
+
+logger = logging.getLogger(__name__)
 
 # Dataset-name label that inline ``seeds`` / ``seed_groups`` carry in by-dataset views, since
 # they have no real dataset name. Inline and named sources are mutually exclusive, so this
@@ -75,8 +83,9 @@ class ResolvedDataset:
     Args:
         seeds (Sequence[Seed]): The resolved seeds (before ``max_dataset_size`` sampling).
         source_kind (DatasetSourceKind): How the configuration was sourced.
-        dataset_names (tuple[str, ...]): The configured dataset names that contributed
-            seeds, in configuration order. Empty for inline ``seeds`` / ``seed_groups``.
+        dataset_names (tuple[str, ...]): The dataset names that contributed seeds, in
+            configuration order. Empty for caller-supplied inline ``seeds`` / ``seed_groups``;
+            file-backed inline configurations retain the YAML dataset name.
     """
 
     seeds: Sequence[Seed]
@@ -223,9 +232,10 @@ def restrict_dataset_names(allowed: set[str]) -> Callable[[ResolvedDataset], Non
 
     Use when a scenario only knows how to handle a fixed set of datasets -- for example,
     one that pairs techniques with specific datasets -- so a caller-supplied
-    ``--dataset-names`` outside that set is rejected loudly. Inline seeds carry no dataset
-    name and therefore pass; compose with ``forbid_inline_seeds`` to also require named
-    datasets.
+    ``--dataset-names`` outside that set is rejected loudly. Caller-supplied inline
+    ``seeds`` / ``seed_groups`` carry no dataset name and therefore pass; file-backed
+    inline configurations carry their YAML dataset name and are checked normally. Compose
+    with ``forbid_inline_seeds`` to require memory-backed datasets.
 
     Args:
         allowed (set[str]): The dataset names the configuration may resolve from.
@@ -594,10 +604,11 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         """
         Build attack groups keyed by dataset, plus the resolved seed set for validation.
 
-        Inline configs preserve their explicit grouping under the ``INLINE_DATASET_NAME`` label
-        (they are not flattened and regrouped). Named datasets reuse ``_collect_named_seeds_async``
-        (auto-fetch + loud empty handling) and run each dataset's seeds through
-        ``_build_attack_groups``.
+        Caller-supplied inline configs preserve their explicit grouping under the
+        ``INLINE_DATASET_NAME`` label (they are not flattened and regrouped). File-backed
+        inline subclasses may retain a real dataset name. Named memory datasets reuse
+        ``_collect_named_seeds_async`` (auto-fetch + loud empty handling) and run each
+        dataset's seeds through ``_build_attack_groups``.
 
         Returns:
             tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]: Groups keyed by
@@ -709,6 +720,148 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         for name, group in self._apply_max_dataset_size(pairs):
             result.setdefault(name, []).append(group)
         return result
+
+    @classmethod
+    def from_yaml_file(
+        cls,
+        *,
+        file_path: str | Path,
+        max_dataset_size: int | None = None,
+        validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
+    ) -> DatasetAttackConfiguration:
+        """
+        Build a file-backed configuration that rereads local YAML during resolution.
+
+        The file is treated as an inline source: it never queries or writes seed memory.
+        Existing grouping, validation, and sampling behavior is preserved, while the
+        YAML dataset name is retained for scenario result grouping and identity. Resolution
+        normally occurs once per scenario initialization. Filters configured through
+        ``update_filters`` are ignored, matching other inline sources. Every resolution
+        warns that disk is authoritative and in-process seed mutations are not persisted.
+
+        Args:
+            file_path (str | Path): The local YAML seed dataset file.
+            max_dataset_size (int | None): Optional global cap on resolved attack groups.
+            validators (Sequence[Callable[[ResolvedDataset], None]] | None): Validators
+                run against the full file contents before sampling.
+
+        Returns:
+            DatasetAttackConfiguration: A file-backed attack dataset configuration.
+
+        Raises:
+            DatasetConstraintError: If the local file cannot be read, parsed, or grouped
+                into valid attack groups.
+            TypeError: If called on a subclass, which would discard subclass-specific
+                grouping or validation behavior.
+        """
+        if cls is not DatasetAttackConfiguration:
+            raise TypeError(
+                f"{cls.__name__}.from_yaml_file() would discard subclass behavior; "
+                "call DatasetAttackConfiguration.from_yaml_file() instead."
+            )
+        return _LocalFileDatasetAttackConfiguration(
+            file_path=file_path,
+            max_dataset_size=max_dataset_size,
+            validators=validators,
+        )
+
+
+class _LocalFileDatasetAttackConfiguration(DatasetAttackConfiguration):
+    """
+    A local YAML dataset that is reread whenever seed groups are resolved.
+
+    This internal configuration uses inline source semantics without collapsing the
+    YAML dataset name to ``INLINE_DATASET_NAME``.
+    """
+
+    def __init__(
+        self,
+        *,
+        file_path: str | Path,
+        max_dataset_size: int | None = None,
+        validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
+    ) -> None:
+        super().__init__(max_dataset_size=max_dataset_size, validators=validators)
+        self._file_path = Path(file_path)
+        self._resolved_dataset_name: str | None = None
+
+    @property
+    def dataset_names(self) -> list[str]:
+        """The resolved YAML dataset name, or the file stem before first resolution."""
+        return [self._resolved_dataset_name or self._file_path.stem]
+
+    @property
+    def source_kind(self) -> DatasetSourceKind:
+        """The inline source kind for the local file."""
+        return DatasetSourceKind.INLINE
+
+    async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
+        """
+        Load and group the current local file contents.
+
+        Returns:
+            tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]: Attack groups keyed
+                by the YAML dataset name and the full resolved seed set.
+
+        Raises:
+            DatasetConstraintError: If the local file cannot be read, parsed as a
+                valid ``SeedDataset``, or grouped into valid attack groups.
+        """
+        dataset = await self._load_dataset_async()
+        dataset_name = dataset.dataset_name or dataset.name or self._file_path.stem
+        self._resolved_dataset_name = dataset_name
+
+        seeds = cast("list[Seed]", list(dataset.seeds))
+        groups = self._build_file_attack_groups(seeds=seeds)
+        logger.warning(
+            "Local file-backed dataset '%s' was loaded from disk. Changes made to loaded seeds are not persisted "
+            "to PyRIT seed memory or written back to the file; save edits to disk before the next resolution or "
+            "they will be lost.",
+            self._file_path,
+        )
+        resolved = ResolvedDataset(
+            seeds=seeds,
+            source_kind=self.source_kind,
+            dataset_names=(dataset_name,),
+        )
+        return {dataset_name: groups}, resolved
+
+    def _build_file_attack_groups(self, *, seeds: list[Seed]) -> list[AttackSeedGroup]:
+        """
+        Group file-backed seeds with actionable local-file error context.
+
+        Args:
+            seeds (list[Seed]): The current parsed file contents.
+
+        Returns:
+            list[AttackSeedGroup]: The grouped attack seeds.
+
+        Raises:
+            DatasetConstraintError: If any group lacks exactly one objective.
+        """
+        try:
+            return self._build_attack_groups(seeds)
+        except ValueError as exc:
+            raise DatasetConstraintError(
+                f"Local dataset file '{self._file_path}' could not be grouped into attack groups; "
+                "each group needs exactly one 'seed_type: objective': "
+                f"{exc}"
+            ) from exc
+
+    async def _load_dataset_async(self) -> SeedDataset:
+        """
+        Read and validate the local YAML dataset off the event loop.
+
+        Returns:
+            SeedDataset: The current parsed file contents.
+
+        Raises:
+            DatasetConstraintError: If the file cannot be read or parsed.
+        """
+        try:
+            return await asyncio.to_thread(SeedDataset.from_yaml_file, self._file_path)
+        except (OSError, ValueError) as exc:
+            raise DatasetConstraintError(f"Local dataset file '{self._file_path}' could not be loaded: {exc}") from exc
 
 
 class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):

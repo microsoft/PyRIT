@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -49,7 +50,38 @@ seeds:
         assert len(dataset.prompts) == 1
         assert dataset.prompts[0].value == "test prompt"
 
-    async def test_fetch_dataset_file_not_found(self):
-        loader = _LocalDatasetLoader(file_path=Path("non_existent.yaml"))
-        with pytest.raises(Exception):
+    async def test_fetch_dataset_warns_that_in_memory_edits_are_not_written_to_disk(
+        self,
+        *,
+        tmp_path: Path,
+        valid_yaml_content: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        file_path = tmp_path / "test.yaml"
+        file_path.write_text(valid_yaml_content, encoding="utf-8")
+        loader = _LocalDatasetLoader(file_path=file_path)
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="pyrit.datasets.seed_datasets.local.local_dataset_loader",
+        ):
             await loader.fetch_dataset_async()
+
+        assert str(file_path) in caplog.text
+        assert "not written back to disk" in caplog.text
+        assert "save edits to the source file before reloading or they will be lost" in caplog.text
+
+    async def test_fetch_dataset_file_not_found_does_not_log_success_warning(
+        self,
+        *,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        loader = _LocalDatasetLoader(file_path=Path("non_existent.yaml"))
+        with caplog.at_level(
+            logging.WARNING,
+            logger="pyrit.datasets.seed_datasets.local.local_dataset_loader",
+        ):
+            with pytest.raises(Exception):
+                await loader.fetch_dataset_async()
+
+        assert "Local dataset provider loaded" not in caplog.text

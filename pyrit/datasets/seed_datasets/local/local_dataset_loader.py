@@ -24,6 +24,8 @@ class _LocalDatasetLoader(SeedDatasetProvider):
 
     This loader discovers and loads datasets from local YAML files.
     Each YAML file should be in the standard SeedDataset format.
+    Every fetch warns that mutations to returned seed objects are not written back
+    to disk and that the caller controls any seed-memory persistence.
     """
 
     should_register = False
@@ -57,6 +59,9 @@ class _LocalDatasetLoader(SeedDatasetProvider):
         """
         Load the dataset from the local YAML file.
 
+        Emits a warning on every fetch because the source file remains authoritative:
+        mutations to returned seed objects are not written back automatically.
+
         Args:
             cache: Ignored for local datasets (included for interface consistency).
 
@@ -71,6 +76,12 @@ class _LocalDatasetLoader(SeedDatasetProvider):
             dataset = SeedDataset.from_yaml_file(self.file_path)
             if not dataset.dataset_name:
                 dataset.dataset_name = self.dataset_name
+            logger.warning(
+                "Local dataset provider loaded '%s' from disk. Later mutations to returned seeds are not written "
+                "back to disk automatically, and callers control any PyRIT seed-memory persistence; save edits "
+                "to the source file before reloading or they will be lost.",
+                self.file_path,
+            )
             return dataset
         except Exception as e:
             logger.error(f"Failed to load local dataset from {self.file_path}: {e}")

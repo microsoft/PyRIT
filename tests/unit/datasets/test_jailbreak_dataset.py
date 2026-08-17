@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
+from pathlib import Path
+
 import pytest
 
 from pyrit.datasets import SeedDatasetProvider
@@ -42,6 +45,25 @@ async def test_fetch_dataset_async_loads_templates_from_path(tmp_path):
     assert len(dataset.seeds) == 2
     assert all(isinstance(seed, SeedPrompt) for seed in dataset.seeds)
     assert all(seed.dataset_name == dataset.dataset_name for seed in dataset.seeds)
+
+
+async def test_fetch_dataset_async_warns_that_in_memory_edits_are_not_written_to_disk(
+    *,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (tmp_path / "a.yaml").write_text(_VALID_TEMPLATE, encoding="utf-8")
+    loader = _JailbreakTemplatesDataset(templates_path=tmp_path)
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="pyrit.datasets.seed_datasets.local.jailbreak_dataset",
+    ):
+        await loader.fetch_dataset_async()
+
+    assert str(tmp_path) in caplog.text
+    assert "not written back to disk" in caplog.text
+    assert "save edits to the source files before reloading or they will be lost" in caplog.text
 
 
 async def test_fetch_dataset_async_skips_invalid_templates(tmp_path):

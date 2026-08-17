@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -28,6 +28,7 @@
 # %%
 from pathlib import Path
 
+from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
@@ -61,6 +62,22 @@ seed_groups: list[SeedGroup] = datasets[0].seed_groups  # type: ignore
 
 # Pass explicit seed_groups instead of dataset_names
 dataset_config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=2)
+
+# %% [markdown]
+# For rapid local iteration, use `from_yaml_file`. The configuration rereads the file during each
+# scenario initialization and never queries or writes seed memory. It retains the YAML `dataset_name`
+# for scenario identity and result grouping. As with other inline sources, memory-query `filters` do
+# not apply. Create or copy the scratch file before initializing the scenario.
+#
+# > **Warning:** The YAML file is authoritative. Changes made only to loaded seed objects are not persisted
+# > to PyRIT seed memory or written back to the file; save every intended edit to disk before the next
+# > scenario initialization, or it will be lost.
+
+# %%
+local_dataset_config = DatasetAttackConfiguration.from_yaml_file(
+    file_path=CONFIGURATION_DIRECTORY_PATH / "rapid_response_local.prompt",
+    max_dataset_size=2,
+)
 
 # %% [markdown]
 # ## Technique Selection and Composition
