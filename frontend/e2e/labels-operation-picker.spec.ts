@@ -18,24 +18,39 @@ function operations(count: number): string[] {
 }
 
 async function setupMocks(page: Page, operationLabels: string[]): Promise<void> {
-  await page.route(/\/api\/labels/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
+  // Everything the app calls while booting, so the run does not depend on a
+  // dev-server proxy with no backend behind it.
+  await page.route(/\/api\//, async (route) => {
+    const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
+
+    if (path === "/health") {
+      return route.fulfill(json({ status: "healthy" }));
+    }
+    if (path === "/auth/config") {
+      return route.fulfill(json({ clientId: "", tenantId: "", allowedGroupIds: "" }));
+    }
+    if (path === "/version") {
+      return route.fulfill(json({ version: "picker-test", display: "picker-test" }));
+    }
+    if (path === "/labels") {
+      return route.fulfill(json({
         source: "attacks",
         labels: { operator: ["roakey"], operation: operationLabels },
-      }),
-    });
+      }));
+    }
+    if (path === "/attacks") {
+      return route.fulfill(json({ items: [], total: 0, limit: 5, offset: 0 }));
+    }
+    return route.fulfill(json({}));
   });
+}
 
-  await page.route(/\/api\/attacks(?:\?|$)/, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ items: [], total: 0, limit: 5, offset: 0 }),
-    });
-  });
+function json(body: unknown) {
+  return {
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(body),
+  };
 }
 
 /** Opens the picker from the labels bar and returns the rendered listbox. */
@@ -93,6 +108,31 @@ test.describe("operation picker placement", () => {
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
   });
 
+  test("keeps the whole editor inside the labels bar on a laptop screen", async ({
+    page,
+  }) => {
+    // The card is narrowest just after the home grid splits into two columns,
+    // which is where an editor that cannot shrink loses its chevron.
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await openOperationPicker(page);
+
+    // The input is sized inside the control, so measure the control itself —
+    // it is the part that carries the dropdown chevron.
+    const overhang = await page
+      .getByTestId("edit-label-operation")
+      .evaluate((input) => {
+        const control = input.parentElement!.getBoundingClientRect();
+        const bar = input
+          .closest("[data-testid='labels-bar']")!
+          .getBoundingClientRect();
+        return control.right - bar.right;
+      });
+
+    // Sub-pixel rounding is fine; a lost chevron is 27px.
+    expect(overhang).toBeLessThan(2);
+  });
+
   test("sizes the list to its content so long names are not clipped", async ({
     page,
   }) => {
@@ -108,5 +148,60 @@ test.describe("operation picker placement", () => {
       clientWidth: el.clientWidth,
     }));
     expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
+  });
+
+  test("shrinks below the cap when the window is too short for it", async ({
+    page,
+  }) => {
+    // Shorter than the 240px cap, so a flat cap would hang off the screen.
+    const viewportHeight = 200;
+    await page.setViewportSize({ width: 1280, height: viewportHeight });
+    await setupMocks(page, operations(60));
+    const listbox = await openOperationPicker(page);
+
+    const box = (await listbox.boundingBox())!;
+    expect(box.height).toBeLessThan(LIST_MAX_HEIGHT);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(viewportHeight);
+  });
+
+  test("keeps the operation in use on the list, wherever it was chosen", async ({
+    page,
+  }) => {
+    // The labels API only knows names that attacks have been stored under, so
+    // one chosen in the other labels bar — or before a refresh — is missing
+    // from this response.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.addInitScript(() => {
+      window.localStorage.setItem(
+        "pyrit.globalLabels",
+        JSON.stringify({ operator: "roakey", operation: "op_chosen_elsewhere" }),
+      );
+    });
+    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await openOperationPicker(page);
+
+    await expect(
+      page.getByRole("option", { name: "op_chosen_elsewhere", exact: true }),
+    ).toBeVisible();
+
+    // ...and it must not offer to create the name that is already set.
+    await page.getByTestId("edit-label-operation").fill("op_chosen_elsewhere");
+    await expect(page.getByRole("option", { name: /Create/ })).toHaveCount(0);
+  });
+});
+
+test.describe("operation picker persistence", () => {
+  test("remembers the chosen operation across a refresh", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await openOperationPicker(page);
+
+    await page.getByRole("option", { name: "op_beta", exact: true }).click();
+    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+
+    await page.reload();
+
+    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
   });
 });
