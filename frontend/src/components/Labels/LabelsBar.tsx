@@ -123,16 +123,15 @@ function OperationPicker({
       {isLoading && (
         <Option disabled className={noteClassName} value="--loading" text="Loading operations">Loading operations...</Option>
       )}
-      {!isLoading && !canCreate && !searchError && (
-        loadFailed && options.length === 0 ? (
-          <Option disabled className={noteErrorClassName} value="--failed" text="Could not load operations">
-            Could not load existing operations — type a name to use one
-          </Option>
-        ) : listed.length === 0 ? (
-          <Option disabled className={noteClassName} value="--empty" text="No operations">
-            No operations yet — type a name to create one
-          </Option>
-        ) : null
+      {!isLoading && loadFailed && (
+        <Option disabled className={noteErrorClassName} value="--failed" text="Could not load operations">
+          Could not load existing operations — type a name to use one
+        </Option>
+      )}
+      {!isLoading && !loadFailed && listed.length === 0 && !canCreate && !searchError && (
+        <Option disabled className={noteClassName} value="--empty" text="No operations">
+          No operations yet — type a name to create one
+        </Option>
       )}
       {matches.map(option => (
         <Option key={option} value={option}>{option}</Option>

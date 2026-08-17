@@ -1133,6 +1133,38 @@ describe('LabelsBar', () => {
       expect(screen.queryByText(/No operations yet/)).not.toBeInTheDocument()
     })
 
+    it('should keep saying the operations could not be loaded after one is created', async () => {
+      // A name created while the request was still in flight is a local
+      // value, not proof that the list arrived.
+      const onChange = jest.fn()
+      let rejectLabels: (reason: Error) => void = () => {}
+      mockedLabelsApi.getLabels.mockReturnValue(
+        new Promise((_resolve, reject) => { rejectLabels = reject })
+      )
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.change(await screen.findByTestId('edit-label-operation'), {
+        target: { value: 'op_made_during_load' },
+      })
+      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_made_during_load"' }))
+
+      await act(async () => {
+        rejectLabels(new Error('boom'))
+      })
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      expect(
+        await screen.findByRole('option', { name: /Could not load existing operations/ })
+      ).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'op_made_during_load' })).toBeInTheDocument()
+    })
+
     it('should still say the operations could not be loaded when one is already set', async () => {
       // The value in use is listed, but that must not read as a loaded list.
       const onChange = jest.fn()
