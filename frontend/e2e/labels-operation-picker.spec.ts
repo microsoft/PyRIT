@@ -271,4 +271,32 @@ test.describe("operation picker persistence", () => {
     );
     await expect(page.getByTestId("label-operation")).toContainText("op_beta");
   });
+
+  test("lets the backend change a label it supplied, after you pick", async ({
+    page,
+  }) => {
+    // The operator here came from the deployment's config, not from a choice,
+    // so picking an operation must not capture it as one.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_beta"], {
+      defaultLabels: { operator: "configured_day1" },
+    });
+    await openOperationPicker(page);
+
+    await page.getByRole("option", { name: "op_beta", exact: true }).click();
+    await expect(page.getByTestId("label-operator")).toContainText(
+      "configured_day1",
+    );
+
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await setupMocks(page, ["op_alpha", "op_beta"], {
+      defaultLabels: { operator: "configured_day2" },
+    });
+    await page.reload();
+
+    await expect(page.getByTestId("label-operator")).toContainText(
+      "configured_day2",
+    );
+    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+  });
 });

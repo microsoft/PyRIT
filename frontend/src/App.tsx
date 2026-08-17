@@ -112,13 +112,18 @@ function App() {
     () => ({ ...DEFAULT_GLOBAL_LABELS, ...storedLabels }),
   )
 
+  // What the app would show if the user had never touched anything: the
+  // built-in placeholders, then whatever the backend hands out. Only labels
+  // that differ from this are the user's own, and only those are worth
+  // keeping — otherwise a value that merely came from the config gets stored
+  // as a choice and outranks that same config from then on.
+  const unchosenLabels = useRef<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
+
   const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
     setGlobalLabels(labels)
-    // A placeholder is not a choice. Storing one would outrank whatever the
-    // backend is configured to hand out, on every later visit.
     persistGlobalLabels(
       Object.fromEntries(
-        Object.entries(labels).filter(([key, value]) => value !== DEFAULT_GLOBAL_LABELS[key]),
+        Object.entries(labels).filter(([key, value]) => value !== unchosenLabels.current[key]),
       ),
     )
   }, [])
@@ -175,6 +180,12 @@ function App() {
 
       const account = instance.getActiveAccount?.()
       const alias = account?.username ? account.username.split('@')[0].toLowerCase() : null
+
+      unchosenLabels.current = {
+        ...DEFAULT_GLOBAL_LABELS,
+        ...defaultLabels,
+        ...(alias ? { operator: alias } : {}),
+      }
 
       setGlobalLabels(prev => {
         const next = { ...prev }
