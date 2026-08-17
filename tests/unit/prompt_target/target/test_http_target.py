@@ -86,7 +86,7 @@ async def test_send_prompt_async(mock_request, mock_http_target, mock_http_respo
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
-        follow_redirects=True,
+        follow_redirects=False,
     )
 
 
@@ -125,7 +125,7 @@ async def test_send_prompt_async_uses_data_for_dict_body(mock_request, mock_http
         url="https://example.com/",
         headers={"host": "example.com"},
         data={"prompt": "test_prompt"},
-        follow_redirects=True,
+        follow_redirects=False,
     )
 
 
@@ -179,7 +179,7 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
             method="GET",
             url="https://example.com/test",
             headers={"host": "example.com"},
-            follow_redirects=True,
+            follow_redirects=False,
             content="",
         )
         assert http_target._client is None
@@ -218,6 +218,22 @@ async def test_send_prompt_async_allows_configured_internal_destination(mock_req
     assert mock_request.call_args.kwargs["url"] == "https://10.0.0.8:8080/api/jobs"
 
 
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_follows_redirects_when_enabled(mock_request, patch_central_database):
+    target = HTTPTarget(
+        http_request="POST /api HTTP/1.1\nHost: example.com\n\n",
+        follow_redirects=True,
+    )
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="prompt")])
+    mock_response = MagicMock()
+    mock_response.content = b"ok"
+    mock_request.return_value = mock_response
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["follow_redirects"] is True
+
+
 async def test_send_prompt_async_validation(mock_http_target):
     # Creating a Message with no pieces raises immediately
     with pytest.raises(ValueError, match="must have at least one message piece"):
@@ -254,7 +270,7 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
-        follow_redirects=True,
+        follow_redirects=False,
     )
 
 
@@ -287,7 +303,7 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
-        follow_redirects=True,
+        follow_redirects=False,
     )
 
     # Send second prompt
@@ -315,14 +331,14 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
-        follow_redirects=True,
+        follow_redirects=False,
     )
     mock_request.assert_any_call(
         method="POST",
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "second_test_prompt"}',
-        follow_redirects=True,
+        follow_redirects=False,
     )
 
 
@@ -401,12 +417,14 @@ def test_http_target_init_with_all_args():
         use_tls=False,
         callback_function=return_parsed,
         max_requests_per_minute=10,
+        follow_redirects=True,
         **client_kwargs,
     )
     assert target.http_request == http_request
     assert target.prompt_regex_string == "{PLACEHOLDER_PROMPT}"
     assert target.use_tls is False
     assert target.callback_function == return_parsed
+    assert target.follow_redirects is True
     assert target.httpx_client_kwargs == client_kwargs
     assert target._client is None
 

@@ -59,6 +59,7 @@ class HTTPXAPITarget(HTTPTarget):
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         http2: bool | None = None,
+        follow_redirects: bool = False,
         callback_function: Callable[..., Any] | None = None,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
@@ -77,6 +78,7 @@ class HTTPXAPITarget(HTTPTarget):
             params (dict, Optional): Query parameters to include in the request URL (for GET/HEAD).
             headers (dict, Optional): Headers to include in the request.
             http2 (bool, Optional): Whether to use HTTP/2. If None, defaults to False.
+            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to False.
             callback_function (Callable, Optional): Function to parse the HTTP response.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for this target
@@ -92,6 +94,7 @@ class HTTPXAPITarget(HTTPTarget):
             http_request="",
             prompt_regex_string="",
             use_tls=True,
+            follow_redirects=follow_redirects,
             callback_function=callback_function,
             max_requests_per_minute=max_requests_per_minute,
             custom_configuration=custom_configuration,
@@ -170,7 +173,7 @@ class HTTPXAPITarget(HTTPTarget):
                         headers=self.headers,
                         params=self.params,
                         files=files,
-                        follow_redirects=True,
+                        follow_redirects=self.follow_redirects,
                     )
                 else:
                     # No file upload, handle based on HTTP method
@@ -182,7 +185,7 @@ class HTTPXAPITarget(HTTPTarget):
                         params=self.params,
                         json=self.json_data if self.method in {"POST", "PUT", "PATCH"} else None,
                         data=self.form_data if self.method in {"POST", "PUT", "PATCH"} else None,
-                        follow_redirects=True,
+                        follow_redirects=self.follow_redirects,
                     )
 
             except httpx.TimeoutException:

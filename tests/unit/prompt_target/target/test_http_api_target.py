@@ -120,8 +120,26 @@ async def test_send_prompt_async_preserves_query_params_for_post(mock_request, p
         params={"alpha": "1"},
         json={"payload": "value"},
         data=None,
+        follow_redirects=False,
+    )
+
+
+@patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_follows_redirects_when_enabled(mock_request, patch_central_database):
+    message_piece = MessagePiece(role="user", original_value="prompt", converted_value="prompt")
+    message = Message(message_pieces=[message_piece])
+    mock_response = MagicMock()
+    mock_response.content = b'{"status": "ok"}'
+    mock_request.return_value = mock_response
+    target = HTTPXAPITarget(
+        http_url="http://example.com/data/",
+        method="POST",
         follow_redirects=True,
     )
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["follow_redirects"] is True
 
 
 @patch("httpx.AsyncClient.request")

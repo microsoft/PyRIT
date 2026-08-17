@@ -43,6 +43,7 @@ class HTTPTarget(PromptTarget):
         max_requests_per_minute: int | None = None,
         client: httpx.AsyncClient | None = None,
         model_name: str = "",
+        follow_redirects: bool = False,
         custom_configuration: TargetConfiguration | None = None,
         **httpx_client_kwargs: Any,
     ) -> None:
@@ -59,6 +60,7 @@ class HTTPTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             client (httpx.AsyncClient, Optional): Pre-configured httpx client.
             model_name (str): The model name. Defaults to empty string.
+            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to False.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **httpx_client_kwargs: Additional keyword arguments for httpx.AsyncClient.
@@ -84,6 +86,7 @@ class HTTPTarget(PromptTarget):
         self.http_request = http_request
         self.callback_function = callback_function
         self.prompt_regex_string = prompt_regex_string
+        self.follow_redirects = follow_redirects
         self.httpx_client_kwargs = httpx_client_kwargs or {}
 
         if client and httpx_client_kwargs:
@@ -101,6 +104,7 @@ class HTTPTarget(PromptTarget):
                 "use_tls": self.use_tls,
                 "prompt_regex_string": self.prompt_regex_string,
                 "callback_function": getattr(self.callback_function, "__name__", None),
+                "follow_redirects": self.follow_redirects,
             },
         )
 
@@ -112,6 +116,7 @@ class HTTPTarget(PromptTarget):
         prompt_regex_string: str = "{PROMPT}",
         callback_function: Callable[..., Any] | None = None,
         max_requests_per_minute: int | None = None,
+        follow_redirects: bool = False,
     ) -> "HTTPTarget":
         """
         Alternative constructor that accepts a pre-configured httpx client.
@@ -122,6 +127,7 @@ class HTTPTarget(PromptTarget):
             prompt_regex_string: the placeholder for the prompt
             callback_function: function to parse HTTP response
             max_requests_per_minute: Optional rate limiting
+            follow_redirects: Whether to follow HTTP redirects.
 
         Returns:
             HTTPTarget: an instance of HTTPTarget
@@ -132,6 +138,7 @@ class HTTPTarget(PromptTarget):
             callback_function=callback_function,
             max_requests_per_minute=max_requests_per_minute,
             client=client,
+            follow_redirects=follow_redirects,
         )
 
     def _inject_prompt_into_request(self, request: MessagePiece) -> str:
@@ -194,7 +201,7 @@ class HTTPTarget(PromptTarget):
                     url=url,
                     headers=header_dict,
                     data=http_body,
-                    follow_redirects=True,
+                    follow_redirects=self.follow_redirects,
                 )
             else:
                 response = await client.request(
@@ -202,7 +209,7 @@ class HTTPTarget(PromptTarget):
                     url=url,
                     headers=header_dict,
                     content=http_body,
-                    follow_redirects=True,
+                    follow_redirects=self.follow_redirects,
                 )
 
             response_content = response.content
