@@ -247,6 +247,39 @@ test.describe("operation picker persistence", () => {
     );
   });
 
+  test("keeps an operation picked before the backend's own default arrives", async ({
+    page,
+  }) => {
+    // Nothing is stored, and the backend supplies its own `operation` default
+    // that lands after the bar is already usable. The only thing standing
+    // between the pick and that late response is that the value on screen is
+    // no longer the built-in placeholder.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_picked_early"], {
+      versionDelayMs: 4000,
+      defaultLabels: { operation: "op_configured" },
+    });
+    await openOperationPicker(page);
+
+    await page
+      .getByRole("option", { name: "op_picked_early", exact: true })
+      .click();
+    await expect(page.getByTestId("label-operation")).toContainText(
+      "op_picked_early",
+    );
+
+    await page.waitForTimeout(5000);
+    await expect(page.getByTestId("label-operation")).toContainText(
+      "op_picked_early",
+    );
+    // What is on screen is also what a refresh would restore.
+    expect(
+      await page.evaluate(() =>
+        window.localStorage.getItem("pyrit.globalLabels"),
+      ),
+    ).toContain("op_picked_early");
+  });
+
   test("lets the backend still name the operator after you pick an operation", async ({
     page,
   }) => {

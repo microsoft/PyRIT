@@ -1187,6 +1187,89 @@ describe('LabelsBar', () => {
       expect(screen.getByRole('option', { name: 'op_already_set' })).toBeInTheDocument()
     })
 
+    it('should keep saying the operations could not be loaded while a name is typed', async () => {
+      // The note answers "why is this list empty"; typing does not answer it.
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockRejectedValue(new Error('boom'))
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const input = await screen.findByTestId('edit-label-operation')
+
+      fireEvent.change(input, { target: { value: 'op_2026_09_typed' } })
+      expect(await screen.findByRole('option', { name: 'Create "op_2026_09_typed"' })).toBeInTheDocument()
+      expect(
+        screen.getByRole('option', { name: /Could not load existing operations/ })
+      ).toBeInTheDocument()
+
+      fireEvent.change(input, { target: { value: 'op bad' } })
+      expect(await screen.findByText(/Only lowercase letters/)).toBeInTheDocument()
+      expect(
+        screen.getByRole('option', { name: /Could not load existing operations/ })
+      ).toBeInTheDocument()
+    })
+
+    it('should not offer a status note as something to choose', async () => {
+      // The notes share the option list with real values, so they have to be
+      // unselectable or one of them becomes the operation.
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockRejectedValue(new Error('boom'))
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const failed = await screen.findByRole('option', {
+        name: /Could not load existing operations/,
+      })
+      expect(failed).toHaveAttribute('aria-disabled', 'true')
+
+      fireEvent.change(await screen.findByTestId('edit-label-operation'), {
+        target: { value: 'op bad' },
+      })
+      const invalid = await screen.findByRole('option', { name: /Only lowercase letters/ })
+      expect(invalid).toHaveAttribute('aria-disabled', 'true')
+
+      fireEvent.click(failed)
+      fireEvent.click(invalid)
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it('should not say there are no operations while offering to create one', async () => {
+      const onChange = jest.fn()
+      mockedLabelsApi.getLabels.mockResolvedValue({
+        source: 'attacks',
+        labels: { operation: [], operator: ['alice'] },
+      })
+      render(
+        <TestWrapper>
+          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const input = await screen.findByTestId('edit-label-operation')
+      expect(await screen.findByText(/No operations yet/)).toBeInTheDocument()
+
+      fireEvent.change(input, { target: { value: 'op_2026_09_first' } })
+      expect(await screen.findByRole('option', { name: 'Create "op_2026_09_first"' })).toBeInTheDocument()
+      expect(screen.queryByText(/No operations yet/)).not.toBeInTheDocument()
+
+      // Same while the typed name is one that cannot be created.
+      fireEvent.change(input, { target: { value: 'op bad' } })
+      expect(await screen.findByText(/Only lowercase letters/)).toBeInTheDocument()
+      expect(screen.queryByText(/No operations yet/)).not.toBeInTheDocument()
+    })
+
     it('should keep an operation created while the list was still loading', async () => {
       const onChange = jest.fn()
       let resolveLabels: (value: { source: string; labels: Record<string, string[]> }) => void = () => {}
