@@ -17,6 +17,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
+import { readStoredGlobalLabels, persistGlobalLabels } from './components/Labels/labelStorage'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInfo } from './types'
@@ -105,7 +106,16 @@ function App() {
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
 
-  const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
+  // Read once, before the effect below can overwrite what the user picked.
+  const [storedLabels] = useState(readStoredGlobalLabels)
+  const [globalLabels, setGlobalLabels] = useState<Record<string, string>>(
+    () => ({ ...DEFAULT_GLOBAL_LABELS, ...storedLabels }),
+  )
+
+  const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
+    setGlobalLabels(labels)
+    persistGlobalLabels(labels)
+  }, [])
 
   // History filters live in the URL query string so they are shareable and
   // survive refresh. The breadcrumb ref remembers the last /history query so
@@ -161,7 +171,9 @@ function App() {
       const alias = account?.username ? account.username.split('@')[0].toLowerCase() : null
 
       setGlobalLabels(prev => {
-        const next = { ...prev, ...defaultLabels }
+        // What the user picked last beats the backend defaults; the signed-in
+        // account still decides who the operator is.
+        const next = { ...prev, ...defaultLabels, ...storedLabels }
         if (alias) {
           next.operator = alias
         }
@@ -171,7 +183,7 @@ function App() {
 
     initLabels()
     return () => { ignore = true }
-  }, [instance])
+  }, [instance, storedLabels])
 
   // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
   // ONLY, so switching conversations within an attack never refetches.
@@ -351,7 +363,7 @@ function App() {
       onConversationCreated={handleConversationCreated}
       onSelectConversation={handleSelectConversation}
       labels={globalLabels}
-      onLabelsChange={setGlobalLabels}
+      onLabelsChange={handleGlobalLabelsChange}
       onNavigate={handleNavigate}
       attackLabels={readyAttack ? readyAttack.labels : null}
       attackTarget={readyAttack ? readyAttack.target : null}
@@ -389,7 +401,7 @@ function App() {
                 element={
                   <Home
                     labels={globalLabels}
-                    onLabelsChange={setGlobalLabels}
+                    onLabelsChange={handleGlobalLabelsChange}
                     activeTarget={activeTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}
