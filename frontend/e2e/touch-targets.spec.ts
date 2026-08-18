@@ -458,6 +458,10 @@ test.describe("Mobile touch targets", () => {
     const scoreMenuItems = page.getByRole("menuitem");
     await expect(scoreMenuItems).toHaveCount(6);
     await expectMinimumTouchTargets(scoreMenuItems);
+    await page.keyboard.press("Escape");
+    await expect(scoreMenuItems).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(scoreStack).toHaveAttribute("aria-expanded", "false");
 
     await expectMinimumTouchTargets(
       page.locator(
