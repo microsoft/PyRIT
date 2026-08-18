@@ -43,7 +43,7 @@ class HTTPTarget(PromptTarget):
         max_requests_per_minute: int | None = None,
         client: httpx.AsyncClient | None = None,
         model_name: str = "",
-        follow_redirects: bool = False,
+        follow_redirects: bool = True,
         custom_configuration: TargetConfiguration | None = None,
         **httpx_client_kwargs: Any,
     ) -> None:
@@ -60,7 +60,7 @@ class HTTPTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             client (httpx.AsyncClient, Optional): Pre-configured httpx client.
             model_name (str): The model name. Defaults to empty string.
-            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to False.
+            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to True.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **httpx_client_kwargs: Additional keyword arguments for httpx.AsyncClient.
@@ -116,7 +116,7 @@ class HTTPTarget(PromptTarget):
         prompt_regex_string: str = "{PROMPT}",
         callback_function: Callable[..., Any] | None = None,
         max_requests_per_minute: int | None = None,
-        follow_redirects: bool = False,
+        follow_redirects: bool = True,
     ) -> "HTTPTarget":
         """
         Alternative constructor that accepts a pre-configured httpx client.
@@ -127,7 +127,7 @@ class HTTPTarget(PromptTarget):
             prompt_regex_string: the placeholder for the prompt
             callback_function: function to parse HTTP response
             max_requests_per_minute: Optional rate limiting
-            follow_redirects: Whether to follow HTTP redirects.
+            follow_redirects: Whether to follow HTTP redirects. Defaults to True.
 
         Returns:
             HTTPTarget: an instance of HTTPTarget

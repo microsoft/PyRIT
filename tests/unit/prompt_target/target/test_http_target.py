@@ -86,7 +86,7 @@ async def test_send_prompt_async(mock_request, mock_http_target, mock_http_respo
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
-        follow_redirects=False,
+        follow_redirects=True,
     )
 
 
@@ -125,7 +125,7 @@ async def test_send_prompt_async_uses_data_for_dict_body(mock_request, mock_http
         url="https://example.com/",
         headers={"host": "example.com"},
         data={"prompt": "test_prompt"},
-        follow_redirects=False,
+        follow_redirects=True,
     )
 
 
@@ -179,7 +179,7 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
             method="GET",
             url="https://example.com/test",
             headers={"host": "example.com"},
-            follow_redirects=False,
+            follow_redirects=True,
             content="",
         )
         assert http_target._client is None
@@ -232,6 +232,27 @@ async def test_send_prompt_async_follows_redirects_when_enabled(mock_request, pa
     await target.send_prompt_async(message=message)
 
     assert mock_request.call_args.kwargs["follow_redirects"] is True
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_disables_redirects_when_requested(mock_request, patch_central_database):
+    target = HTTPTarget(
+        http_request="POST /api HTTP/1.1\nHost: example.com\n\n",
+        follow_redirects=False,
+    )
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="prompt")])
+    mock_response = MagicMock()
+    mock_response.content = b"ok"
+    mock_request.return_value = mock_response
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["follow_redirects"] is False
+
+
+def test_http_target_omitted_redirect_setting_preserves_behavior(patch_central_database):
+    target = HTTPTarget(http_request="GET / HTTP/1.1\nHost: example.com\n\n")
+    assert target.follow_redirects is True
 
 
 @pytest.mark.parametrize(
@@ -310,7 +331,7 @@ async def test_send_prompt_regex_parse_async(mock_request, mock_http_target):
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
-        follow_redirects=False,
+        follow_redirects=True,
     )
 
 
@@ -343,7 +364,7 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
-        follow_redirects=False,
+        follow_redirects=True,
     )
 
     # Send second prompt
@@ -371,14 +392,14 @@ async def test_send_prompt_async_keeps_original_template(mock_request, mock_http
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "test_prompt"}',
-        follow_redirects=False,
+        follow_redirects=True,
     )
     mock_request.assert_any_call(
         method="POST",
         url="https://example.com/",
         headers={"host": "example.com", "content-type": "application/json"},
         content='{"prompt": "second_test_prompt"}',
-        follow_redirects=False,
+        follow_redirects=True,
     )
 
 
