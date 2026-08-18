@@ -301,6 +301,8 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
                 - 'middle': Select from the middle
                 - 'random': Select from a random position
             seed (int | None): Random seed for reproducible random selections. Defaults to None.
+                Scoped to this strategy: it makes this strategy reproducible without affecting
+                the randomness of any other component.
 
         Raises:
             ValueError: If proportion is not between 0.0 and 1.0, or anchor is invalid.
@@ -482,6 +484,8 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
         Args:
             proportion (float): The proportion of words to select (0.0 to 1.0).
             seed (int | None): Random seed for reproducible selections. Defaults to None.
+                Scoped to this strategy: it makes this strategy reproducible without affecting
+                the randomness of any other component.
 
         Raises:
             ValueError: If proportion is not between 0.0 and 1.0.

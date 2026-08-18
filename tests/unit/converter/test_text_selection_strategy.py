@@ -223,12 +223,20 @@ class TestProportionSelectionStrategy:
 
     def test_select_range_seed_does_not_disturb_global_rng(self):
         """A seeded strategy must not reseed the process-wide RNG."""
-        random.seed(0)
-        state_before = random.getstate()
+        original_state = random.getstate()
+        try:
+            # Seed to a value distinct from the strategy's own seed. Without this the
+            # assertion can pass vacuously: a leaking strategy that reseeds to the same
+            # value the previous test used lands back on the captured state.
+            random.seed(0)
+            state_before = random.getstate()
 
-        ProportionSelectionStrategy(proportion=0.3, anchor="random", seed=42).select_range(text="0123456789")
+            ProportionSelectionStrategy(proportion=0.3, anchor="random", seed=42).select_range(text="0123456789")
 
-        assert random.getstate() == state_before
+            assert random.getstate() == state_before
+        finally:
+            # Leave process-wide RNG exactly as found so test order stays irrelevant.
+            random.setstate(original_state)
 
     def test_select_range_random_anchor_different_seeds(self):
         strategy1 = ProportionSelectionStrategy(proportion=0.3, anchor="random", seed=42)
@@ -396,13 +404,21 @@ class TestWordProportionSelectionStrategy:
 
     def test_select_words_seed_does_not_disturb_global_rng(self):
         """A seeded strategy must not reseed the process-wide RNG."""
-        random.seed(0)
-        state_before = random.getstate()
+        original_state = random.getstate()
+        try:
+            # Seed to a value distinct from the strategy's own seed. Without this the
+            # assertion can pass vacuously: a leaking strategy that reseeds to the same
+            # value the previous test used lands back on the captured state.
+            random.seed(0)
+            state_before = random.getstate()
 
-        strategy = WordProportionSelectionStrategy(proportion=0.3, seed=42)
-        strategy.select_words(words=["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"])
+            strategy = WordProportionSelectionStrategy(proportion=0.3, seed=42)
+            strategy.select_words(words=["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"])
 
-        assert random.getstate() == state_before
+            assert random.getstate() == state_before
+        finally:
+            # Leave process-wide RNG exactly as found so test order stays irrelevant.
+            random.setstate(original_state)
 
     def test_select_words_zero_proportion(self):
         strategy = WordProportionSelectionStrategy(proportion=0.0, seed=42)

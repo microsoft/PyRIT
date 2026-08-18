@@ -34,7 +34,13 @@ class ZalgoConverter(WordLevelConverter):
 
         Args:
             intensity (int): Number of combining marks per character (higher = more cursed). Default is 10.
-            seed (int | None): Optional seed for reproducible output.
+            seed (int | None): Optional seed for this converter's own randomness, i.e. which combining
+                marks are applied and how many. Seeds are component-scoped: they make the seeded
+                component reproducible without touching any other component's randomness. The default
+                word selection strategy selects every word and is deterministic, so a seed alone makes
+                the output reproducible. If you supply a ``word_selection_strategy`` that draws randomly
+                (such as ``WordProportionSelectionStrategy``), seed that strategy as well for
+                end-to-end reproducibility.
             word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
         """
