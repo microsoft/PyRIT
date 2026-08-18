@@ -253,6 +253,24 @@ class TestListTargetCatalog:
         assert "api_key" in openai_entry.supported_auth_modes
         assert "identity" in openai_entry.supported_auth_modes
 
+    async def test_catalog_cold_and_warm_results_are_equal(self) -> None:
+        service = TargetService()
+
+        cold = await service.list_target_catalog_async()
+        warm = await service.list_target_catalog_async()
+
+        assert cold == warm
+
+    async def test_catalog_refreshes_after_runtime_class_registration(self) -> None:
+        service = TargetService()
+        initial = await service.list_target_catalog_async()
+
+        service._registry.register_class(MockPromptTarget)
+        refreshed = await service.list_target_catalog_async()
+
+        assert all(item.target_type != "MockPromptTarget" for item in initial.items)
+        assert any(item.target_type == "MockPromptTarget" for item in refreshed.items)
+
     @pytest.mark.parametrize(
         ("target_type", "parameter_name", "type_name", "required", "choices"),
         [

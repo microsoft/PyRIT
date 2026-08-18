@@ -172,13 +172,16 @@ class Encoding(Scenario):
                 successfully decoded the payload. Defaults to DecodingScorer with encoding_scenario
                 category.
             encoding_templates (Sequence[str] | None): Templates used to construct the decoding
-                prompts. Defaults to AskToDecodeConverter.garak_templates.
+                prompts. An empty list is supported and will pass the raw encoded prompts.
+                Defaults to AskToDecodeConverter.garak_templates if None.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         objective_scorer = objective_scorer or DecodingScorer(categories=["encoding_scenario"])
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
 
-        self._encoding_templates = encoding_templates or AskToDecodeConverter.garak_templates
+        self._encoding_templates = (
+            AskToDecodeConverter.garak_templates if encoding_templates is None else encoding_templates
+        )
 
         super().__init__(
             version=self.VERSION,
