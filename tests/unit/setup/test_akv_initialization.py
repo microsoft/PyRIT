@@ -19,6 +19,7 @@ from pyrit.setup.akv_initialization import (
     _parse_akv_reference,
     _parse_akv_secret_url,
     _warn_about_akv_environment_files,
+    _write_akv_env_file,
 )
 
 
@@ -249,6 +250,85 @@ class TestLoadEnvironmentFiles:
 
             assert mock_load_environment_files.call_args.kwargs["env_files"] == [local_env]
             assert mock_load_environment_files.call_args.kwargs["include_default_base"] is True
+
+    def test_write_akv_env_file_secures_descriptor_before_writing(self):
+        events: list[str] = []
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            temporary_file = temp_path / ".env.test.tmp"
+            stream = mock.MagicMock()
+            stream.write.side_effect = lambda content: events.append(f"write:{content}")
+            with (
+                mock.patch("pyrit.setup.akv_initialization.path.CONFIGURATION_DIRECTORY_PATH", temp_path),
+                mock.patch(
+                    "pyrit.setup.akv_initialization.tempfile.mkstemp",
+                    side_effect=lambda **kwargs: events.append("create") or (7, str(temporary_file)),
+                ),
+                mock.patch(
+                    "pyrit.setup.akv_initialization.os.fchmod",
+                    side_effect=lambda *args: events.append("fchmod"),
+                    create=True,
+                ),
+                mock.patch(
+                    "pyrit.setup.akv_initialization.os.fdopen",
+                    side_effect=lambda *args, **kwargs: events.append("fdopen") or stream,
+                ),
+                mock.patch(
+                    "pyrit.setup.akv_initialization.os.replace",
+                    side_effect=lambda *args: events.append("replace"),
+                ),
+            ):
+                _write_akv_env_file(documents=["VALUE=bootstrap\n"], silent=True)
+
+        assert events == ["create", "fchmod", "fdopen", "write:VALUE=bootstrap\n", "replace"]
+
+    def test_write_akv_env_file_preserves_existing_file_when_replace_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            env_file = temp_path / ".env"
+            env_file.write_text("ORIGINAL=value\n", encoding="utf-8")
+
+            with (
+                mock.patch("pyrit.setup.akv_initialization.path.CONFIGURATION_DIRECTORY_PATH", temp_path),
+                mock.patch("pyrit.setup.akv_initialization.os.replace", side_effect=OSError("replace failed")),
+                pytest.raises(OSError, match="replace failed"),
+            ):
+                _write_akv_env_file(documents=["NEW=value\n"], silent=True)
+
+            assert env_file.read_text(encoding="utf-8") == "ORIGINAL=value\n"
+            assert list(temp_path.glob(".env.*.tmp")) == []
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits are not enforced on this platform.")
+    def test_write_akv_env_file_uses_owner_only_permissions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            configuration_directory = pathlib.Path(temp_dir) / ".pyrit"
+            with mock.patch(
+                "pyrit.setup.akv_initialization.path.CONFIGURATION_DIRECTORY_PATH", configuration_directory
+            ):
+                env_file = _write_akv_env_file(documents=["VALUE=bootstrap\n"], silent=True)
+
+            assert configuration_directory.stat().st_mode & 0o777 == 0o700
+            assert env_file.stat().st_mode & 0o777 == 0o600
+
+    def test_write_akv_env_file_rejects_symbolic_link(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            target = temp_path / "target"
+            target.write_text("unchanged", encoding="utf-8")
+            env_file = temp_path / ".env"
+            try:
+                env_file.symlink_to(target)
+            except OSError:
+                pytest.skip("Symbolic links are unavailable on this platform.")
+
+            with (
+                mock.patch("pyrit.setup.akv_initialization.path.CONFIGURATION_DIRECTORY_PATH", temp_path),
+                pytest.raises(ValueError, match="symbolic link"),
+            ):
+                _write_akv_env_file(documents=["VALUE=bootstrap\n"], silent=True)
+
+            assert target.read_text(encoding="utf-8") == "unchanged"
 
     async def test_direct_local_file_loader_keeps_pyrit_references_literal(self):
         with tempfile.TemporaryDirectory() as temp_dir:

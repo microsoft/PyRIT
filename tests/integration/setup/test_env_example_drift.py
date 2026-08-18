@@ -5,6 +5,7 @@ import os
 import pathlib
 import re
 import subprocess
+from unittest import mock
 
 from dotenv import dotenv_values
 
@@ -12,6 +13,7 @@ _ENV_EXAMPLE_PATH_ENV = "PYRIT_ENV_EXAMPLE_PATH"
 _REPOSITORY_ROOT_ENV = "PYRIT_REPOSITORY_ROOT"
 _ENVIRONMENT_NAME_PATTERN = re.compile(r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]*(?![A-Za-z0-9_])")
 _DOTENV_ASSIGNMENT_NAME_PATTERN = re.compile(r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=", re.MULTILINE)
+_DOTENV_COMPLETE_REFERENCE_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
 
 def _get_repository_root() -> pathlib.Path:
@@ -88,4 +90,44 @@ def test_env_example_names_are_referenced_in_repository() -> None:
     unreferenced_names = environment_names - referenced_names
     assert not unreferenced_names, ".env_example contains names with no tracked repository reference: " + ", ".join(
         sorted(unreferenced_names)
+    )
+
+
+def test_env_example_url_values_are_not_wrapped_in_angle_brackets() -> None:
+    """Ensure URL placeholder styling does not become part of parsed dotenv values."""
+    repository_root = _get_repository_root()
+    env_example_path = _get_env_example_path(repository_root=repository_root)
+    values = dotenv_values(dotenv_path=env_example_path, interpolate=False)
+
+    wrapped_names = {name for name, value in values.items() if value and ("<" in value or ">" in value)}
+    assert not wrapped_names, ".env_example contains values wrapped in angle brackets: " + ", ".join(
+        sorted(wrapped_names)
+    )
+
+
+def test_env_example_aliases_resolve_in_assignment_order() -> None:
+    """Ensure complete-value aliases resolve to their sources without ambient environment values."""
+    repository_root = _get_repository_root()
+    env_example_path = _get_env_example_path(repository_root=repository_root)
+    raw_values = dotenv_values(dotenv_path=env_example_path, interpolate=False)
+    aliases = {
+        name: match.group(1)
+        for name, value in raw_values.items()
+        if value and (match := _DOTENV_COMPLETE_REFERENCE_PATTERN.fullmatch(value))
+    }
+    assert aliases, ".env_example contains no complete-value aliases."
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        resolved_values = dotenv_values(dotenv_path=env_example_path, interpolate=True)
+
+    unresolved_names = {name for name in aliases if not resolved_values.get(name)}
+    assert not unresolved_names, ".env_example contains aliases that resolve to empty values: " + ", ".join(
+        sorted(unresolved_names)
+    )
+
+    mismatched_names = {
+        name for name, source_name in aliases.items() if resolved_values[name] != resolved_values.get(source_name)
+    }
+    assert not mismatched_names, ".env_example contains aliases that differ from their sources: " + ", ".join(
+        sorted(mismatched_names)
     )

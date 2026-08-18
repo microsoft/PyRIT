@@ -4,10 +4,12 @@
 """Load dotenv files and Azure Key Vault-backed environment documents."""
 
 import asyncio
+import contextlib
 import io
 import logging
 import os
 import pathlib
+import tempfile
 import urllib.parse
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
@@ -485,15 +487,44 @@ def _write_akv_env_file(*, documents: Sequence[str], silent: bool) -> pathlib.Pa
 
     Returns:
         pathlib.Path: Path to the written dotenv file.
+
+    Raises:
+        ValueError: If the destination is a symbolic link.
     """
     env_file = path.CONFIGURATION_DIRECTORY_PATH / _AKV_ENV_FILE_NAME
-    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if env_file.is_symlink():
+        raise ValueError(f"Refusing to write the AKV environment through a symbolic link: {env_file}")
+
     content = "\n".join(document.rstrip("\r\n") for document in documents) + "\n"
-    env_file.write_text(content, encoding="utf-8")
+    file_descriptor: int | None = None
+    temporary_file: pathlib.Path | None = None
     try:
-        env_file.chmod(0o600)
-    except OSError:
-        logger.warning("Could not restrict permissions on written AKV environment file: %s", env_file)
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f"{env_file.name}.",
+            suffix=".tmp",
+            dir=env_file.parent,
+        )
+        temporary_file = pathlib.Path(temporary_name)
+        if hasattr(os, "fchmod"):
+            os.fchmod(file_descriptor, 0o600)
+        else:
+            os.chmod(temporary_file, 0o600)
+        stream = os.fdopen(file_descriptor, "w", encoding="utf-8", newline="")
+        file_descriptor = None
+        with stream:
+            stream.write(content)
+        if env_file.is_symlink():
+            raise ValueError(f"Refusing to replace a symbolic link with the AKV environment: {env_file}")
+        os.replace(temporary_file, env_file)
+        temporary_file = None
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        if temporary_file is not None:
+            with contextlib.suppress(FileNotFoundError):
+                temporary_file.unlink()
+
     _print_msg(f"Saved Key Vault bootstrap environment file: {env_file}", quiet=silent, log=True)
     return env_file
 
