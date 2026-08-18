@@ -72,7 +72,8 @@ async def test_send_prompt_async_file_upload_preserves_query_params(mock_request
         params={"alpha": "1"},
         timeout=180,
     )
-    await target.send_prompt_async(message=message)
+    with pytest.warns(DeprecationWarning, match="implicit text-path uploads"):
+        await target.send_prompt_async(message=message)
 
     assert mock_request.call_args.kwargs["params"] == {"alpha": "1"}
 
@@ -151,14 +152,16 @@ async def test_send_prompt_async_follows_redirects_when_enabled(mock_request, pa
 
 
 @patch("httpx.AsyncClient.request")
-async def test_send_prompt_async_missing_explicit_file_path_raises(mock_request, patch_central_database):
+async def test_send_prompt_async_missing_explicit_file_path_raises(mock_request, patch_central_database, tmp_path):
     message_piece = MessagePiece(role="user", original_value="mock", converted_value="trigger")
     message = Message(message_pieces=[message_piece])
+    missing_file = tmp_path / "missing.pdf"
 
     target = HTTPXAPITarget(
         http_url="http://example.com/upload/",
         method="POST",
-        file_path="/definitely/missing/file.pdf",
+        file_path=str(missing_file),
+        allowed_upload_directory=tmp_path,
         timeout=180,
     )
 
