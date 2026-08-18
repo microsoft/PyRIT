@@ -376,6 +376,59 @@ class TestCrescendoMixedFailureRecovery:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestCrescendoTerminalBoundaries:
+    async def test_refusal_scorer_failure_aborts_before_objective_scoring_and_persists_error(self):
+        event_log: list[str] = []
+        adversarial_target = _ScriptedTarget(
+            name="adversarial",
+            script=[_adversarial_reply(1)],
+            event_log=event_log,
+        )
+        objective_target = _ScriptedTarget(
+            name="objective",
+            script=["response-1"],
+            event_log=event_log,
+        )
+        objective_scorer = _scorer("ObjectiveScorer")
+        refusal_scorer = _scorer("RefusalScorer")
+        refusal_scorer.score_async.side_effect = RuntimeError("refusal scorer unavailable")
+        attack = _build_attack(
+            adversarial_target=adversarial_target,
+            objective_target=objective_target,
+            objective_scorer=objective_scorer,
+            refusal_scorer=refusal_scorer,
+        )
+        context = _context()
+
+        with (
+            patch.object(Scorer, "score_response_async", new_callable=AsyncMock) as score_response,
+            patch.object(attack, "_teardown_async", new_callable=AsyncMock, wraps=attack._teardown_async) as teardown,
+        ):
+            with pytest.raises(RuntimeError, match="Strategy execution failed") as exc_info:
+                await attack.execute_with_context_async(context=context)
+
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert str(exc_info.value.__cause__) == "refusal scorer unavailable"
+        teardown.assert_awaited_once_with(context=context)
+        assert event_log == ["adversarial", "objective"]
+        assert context.executed_turns == 0
+        assert context.last_response is not None
+        assert context.last_response.get_value() == "response-1"
+        refusal_scorer.score_async.assert_awaited_once()
+        score_response.assert_not_awaited()
+
+        pieces = attack._memory.get_message_pieces(conversation_id=context.session.conversation_id)
+        assert [piece.api_role for piece in pieces] == ["user", "assistant"]
+        assert [piece.original_value for piece in pieces] == ["question-1", "response-1"]
+        assert len({piece.id for piece in pieces}) == 2
+
+        stored_results = attack._memory.get_attack_results(objective=_OBJECTIVE)
+        assert len(stored_results) == 1
+        assert stored_results[0].outcome is AttackOutcome.ERROR
+        assert stored_results[0].error_type == "RuntimeError"
+        assert stored_results[0].error_message == "refusal scorer unavailable"
+        assert stored_results[0].executed_turns == 0
+        assert not any(result.outcome is AttackOutcome.SUCCESS for result in stored_results)
+
     async def test_objective_scorer_failure_persists_partial_history_and_one_error_result(self):
         event_log: list[str] = []
         adversarial_target = _ScriptedTarget(

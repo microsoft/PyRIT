@@ -659,11 +659,7 @@ def test_memory_interface_check_schema_migration_raises_without_engine():
 
 def test_memory_migrations_head_command(capsys):
     """The 'head' subcommand of memory_migrations.py prints the current Alembic head revision."""
-    import sys
-
-    # Import the module's main function
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "build_scripts"))
-    from memory_migrations import _cmd_head
+    from build_scripts.memory_migrations import _cmd_head
 
     _cmd_head()
     captured = capsys.readouterr()

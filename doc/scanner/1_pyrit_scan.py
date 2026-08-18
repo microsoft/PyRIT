@@ -121,6 +121,18 @@
 # - `--max-retries <int>`: Maximum number of automatic retries if the scenario raises an exception
 # - `--memory-labels <json>`: Additional labels to apply to all attack runs (must be a JSON string with string keys and values)
 #
+# Dataset-backed scenarios can also select a supported dataset:
+#
+# ```shell
+# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
+# ```
+#
+# Dataset-backed scenarios can also select a supported dataset:
+#
+# ```shell
+# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
+# ```
+#
 # Custom initialization scripts are loaded by the backend at startup: list them in the
 # `initialization_scripts` section of the config the server loads (paths are relative to your
 # working directory, but full paths avoid confusion). Once the server is running with that

@@ -32,8 +32,14 @@ import { toApiError } from '../../services/errors'
 import { buildMessagePieces, backendMessagesToFrontend } from '../../utils/messageMapper'
 import { exportConversation } from '../../utils/conversationExport'
 import type { ExportFormat } from '../../utils/conversationExport'
-import type { Message, MessageAttachment, TargetInstance, TargetInfo } from '../../types'
-import { targetInfoMatchesTarget } from '../../utils/targetIdentity'
+import type {
+  AttackTargetResolutionStatus,
+  Message,
+  MessageAttachment,
+  TargetInstance,
+  TargetInfo,
+} from '../../types'
+import { isTargetResolutionBlocking, targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useChatWindowStyles } from './ChatWindow.styles'
 
@@ -80,6 +86,10 @@ interface ChatWindowProps {
   attackLabels?: Record<string, string> | null
   /** Target info that the current attack was started with (for cross-target guard). */
   attackTarget?: TargetInfo | null
+  /** Result of resolving the persisted attack target against the current registry. */
+  targetResolutionStatus?: AttackTargetResolutionStatus
+  /** Re-run target registry resolution after a transient or unavailable result. */
+  onRetryTargetResolution?: () => void
   /** True while a historical attack is being loaded from the history view. */
   isLoadingAttack?: boolean
   /** Number of related (non-main) conversations in the loaded attack. */
@@ -99,6 +109,8 @@ export default function ChatWindow({
   onNavigate,
   attackLabels,
   attackTarget,
+  targetResolutionStatus = 'idle',
+  onRetryTargetResolution,
   isLoadingAttack,
   relatedConversationCount,
 }: ChatWindowProps) {
@@ -206,6 +218,25 @@ export default function ChatWindow({
   const pendingUserMessagesRef = useRef<Map<string, Message[]>>(new Map())
 
   const supportsSystemPrompt = activeTarget?.capabilities?.supports_system_prompt === true
+  const isTargetResolutionLocked = Boolean(
+    attackResultId
+    && isTargetResolutionBlocking(targetResolutionStatus),
+  )
+  const currentOperator = labels?.operator
+  const attackOperator = attackLabels?.operator
+  // Existing attacks are operator-locked when their operator differs from the current one.
+  const isOperatorLocked = Boolean(
+    attackResultId && attackLabels && attackOperator && currentOperator && attackOperator !== currentOperator,
+  )
+  // They are cross-target locked when the selected target's canonical hash differs from the persisted target.
+  const isCrossTargetLocked = Boolean(
+    attackResultId
+    && attackTarget
+    && activeTarget
+    && !targetInfoMatchesTarget(attackTarget, activeTarget),
+  )
+  // Any failed invariant keeps all mutation controls and handlers read-only.
+  const isMutationLocked = isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked
 
   // Clear internal messages when attack state is reset (e.g. New Attack).
   // Uses the "adjust state during render" pattern (see React docs:
@@ -299,7 +330,13 @@ export default function ChatWindow({
   }, [attackResultId, activeConversationId, isNarrowScreen, onSelectConversation, loadConversation])
 
   const handleSend = async (originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[]) => {
-    if (!activeTarget) { return }
+    if (
+      !activeTarget
+      || isLoadingAttack
+      || isMutationLocked
+    ) {
+      return
+    }
 
     // Capture all piece conversions upfront before any async work or state clears
     const conversions = { ...activePieceConversions }
@@ -497,7 +534,7 @@ export default function ChatWindow({
   }
 
   const handleNewConversation = useCallback(async () => {
-    if (!attackResultId) { return }
+    if (!attackResultId || isMutationLocked) { return }
 
     try {
       const response = await attacksApi.createConversation(attackResultId, {})
@@ -506,7 +543,12 @@ export default function ChatWindow({
     } catch {
       // Silently fail
     }
-  }, [attackResultId, isNarrowScreen, onSelectConversation])
+  }, [
+    attackResultId,
+    isNarrowScreen,
+    isMutationLocked,
+    onSelectConversation,
+  ])
 
   // -------------------------------------------------------------------
   // Message action handlers (4 buttons on each assistant message)
@@ -526,7 +568,7 @@ export default function ChatWindow({
 
   /** 2. Create a new conversation in the same attack and copy ONLY this message to its input box */
   const handleCopyToNewConversation = useCallback(async (messageIndex: number) => {
-    if (!attackResultId) { return }
+    if (!attackResultId || isMutationLocked) { return }
     const msg = messages[messageIndex]
     if (!msg) { return }
 
@@ -547,11 +589,23 @@ export default function ChatWindow({
       // If creating fails, fall back to current conversation
       if (msg.content) inputBoxRef.current?.setText(msg.content)
     }
-  }, [attackResultId, isNarrowScreen, messages, onSelectConversation])
+  }, [
+    attackResultId,
+    isNarrowScreen,
+    isMutationLocked,
+    messages,
+    onSelectConversation,
+  ])
 
   /** 3. Branch into a new conversation within the same attack (clone up to clicked message) */
   const handleBranchConversation = useCallback(async (messageIndex: number) => {
-    if (!attackResultId || !activeConversationId) { return }
+    if (
+      !attackResultId
+      || !activeConversationId
+      || isMutationLocked
+    ) {
+      return
+    }
 
     try {
       const response = await attacksApi.createConversation(attackResultId, {
@@ -567,7 +621,13 @@ export default function ChatWindow({
     } catch (err) {
       console.error('Failed to branch into new conversation:', err)
     }
-  }, [attackResultId, activeConversationId, isNarrowScreen, onSelectConversation])
+  }, [
+    attackResultId,
+    activeConversationId,
+    isNarrowScreen,
+    isMutationLocked,
+    onSelectConversation,
+  ])
 
   /** 4. Branch into a brand-new attack (clone up to clicked message with new labels) */
   const handleBranchAttack = useCallback(async (messageIndex: number) => {
@@ -592,7 +652,12 @@ export default function ChatWindow({
   }, [activeTarget, activeConversationId, labels, onConversationCreated])
 
   const handleChangeMainConversation = useCallback(async (convId: string) => {
-    if (!attackResultId) { return }
+    if (
+      !attackResultId
+      || isMutationLocked
+    ) {
+      return
+    }
 
     try {
       await attacksApi.changeMainConversation(attackResultId, convId)
@@ -600,27 +665,12 @@ export default function ChatWindow({
     } catch (err) {
       console.error('Failed to change main conversation:', err)
     }
-  }, [attackResultId])
+  }, [
+    attackResultId,
+    isMutationLocked,
+  ])
 
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
-
-  // Operator locking: if the loaded attack's operator differs from the current
-  // user's operator label, the conversation should be read-only.
-  const currentOperator = labels?.operator
-  const attackOperator = attackLabels?.operator
-  const isOperatorLocked = Boolean(
-    attackResultId && attackLabels && attackOperator && currentOperator && attackOperator !== currentOperator
-  )
-
-  // Cross-target guard: if viewing a historical attack whose target differs
-  // from the currently configured target, prevent sending new messages.
-  // The user can "Continue with your target" to branch into a new attack with their target.
-  const isCrossTargetLocked = Boolean(
-    attackResultId &&
-    attackTarget &&
-    activeTarget &&
-    !targetInfoMatchesTarget(attackTarget, activeTarget)
-  )
 
   // "Continue with your target" — clone the current conversation into a new attack
   const handleUseAsTemplate = useCallback(async () => {
@@ -769,7 +819,7 @@ export default function ChatWindow({
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
           isSingleTurn={activeTarget?.capabilities?.supports_multi_turn === false}
           isOperatorLocked={isOperatorLocked}
-          isCrossTarget={isCrossTargetLocked}
+          isCrossTarget={isCrossTargetLocked || isTargetResolutionLocked}
           noTargetSelected={!activeTarget}
           globalMarkdown={globalMarkdown}
         />
@@ -780,12 +830,20 @@ export default function ChatWindow({
           supportsSystemPrompt={supportsSystemPrompt}
           systemPrompt={systemPrompt}
           onSystemPromptChange={setSystemPrompt}
-          disabled={isSending || !activeTarget || singleTurnLimitReached || isOperatorLocked || isCrossTargetLocked}
+          disabled={
+            isSending
+            || !activeTarget
+            || isLoadingAttack
+            || singleTurnLimitReached
+            || isMutationLocked
+          }
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}
           onNewConversation={handleNewConversation}
           operatorLocked={isOperatorLocked}
           crossTargetLocked={isCrossTargetLocked}
+          targetResolutionStatus={targetResolutionStatus}
+          onRetryTargetResolution={onRetryTargetResolution}
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
@@ -849,6 +907,7 @@ export default function ChatWindow({
             !activeTarget ? 'Configure a target to enable this action.'
             : isOperatorLocked ? 'Cannot modify — attack belongs to a different operator.'
             : isCrossTargetLocked ? 'Cannot modify — attack was created with a different target.'
+            : isTargetResolutionLocked ? 'Cannot modify — the attack target could not be safely resolved.'
             : undefined
           }
           refreshKey={panelRefreshKey}

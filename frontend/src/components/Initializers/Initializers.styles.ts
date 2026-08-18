@@ -1,5 +1,7 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
+import { mobileTouchTargetHeight } from '@/styles/touchTargets'
+
 export const useInitializersStyles = makeStyles({
   root: {
     display: 'flex',
@@ -52,6 +54,10 @@ export const useInitializersStyles = makeStyles({
   },
   addInitializerSelect: {
     minWidth: '220px',
+    ...mobileTouchTargetHeight,
+  },
+  touchTarget: {
+    ...mobileTouchTargetHeight,
   },
   baselineList: {
     display: 'flex',

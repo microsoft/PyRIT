@@ -89,6 +89,12 @@ _PROMPT_TARGET_FORBIDDEN = [
     "transformers",
 ]
 
+_TARGET_CATALOG_FORBIDDEN = [
+    "huggingface_hub",
+    "torch",
+    "transformers",
+]
+
 
 class TestImportGuards:
     """Verify heavy modules are not eagerly loaded at key import points."""
@@ -132,4 +138,19 @@ class TestImportGuards:
         assert not loaded, (
             f"PromptTarget base class loaded ML modules: {loaded}. "
             f"Ensure heavy subclass imports use __getattr__ lazy loading in __init__.py."
+        )
+
+    def test_target_catalog_discovery_does_not_load_inference_frameworks(self) -> None:
+        """Full target discovery includes Hugging Face without importing its runtime frameworks."""
+        loaded = _check_forbidden_imports(
+            import_statement=(
+                "from pyrit.registry import TargetRegistry\n"
+                "metadata = TargetRegistry.get_registry_singleton().get_all_registered_class_metadata()\n"
+                "assert any(item.class_name == 'HuggingFaceChatTarget' for item in metadata)"
+            ),
+            forbidden=_TARGET_CATALOG_FORBIDDEN,
+        )
+        assert not loaded, (
+            f"Target catalog discovery loaded inference frameworks: {loaded}. "
+            f"Move target-specific runtime imports to construction or execution paths."
         )
