@@ -136,13 +136,6 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # encoding-based evasion. It favors recall over precision, so use it as a cheap pre-filter ahead of
 # a model-based scorer such as `PromptShieldScorer`.
 #
-# ### AgentThreatRulesScorer
-#
-# `AgentThreatRulesScorer` evaluates text against the locally bundled Agent Threat Rules (ATR)
-# ruleset. It returns True when a rule at or above the configured minimum severity matches and
-# records the matched rule IDs, ATR category, and maximum severity in score metadata. Install the
-# optional integration with `pip install pyrit[atr]`.
-#
 # ### DecodingScorer
 #
 # `DecodingScorer` checks whether the request text (its `original_value`, `converted_value`, or
