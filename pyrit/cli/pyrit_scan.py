@@ -86,9 +86,10 @@ _DESCRIPTION = """PyRIT Scanner - Run AI security scenarios from the command lin
 Requires a running PyRIT backend server. Use 'start-server' to launch one,
 or connect to an existing server with --server-url.
 
-Global options (usable with any command, before or after the verb):
-  --server-url  --config-file  --log-level  --request-timeout  --start-server  --startup-timeout
-Run 'pyrit_scan <command> --help' for full option descriptions and a command's arguments.
+Global options (--server-url, --config-file, --log-level) are listed below and
+work before or after the verb. Backend commands (run, list-*, add-initializer,
+scenario-results, scenario-history) also accept --start-server, --startup-timeout,
+and --request-timeout; run 'pyrit_scan <command> --help' to see them.
 
 Examples:
   # Start the backend server
@@ -137,59 +138,111 @@ def _positive_finite_float(value: str) -> float:
     return parsed
 
 
-def _build_global_parser() -> ArgumentParser:
-    """
-    Build the parser holding options valid for *every* subcommand.
+_SERVER_URL_HELP = "URL of the PyRIT backend server (default: http://localhost:8000)"
+_LOG_LEVEL_HELP = "Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)"
+# Scan-specific override of the shared CONFIG_FILE_HELP: for the thin client the file's
+# database/initializers/init-scripts/env sections only take effect when a backend is
+# launched (start-server or --start-server) and are NOT re-applied to a running server.
+_CONFIG_FILE_HELP = (
+    "Path to a YAML config file. For commands that talk to a running server this only "
+    "selects which backend to connect to (server.url). Its database, initializers, "
+    "initialization-scripts, and env sections apply only when a backend is launched "
+    "(start-server or --start-server); they are not re-run against an already-running server."
+)
+_START_SERVER_HELP = "Start a local backend server first if one is not already running"
+_STARTUP_TIMEOUT_HELP = "Seconds to wait for a local backend to start (default: server.startup_timeout or 120)"
+_REQUEST_TIMEOUT_HELP = (
+    "HTTP read timeout in seconds for non-polling server requests "
+    "(catalog/results/cancel/etc). Defaults to 60. Polling a live "
+    "scenario run always waits indefinitely regardless of this value."
+)
 
-    This parser is never used on its own. It is passed as ``parents=[...]`` to
-    each verb's sub-parser so that global options work after any verb, e.g.
-    ``pyrit_scan run foo --server-url X`` or ``pyrit_scan list-scenarios
-    --server-url X``.
+
+def _add_common_options(*, parser: ArgumentParser, suppress_defaults: bool) -> None:
+    """
+    Add the options that *every* command honors: server URL, config file, log level.
+
+    These live on the root parser (real defaults) *and* on each sub-parser
+    (``SUPPRESS`` defaults, so a value parsed by the root — e.g.
+    ``pyrit_scan --server-url X run`` — is not clobbered by the sub-parser's own
+    default on the second parse pass).
+
+    Args:
+        parser (ArgumentParser): Parser to extend.
+        suppress_defaults (bool): Use ``argparse.SUPPRESS`` defaults (sub-parser copies)
+            instead of real defaults (the root parser, which owns the canonical values).
+    """
+    default = argparse.SUPPRESS if suppress_defaults else None
+    log_default = argparse.SUPPRESS if suppress_defaults else logging.WARNING
+    group = parser.add_argument_group("global options")
+    group.add_argument("--server-url", type=str, default=default, help=_SERVER_URL_HELP)
+    group.add_argument("--config-file", type=Path, default=default, help=_CONFIG_FILE_HELP)
+    group.add_argument("--log-level", type=validate_log_level_argparse, default=log_default, help=_LOG_LEVEL_HELP)
+
+
+def _build_common_parent() -> ArgumentParser:
+    """
+    Parent parser with the common options for a sub-parser (``SUPPRESS`` defaults).
 
     Returns:
-        ArgumentParser: A help-less parent parser with the global options.
+        ArgumentParser: A help-less parent parser with the common options.
     """
     parser = ArgumentParser(add_help=False)
-    group = parser.add_argument_group("global options")
+    _add_common_options(parser=parser, suppress_defaults=True)
+    return parser
+
+
+def _build_client_parent() -> ArgumentParser:
+    """
+    Parent parser for commands that reach the backend through the API client.
+
+    Adds ``--request-timeout`` plus the auto-start options (``--start-server`` /
+    ``--startup-timeout``). Attached to ``run``, the ``list-*`` verbs,
+    ``add-initializer``, ``scenario-results``, and ``scenario-history``. Verbs that do
+    not open a client (``start-server``, ``stop-server``) deliberately omit it so
+    unsupported combinations like ``start-server --request-timeout`` are rejected.
+
+    Returns:
+        ArgumentParser: A help-less parent parser with the client/auto-start options.
+    """
+    parser = ArgumentParser(add_help=False)
+    group = parser.add_argument_group("server options")
+    group.add_argument("--request-timeout", type=float, default=None, help=_REQUEST_TIMEOUT_HELP)
+    group.add_argument("--start-server", action="store_true", help=_START_SERVER_HELP)
     group.add_argument(
-        "--server-url",
-        type=str,
-        help="URL of the PyRIT backend server (default: http://localhost:8000)",
-    )
-    group.add_argument(
-        "--start-server",
-        action="store_true",
-        help="Start a local backend server first if one is not already running",
-    )
-    group.add_argument(
-        "--startup-timeout",
-        type=_positive_finite_float,
-        default=None,
-        metavar="SECONDS",
-        help="Seconds to wait for a local backend to start (default: server.startup_timeout or 120)",
-    )
-    group.add_argument(
-        "--config-file",
-        type=Path,
-        help=ARG_HELP["config_file"],
-    )
-    group.add_argument(
-        "--log-level",
-        type=validate_log_level_argparse,
-        default=logging.WARNING,
-        help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)",
-    )
-    group.add_argument(
-        "--request-timeout",
-        type=float,
-        default=None,
-        help=(
-            "HTTP read timeout in seconds for non-polling server requests "
-            "(catalog/results/cancel/etc). Defaults to 60. Polling a live "
-            "scenario run always waits indefinitely regardless of this value."
-        ),
+        "--startup-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_STARTUP_TIMEOUT_HELP
     )
     return parser
+
+
+def _build_start_server_parent() -> ArgumentParser:
+    """
+    Parent parser for the ``start-server`` verb: only ``--startup-timeout`` applies.
+
+    Returns:
+        ArgumentParser: A help-less parent parser with the startup timeout option.
+    """
+    parser = ArgumentParser(add_help=False)
+    group = parser.add_argument_group("server startup options")
+    group.add_argument(
+        "--startup-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_STARTUP_TIMEOUT_HELP
+    )
+    return parser
+
+
+def _build_global_parser() -> ArgumentParser:
+    """
+    Union of every option group.
+
+    Used *only* by the legacy shim to strip options and locate a verb; it is never
+    attached to a command. Keeping it a union (rather than the per-command groups)
+    lets the shim reorder any option placed before a verb, regardless of which
+    command ultimately owns it.
+
+    Returns:
+        ArgumentParser: A help-less parser recognizing all common and server options.
+    """
+    return ArgumentParser(add_help=False, parents=[_build_common_parent(), _build_client_parent()])
 
 
 def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Parameter] | None = None) -> None:
@@ -260,29 +313,36 @@ def _build_parser(*, scenario_params: list[Parameter] | None = None, add_help: b
     Returns:
         ArgumentParser: The configured parser.
     """
-    global_parser = _build_global_parser()
+    common_parent = _build_common_parent()
+    client_parent = _build_client_parent()
+    start_server_parent = _build_start_server_parent()
+    client_parents = [common_parent, client_parent]
+
     parser = ArgumentParser(
         prog="pyrit_scan",
         description=_DESCRIPTION,
         formatter_class=RawDescriptionHelpFormatter,
         add_help=add_help,
     )
+    # The root parser owns the real global options so top-level help and pre-verb
+    # handling (e.g. ``pyrit_scan --server-url X --help``) work normally.
+    _add_common_options(parser=parser, suppress_defaults=False)
     subparsers = parser.add_subparsers(dest="command", metavar="<command>", title="commands")
 
     run_parser = subparsers.add_parser(
         "run",
-        parents=[global_parser],
+        parents=client_parents,
         help="Run a scenario against a target",
         formatter_class=RawDescriptionHelpFormatter,
     )
     _add_run_arguments(parser=run_parser, scenario_params=scenario_params)
 
     for verb, help_text in _LIST_VERBS.items():
-        subparsers.add_parser(verb, parents=[global_parser], help=help_text)
+        subparsers.add_parser(verb, parents=client_parents, help=help_text)
 
     add_init_parser = subparsers.add_parser(
         "add-initializer",
-        parents=[global_parser],
+        parents=client_parents,
         help="Register initializer(s) from Python script file(s)",
     )
     add_init_parser.add_argument(
@@ -295,7 +355,7 @@ def _build_parser(*, scenario_params: list[Parameter] | None = None, add_help: b
 
     results_parser = subparsers.add_parser(
         "scenario-results",
-        parents=[global_parser],
+        parents=client_parents,
         help="Inspect the results of a completed scenario run",
     )
     results_parser.add_argument("scenario_result_id", type=str, help="Scenario result id to inspect")
@@ -303,7 +363,7 @@ def _build_parser(*, scenario_params: list[Parameter] | None = None, add_help: b
 
     history_parser = subparsers.add_parser(
         "scenario-history",
-        parents=[global_parser],
+        parents=client_parents,
         help="List recent scenario runs",
     )
     history_parser.add_argument(
@@ -315,16 +375,31 @@ def _build_parser(*, scenario_params: list[Parameter] | None = None, add_help: b
         help="Number of recent runs to show (default: 10)",
     )
 
-    subparsers.add_parser("start-server", parents=[global_parser], help="Start a local backend server")
-    subparsers.add_parser("stop-server", parents=[global_parser], help="Stop the backend server")
+    subparsers.add_parser(
+        "start-server", parents=[common_parent, start_server_parent], help="Start a local backend server"
+    )
+    subparsers.add_parser("stop-server", parents=[common_parent], help="Stop the backend server")
 
     return parser
 
 
+def _discover_verbs() -> frozenset[str]:
+    """
+    Read the registered subcommand verbs straight off the built parser's subparsers.
+
+    Returns:
+        frozenset[str]: Every registered subcommand verb.
+    """
+    parser = _build_parser(add_help=False)
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return frozenset(action.choices)
+    return frozenset()
+
+
 #: Every valid subcommand verb (used by the legacy-argv shim to detect new-style calls).
-_KNOWN_VERBS: frozenset[str] = frozenset(
-    {"run", "add-initializer", "scenario-results", "scenario-history", "start-server", "stop-server", *_LIST_VERBS}
-)
+#: Derived from _build_parser so adding/renaming a subcommand can't leave this stale.
+_KNOWN_VERBS: frozenset[str] = _discover_verbs()
 
 
 # Namespacing prefix for scenario-declared params on the parsed Namespace.
@@ -450,6 +525,7 @@ _LEGACY_COMMAND_FLAGS: dict[str, str] = {
     "--list-datasets": "list-datasets",
     "--add-initializer": "add-initializer",
     "--stop-server": "stop-server",
+    "--scenario-results": "scenario-results",
 }
 
 
@@ -503,6 +579,11 @@ def _translate_legacy_argv(argv: list[str]) -> list[str]:
             verb = leftover[0]
             index = argv.index(verb)
             return [verb, *argv[:index], *argv[index + 1 :]]
+        if leftover[0] in ("-h", "--help"):
+            # Global options followed by top-level help (e.g. ``--server-url X --help``).
+            # Leave argv untouched so the root parser prints its own help instead of
+            # misreading ``--help`` as an implicit scenario name.
+            return argv
         # Otherwise it is a bare scenario name (+ run flags) → implicit run.
         _warn_legacy(old="<scenario> (implicit run)", new="run <scenario>")
         return ["run", *argv]
@@ -607,7 +688,7 @@ def _resolve_configured_server_url(*, parsed_args: Namespace) -> str:
 
 async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     """
-    Handle ``--stop-server``: probe, then terminate the listening process.
+    Handle ``stop-server``: probe, then terminate the listening process.
 
     Returns:
         int: Zero when no server is running or shutdown succeeds; one otherwise.
@@ -662,7 +743,7 @@ async def _handle_list_commands_async(*, client: Any, parsed_args: Namespace) ->
 
 async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) -> int:
     """
-    Handle ``--add-initializer``: upload one or more scripts to the server.
+    Handle ``add-initializer``: upload one or more scripts to the server.
 
     Returns:
         int: Exit code (``0`` on success, ``1`` on failure).
@@ -909,24 +990,13 @@ async def _run_scenario_async(
     return 1
 
 
-async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) -> int:
+async def _handle_run_async(*, client: Any, parsed_args: Namespace) -> int:
     """
-    Dispatch a verb that needs an open API client.
+    Handle the ``run`` verb: resolve the scenario, reparse its declared flags, then run it.
 
     Returns:
-        int: Exit code from the dispatched command.
+        int: Exit code (``0`` if the run completed successfully, ``1`` otherwise).
     """
-    command = parsed_args.command
-    if command in _LIST_VERBS:
-        return await _handle_list_commands_async(client=client, parsed_args=parsed_args)
-    if command == "add-initializer":
-        return await _handle_add_initializer_async(client=client, parsed_args=parsed_args)
-    if command == "scenario-results":
-        return await _handle_results_async(client=client, parsed_args=parsed_args)
-    if command == "scenario-history":
-        return await _handle_scenario_history_async(client=client, parsed_args=parsed_args)
-
-    # command == "run": the scenario positional is required by the run sub-parser.
     scenario_name = parsed_args.scenario_name
     scenario_meta = await client.get_scenario_async(scenario_name=scenario_name)
     if scenario_meta is None:
@@ -943,9 +1013,31 @@ async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) ->
     )
     if reparsed is None:
         return 1
-    parsed_args = reparsed
 
-    return await _run_scenario_async(client=client, parsed_args=parsed_args, scenario_meta=scenario_meta)
+    return await _run_scenario_async(client=client, parsed_args=reparsed, scenario_meta=scenario_meta)
+
+
+#: Post-client verbs, each a uniform ``(*, client, parsed_args) -> int`` handler. Reached
+#: only after the API client is open (start-server/stop-server are handled earlier, before
+#: any client exists), so dispatch here is a pure table lookup with no branching.
+_CLIENT_HANDLERS: dict[str, Callable[..., Any]] = {
+    "run": _handle_run_async,
+    "add-initializer": _handle_add_initializer_async,
+    "scenario-results": _handle_results_async,
+    "scenario-history": _handle_scenario_history_async,
+    **dict.fromkeys(_LIST_VERBS, _handle_list_commands_async),
+}
+
+
+async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) -> int:
+    """
+    Dispatch a verb that needs an open API client.
+
+    Returns:
+        int: Exit code from the dispatched command.
+    """
+    handler = _CLIENT_HANDLERS[parsed_args.command]
+    return await handler(client=client, parsed_args=parsed_args)
 
 
 async def _run_async(*, parsed_args: Namespace) -> int:

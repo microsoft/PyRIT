@@ -196,9 +196,46 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["list-scenarios", "--start-server"])
         assert args.start_server is True
 
+    def test_list_with_request_timeout(self):
+        args = pyrit_scan.parse_args(["list-scenarios", "--request-timeout", "30"])
+        assert args.request_timeout == 30
+
     def test_start_server_with_startup_timeout(self):
         args = pyrit_scan.parse_args(["start-server", "--startup-timeout", "45.5"])
         assert args.startup_timeout == 45.5
+
+
+class TestGlobalOptionScoping:
+    """Options are scoped to the commands that use them; unsupported combos are rejected."""
+
+    def test_top_level_help_with_global_option_shows_root_help(self, capsys, recwarn):
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_scan.parse_args(["--server-url", "http://x", "--help"])
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "<command>" in out
+        assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+    def test_stop_server_rejects_start_server(self):
+        assert pyrit_scan.main(["stop-server", "--start-server"]) == 2
+
+    def test_stop_server_rejects_request_timeout(self):
+        assert pyrit_scan.main(["stop-server", "--request-timeout", "7"]) == 2
+
+    def test_start_server_rejects_request_timeout(self):
+        assert pyrit_scan.main(["start-server", "--request-timeout", "7"]) == 2
+
+
+class TestClientHandlerTable:
+    """The client-dispatch table must stay in sync with the registered verbs."""
+
+    def test_client_handlers_cover_every_post_client_verb(self):
+        # _dispatch_with_client_async indexes _CLIENT_HANDLERS directly, so a client verb
+        # without a handler would KeyError at runtime. start-server/stop-server run before a
+        # client is opened and are handled in _run_async, so they are the only exclusions.
+        pre_client_verbs = {"start-server", "stop-server"}
+        expected = set(pyrit_scan._KNOWN_VERBS) - pre_client_verbs
+        assert set(pyrit_scan._CLIENT_HANDLERS) == expected
 
 
 class TestLegacyArgvShim:
