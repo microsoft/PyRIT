@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
+from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import (
@@ -64,6 +65,7 @@ async def _initialize(
     dataset_config: DatasetAttackConfiguration,
     include_baseline: bool | None = None,
     memory_labels: dict[str, str] | None = None,
+    technique_converters: dict[str, list[Converter]] | None = None,
 ) -> None:
     args: dict[str, Any] = {
         "objective_target": target,
@@ -73,6 +75,8 @@ async def _initialize(
         args["include_baseline"] = include_baseline
     if memory_labels is not None:
         args["memory_labels"] = memory_labels
+    if technique_converters is not None:
+        args["technique_converters"] = technique_converters
 
     with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"):
         scenario.set_params_from_args(args=args)
@@ -342,6 +346,28 @@ class TestFigStepAtomicAttacks:
         )
 
         assert all(attack._memory_labels == labels for attack in scenario._atomic_attacks)
+
+    async def test_user_converters_are_applied_only_to_visual_attack(
+        self, mock_objective_target, mock_objective_scorer
+    ):
+        converter = Base64Converter()
+        scenario = FigStep(objective_scorer=mock_objective_scorer)
+
+        await _initialize(
+            scenario=scenario,
+            target=mock_objective_target,
+            dataset_config=_inline_config(),
+            technique_converters={FigStepTechnique.VisualJailbreak.value: [converter]},
+        )
+
+        baseline, visual = scenario._atomic_attacks
+        baseline_attack = baseline.attack_technique.attack
+        visual_attack = visual.attack_technique.attack
+        assert isinstance(baseline_attack, PromptSendingAttack)
+        assert isinstance(visual_attack, PromptSendingAttack)
+        assert baseline_attack._request_converters == []
+        assert len(visual_attack._request_converters) == 1
+        assert visual_attack._request_converters[0].converters == [converter]
 
 
 class TestFigStepTechnique:

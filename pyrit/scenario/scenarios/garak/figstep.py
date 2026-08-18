@@ -11,9 +11,10 @@ from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, PromptDataType
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
     INLINE_DATASET_NAME,
     DatasetAttackConfiguration,
@@ -44,6 +45,13 @@ class FigStepTechnique(ScenarioTechnique):
 
     ALL = ("all", {"all"})
     VisualJailbreak = ("visual_jailbreak", set[str]())
+
+
+_VISUAL_JAILBREAK_FACTORY = AttackTechniqueFactory(
+    name=FigStepTechnique.VisualJailbreak.value,
+    attack_class=PromptSendingAttack,
+    technique_tags=["single_turn"],
+)
 
 
 class FigStep(Scenario):
@@ -191,15 +199,19 @@ class FigStep(Scenario):
                 )
             )
 
-        attack = PromptSendingAttack(
+        user_converters = ConverterConfiguration.from_converters(
+            converters=self._technique_converters.get(FigStepTechnique.VisualJailbreak.value, [])
+        )
+        attack_technique = _VISUAL_JAILBREAK_FACTORY.create(
             objective_target=context.objective_target,
             attack_scoring_config=self._scorer_config,
+            extra_request_converters=user_converters,
         )
         atomic_attacks.append(
             AtomicAttack(
                 atomic_attack_name=f"{FigStepTechnique.VisualJailbreak.value}_{dataset_label}",
                 display_group=dataset_label,
-                attack_technique=AttackTechnique(attack=attack),
+                attack_technique=attack_technique,
                 seed_groups=seed_groups,
                 memory_labels=context.memory_labels,
             )

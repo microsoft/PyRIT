@@ -112,7 +112,7 @@ await output_scenario_async(scenario_result)
 # > and image input in the same message. Select exactly one of the `figstep` or `figstep_pro`
 # > datasets; unrelated named datasets are rejected because they do not contain the required visual
 # > payload. By default, PyRIT also sends each sampled objective as direct text. Use
-# > `--no-include-baseline` to omit this comparison.
+# > `--include-baseline False` to omit this comparison.
 
 # %%
 figstep_dataset_config = DatasetAttackConfiguration(dataset_names=["figstep"], max_dataset_size=1)
@@ -131,7 +131,6 @@ print(f"Atomic attacks: {figstep_scenario.atomic_attack_count}")
 
 figstep_result = await figstep_scenario.run_async()  # type: ignore
 
-# %%
 await output_scenario_async(figstep_result)
 
 # %% [markdown]
