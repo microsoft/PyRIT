@@ -122,6 +122,10 @@ function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }
         <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
         <Text size={200}>{score.scorer_type}</Text>
       </div>
+      <div className={styles.scoreRow}>
+        <Text size={200} weight="semibold" className={styles.scoreLabel}>Objective</Text>
+        <Text size={200}>{score.is_objective_score ? 'Yes' : 'No'}</Text>
+      </div>
       {score.sourceLabel && (
         <div className={styles.scoreRow}>
           <Text size={200} weight="semibold" className={styles.scoreLabel}>Piece</Text>
@@ -285,29 +289,30 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
             >
               {visibleScores.map((score) => {
                 const scoreIndex = scores.indexOf(score)
+                const scoreContext = `Score ${score.score_value} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`
                 return (
-                  <Tab
+                  <Tooltip
                     key={score.id}
-                    value={score.id}
-                    id={`message-score-tab-${groupId}-${scoreIndex}`}
-                    aria-controls={`message-score-panel-${groupId}`}
-                    className={styles.scoreTab}
-                    data-testid={`message-score-tab-${groupId}-${scoreIndex}`}
+                    content={scoreContext}
+                    relationship="description"
+                    withArrow
                   >
-                    <span className={styles.scoreTabContent}>
-                      <Badge
-                        appearance={score.is_objective_score ? 'filled' : 'tint'}
-                        color="brand"
-                        size="small"
-                      >
-                        {score.score_value}
-                      </Badge>
-                      <span>{score.scorer_type}</span>
-                      {score.is_objective_score && (
-                        <span className={styles.objectiveScoreLabel}>Objective</span>
+                    <Tab
+                      value={score.id}
+                      id={`message-score-tab-${groupId}-${scoreIndex}`}
+                      aria-label={scoreContext}
+                      aria-controls={`message-score-panel-${groupId}`}
+                      className={mergeClasses(
+                        styles.scoreTab,
+                        score.is_objective_score && styles.objectiveScoreTab
                       )}
-                    </span>
-                  </Tab>
+                      data-testid={`message-score-tab-${groupId}-${scoreIndex}`}
+                    >
+                      <span className={styles.scoreTabValue}>
+                        {score.score_value}
+                      </span>
+                    </Tab>
+                  </Tooltip>
                 )
               })}
             </TabList>

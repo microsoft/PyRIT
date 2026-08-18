@@ -151,6 +151,7 @@ describe("MessageList", () => {
 
     expect(screen.getByText("float_scale")).toBeInTheDocument();
     expect(screen.getByText("SelfAskScaleScorer")).toBeInTheDocument();
+    expect(screen.getByText("Yes")).toBeInTheDocument();
     expect(screen.getByText("Piece 1 · text")).toBeInTheDocument();
     expect(screen.getByText("harmful")).toBeInTheDocument();
     expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
@@ -206,21 +207,36 @@ describe("MessageList", () => {
 
     expect(screen.getByRole("tablist", { name: "Scores" })).toBeInTheDocument();
     const objectiveTab = screen.getByRole("tab", {
-      name: /false oldscorer objective/i,
+      name: /score false from oldscorer, objective score/i,
     });
     const auxiliaryTab = screen.getByRole("tab", {
-      name: /0.9 newscorer/i,
+      name: /score 0.9 from newscorer/i,
     });
     expect(screen.getAllByRole("tab")).toEqual([objectiveTab, auxiliaryTab]);
+    expect(objectiveTab).toHaveTextContent("False");
+    expect(objectiveTab).not.toHaveTextContent("OldScorer");
+    expect(objectiveTab).not.toHaveTextContent("Objective");
+    expect(auxiliaryTab).toHaveTextContent("0.9");
+    expect(auxiliaryTab).not.toHaveTextContent("NewScorer");
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", objectiveTab.id);
     expect(screen.getByText("true_false")).toBeInTheDocument();
+    expect(screen.getByText("OldScorer")).toBeInTheDocument();
+    expect(screen.getByText("Yes")).toBeInTheDocument();
+
+    await user.hover(auxiliaryTab);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Score 0.9 from NewScorer, Piece 2 · text"
+    );
+    await user.unhover(auxiliaryTab);
 
     await user.click(auxiliaryTab);
 
     expect(auxiliaryTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", auxiliaryTab.id);
     expect(screen.getByText("float_scale")).toBeInTheDocument();
+    expect(screen.getByText("NewScorer")).toBeInTheDocument();
+    expect(screen.getByText("No")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: /view 2 scores, selected score 0.9 from newscorer/i,
@@ -301,7 +317,9 @@ describe("MessageList", () => {
     expect(
       screen.queryByRole("tab", { name: /overflowscorer/i })
     ).not.toBeInTheDocument();
-    const objectiveTab = screen.getByRole("tab", { name: /objectivescorer/i });
+    const objectiveTab = screen.getByRole("tab", {
+      name: /score 1 from objectivescorer, objective score/i,
+    });
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
     await user.click(screen.getByRole("button", { name: "Choose from 1 scores" }));
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
@@ -320,10 +338,10 @@ describe("MessageList", () => {
     await user.click(overflowScore);
 
     expect(
-      screen.getByRole("tab", { name: /3 overflowscorer/i })
+      screen.getByRole("tab", { name: /score 3 from overflowscorer/i })
     ).toHaveAttribute("aria-selected", "true");
     expect(
-      screen.queryByRole("tab", { name: /2 thirdscorer/i })
+      screen.queryByRole("tab", { name: /score 2 from thirdscorer/i })
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Choose from 1 scores" }));
