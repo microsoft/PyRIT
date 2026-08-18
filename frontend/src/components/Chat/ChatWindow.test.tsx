@@ -3507,6 +3507,23 @@ describe("ChatWindow Integration", () => {
       expect(mockedAttacksApi.getMessages.mock.calls.length).toBe(callsBefore);
     });
 
+    it("exports the displayed conversation as a self-contained HTML transcript", async () => {
+      const user = userEvent.setup();
+      await renderWithLoadedConversation();
+      const callsBefore = mockedAttacksApi.getMessages.mock.calls.length;
+      const { getDownloadAnchor } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByRole("menuitem", { name: /export as html/i }));
+
+      await waitFor(() => expect(URL.createObjectURL as jest.Mock).toHaveBeenCalled());
+      const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
+      expect(blob.type).toBe("text/html;charset=utf-8");
+      expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.html$/);
+      // WYSIWYG: export serializes in-state messages and makes no extra API call.
+      expect(mockedAttacksApi.getMessages.mock.calls.length).toBe(callsBefore);
+    });
+
     it("exports the displayed conversation id when it differs from the attack's main conversation", async () => {
       const user = userEvent.setup();
       // Viewing a branch: activeConversationId (displayed) differs from the

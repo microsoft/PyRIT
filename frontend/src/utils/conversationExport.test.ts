@@ -2,11 +2,12 @@ import {
   exportConversation,
   conversationToMarkdown,
   conversationToJson,
+  conversationToHtml,
   buildExportFilename,
   downloadTextFile,
   EXPORT_MIME_TYPES,
 } from "./conversationExport";
-import type { Message } from "../types";
+import type { Message, MessageAttachment } from "../types";
 
 const FIXED_NOW = new Date("2026-07-22T02:34:01.059Z");
 
@@ -17,6 +18,25 @@ function message(overrides: Partial<Message> = {}): Message {
     timestamp: "2026-07-22T02:30:07.000Z",
     ...overrides,
   };
+}
+
+function attachment(overrides: Partial<MessageAttachment> = {}): MessageAttachment {
+  return {
+    type: "image",
+    name: "result.png",
+    url: "/api/media?path=/home/op/dbdata/result.png",
+    mimeType: "image/png",
+    ...overrides,
+  };
+}
+
+function mockFetchOnce(body: string, { ok = true, type = "image/png" } = {}): jest.Mock {
+  const fetchMock = jest.fn().mockResolvedValue({
+    ok,
+    blob: () => Promise.resolve(new Blob([body], { type })),
+  });
+  global.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
 }
 
 function blobToText(blob: Blob): Promise<string> {
@@ -424,6 +444,249 @@ describe("conversationExport", () => {
     });
   });
 
+  describe("conversationToHtml", () => {
+    it("renders a header with the conversation id, exported time, and message count", async () => {
+      const html = await conversationToHtml([message()], "conv-1", FIXED_NOW);
+      expect(html).toContain("<h1>CoPyRIT conversation export</h1>");
+      expect(html).toContain("Conversation: conv-1");
+      expect(html).toContain("Exported: 2026-07-22T02:34:01.059Z");
+      expect(html).toContain("Messages: 1");
+    });
+
+    it("includes print styles so the file can be saved as PDF as-is", async () => {
+      const html = await conversationToHtml([message()], "conv-1", FIXED_NOW);
+      expect(html).toContain("@media print");
+      expect(html).toContain("page-break-inside: avoid");
+    });
+
+    it("includes the system message that the chat view hides", async () => {
+      const html = await conversationToHtml(
+        [message({ role: "system", content: "You are a helpful assistant." })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("System");
+      expect(html).toContain("You are a helpful assistant.");
+    });
+
+    it("drops loading placeholders", async () => {
+      const html = await conversationToHtml(
+        [message({ content: "kept" }), message({ content: "pending", isLoading: true })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("kept");
+      expect(html).not.toContain("pending");
+      expect(html).toContain("Messages: 1");
+    });
+
+    it("escapes markup so model output cannot execute when the file is opened", async () => {
+      const html = await conversationToHtml(
+        [message({ content: "<script>alert(1)</script> & \"quoted\"" })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+      expect(html).not.toContain("<script>alert(1)</script>");
+    });
+
+    it("escapes a hostile mime type instead of letting it break out of the src attribute", async () => {
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "",
+            attachments: [attachment({ url: 'data:image/png;base64,AAAA', mimeType: 'image/png" onerror="alert(1)' })],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).not.toContain('onerror="alert(1)"');
+      expect(html).toContain("&quot;");
+    });
+
+    it("omits the text block for a media-only message rather than rendering an empty one", async () => {
+      const html = await conversationToHtml(
+        [message({ content: "", attachments: [attachment({ url: "data:image/png;base64,AAAA" })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).not.toContain("<pre></pre>");
+      expect(html).toContain("<img src=\"data:image/png;base64,AAAA\"");
+    });
+
+    it("reuses a data URI without fetching it", async () => {
+      const fetchMock = mockFetchOnce("bytes");
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url: "data:image/png;base64,AAAA" })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(html).toContain("data:image/png;base64,AAAA");
+    });
+
+    it("reads a pending upload from its local file without fetching", async () => {
+      const fetchMock = mockFetchOnce("bytes");
+      const file = new File(["hello"], "pending.png", { type: "image/png" });
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url: "blob:http://localhost/abc", file })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(html).toContain("data:image/png;base64,aGVsbG8=");
+    });
+
+    it("embeds same-origin media fetched from the media endpoint", async () => {
+      const fetchMock = mockFetchOnce("hello");
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).toHaveBeenCalledWith("/api/media?path=/home/op/dbdata/result.png");
+      expect(html).toContain("data:image/png;base64,aGVsbG8=");
+    });
+
+    it("names but does not embed blob-hosted media, and never writes its signed url", async () => {
+      const fetchMock = mockFetchOnce("hello");
+      const url = "https://acct.blob.core.windows.net/c/result.png?sv=2024&sig=SECRETSIG";
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(html).not.toContain("SECRETSIG");
+      expect(html).not.toContain("blob.core.windows.net");
+      expect(html).toContain("[Image: result.png (image/png)]");
+    });
+
+    it("names but does not embed a blob url with no local file", async () => {
+      const fetchMock = mockFetchOnce("hello");
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url: "blob:http://localhost/abc" })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(html).toContain("[Image: result.png (image/png)]");
+    });
+
+    it("falls back to a placeholder when the media endpoint refuses the file", async () => {
+      mockFetchOnce(JSON.stringify({ detail: "Access denied" }), { ok: false, type: "application/json" });
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).not.toContain("Access denied");
+      expect(html).not.toContain("/api/media");
+    });
+
+    it("falls back to a placeholder when the fetch throws", async () => {
+      global.fetch = jest.fn().mockRejectedValue(new Error("network down")) as unknown as typeof fetch;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: result.png (image/png)]");
+    });
+
+    it("names but does not embed an attachment over the inline size cap", async () => {
+      mockFetchOnce("x".repeat(10 * 1024 * 1024 + 1));
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).not.toContain("base64");
+    });
+
+    it("names but does not embed a zero-byte attachment", async () => {
+      mockFetchOnce("");
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: result.png (image/png)]");
+    });
+
+    it("falls back to a generic mime type when the attachment has none", async () => {
+      mockFetchOnce("hello", { type: "" });
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ mimeType: "" })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("data:application/octet-stream;base64,aGVsbG8=");
+    });
+
+    it("renders players for audio and video and a download link for files", async () => {
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "",
+            attachments: [
+              attachment({ type: "audio", name: "a.mp3", mimeType: "audio/mpeg", url: "data:audio/mpeg;base64,AAAA" }),
+              attachment({ type: "video", name: "v.mp4", mimeType: "video/mp4", url: "data:video/mp4;base64,AAAA" }),
+              attachment({ type: "file", name: "f.txt", mimeType: "text/plain", url: "data:text/plain;base64,AAAA" }),
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("<audio controls");
+      expect(html).toContain("<video controls");
+      expect(html).toContain('download="f.txt"');
+    });
+
+    it("renders original content, original attachments, reasoning, and errors like Markdown does", async () => {
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "converted",
+            originalContent: "original",
+            originalAttachments: [attachment({ name: "before.png", url: "data:image/png;base64,AAAA" })],
+            reasoningSummaries: ["step one", "step two"],
+            error: { type: "rate_limit", description: "slow down" },
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("Original (before conversion):");
+      expect(html).toContain("original");
+      expect(html).toContain("Original attachments (before conversion):");
+      expect(html).toContain("step one");
+      expect(html).toContain("Reasoning:");
+      expect(html).toContain("Error (rate_limit): slow down");
+    });
+
+    it("preserves non-ASCII content", async () => {
+      const html = await conversationToHtml(
+        [message({ content: "emoji 🎉 عربى 中文" })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain('<meta charset="utf-8" />');
+      expect(html).toContain("emoji 🎉 عربى 中文");
+    });
+
+    it("renders an empty conversation without messages", async () => {
+      const html = await conversationToHtml([], null, FIXED_NOW);
+      expect(html).toContain("Conversation: (unsaved)");
+      expect(html).toContain("Messages: 0");
+      expect(html).not.toContain("<article");
+    });
+  });
+
   describe("exportConversation", () => {
     it("exports Markdown with the markdown mime type and rendered transcript", async () => {
       const { getAnchor } = installAnchorSpy();
@@ -458,6 +721,25 @@ describe("conversationExport", () => {
       const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
       expect(JSON.parse(await blobToText(blob)).exported_at).toBe(FIXED_NOW.toISOString());
       expect(getAnchor().download).toContain("2026-07-22T02-34-01-059");
+    });
+
+    // Markdown and JSON must not await, so they keep downloading in the same
+    // tick. Adding an await on those branches would silently break callers
+    // that do not expect a pending promise.
+    it("still downloads Markdown synchronously", () => {
+      installAnchorSpy();
+      void exportConversation({ messages: [message({ content: "hi" })], conversationId: "conv-1", format: "markdown", now: FIXED_NOW });
+      expect(URL.createObjectURL as jest.Mock).toHaveBeenCalledTimes(1);
+    });
+
+    it("exports HTML with the html mime type and an embedded transcript", async () => {
+      const { getAnchor } = installAnchorSpy();
+      await exportConversation({ messages: [message({ content: "hi" })], conversationId: "conv-1", format: "html", now: FIXED_NOW });
+
+      const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
+      expect(blob.type).toBe(EXPORT_MIME_TYPES.html);
+      expect(getAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.html$/);
+      expect(await blobToText(blob)).toContain("<h1>CoPyRIT conversation export</h1>");
     });
   });
 });

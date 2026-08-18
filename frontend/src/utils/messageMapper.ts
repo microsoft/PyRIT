@@ -8,9 +8,9 @@ import type {
 } from '../types'
 
 /**
- * Read a File and return its contents as a base64-encoded string (no data URI prefix).
+ * Read a File or Blob and return its contents as a base64-encoded string (no data URI prefix).
  */
-export function fileToBase64(file: File): Promise<string> {
+export function fileToBase64(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {

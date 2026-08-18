@@ -74,12 +74,13 @@ Click the panel toggle in the ribbon to open the conversations sidebar. This pan
 
 #### Exporting a Conversation
 
-Click the **Export** button in the ribbon to download the conversation that is currently displayed. Two formats are offered from the button's menu:
+Click the **Export** button in the ribbon to download the conversation that is currently displayed. Three formats are offered from the button's menu:
 
 - **Markdown (`.md`):** A human-readable transcript with each message labeled by role. Best for reading, sharing, or pasting into reports.
 - **JSON (`.json`):** A structured record of the conversation for tooling and further processing.
+- **HTML (`.html`):** A single self-contained page with the images, audio, and video embedded in the file itself. Best for sharing a conversation as evidence, and for printing — open it and use your browser's **Print → Save as PDF**.
 
-The export runs entirely in your browser and captures exactly what is shown in the chat, including the system prompt shown in the banner — no data is sent to the server. Export stays available for read-only historical conversations, and is disabled while a conversation is empty, still loading, or sending. The button is disabled until there is at least one user or model message to export.
+Markdown and JSON are built entirely in your browser with no network requests. The HTML export additionally re-reads each attachment from the backend — a read-only request for media that is already shown on screen — so it can embed it in the file; no conversation content is uploaded. Attachments the browser cannot read, such as media held in Azure Blob storage or files larger than 10 MB, are listed by name instead of embedded, and their source links are deliberately left out of the file. All formats capture exactly what is shown in the chat, including the system prompt shown in the banner. Export stays available for read-only historical conversations, and is disabled while a conversation is empty, still loading, or sending. The button is disabled until there is at least one user or model message to export.
 
 > **Note:** Exported files can contain adversarial prompts, model responses, and other sensitive material. Store and share them responsibly.
 
