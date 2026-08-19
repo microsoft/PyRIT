@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -124,19 +124,14 @@
 # Dataset-backed scenarios can also select a supported dataset:
 #
 # ```shell
-# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
-# ```
-#
-# Dataset-backed scenarios can also select a supported dataset:
-#
-# ```shell
-# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
+# pyrit_scan run garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
 # ```
 #
 # Custom initialization scripts are loaded by the backend at startup: list them in the
 # `initialization_scripts` section of the config the server loads (paths are relative to your
 # working directory, but full paths avoid confusion). Once the server is running with that
 # config, they apply to every `run`:
+#
 #
 # ```shell
 # pyrit_scan --config-file ./my_pyrit_conf.yaml start-server
@@ -168,9 +163,9 @@
 # # Add the registered "translation_spanish" converter to role_play_movie_script only
 # pyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish
 #
-# # Chain multiple converters (applied in order) and combine with plain techniques
-# pyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 # ```
+#
+# # Chain multiple converters (applied in order) and combine with plain techniquespyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 
 # %% [markdown]
 # #### Using Custom Scenarios
@@ -236,9 +231,9 @@ MyCustomScenario()
 #
 # # Run it with parameter overrides
 # pyrit_scan run my_custom_scenario --max-concurrency 10
-# ```
 #
-# The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
+# ```The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
+#
 
 # %% [markdown]
 # ## Stopping the Backend Server

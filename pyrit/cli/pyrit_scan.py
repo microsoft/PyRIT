@@ -525,7 +525,6 @@ _LEGACY_COMMAND_FLAGS: dict[str, str] = {
     "--list-datasets": "list-datasets",
     "--add-initializer": "add-initializer",
     "--stop-server": "stop-server",
-    "--scenario-results": "scenario-results",
 }
 
 
