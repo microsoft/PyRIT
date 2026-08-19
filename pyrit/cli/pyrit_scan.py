@@ -452,12 +452,17 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
 
     Returns:
         str | None: The server base URL, or ``None`` if unreachable.
+
+    Raises:
+        TypeError: If the configured server URL is not a string.
     """
     from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_settings
     from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address
 
     server_settings = read_server_settings(config_file=parsed_args.config_file)
     base_url = parsed_args.server_url or server_settings.url or DEFAULT_SERVER_URL
+    if not isinstance(base_url, str):
+        raise TypeError(f"Configured server URL must be a string, got {type(base_url).__name__}")
     startup_timeout = getattr(parsed_args, "startup_timeout", None) or server_settings.startup_timeout
 
     # Probe existing server
@@ -517,10 +522,16 @@ def _resolve_configured_server_url(*, parsed_args: Namespace) -> str:
 
     Returns:
         str: The configured server URL, falling back to the built-in default.
+
+    Raises:
+        TypeError: If the configured server URL is not a string.
     """
     from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
 
-    return parsed_args.server_url or read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
+    server_url = parsed_args.server_url or read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
+    if not isinstance(server_url, str):
+        raise TypeError(f"Configured server URL must be a string, got {type(server_url).__name__}")
+    return server_url
 
 
 async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
@@ -779,7 +790,7 @@ async def _poll_until_terminal_async(
 
     seen_retry_attack_ids: set[str] = set()
     while True:
-        run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
+        run: ScenarioRunSummary = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
         _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen_retry_attack_ids)
         _output.print_scenario_run_progress(run=run, total_techniques=total_techniques)
         if run.status in terminal_states:

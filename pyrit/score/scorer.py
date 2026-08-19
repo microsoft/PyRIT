@@ -120,7 +120,8 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
         """
-        return getattr(self, "_prompt_target", None)
+        prompt_target: PromptTarget | None = getattr(self, "_prompt_target", None)
+        return prompt_target
 
     def get_identifier(self) -> ComponentIdentifier:
         """

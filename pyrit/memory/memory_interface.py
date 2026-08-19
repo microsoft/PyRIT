@@ -854,7 +854,8 @@ class MemoryInterface(abc.ABC):
         filters: dict[str, Any],
     ) -> Sequence[IdentifierModel]:
         if identifier_hashes is not None and not identifier_hashes:
-            return []
+            empty_identifiers: list[IdentifierModel] = []
+            return empty_identifiers
 
         list_filters = {name: value for name, value in filters.items() if isinstance(value, list)}
         conditions = [
@@ -1405,11 +1406,15 @@ class MemoryInterface(abc.ABC):
             batch_size=effective_batch_size,
         )
 
+        if not other_large_params:
+            return results
+
+        filtered_results: list[Model] = list(results)
         for _col, vals, attr_name in other_large_params:
             vals_set = set(vals)
-            results = [e for e in results if getattr(e, attr_name, None) in vals_set]
+            filtered_results = [e for e in filtered_results if getattr(e, attr_name, None) in vals_set]
 
-        return results
+        return filtered_results
 
     def _insert_entry(self, entry: Base) -> None:
         """
@@ -1666,7 +1671,8 @@ class MemoryInterface(abc.ABC):
             Sequence[Score]: A list of Score objects that match the specified filters.
         """
         if score_ids is not None and len(score_ids) == 0:
-            return []
+            empty_scores: list[Score] = []
+            return empty_scores
 
         conditions: list[Any] = []
 
@@ -1699,7 +1705,8 @@ class MemoryInterface(abc.ABC):
 
         # No score_ids specified - use regular query
         if not conditions:
-            return []
+            no_condition_scores: list[Score] = []
+            return no_condition_scores
 
         score_entries: Sequence[ScoreEntry] = self._query_entries(ScoreEntry, conditions=and_(*conditions))
         return [entry.get_score() for entry in score_entries]
@@ -1762,7 +1769,8 @@ class MemoryInterface(abc.ABC):
         # with their originals.
         original_ids = {piece.original_prompt_id for piece in message_pieces if piece.original_prompt_id is not None}
         if not original_ids:
-            return []
+            no_original_ids_scores: list[Score] = []
+            return no_original_ids_scores
 
         score_entries = self._execute_batched_query(
             ScoreEntry,
@@ -1929,7 +1937,8 @@ class MemoryInterface(abc.ABC):
                 an exception is logged and an empty list is returned.
         """
         if prompt_ids is not None and len(prompt_ids) == 0:
-            return []
+            empty_message_pieces: list[MessagePiece] = []
+            return empty_message_pieces
 
         try:
             conditions: list[Any] = []
@@ -2464,7 +2473,7 @@ class MemoryInterface(abc.ABC):
                 distinct=True,
             )
             # Extract unique dataset names from the entries
-            dataset_names = set()
+            dataset_names: set[str] = set()
             for entry in entries:
                 if entry.dataset_name:
                     dataset_names.add(entry.dataset_name)
@@ -2895,7 +2904,8 @@ class MemoryInterface(abc.ABC):
                 with an ID-batched lookup.
         """
         if self._attack_result_query_has_empty_lookup(query=query):
-            return []
+            empty_attack_results: list[AttackResult] = []
+            return empty_attack_results
 
         conditions = self._build_attack_result_conditions(query=query)
         paginating = query.limit is not None or query.after is not None
@@ -3400,7 +3410,8 @@ class MemoryInterface(abc.ABC):
                 ordered by completion_time descending.
         """
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
-            return []
+            empty_scenario_results: list[ScenarioResult] = []
+            return empty_scenario_results
 
         conditions = self._build_scenario_result_query_conditions(
             scenario_name=scenario_name,

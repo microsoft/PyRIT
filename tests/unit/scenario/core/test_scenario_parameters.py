@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.models import ComponentIdentifier, Parameter
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.score import Scorer
@@ -558,7 +559,7 @@ class TestParamPersistenceJsonSafety:
 
     @staticmethod
     def _mock_target() -> MagicMock:
-        target = MagicMock()
+        target = MagicMock(spec=PromptTarget)
         target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test")
         return target
 
@@ -592,7 +593,7 @@ class TestParamPersistenceJsonSafety:
 
 
 def _mock_objective_target() -> MagicMock:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = ComponentIdentifier(class_name="MockTarget", class_module="test")
     return target
 

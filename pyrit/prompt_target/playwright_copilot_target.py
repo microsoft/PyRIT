@@ -377,7 +377,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         Returns:
             List of extracted text strings (may include placeholders)
         """
-        all_text_parts = []
+        all_text_parts: list[str] = []
 
         for group_idx, msg_group in enumerate(ai_message_groups):
             text_elements = await msg_group.query_selector_all(text_selector)
@@ -385,7 +385,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
             for text_elem in text_elements:
                 text = await text_elem.text_content()
-                if text:
+                if isinstance(text, str) and text:
                     all_text_parts.append(text.strip())
 
         return all_text_parts
@@ -712,10 +712,10 @@ class PlaywrightCopilotTarget(PromptTarget):
         Returns:
             Combined text content from all groups
         """
-        fallback_parts = []
+        fallback_parts: list[str] = []
         for msg_group in ai_message_groups:
             fallback_text = await msg_group.text_content()
-            if fallback_text:
+            if isinstance(fallback_text, str) and fallback_text:
                 fallback_parts.append(fallback_text.strip())
         fallback_result = "\n".join(fallback_parts).strip()
         logger.debug(f"Using fallback text: '{fallback_result}'")
