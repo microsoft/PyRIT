@@ -5487,7 +5487,7 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.6.1" },
     { name = "respx", specifier = ">=0.22.0" },
     { name = "ruff", specifier = ">=0.14.4" },
-    { name = "ty", specifier = ">=0.0.32,<0.0.70" },
+    { name = "ty", specifier = ">=0.0.32" },
     { name = "types-aiofiles", specifier = ">=24.1.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250516" },
     { name = "types-requests", specifier = ">=2.31.0.20250515" },
