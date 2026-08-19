@@ -79,7 +79,9 @@ from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunStat
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import (
+    Condition,
     ContentScorable,
+    MatchesObjective,
     MessageScorable,
     Scorable,
     Score,
@@ -140,6 +142,7 @@ __all__ = [
     "ComponentIdentifier",
     "ComponentType",
     "compute_eval_hash",
+    "Condition",
     "config_hash",
     "ConverterIdentifier",
     "Conversation",
@@ -176,6 +179,7 @@ __all__ = [
     "JSON_SCHEMA_METADATA_KEY",
     "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY",
     "JsonSchemaDefinition",
+    "MatchesObjective",
     "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
