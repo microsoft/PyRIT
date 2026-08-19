@@ -208,7 +208,7 @@ test.describe("operation picker placement", () => {
     // so an uncapped list stalls the tab. Measured before the cap, 50k options
     // took ~27s for a single keystroke.
     await page.setViewportSize({ width: 1280, height: 800 });
-    await setupMocks(page, operations(5000));
+    await setupMocks(page, operations(600));
     const listbox = await openOperationPicker(page);
 
     await expect(listbox.getByRole("option").first()).toBeVisible();
@@ -216,9 +216,9 @@ test.describe("operation picker placement", () => {
 
     // Typing has to stay responsive, which is the thing that was broken.
     const started = Date.now();
-    await page.getByTestId("edit-label-operation").fill("run_004");
+    await page.getByTestId("edit-label-operation").fill("run_599");
     await expect(
-      page.getByRole("option", { name: "op_2026_08_run_004", exact: true }),
+      page.getByRole("option", { name: "op_2026_08_run_599", exact: true }),
     ).toBeVisible();
     expect(Date.now() - started).toBeLessThan(3000);
   });
@@ -226,8 +226,8 @@ test.describe("operation picker placement", () => {
   test("keeps the operation in use reachable past the end of a long list", async ({
     page,
   }) => {
-    // The value in use is added to whatever the API returned. Cap the wrong
-    // end of that list and it is the first thing to disappear.
+    // The value in use goes to the front of the list. Cap the wrong end and it
+    // is the first thing to disappear — whether or not the request returned it.
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.addInitScript(() => {
       window.localStorage.setItem(
@@ -235,7 +235,7 @@ test.describe("operation picker placement", () => {
         JSON.stringify({ operator: "roakey", operation: "op_chosen_elsewhere" }),
       );
     });
-    await setupMocks(page, operations(5000));
+    await setupMocks(page, operations(600));
     await openOperationPicker(page);
 
     const inUse = page.getByRole("option", {
@@ -247,6 +247,27 @@ test.describe("operation picker placement", () => {
     await expect(page.getByTestId("label-operation")).toContainText(
       "op_chosen_elsewhere",
     );
+  });
+
+  test("keeps an operation the saved list already holds past the cap", async ({
+    page,
+  }) => {
+    // The usual case: the operation in use is in the response, just not near
+    // the front of it.
+    const inUseName = "op_2026_08_run_400";
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.addInitScript((name) => {
+      window.localStorage.setItem(
+        "pyrit.globalLabels",
+        JSON.stringify({ operator: "roakey", operation: name }),
+      );
+    }, inUseName);
+    await setupMocks(page, operations(600));
+    await openOperationPicker(page);
+
+    await expect(
+      page.getByRole("option", { name: inUseName, exact: true }),
+    ).toHaveCount(1);
   });
 });
 

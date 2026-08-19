@@ -81,11 +81,12 @@ function OperationPicker({
   // Each labels bar fetches its own list, and the popover and ribbon mount
   // separately, so a name created a moment ago may not be in `options` here.
   // List it anyway, or the picker offers to create the value already in use.
-  // It goes first so the cap below can never be what drops it.
+  // It goes first, whether or not the request returned it, so the cap below
+  // can never be what drops it.
   // The placeholder is not a real operation, so it stays off the list.
   const listed = useMemo(() => {
     const inUse = currentValue && currentValue !== DUMMY_VALUES.operation
-    return inUse && !options.includes(currentValue) ? [currentValue, ...options] : options
+    return inUse ? [currentValue, ...options.filter(option => option !== currentValue)] : options
   }, [options, currentValue])
 
   const matches = search ? listed.filter(option => option.toLowerCase().includes(search)) : listed
@@ -94,6 +95,15 @@ function OperationPicker({
   // rejecting it after the fact next to a bar that clips the message.
   const searchError = isNewName ? validateValue(search) : null
   const canCreate = isNewName && !searchError
+
+  // A name typed in full has to survive the cap too. Without this, typing an
+  // operation whose name is also a substring of two hundred others would leave
+  // it off the list, and Enter would commit whichever one happened to be first.
+  const shown = useMemo(() => {
+    const exact = matches.find(option => option.toLowerCase() === search)
+    const ordered = exact ? [exact, ...matches.filter(option => option !== exact)] : matches
+    return ordered.slice(0, MAX_LISTED)
+  }, [matches, search])
 
   // Deferred so focus lands on whatever the user moved to before this unmounts.
   const dismissAfterFocusMoves = () => { setTimeout(onDismiss, 0) }
@@ -138,7 +148,7 @@ function OperationPicker({
           No operations yet — type a name to create one
         </Option>
       )}
-      {matches.slice(0, MAX_LISTED).map(option => (
+      {shown.map(option => (
         <Option key={option} value={option}>{option}</Option>
       ))}
       {matches.length > MAX_LISTED && (

@@ -1188,10 +1188,10 @@ describe('LabelsBar', () => {
     })
 
     it('should keep the operation in use on the list when the list is capped', async () => {
-      // The value in use is appended to whatever the API returned, so a cap
-      // applied to the end of the list is exactly what would drop it.
+      // The value in use is put at the front of whatever the API returned, so
+      // a cap applied to the end of the list is exactly what would drop it.
       const onChange = jest.fn()
-      const many = Array.from({ length: 400 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
+      const many = Array.from({ length: 250 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
         labels: { operation: many, operator: ['alice'] },
@@ -1219,9 +1219,60 @@ describe('LabelsBar', () => {
       })
     })
 
+    it('should keep the operation in use on a capped list that already contains it', async () => {
+      // The saved list usually does contain the operation in use, and it can
+      // sit anywhere in it — including past the cap.
+      const onChange = jest.fn()
+      const many = Array.from({ length: 250 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
+      mockedLabelsApi.getLabels.mockResolvedValue({
+        source: 'attacks',
+        labels: { operation: many, operator: ['alice'] },
+      })
+      render(
+        <TestWrapper>
+          <LabelsBar
+            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_2026_08_run_0240' }}
+            onLabelsChange={onChange}
+          />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      // Listed once, not twice, even though it is also in the saved list.
+      expect(await screen.findAllByRole('option', { name: 'op_2026_08_run_0240' })).toHaveLength(1)
+      expect(screen.getByText('Showing 200 of 250 — type to narrow')).toBeInTheDocument()
+    })
+
+    it('should keep a name typed in full on a capped list', async () => {
+      // Every decoy contains the typed name, so the exact match sorts last and
+      // the cap would hide it — leaving Enter to commit a different operation.
+      const onChange = jest.fn()
+      const decoys = Array.from({ length: 250 }, (_, i) => `op_2026_08_run_042_${String(i).padStart(3, '0')}`)
+      renderWithOperations(onChange, [...decoys, 'run_042'].sort())
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.change(await screen.findByTestId('edit-label-operation'), {
+        target: { value: 'run_042' },
+      })
+
+      const exact = await screen.findByRole('option', { name: 'run_042' })
+      expect(exact).toBeInTheDocument()
+      // It is not offered for creation, because it already exists.
+      expect(screen.queryByRole('option', { name: 'Create "run_042"' })).not.toBeInTheDocument()
+
+      fireEvent.click(exact)
+      expect(onChange).toHaveBeenCalledWith({
+        ...DEFAULT_GLOBAL_LABELS,
+        operation: 'run_042',
+      })
+    })
+
     it('should show only the first page of a long list and say so', async () => {
       const onChange = jest.fn()
-      const many = Array.from({ length: 400 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
+      const many = Array.from({ length: 250 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
       renderWithOperations(onChange, many)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
@@ -1229,20 +1280,20 @@ describe('LabelsBar', () => {
       await screen.findByRole('option', { name: 'op_2026_08_run_0000' })
 
       expect(screen.getAllByRole('option')).toHaveLength(201)
-      expect(screen.getByText('Showing 200 of 400 — type to narrow')).toBeInTheDocument()
-      expect(screen.queryByRole('option', { name: 'op_2026_08_run_0399' })).not.toBeInTheDocument()
+      expect(screen.getByText('Showing 200 of 250 — type to narrow')).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'op_2026_08_run_0249' })).not.toBeInTheDocument()
 
       // Typing narrows it below the cap, and then the note goes away.
       fireEvent.change(screen.getByTestId('edit-label-operation'), {
-        target: { value: 'run_039' },
+        target: { value: 'run_024' },
       })
-      expect(await screen.findByRole('option', { name: 'op_2026_08_run_0399' })).toBeInTheDocument()
+      expect(await screen.findByRole('option', { name: 'op_2026_08_run_0249' })).toBeInTheDocument()
       expect(screen.queryByText(/type to narrow/)).not.toBeInTheDocument()
     })
 
     it('should not offer the cap note as something to choose', async () => {
       const onChange = jest.fn()
-      const many = Array.from({ length: 400 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
+      const many = Array.from({ length: 250 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
       renderWithOperations(onChange, many)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
