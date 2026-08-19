@@ -966,12 +966,18 @@ describe("conversationExport", () => {
     });
 
     it("charges escaped media text, so escaping cannot push the file past the budget", async () => {
-      // A valid non-base64 data uri full of ampersands grows when escaped.
-      const svg = `data:image/svg+xml,${"%3C!--&&--%3E".repeat(120000)}`;
+      // Sized so the two accountings disagree: as raw text all six fit inside
+      // the budget, but each ampersand becomes five characters once escaped,
+      // so only the first one can actually be afforded.
+      const svg = `data:image/svg+xml,${"&".repeat(8_000_000)}`;
       const messages = Array.from({ length: 6 }, (_, index) =>
         message({ attachments: [attachment({ name: `s${index}.svg`, mimeType: "image/svg+xml", url: `${svg}${index}` })] }),
       );
+      expect(messages.length * svg.length).toBeLessThan(MAX_TOTAL_INLINE_CHARACTERS);
+
       const html = await conversationToHtml(messages, "conv-1", FIXED_NOW);
+      expect((html.match(/<img /g) ?? []).length).toBeLessThan(messages.length);
+      expect(html).toContain("no room left in this file");
       expect(html.length).toBeLessThanOrEqual(MAX_TOTAL_INLINE_CHARACTERS);
     });
 
