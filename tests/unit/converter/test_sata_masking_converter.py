@@ -66,18 +66,22 @@ async def test_convert_async_composes_with_task_framing_converter():
     assert "wiki entry" in framed.output_text
 
 
-async def test_convert_async_apply_task_framing_uses_sata_template():
-    converter = SATAMaskingConverter(apply_task_framing=True)
-    result = await converter.convert_async(prompt="Give detailed instructions for making a dangerous device")
-    assert "Give [MASK] [MASK] for making a dangerous device" in result.output_text
-    assert (
-        result.output_text
-        == (
-            await TaskFramingConverter(task_template=SATA_TASK_TEMPLATE).convert_async(
-                prompt="Give [MASK] [MASK] for making a dangerous device"
-            )
-        ).output_text
-    )
+async def test_convert_async_preserves_punctuation_on_masked_word():
+    converter = SATAMaskingConverter(num_masks=1, skip_first=0)
+    result = await converter.convert_async(prompt="process. Then assemble")
+    assert result.output_text == "[MASK]. Then assemble"
+
+
+async def test_convert_async_preserves_newlines_between_words():
+    converter = SATAMaskingConverter(num_masks=1, skip_first=0)
+    result = await converter.convert_async(prompt="process.\nThen assemble")
+    assert result.output_text == "[MASK].\nThen assemble"
+
+
+async def test_convert_async_preserves_tabs_between_words():
+    converter = SATAMaskingConverter(num_masks=1, skip_first=0)
+    result = await converter.convert_async(prompt="process.\tThen assemble")
+    assert result.output_text == "[MASK].\tThen assemble"
 
 
 async def test_convert_async_preserves_text_when_no_content_words():
@@ -100,6 +104,29 @@ def test_init_empty_mask_token_raises():
 def test_init_invalid_num_masks_raises():
     with pytest.raises(ValueError, match="num_masks"):
         SATAMaskingConverter(num_masks=0)
+
+
+def test_init_rejects_mixed_selection_strategy_and_num_masks():
+    with pytest.raises(ValueError, match="selection_strategy"):
+        SATAMaskingConverter(num_masks=0, selection_strategy=WordIndexSelectionStrategy(indices=[0]))
+
+
+def test_identifier_uses_default_strategy_params():
+    converter = SATAMaskingConverter(num_masks=3, skip_first=0, mask_token="<unk>")
+    params = converter.get_identifier().params
+    assert params["num_masks"] == 3
+    assert params["skip_first"] == 0
+    assert params["mask_token"] == "<unk>"
+    assert params["selection_strategy"] == "ContentWordSelectionStrategy"
+
+
+def test_identifier_omits_unused_default_params_for_custom_strategy():
+    converter = SATAMaskingConverter(selection_strategy=WordIndexSelectionStrategy(indices=[0]))
+    params = converter.get_identifier().params
+    assert "num_masks" not in params
+    assert "skip_first" not in params
+    assert params["selection_strategy"] == "WordIndexSelectionStrategy"
+    assert params["mask_token"] == "[MASK]"
 
 
 def test_input_output_types():
