@@ -1,13 +1,37 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from io import BytesIO
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
 import pytest
 from PIL import Image
 
 from pyrit.converter import ImageCompressionConverter
+from pyrit.converter.base_image_to_image_converter import _download_image_from_url_async
+
+
+async def test_download_image_from_url_async_preserves_response_semantics():
+    response = AsyncMock()
+    with patch("pyrit.converter.base_image_to_image_converter.aiohttp.ClientSession") as client:
+        response.raise_for_status = client.raise_for_status
+        session = client.session
+        client.return_value.__aenter__.return_value = session
+        session.get.return_value.__aenter__.return_value = response
+
+        response.read.return_value = b"image"
+        assert await _download_image_from_url_async("https://example.com/image") == b"image"
+
+        response.raise_for_status.side_effect = aiohttp.ClientResponseError(client, (), status=404)
+        with pytest.raises(RuntimeError, match="Failed to download content from URL"):
+            await _download_image_from_url_async("https://example.com/image")
+
+        response.raise_for_status.side_effect = None
+        response.read.side_effect = asyncio.CancelledError()
+        with pytest.raises(asyncio.CancelledError):
+            await _download_image_from_url_async("https://example.com/image")
 
 
 @pytest.fixture
