@@ -32,6 +32,10 @@ const DUMMY_VALUES: Record<string, string> = {
   operation: 'op_trash_panda',
 }
 
+// Fluent's listbox renders every option as a real component, so a long list
+// stalls opening and typing. Past this many, you narrow the list by typing.
+const MAX_LISTED = 200
+
 interface LabelsBarProps {
   labels: Record<string, string>
   onLabelsChange: (labels: Record<string, string>) => void
@@ -77,10 +81,11 @@ function OperationPicker({
   // Each labels bar fetches its own list, and the popover and ribbon mount
   // separately, so a name created a moment ago may not be in `options` here.
   // List it anyway, or the picker offers to create the value already in use.
+  // It goes first so the cap below can never be what drops it.
   // The placeholder is not a real operation, so it stays off the list.
   const listed = useMemo(() => {
     const inUse = currentValue && currentValue !== DUMMY_VALUES.operation
-    return inUse && !options.includes(currentValue) ? [...options, currentValue] : options
+    return inUse && !options.includes(currentValue) ? [currentValue, ...options] : options
   }, [options, currentValue])
 
   const matches = search ? listed.filter(option => option.toLowerCase().includes(search)) : listed
@@ -133,9 +138,14 @@ function OperationPicker({
           No operations yet — type a name to create one
         </Option>
       )}
-      {matches.map(option => (
+      {matches.slice(0, MAX_LISTED).map(option => (
         <Option key={option} value={option}>{option}</Option>
       ))}
+      {matches.length > MAX_LISTED && (
+        <Option disabled className={noteClassName} value="--more" text="Type to narrow">
+          {`Showing ${MAX_LISTED} of ${matches.length} — type to narrow`}
+        </Option>
+      )}
       {canCreate && (
         <Option key="__create" value={search} text={search}>{`Create "${search}"`}</Option>
       )}

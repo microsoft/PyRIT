@@ -200,6 +200,54 @@ test.describe("operation picker placement", () => {
     await page.getByTestId("edit-label-operation").fill("op_chosen_elsewhere");
     await expect(page.getByRole("option", { name: /Create/ })).toHaveCount(0);
   });
+
+  test("stays usable when memory holds far more operations than fit", async ({
+    page,
+  }) => {
+    // The reason for the cap: Fluent renders every option as a real component,
+    // so an uncapped list stalls the tab. Measured before the cap, 50k options
+    // took ~27s for a single keystroke.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, operations(5000));
+    const listbox = await openOperationPicker(page);
+
+    await expect(listbox.getByRole("option").first()).toBeVisible();
+    expect(await listbox.getByRole("option").count()).toBeLessThanOrEqual(210);
+
+    // Typing has to stay responsive, which is the thing that was broken.
+    const started = Date.now();
+    await page.getByTestId("edit-label-operation").fill("run_004");
+    await expect(
+      page.getByRole("option", { name: "op_2026_08_run_004", exact: true }),
+    ).toBeVisible();
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("keeps the operation in use reachable past the end of a long list", async ({
+    page,
+  }) => {
+    // The value in use is added to whatever the API returned. Cap the wrong
+    // end of that list and it is the first thing to disappear.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.addInitScript(() => {
+      window.localStorage.setItem(
+        "pyrit.globalLabels",
+        JSON.stringify({ operator: "roakey", operation: "op_chosen_elsewhere" }),
+      );
+    });
+    await setupMocks(page, operations(5000));
+    await openOperationPicker(page);
+
+    const inUse = page.getByRole("option", {
+      name: "op_chosen_elsewhere",
+      exact: true,
+    });
+    await expect(inUse).toBeVisible();
+    await inUse.click();
+    await expect(page.getByTestId("label-operation")).toContainText(
+      "op_chosen_elsewhere",
+    );
+  });
 });
 
 test.describe("operation picker persistence", () => {

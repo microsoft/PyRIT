@@ -1187,6 +1187,73 @@ describe('LabelsBar', () => {
       expect(screen.getByRole('option', { name: 'op_already_set' })).toBeInTheDocument()
     })
 
+    it('should keep the operation in use on the list when the list is capped', async () => {
+      // The value in use is appended to whatever the API returned, so a cap
+      // applied to the end of the list is exactly what would drop it.
+      const onChange = jest.fn()
+      const many = Array.from({ length: 400 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
+      mockedLabelsApi.getLabels.mockResolvedValue({
+        source: 'attacks',
+        labels: { operation: many, operator: ['alice'] },
+      })
+      render(
+        <TestWrapper>
+          <LabelsBar
+            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_chosen_elsewhere' }}
+            onLabelsChange={onChange}
+          />
+        </TestWrapper>
+      )
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+
+      const inUse = await screen.findByRole('option', { name: 'op_chosen_elsewhere' })
+      expect(inUse).toBeInTheDocument()
+
+      // And it is still selectable, not just present.
+      fireEvent.click(inUse)
+      expect(onChange).toHaveBeenCalledWith({
+        ...DEFAULT_GLOBAL_LABELS,
+        operation: 'op_chosen_elsewhere',
+      })
+    })
+
+    it('should show only the first page of a long list and say so', async () => {
+      const onChange = jest.fn()
+      const many = Array.from({ length: 400 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
+      renderWithOperations(onChange, many)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      await screen.findByRole('option', { name: 'op_2026_08_run_0000' })
+
+      expect(screen.getAllByRole('option')).toHaveLength(201)
+      expect(screen.getByText('Showing 200 of 400 — type to narrow')).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'op_2026_08_run_0399' })).not.toBeInTheDocument()
+
+      // Typing narrows it below the cap, and then the note goes away.
+      fireEvent.change(screen.getByTestId('edit-label-operation'), {
+        target: { value: 'run_039' },
+      })
+      expect(await screen.findByRole('option', { name: 'op_2026_08_run_0399' })).toBeInTheDocument()
+      expect(screen.queryByText(/type to narrow/)).not.toBeInTheDocument()
+    })
+
+    it('should not offer the cap note as something to choose', async () => {
+      const onChange = jest.fn()
+      const many = Array.from({ length: 400 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
+      renderWithOperations(onChange, many)
+      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
+
+      fireEvent.click(screen.getByTestId('label-operation'))
+      const note = await screen.findByRole('option', { name: /type to narrow/ })
+
+      expect(note).toHaveAttribute('aria-disabled', 'true')
+      fireEvent.click(note)
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
     it('should keep saying the operations could not be loaded while a name is typed', async () => {
       // The note answers "why is this list empty"; typing does not answer it.
       const onChange = jest.fn()
