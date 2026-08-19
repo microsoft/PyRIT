@@ -13,8 +13,17 @@ parameters:
     displayName: Space-separated adversarial target registry names
     type: string
     default: azure_openai_gpt4o azure_gpt4o_unsafe_chat
-  - name: techniques
-    displayName: Space-separated technique names
+  - name: techniquePreset
+    displayName: Technique set
+    type: string
+    default: union
+    values:
+      - current-default
+      - candidate
+      - union
+      - custom
+  - name: customTechniques
+    displayName: Custom space-separated techniques (used when Technique set is custom)
     type: string
     default: >-
       role_play_movie_script role_play_video_game role_play_trivia_game
@@ -32,6 +41,19 @@ parameters:
     displayName: Maximum concurrency
     type: number
     default: 1
+  - name: maxRetries
+    displayName: Maximum scenario retries
+    type: number
+    default: 0
+  - name: logLevel
+    displayName: Log level
+    type: string
+    default: INFO
+    values:
+      - DEBUG
+      - INFO
+      - WARNING
+      - ERROR
 
 jobs:
   - job: AdversarialBenchmark
@@ -127,6 +149,7 @@ jobs:
             uv run pyrit_scan \
               --start-server \
               --config-file "$config_file" \
+              --log-level "$LOG_LEVEL_INPUT" \
               --startup-timeout 180
 
             stop_server() {
@@ -134,17 +157,44 @@ jobs:
             }
             trap stop_server EXIT
 
+            case "$TECHNIQUE_PRESET_INPUT" in
+              current-default)
+                resolved_techniques="role_play_movie_script role_play_video_game role_play_trivia_game role_play_persuasion role_play_persuasion_written red_teaming context_compliance"
+                ;;
+              candidate)
+                resolved_techniques="role_play_movie_script red_teaming context_compliance tap crescendo_simulated"
+                ;;
+              union)
+                resolved_techniques="role_play_movie_script role_play_video_game role_play_trivia_game role_play_persuasion role_play_persuasion_written red_teaming context_compliance tap crescendo_simulated"
+                ;;
+              custom)
+                resolved_techniques="$CUSTOM_TECHNIQUES_INPUT"
+                ;;
+              *)
+                echo "Unknown technique preset: $TECHNIQUE_PRESET_INPUT" >&2
+                exit 2
+                ;;
+            esac
+
+            if [[ -z "${resolved_techniques// }" ]]; then
+              echo "At least one technique is required." >&2
+              exit 2
+            fi
+
             read -r -a adversarial_targets <<< "$ADVERSARIAL_TARGETS_INPUT"
-            read -r -a techniques <<< "$TECHNIQUES_INPUT"
+            read -r -a techniques <<< "$resolved_techniques"
+            export RESOLVED_TECHNIQUES_INPUT="$resolved_techniques"
 
             set +e
             uv run pyrit_scan benchmark.adversarial \
+              --log-level "$LOG_LEVEL_INPUT" \
               --target "$OBJECTIVE_TARGET_INPUT" \
               --adversarial-targets "${adversarial_targets[@]}" \
               --techniques "${techniques[@]}" \
               --dataset-names "$DATASET_NAME_INPUT" \
               --max-dataset-size "$MAX_DATASET_SIZE_INPUT" \
               --max-concurrency "$MAX_CONCURRENCY_INPUT" \
+              --max-retries "$MAX_RETRIES_INPUT" \
               2>&1 | tee "$scenario_log"
             benchmark_exit_code=${PIPESTATUS[0]}
             set -e
@@ -182,10 +232,13 @@ jobs:
                 "exit_code": int(os.environ["BENCHMARK_EXIT_CODE"]),
                 "objective_target": os.environ["OBJECTIVE_TARGET_INPUT"],
                 "adversarial_targets": os.environ["ADVERSARIAL_TARGETS_INPUT"].split(),
-                "techniques": os.environ["TECHNIQUES_INPUT"].split(),
+                "technique_preset": os.environ["TECHNIQUE_PRESET_INPUT"],
+                "techniques": os.environ["RESOLVED_TECHNIQUES_INPUT"].split(),
                 "dataset_name": os.environ["DATASET_NAME_INPUT"],
                 "max_dataset_size": int(os.environ["MAX_DATASET_SIZE_INPUT"]),
                 "max_concurrency": int(os.environ["MAX_CONCURRENCY_INPUT"]),
+                "max_retries": int(os.environ["MAX_RETRIES_INPUT"]),
+                "log_level": os.environ["LOG_LEVEL_INPUT"],
             }
             output = Path(os.environ["ARTIFACT_DIR"]) / "run-manifest.json"
             output.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -213,10 +266,13 @@ jobs:
         env:
           OBJECTIVE_TARGET_INPUT: "${{ parameters.objectiveTarget }}"
           ADVERSARIAL_TARGETS_INPUT: "${{ parameters.adversarialTargets }}"
-          TECHNIQUES_INPUT: "${{ parameters.techniques }}"
+          TECHNIQUE_PRESET_INPUT: "${{ parameters.techniquePreset }}"
+          CUSTOM_TECHNIQUES_INPUT: "${{ parameters.customTechniques }}"
           DATASET_NAME_INPUT: "${{ parameters.datasetName }}"
           MAX_DATASET_SIZE_INPUT: "${{ parameters.maxDatasetSize }}"
           MAX_CONCURRENCY_INPUT: "${{ parameters.maxConcurrency }}"
+          MAX_RETRIES_INPUT: "${{ parameters.maxRetries }}"
+          LOG_LEVEL_INPUT: "${{ parameters.logLevel }}"
 
       - task: PublishPipelineArtifact@1
         displayName: Publish benchmark snapshot
