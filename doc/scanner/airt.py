@@ -44,7 +44,7 @@ objective_target = OpenAIChatTarget()
 # different attack technique to the full set of harm datasets.
 #
 # ```bash
-# pyrit_scan airt.rapid_response \
+# pyrit_scan run airt.rapid_response \
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques role_play_movie_script \
@@ -84,7 +84,7 @@ await output_scenario_async(scenario_result)
 # default, each with its own dataset, escalation prompt, and conversation-level scorer.
 #
 # ```bash
-# pyrit_scan airt.psychosocial --target openai_chat --techniques tone
+# pyrit_scan run airt.psychosocial --target openai_chat --techniques tone
 # ```
 #
 # Each sub-harm escalates a simulated multi-turn conversation toward the objective, then layers the
@@ -125,7 +125,7 @@ await output_scenario_async(scenario_result)
 # and multi-turn attacks.
 #
 # ```bash
-# pyrit_scan airt.cyber \
+# pyrit_scan run airt.cyber \
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques multi_turn \
@@ -168,7 +168,7 @@ await output_scenario_async(scenario_result)
 # included by default so complying with the bare objective is itself visible.
 #
 # ```bash
-# pyrit_scan airt.jailbreak \
+# pyrit_scan run airt.jailbreak \
 #   --initializers target load_default_datasets \
 #   --target openai_chat \
 #   --dataset-names harmbench \
@@ -208,7 +208,7 @@ await output_scenario_async(scenario_result)
 # plagiarism detection.
 #
 # ```bash
-# pyrit_scan airt.leakage --target openai_chat --techniques first_letter --max-dataset-size 1
+# pyrit_scan run airt.leakage --target openai_chat --techniques first_letter --max-dataset-size 1
 # ```
 #
 # **Available techniques:** ALL, SINGLE_TURN, MULTI_TURN, IP, SENSITIVE_DATA, FirstLetter, Image, RolePlay, Crescendo
@@ -258,7 +258,7 @@ await output_scenario_async(scenario_result)
 # Tests whether a target can be induced to generate scam, phishing, or fraud content.
 #
 # ```bash
-# pyrit_scan airt.scam \
+# pyrit_scan run airt.scam \
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques context_compliance \
