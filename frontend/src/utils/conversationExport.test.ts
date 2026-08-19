@@ -618,6 +618,21 @@ describe("conversationExport", () => {
       expect(html).toContain("&quot;");
     });
 
+    it("escapes a hostile mime type on media it fetched, which is the only path that writes one", async () => {
+      // The fetched path builds the data uri itself, so the mime type reaches
+      // the src attribute here and nowhere else.
+      mockFetchOnce("hi");
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ mimeType: 'image/png" onerror="alert(1)' })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      const src = html.match(/<img src="([^"]*)"/)?.[1] ?? "";
+      expect(src).toContain("&quot;");
+      expect(src).not.toContain('" onerror=');
+      expect(html).not.toContain('onerror="alert(1)"');
+    });
+
     it("omits the text block for a media-only message rather than rendering an empty one", async () => {
       const html = await conversationToHtml(
         [message({ content: "", attachments: [attachment({ url: "data:image/png;base64,AAAA" })] })],
