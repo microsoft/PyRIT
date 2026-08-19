@@ -37,6 +37,13 @@ const MEDIA_LABELS: Record<MessageAttachment['type'], string> = {
  */
 const MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
+/**
+ * The only path the export reads attachment bytes from. Any other same-origin
+ * path is answered by the single-page app, whose HTML would otherwise be
+ * embedded as if it were the media.
+ */
+const MEDIA_ENDPOINT_PATH = '/api/media'
+
 const HTML_STYLESHEET = `
 body { font-family: 'Segoe UI', system-ui, sans-serif; color: #201f1e; margin: 2rem auto; max-width: 50rem; }
 h1 { font-size: 1.5rem; }
@@ -311,19 +318,24 @@ async function resolveMedia(messages: Message[]): Promise<ResolvedMedia> {
  * Resolve one attachment to an embeddable `data:` URI, or `null` when the
  * bytes are unavailable. Already-inline values are reused as-is, pending
  * uploads are read from their local `File`, and everything else is fetched
- * only when it is same-origin — a cross-origin or `blob:` URL is blocked by
- * the app's own content security policy, so requesting it would only produce a
- * console error.
+ * only from the media endpoint — a cross-origin or `blob:` URL is blocked by
+ * the app's own content security policy, and any other same-origin path is
+ * answered by the single-page app rather than by media bytes.
  */
 async function attachmentToDataUri(attachment: MessageAttachment): Promise<string | null> {
+  // Only inert media is embedded. A file attachment can hold active content,
+  // and this artifact is meant to be shared, so files are named instead.
+  if (attachment.type === 'file') {
+    return null
+  }
   try {
     if (attachment.url.startsWith('data:')) {
-      return attachment.url
+      return withinInlineCap(attachment.url) ? attachment.url : null
     }
     if (attachment.file) {
       return await blobToDataUri(attachment.file, attachment.mimeType)
     }
-    if (!isSameOriginHttpUrl(attachment.url)) {
+    if (!isMediaEndpointUrl(attachment.url)) {
       return null
     }
     const response = await fetch(attachment.url)
@@ -334,6 +346,22 @@ async function attachmentToDataUri(attachment: MessageAttachment): Promise<strin
   } catch {
     return null
   }
+}
+
+/**
+ * Report whether an already-inline `data:` URI is small enough to embed. Only
+ * base64 payloads carry a measurable size; anything else is short by nature.
+ */
+function withinInlineCap(dataUri: string): boolean {
+  const marker = ';base64,'
+  const start = dataUri.indexOf(marker)
+  if (start === -1) {
+    return true
+  }
+  const payload = dataUri.slice(start + marker.length)
+  const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0
+  const bytes = Math.floor((payload.length * 3) / 4) - padding
+  return bytes > 0 && bytes <= MAX_INLINE_ATTACHMENT_BYTES
 }
 
 /** Encode a blob as a `data:` URI, skipping empty and oversized payloads. */
@@ -348,10 +376,14 @@ async function blobToDataUri(blob: Blob, mimeType: string): Promise<string | nul
   return `data:${mimeType || blob.type || 'application/octet-stream'};base64,${base64}`
 }
 
-function isSameOriginHttpUrl(url: string): boolean {
+function isMediaEndpointUrl(url: string): boolean {
   try {
     const parsed = new URL(url, window.location.origin)
-    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.origin === window.location.origin
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.origin === window.location.origin &&
+      parsed.pathname === MEDIA_ENDPOINT_PATH
+    )
   } catch {
     return false
   }
@@ -406,15 +438,12 @@ function renderAttachment(attachment: MessageAttachment, dataUri: string | null)
   // The MIME type is echoed into the data URI, so escape it like any other
   // untrusted value before it lands in an attribute.
   const source = escapeHtml(dataUri)
-  const name = escapeHtml(attachment.name)
   const body =
     attachment.type === 'image'
-      ? `<img src="${source}" alt="${name}" />`
+      ? `<img src="${source}" alt="${escapeHtml(attachment.name)}" />`
       : attachment.type === 'audio'
         ? `<audio controls src="${source}"></audio>`
-        : attachment.type === 'video'
-          ? `<video controls src="${source}"></video>`
-          : `<a href="${source}" download="${name}">${caption}</a>`
+        : `<video controls src="${source}"></video>`
   return `<figure>${body}<figcaption>${caption}</figcaption></figure>`
 }
 

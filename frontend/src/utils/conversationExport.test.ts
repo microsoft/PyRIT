@@ -490,6 +490,41 @@ describe("conversationExport", () => {
       expect(html).not.toContain("<script>alert(1)</script>");
     });
 
+    it("escapes a hostile url so it cannot break out of the src attribute", async () => {
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "",
+            attachments: [attachment({ url: 'data:image/png;base64,AAAA" onerror="alert(1)' })],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      const img = new DOMParser().parseFromString(html, "text/html").querySelector("img");
+      expect(img).not.toBeNull();
+      expect(img?.getAttribute("onerror")).toBeNull();
+      expect(img?.getAttributeNames().sort()).toEqual(["alt", "src"]);
+    });
+
+    it("escapes a hostile filename so it cannot break out of the alt attribute", async () => {
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "",
+            attachments: [
+              attachment({ url: "data:image/png;base64,AAAA", name: 'x" onerror="alert(1)' }),
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      const img = new DOMParser().parseFromString(html, "text/html").querySelector("img");
+      expect(img?.getAttribute("onerror")).toBeNull();
+      expect(img?.getAttribute("alt")).toBe('x" onerror="alert(1)');
+    });
+
     it("escapes a hostile mime type instead of letting it break out of the src attribute", async () => {
       const html = await conversationToHtml(
         [
@@ -607,6 +642,72 @@ describe("conversationExport", () => {
       expect(html).not.toContain("base64");
     });
 
+    it("names but does not embed an inline data uri over the size cap", async () => {
+      const oversized = `data:image/png;base64,${"A".repeat(14 * 1024 * 1024)}`;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url: oversized })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).not.toContain("base64,AAAA");
+      expect(html.length).toBeLessThan(10000);
+    });
+
+    it("names but does not embed an empty inline data uri", async () => {
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url: "data:image/png;base64," })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).not.toContain("<img");
+    });
+
+    it("does not fetch a same-origin url outside the media endpoint", async () => {
+      // Any other same-origin path is answered by the single-page app, whose
+      // HTML would otherwise be embedded as if it were the image.
+      const fetchMock = mockFetchOnce("<!doctype html><html>app shell</html>", { type: "text/html" });
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url: "/attacks/conv-1" })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).not.toContain("app shell");
+    });
+
+    it("prefers the attachment mime type over the one the server reports", async () => {
+      mockFetchOnce("hello", { type: "text/plain" });
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ mimeType: "image/png" })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("data:image/png;base64,aGVsbG8=");
+    });
+
+    it("names file attachments rather than embedding them as links", async () => {
+      const fetchMock = mockFetchOnce("hello");
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "",
+            attachments: [
+              attachment({ type: "file", name: "evil.html", mimeType: "text/html", url: "data:text/html;base64,AAAA" }),
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(html).toContain("[File: evil.html (text/html)]");
+      expect(html).not.toContain("<a ");
+      expect(html).not.toContain("data:text/html");
+    });
+
     it("names but does not embed a zero-byte attachment", async () => {
       mockFetchOnce("");
       const html = await conversationToHtml(
@@ -627,7 +728,7 @@ describe("conversationExport", () => {
       expect(html).toContain("data:application/octet-stream;base64,aGVsbG8=");
     });
 
-    it("renders players for audio and video and a download link for files", async () => {
+    it("renders players for audio and video and names other files", async () => {
       const html = await conversationToHtml(
         [
           message({
@@ -644,7 +745,7 @@ describe("conversationExport", () => {
       );
       expect(html).toContain("<audio controls");
       expect(html).toContain("<video controls");
-      expect(html).toContain('download="f.txt"');
+      expect(html).toContain("[File: f.txt (text/plain)]");
     });
 
     it("renders original content, original attachments, reasoning, and errors like Markdown does", async () => {

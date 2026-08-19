@@ -128,6 +128,7 @@ export default function ChatWindow({
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   // Conversation-wide preference for rendering message text as Markdown.
@@ -718,15 +719,19 @@ export default function ChatWindow({
     !awaitingConversationLoad
 
   const handleExport = async (format: ExportFormat) => {
-    if (isExporting) {
+    // A ref, not the state flag: two clicks in the same tick would both read
+    // the pre-render value and start duplicate exports.
+    if (isExportingRef.current) {
       return
     }
+    isExportingRef.current = true
     setIsExporting(true)
     try {
       await exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
     } catch (err) {
       console.error('Failed to export conversation:', err)
     } finally {
+      isExportingRef.current = false
       setIsExporting(false)
     }
   }
