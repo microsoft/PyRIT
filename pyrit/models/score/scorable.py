@@ -35,6 +35,19 @@ class MessageScorable(Scorable):
 
     message_piece_ids: tuple[uuid.UUID | str, ...]
 
+    def __post_init__(self) -> None:
+        """
+        Reject id tuples that cannot name evidence.
+
+        Raises:
+            ValueError: If no ids are given, or if an id is repeated.
+        """
+        if not self.message_piece_ids:
+            raise ValueError("A MessageScorable must name at least one message piece.")
+        seen = [str(piece_id) for piece_id in self.message_piece_ids]
+        if len(set(seen)) != len(seen):
+            raise ValueError(f"A MessageScorable must name each message piece once, got {seen}.")
+
     @classmethod
     def from_message(
         cls,
@@ -70,7 +83,10 @@ class ContentScorable(Scorable):
         Describe the converted content of a single-piece ephemeral message.
 
         Scorers consume ``converted_value``, so this adapter preserves the converted value
-        and data type rather than the pre-conversion input.
+        and data type rather than the pre-conversion input. Everything else the message
+        carried is dropped, including its role and its error state, so a scorer's
+        deterministic blocked-response handling no longer applies. Use
+        ``MessageScorer.score_message_async`` when that state is part of the evidence.
 
         Args:
             message (Message): The ephemeral message whose converted content to take.

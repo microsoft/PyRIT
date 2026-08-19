@@ -31,7 +31,8 @@ from pyrit.score.float_scale.self_ask_likert_scorer import (
     render_likert_system_prompt,
 )
 from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer, render_scale_system_prompt
-from pyrit.score.message_scorer import MessageScorer
+from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.message_scorer import MessageScorer, MessageScoringOptions
 from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
 from pyrit.score.scorer import Scorer
@@ -191,7 +192,9 @@ __all__ = [
     "LlamaGuardScorer",
     "MarkdownInjectionScorer",
     "MessageScorable",
+    "MessageScorableResolver",
     "MessageScorer",
+    "MessageScoringOptions",
     "MethKeywordScorer",
     "MetricsType",
     "NerveAgentKeywordScorer",

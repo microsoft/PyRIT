@@ -10,10 +10,9 @@ if TYPE_CHECKING:
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
-    ContentScorable,
+    Condition,
     Message,
     MessagePiece,
-    MessageScorable,
     Score,
     ScoringExpectation,
 )
@@ -63,6 +62,15 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
+    def supported_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report what the wrapped scorer consumes.
+
+        Returns:
+            frozenset[type[Condition]]: The condition types the wrapped scorer routes.
+        """
+        return self._scorer.supported_conditions()
+
     async def _score_async(
         self,
         message: Message,
@@ -82,12 +90,8 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         Returns:
             list[Score]: A list containing a single Score object with the inverted true/false value.
         """
-        scores = await self._scorer.score_async(
-            scorable=(
-                ContentScorable.from_message(message)
-                if len(message.message_pieces) == 1 and message.get_piece().not_in_memory
-                else MessageScorable.from_message(message)
-            ),
+        scores = await self._scorer.score_message_async(
+            message=message,
             expectation=ScoringExpectation(objective=objective),
         )
         inv_score = scores[0]

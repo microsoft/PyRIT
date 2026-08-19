@@ -14,6 +14,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
+    Condition,
     ContentScorable,
     Identifiable,
     Message,
@@ -35,11 +36,58 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
 
 #: Release in which the message-shaped ``score_async`` parameters are removed.
 LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
+
+
+async def _legacy_score_scorable_async(
+    self: Scorer,
+    *,
+    scorable: Scorable,
+    expectation: ScoringExpectation | None,
+) -> list[Score]:
+    """
+    Route a scorable to a pre-2.0 subclass that only implements ``_score_async``.
+
+    Returns:
+        list[Score]: The scores the legacy scorer body produced.
+    """
+    from pyrit.score.message_scorable_resolver import MessageScorableResolver
+
+    print_deprecation_message(
+        old_item=f"{type(self).__name__}._score_async on a direct Scorer subclass",
+        new_item="pyrit.score.MessageScorer (or TrueFalseScorer / FloatScaleScorer) as the base class",
+        removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+    )
+    resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
+    message = resolver.resolve(scorable=scorable, memory=self._memory)
+    legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
+    return await legacy_score_async(message, objective=expectation.objective if expectation else None)
+
+
+def _adapt_legacy_message_scorer(cls: type) -> None:
+    """
+    Give a pre-2.0 direct ``Scorer`` subclass an implementation of the scorable contract.
+
+    Subclasses of ``MessageScorer`` already inherit one, so they are left alone. A class that
+    predates the split implements ``_score_async`` instead, and would otherwise fail to
+    instantiate because ``_score_scorable_async`` is abstract. ``ABCMeta`` recomputes
+    ``__abstractmethods__`` after ``__init_subclass__``, so assigning it here is enough.
+    """
+    for base in cls.__mro__:
+        if base is Scorer:
+            break
+        if "_score_scorable_async" in base.__dict__:
+            return
+
+    if not any("_score_async" in base.__dict__ for base in cls.__mro__):
+        return
+
+    cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment]
 
 
 class Scorer(Identifiable, abc.ABC):
@@ -62,6 +110,11 @@ class Scorer(Identifiable, abc.ABC):
     #: validate it.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
+    #: Condition types this scorer consumes. An expectation is a routing envelope, so a
+    #: condition that no scorer in the tree declares is a configuration error rather than
+    #: something to drop silently. Wrapping scorers report their children's union.
+    SUPPORTED_CONDITIONS: ClassVar[frozenset[type[Condition]]] = frozenset()
+
     _identifier: ComponentIdentifier | None = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -75,17 +128,42 @@ class Scorer(Identifiable, abc.ABC):
         from pyrit.common.brick_contract import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scorer")
+        _adapt_legacy_message_scorer(cls)
 
-    def __init__(self, *, chat_target: PromptTarget | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        chat_target: PromptTarget | None = None,
+        validator: ScorerPromptValidator | None = None,
+    ) -> None:
         """
         Initialize the Scorer.
 
         Args:
             chat_target (PromptTarget | None): Chat target used by the scorer, if any. When
                 provided, it is validated against ``TARGET_REQUIREMENTS``.
+            validator (ScorerPromptValidator | None): Deprecated. Message validation moved to
+                ``MessageScorer``; a value passed here is kept so pre-2.0 subclasses keep working.
         """
+        if validator is not None:
+            print_deprecation_message(
+                old_item="Scorer.__init__(validator=...)",
+                new_item="MessageScorer.__init__(validator=...)",
+                removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+            )
+            if getattr(self, "_validator", None) is None:
+                self._validator = validator
         if chat_target is not None:
             type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
+
+    def supported_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Return the condition types this scorer can consume.
+
+        Returns:
+            frozenset[type[Condition]]: The declared condition types.
+        """
+        return type(self).SUPPORTED_CONDITIONS
 
     def get_chat_target(self) -> PromptTarget | None:
         """
@@ -199,8 +277,38 @@ class Scorer(Identifiable, abc.ABC):
         Raises:
             TypeError: If this scorer does not support this kind of scorable.
         """
+        self._validate_expectation(expectation=expectation)
         scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
         return self._validate_and_persist_scores(scores=scores)
+
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """
+        Reject conditions no scorer in this tree consumes, and ambiguous routing.
+
+        Raises:
+            ValueError: If a condition is unsupported, or if more than one condition of the
+                same supported type is present.
+        """
+        if expectation is None or not expectation.conditions:
+            return
+
+        supported = self.supported_conditions()
+        unsupported = [condition for condition in expectation.conditions if not isinstance(condition, tuple(supported))]
+        if unsupported:
+            names = ", ".join(sorted({type(condition).__name__ for condition in unsupported}))
+            supported_names = ", ".join(sorted(cls.__name__ for cls in supported)) or "none"
+            raise ValueError(
+                f"{type(self).__name__} does not consume the condition(s) {names}. "
+                f"Supported conditions: {supported_names}."
+            )
+
+        for condition_type in supported:
+            matches = [condition for condition in expectation.conditions if isinstance(condition, condition_type)]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"{type(self).__name__} received {len(matches)} {condition_type.__name__} conditions. "
+                    "A scorer consumes at most one condition of a given type."
+                )
 
     def _validate_and_persist_scores(self, *, scores: list[Score]) -> list[Score]:
         """

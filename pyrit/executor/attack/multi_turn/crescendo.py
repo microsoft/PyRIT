@@ -40,12 +40,12 @@ from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     MessageScorable,
+    MessageScoringOptions,
     NumericRubric,
     Scorer,
     SelfAskRefusalScorer,
     SelfAskScaleScorer,
 )
-from pyrit.score.message_scorer import MessageScoringOptions
 from pyrit.score.score_utils import normalize_score_to_float
 
 if TYPE_CHECKING:

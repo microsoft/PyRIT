@@ -10,10 +10,9 @@ if TYPE_CHECKING:
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
-    ContentScorable,
+    Condition,
     Message,
     MessagePiece,
-    MessageScorable,
     Score,
     ScoringExpectation,
 )
@@ -84,6 +83,15 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 return target
         return None
 
+    def supported_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report the union of what the constituent scorers consume.
+
+        Returns:
+            frozenset[type[Condition]]: The condition types this composite routes.
+        """
+        return frozenset().union(*(scorer.supported_conditions() for scorer in self._scorers))
+
     async def _score_async(
         self,
         message: Message,
@@ -106,13 +114,11 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             ValueError: If any constituent scorer does not return exactly one score.
             ValueError: If no scores are generated from the request response pieces.
         """
-        scorable = (
-            ContentScorable.from_message(message)
-            if len(message.message_pieces) == 1 and message.get_piece().not_in_memory
-            else MessageScorable.from_message(message)
-        )
+        # The children score the evidence this scorer was handed, substitutions and all.
+        # Naming it instead would send them back to memory for the pre-substitution pieces,
+        # or discard the role and error state of a message that was never persisted.
         expectation = ScoringExpectation(objective=objective)
-        tasks = [scorer.score_async(scorable=scorable, expectation=expectation) for scorer in self._scorers]
+        tasks = [scorer.score_message_async(message=message, expectation=expectation) for scorer in self._scorers]
 
         # Run all response scorings concurrently
         score_list_results = await asyncio.gather(*tasks)

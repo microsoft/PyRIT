@@ -7,16 +7,16 @@ import asyncio
 import logging
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
 from pyrit.models import (
     ChatMessageRole,
-    ContentScorable,
+    Condition,
+    MatchesObjective,
     Message,
     MessagePiece,
-    MessageScorable,
     PromptResponseError,
     Scorable,
     Score,
@@ -62,22 +62,24 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     if not message.message_pieces:
         return ""
 
-    piece = message.get_piece()
+    scored_piece = message.get_piece()
 
-    if piece.api_role != "assistant":
+    if scored_piece.api_role != "assistant":
         return ""
 
-    conversation = memory.get_message_pieces(conversation_id=piece.conversation_id)
-    if not conversation:
+    # The request is the turn before the response being scored, not before whatever the
+    # conversation has grown to since. Scoring an earlier response must not read the latest turn.
+    previous_sequence = scored_piece.sequence - 1
+    if previous_sequence < 0:
         return ""
 
-    last_prompt = max(conversation, key=lambda x: x.sequence)
+    conversation = memory.get_message_pieces(conversation_id=scored_piece.conversation_id)
 
     return "\n".join(
         [
             piece.original_value
             for piece in conversation
-            if piece.sequence == last_prompt.sequence - 1 and piece.original_value_data_type == "text"
+            if piece.sequence == previous_sequence and piece.original_value_data_type == "text"
         ]
     )
 
@@ -103,6 +105,11 @@ class MessageScorer(Scorer):
     #: family's neutral fallback score instead of raising.
     raise_if_scorer_blocks: bool = True
 
+    #: A message scorer judges the message against the expectation's objective, so it
+    #: routes ``MatchesObjective``. Domain-specific conditions belong to the scorers
+    #: that match them.
+    SUPPORTED_CONDITIONS: ClassVar[frozenset[type[Condition]]] = frozenset({MatchesObjective})
+
     def __init__(
         self,
         *,
@@ -121,6 +128,24 @@ class MessageScorer(Scorer):
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
+
+    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
+        """
+        Reject conditions this scorer cannot consume, and unusable ``MatchesObjective``.
+
+        Raises:
+            ValueError: If ``MatchesObjective`` is present without an objective to match.
+        """
+        super()._validate_expectation(expectation=expectation)
+        if expectation is None:
+            return
+        if any(isinstance(condition, MatchesObjective) for condition in expectation.conditions) and not (
+            expectation.objective
+        ):
+            raise ValueError(
+                "MatchesObjective requires the expectation to carry an objective. "
+                "Set ScoringExpectation.objective or drop the condition."
+            )
 
     async def score_async(
         self,
@@ -150,7 +175,7 @@ class MessageScorer(Scorer):
         Returns:
             list[Score]: The persisted scores, or an empty list when policy skips the message.
         """
-        resolved_scorable, resolved_expectation, options, infer_objective = self._consolidate_message_inputs(
+        resolved_expectation, options, infer_objective = self._consolidate_message_inputs(
             message=message,
             scorable=scorable,
             expectation=expectation,
@@ -160,11 +185,56 @@ class MessageScorer(Scorer):
             skip_on_error_result=skip_on_error_result,
             infer_objective_from_request=infer_objective_from_request,
         )
-        scores = await self._score_message_scorable_async(
-            scorable=resolved_scorable,
-            expectation=resolved_expectation,
-            options=options,
-            infer_objective_from_request=infer_objective,
+        self._validate_expectation(expectation=resolved_expectation)
+
+        # The deprecated parameter hands over the message itself, so scoring it must not round
+        # trip through a reference. Re-describing it would reload the persisted originals and
+        # drop role and error state for a message that was never persisted at all.
+        if message is not None:
+            scores = await self._score_resolved_message_async(
+                message=message,
+                expectation=resolved_expectation,
+                options=options,
+                infer_objective_from_request=infer_objective,
+            )
+        else:
+            scores = await self._score_message_scorable_async(
+                scorable=cast("Scorable", scorable),
+                expectation=resolved_expectation,
+                options=options,
+                infer_objective_from_request=infer_objective,
+            )
+        return self._validate_and_persist_scores(scores=scores)
+
+    async def score_message_async(
+        self,
+        *,
+        message: Message,
+        expectation: ScoringExpectation | None = None,
+        message_options: MessageScoringOptions | None = None,
+    ) -> list[Score]:
+        """
+        Score a message that is already in hand.
+
+        Use this when the caller holds the message itself rather than a reference to it:
+        an ephemeral response that was never persisted, or a scoring view a wrapping scorer
+        has already prepared. Naming persisted evidence with a ``MessageScorable`` stays the
+        default, because a reference is what a stored score can be audited against.
+
+        Args:
+            message (Message): The message to score.
+            expectation (ScoringExpectation | None): What to look for. Defaults to None.
+            message_options (MessageScoringOptions | None): Message-family policy. Defaults to None.
+
+        Returns:
+            list[Score]: The persisted scores, or an empty list when policy skips the message.
+        """
+        self._validate_expectation(expectation=expectation)
+        scores = await self._score_resolved_message_async(
+            message=message,
+            expectation=expectation,
+            options=message_options or MessageScoringOptions(),
+            infer_objective_from_request=False,
         )
         return self._validate_and_persist_scores(scores=scores)
 
@@ -179,7 +249,7 @@ class MessageScorer(Scorer):
         role_filter: ChatMessageRole | None,
         skip_on_error_result: bool | None,
         infer_objective_from_request: bool | None,
-    ) -> tuple[Scorable, ScoringExpectation | None, MessageScoringOptions, bool]:
+    ) -> tuple[ScoringExpectation | None, MessageScoringOptions, bool]:
         if message is not None and scorable is not None:
             raise ValueError("Pass either 'message' or 'scorable', not both.")
         if message is None and scorable is None:
@@ -204,21 +274,12 @@ class MessageScorer(Scorer):
                 removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
             )
 
-        if scorable is not None:
-            resolved_scorable = scorable
-        else:
-            legacy_message = cast("Message", message)
-            resolved_scorable = (
-                ContentScorable.from_message(legacy_message)
-                if len(legacy_message.message_pieces) == 1 and legacy_message.get_piece().not_in_memory
-                else MessageScorable.from_message(legacy_message)
-            )
         resolved_expectation = ScoringExpectation(objective=objective) if objective is not None else expectation
         options = message_options or MessageScoringOptions(
             role_filter=role_filter,
             skip_on_error_result=skip_on_error_result or False,
         )
-        return resolved_scorable, resolved_expectation, options, bool(infer_objective_from_request)
+        return resolved_expectation, options, bool(infer_objective_from_request)
 
     async def _score_scorable_async(
         self,
@@ -262,13 +323,42 @@ class MessageScorer(Scorer):
 
         Raises:
             TypeError: If the scorable is not message-shaped.
+        """
+        message = self._message_resolver.resolve(scorable=scorable, memory=self._memory)
+        return await self._score_resolved_message_async(
+            message=message,
+            expectation=expectation,
+            options=options,
+            infer_objective_from_request=infer_objective_from_request,
+        )
+
+    async def _score_resolved_message_async(
+        self,
+        *,
+        message: Message,
+        expectation: ScoringExpectation | None,
+        options: MessageScoringOptions,
+        infer_objective_from_request: bool,
+    ) -> list[Score]:
+        """
+        Run the message-scoring pipeline over an acquired message.
+
+        Args:
+            message (Message): The acquired message.
+            expectation (ScoringExpectation | None): What to look for.
+            options (MessageScoringOptions): Message-only scoring policy.
+            infer_objective_from_request (bool): Deprecated; read the objective from the
+                previous turn when the expectation carries none.
+
+        Returns:
+            list[Score]: The scores, or an empty list when a filter skipped the message.
+
+        Raises:
             ScorerLLMResponseBlockedException: If the scorer's own LLM response is blocked by
                 content filtering and ``raise_if_scorer_blocks`` is True (the default).
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
-        message = self._message_resolver.resolve(scorable=scorable, memory=self._memory)
-
         objective = expectation.objective if expectation else None
 
         # Structured refusals are persisted as blocked error pieces, but scorers should

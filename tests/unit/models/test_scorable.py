@@ -67,6 +67,25 @@ def test_message_scorable_from_message_names_pieces():
     assert not hasattr(scorable, "message")
 
 
+def test_message_scorable_rejects_empty_ids():
+    with pytest.raises(ValueError, match="at least one message piece"):
+        MessageScorable(message_piece_ids=())
+
+
+def test_message_scorable_rejects_duplicate_ids():
+    piece_id = uuid.uuid4()
+
+    with pytest.raises(ValueError, match="each message piece once"):
+        MessageScorable(message_piece_ids=(piece_id, piece_id))
+
+
+def test_message_scorable_rejects_ids_that_repeat_across_types():
+    piece_id = uuid.uuid4()
+
+    with pytest.raises(ValueError, match="each message piece once"):
+        MessageScorable(message_piece_ids=(piece_id, str(piece_id)))
+
+
 def test_content_scorable_defaults_to_text():
     assert ContentScorable(value="hello").data_type == "text"
 

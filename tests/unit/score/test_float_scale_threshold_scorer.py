@@ -21,7 +21,7 @@ def create_mock_float_scorer(score_value: float):
         class_module="test.mock",
     )
     scorer = AsyncMock()
-    scorer.score_async = AsyncMock(
+    scorer.score_message_async = AsyncMock(
         return_value=[
             Score(
                 score_value=str(score_value),
@@ -75,7 +75,7 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
     # Mock a scorer that returns multiple scores (like AzureContentFilterScorer)
     scorer = AsyncMock()
     prompt_id = uuid.uuid4()
-    scorer.score_async = AsyncMock(
+    scorer.score_message_async = AsyncMock(
         return_value=[
             Score(
                 score_value="0.2",
@@ -142,7 +142,7 @@ async def test_float_scale_threshold_scorer_handles_empty_scores():
 
     # Mock a scorer that returns empty list (all pieces filtered)
     scorer = AsyncMock()
-    scorer.score_async = AsyncMock(return_value=[])
+    scorer.score_message_async = AsyncMock(return_value=[])
     # get_identifier() returns a ComponentIdentifier
     mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
@@ -177,7 +177,7 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
 
     # Mock a scorer that returns empty list (all pieces filtered)
     scorer = AsyncMock()
-    scorer.score_async = AsyncMock(return_value=[])
+    scorer.score_message_async = AsyncMock(return_value=[])
     # get_identifier() returns a ComponentIdentifier
     mock_identifier = ComponentIdentifier(
         class_name="MockScorer",

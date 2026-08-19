@@ -9,7 +9,16 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    Condition,
+    MatchesObjective,
+    Message,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score import (
     ContentScorable,
     MessageScorable,
@@ -203,7 +212,10 @@ class TestScorerBaseIsScorableAgnostic:
         assert "_score_piece_async" in MessageScorer.__abstractmethods__
 
     def test_message_dependencies_live_on_message_scorer(self):
-        assert "validator" not in inspect.signature(Scorer).parameters
+        # The base keeps 'validator' only as a deprecated shim for pre-2.0 subclasses; the
+        # dependency itself is required by MessageScorer.
+        assert inspect.signature(Scorer).parameters["validator"].default is None
+        assert inspect.signature(MessageScorer).parameters["validator"].default is inspect.Parameter.empty
         for hook in [
             "_build_fallback_score",
             "_apply_structured_refusal_substitution",
@@ -306,19 +318,24 @@ class TestDeprecatedParameters:
 
         assert scorer.scored_messages == [message]
 
-    async def test_ephemeral_message_maps_its_converted_view_to_content(self):
+    async def test_ephemeral_message_keeps_its_own_state(self):
+        """An in-hand message is scored as it stands, so nothing about it is re-derived."""
         scorer = RecordingScorer()
         message = MessagePiece(
-            role="user",
+            role="assistant",
             original_value="original",
             converted_value="converted",
+            response_error="blocked",
         ).to_message()
         message.set_response_not_in_memory()
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
             await scorer.score_async(message)
 
-        assert scorer.scored_messages[0].get_value() == "converted"
+        scored = scorer.scored_messages[0]
+        assert scored.get_value() == "converted"
+        assert scored.get_piece().role == "assistant"
+        assert scored.is_error()
 
     async def test_message_does_not_widen_to_the_stored_conversation(self, sqlite_instance: MemoryInterface):
         """The shim scores the supplied message, never the whole conversation behind it."""
@@ -476,3 +493,110 @@ class TestExtractObjectiveFromPreviousTurn:
         ).to_message()
 
         assert extract_objective_from_previous_turn(message=message, memory=sqlite_instance) == ""
+
+    def test_reads_the_request_for_the_scored_turn_not_the_latest_one(self, sqlite_instance: MemoryInterface):
+        """Scoring an earlier response must not pick up a request from later in the conversation."""
+        conversation_id = str(uuid.uuid4())
+        turns: list[tuple[str, ChatMessageRole]] = [
+            ("the first request", "user"),
+            ("the first response", "assistant"),
+            ("a later request", "user"),
+            ("a later response", "assistant"),
+        ]
+        for value, role in turns:
+            sqlite_instance.add_message_to_memory(
+                request=MessagePiece(role=role, original_value=value, conversation_id=conversation_id).to_message()
+            )
+        first_response = sqlite_instance.get_message_pieces(conversation_id=conversation_id)[1].to_message()
+
+        objective = extract_objective_from_previous_turn(message=first_response, memory=sqlite_instance)
+
+        assert objective == "the first request"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestInHandMessages:
+    """A message already in hand is scored as it stands, not re-acquired."""
+
+    async def test_score_message_async_does_not_read_memory(self):
+        resolver = MagicMock(spec=MessageScorableResolver)
+        scorer = RecordingScorer(message_resolver=resolver)
+        message = _assistant_message("in hand")
+
+        await scorer.score_message_async(message=message)
+
+        resolver.resolve.assert_not_called()
+        assert scorer.scored_messages == [message]
+
+    async def test_score_message_async_preserves_ephemeral_error_state(self):
+        scorer = RecordingScorer()
+        message = MessagePiece(
+            role="assistant",
+            original_value="",
+            original_value_data_type="error",
+            response_error="blocked",
+        ).to_message()
+        message.set_response_not_in_memory()
+
+        await scorer.score_message_async(message=message)
+
+        assert scorer.scored_messages[0].is_error()
+
+    async def test_score_message_async_applies_message_options(self):
+        scorer = RecordingScorer()
+
+        scores = await scorer.score_message_async(
+            message=_assistant_message(),
+            message_options=MessageScoringOptions(role_filter="user"),
+        )
+
+        assert scores == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestConditionRouting:
+    """An expectation is a routing envelope, so a condition is consumed or refused."""
+
+    async def test_matches_objective_reaches_a_message_scorer(self):
+        scorer = RecordingScorer()
+
+        scores = await scorer.score_async(
+            scorable=MessageScorable.from_message(_assistant_message()),
+            expectation=ScoringExpectation(objective="an objective", conditions=(MatchesObjective(),)),
+        )
+
+        assert len(scores) == 1
+
+    async def test_matches_objective_without_an_objective_raises(self):
+        scorer = RecordingScorer()
+
+        with pytest.raises(ValueError, match="MatchesObjective requires"):
+            await scorer.score_async(
+                scorable=MessageScorable.from_message(_assistant_message()),
+                expectation=ScoringExpectation(conditions=(MatchesObjective(),)),
+            )
+
+    async def test_unconsumed_condition_raises_instead_of_being_dropped(self):
+        @dataclasses.dataclass(frozen=True)
+        class UnroutedCondition(Condition):
+            pass
+
+        scorer = RecordingScorer()
+
+        with pytest.raises(ValueError, match="does not consume the condition"):
+            await scorer.score_async(
+                scorable=MessageScorable.from_message(_assistant_message()),
+                expectation=ScoringExpectation(conditions=(UnroutedCondition(),)),
+            )
+
+    async def test_two_conditions_of_one_type_raise(self):
+        scorer = RecordingScorer()
+
+        with pytest.raises(ValueError, match="at most one condition"):
+            await scorer.score_async(
+                scorable=MessageScorable.from_message(_assistant_message()),
+                expectation=ScoringExpectation(
+                    objective="an objective",
+                    conditions=(MatchesObjective(), MatchesObjective()),
+                ),
+            )

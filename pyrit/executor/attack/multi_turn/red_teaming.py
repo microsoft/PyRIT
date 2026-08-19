@@ -39,8 +39,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score import MessageScorable
-from pyrit.score.message_scorer import MessageScoringOptions
+from pyrit.score import MessageScorable, MessageScoringOptions
 
 if TYPE_CHECKING:
     from collections.abc import Callable

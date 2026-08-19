@@ -1238,6 +1238,71 @@ async def test_base_scorer_score_async_implementation(patch_central_database):
     assert len(scores) == 2
 
 
+class TestLegacyDirectScorerSubclass:
+    """Scorers written against the pre-2.0 base keep working behind a deprecation warning."""
+
+    @staticmethod
+    def _build_legacy_scorer_class():
+        class LegacyScorer(Scorer):
+            def __init__(self, *, validator: ScorerPromptValidator):
+                super().__init__(validator=validator)
+                self.scored_messages: list[Message] = []
+
+            def _build_identifier(self) -> ComponentIdentifier:
+                return self._create_identifier()
+
+            async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+                self.scored_messages.append(message)
+                return [
+                    Score(
+                        score_value="true",
+                        score_value_description="legacy",
+                        score_type="true_false",
+                        score_category=None,
+                        score_metadata=None,
+                        score_rationale="legacy",
+                        scorer_class_identifier=self.get_identifier(),
+                        message_piece_id=message.get_piece().id,
+                        objective=objective,
+                    )
+                ]
+
+            def validate_return_scores(self, scores: list[Score]) -> None:
+                pass
+
+            def get_scorer_metrics(self):
+                return None
+
+        return LegacyScorer
+
+    def test_legacy_scorer_is_instantiable(self):
+        legacy_class = self._build_legacy_scorer_class()
+
+        assert "_score_scorable_async" not in legacy_class.__abstractmethods__
+
+    def test_legacy_validator_argument_warns(self):
+        legacy_class = self._build_legacy_scorer_class()
+
+        with pytest.warns(DeprecationWarning, match="Scorer.__init__"):
+            scorer = legacy_class(validator=DummyValidator())
+
+        assert scorer._validator is not None
+
+    async def test_legacy_scorer_scores_a_scorable(self, patch_central_database):
+        legacy_class = self._build_legacy_scorer_class()
+        with pytest.warns(DeprecationWarning):
+            scorer = legacy_class(validator=DummyValidator())
+        message = store_message(
+            MessagePiece(role="assistant", original_value="legacy response", conversation_id="legacy").to_message()
+        )
+
+        with pytest.warns(DeprecationWarning, match="_score_async"):
+            scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
+
+        assert len(scores) == 1
+        assert scorer.scored_messages[0].get_value() == "legacy response"
+
+
 # Tests for get_identifier and identifier
 
 
