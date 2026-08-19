@@ -1581,6 +1581,29 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores == {}
         assert node.error_message is None
 
+    async def test_subsequent_prompt_omits_score_when_feedback_disabled(self, node_components):
+        """A disabled score-feedback setting preserves response context without exposing the score."""
+        node = _TreeOfAttacksNode(**node_components, use_score_as_feedback=False)
+        response = MagicMock()
+        response.get_piece.return_value = MessagePiece(
+            role="assistant",
+            original_value="target response",
+            converted_value="target response",
+            conversation_id=node.objective_target_conversation_id,
+        )
+
+        with (
+            patch.object(node._memory, "get_conversation_messages", return_value=[response]),
+            patch.object(node, "_get_response_score_async", new_callable=AsyncMock) as get_score,
+        ):
+            result = await node._generate_subsequent_turn_prompt_async("test objective")
+
+        assert result == "rendered template"
+        get_score.assert_not_awaited()
+        render_kwargs = node_components["adversarial_chat_prompt_template"].render_template_value.call_args.kwargs
+        assert render_kwargs["target_response"] == "target response"
+        assert render_kwargs["score"] == ""
+
     def test_node_duplicate_creates_child(self, node_components):
         """Test that duplicate() creates a proper child node."""
         parent_node = _TreeOfAttacksNode(**node_components)

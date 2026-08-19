@@ -13,7 +13,9 @@ from pyrit.datasets.seed_datasets.remote.figstep_dataset import (
     FigStepCategory,
     FigStepVariant,
     _FigStepDataset,
+    _FigStepProDataset,
 )
+from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 
 
@@ -418,7 +420,23 @@ class TestFigStepProDataset:
 
     def test_pro_dataset_name(self):
         loader = _FigStepDataset(variant=FigStepVariant.FIGSTEP_PRO)
-        assert loader.dataset_name == "figstep"
+        assert loader.dataset_name == "figstep_pro"
+
+
+class TestFigStepProProvider:
+    """Unit tests for the registered FigStep-Pro provider entry."""
+
+    def test_provider_defaults_to_figstep_pro_tiny(self):
+        loader = _FigStepProDataset()
+
+        assert loader.dataset_name == "figstep_pro"
+        assert loader.variant is FigStepVariant.FIGSTEP_PRO
+        assert loader.use_tiny is True
+
+    def test_provider_is_registered(self):
+        providers = SeedDatasetProvider.get_all_providers()
+
+        assert providers["_FigStepProDataset"] is _FigStepProDataset
 
 
 class TestFigStepProSubImageDiscovery:

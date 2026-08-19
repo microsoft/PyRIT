@@ -41,7 +41,12 @@ from pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset import 
     _DecodingTrustToxicityDataset,
 )
 from pyrit.datasets.seed_datasets.remote.equitymedqa_dataset import _EquityMedQADataset
-from pyrit.datasets.seed_datasets.remote.figstep_dataset import FigStepCategory, FigStepVariant, _FigStepDataset
+from pyrit.datasets.seed_datasets.remote.figstep_dataset import (
+    FigStepCategory,
+    FigStepVariant,
+    _FigStepDataset,
+    _FigStepProDataset,
+)
 from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import _ForbiddenQuestionsDataset
 from pyrit.datasets.seed_datasets.remote.garak_audio_dataset import _GarakAudioAchillesHeelDataset
 from pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset import (
@@ -182,6 +187,7 @@ __all__ = [
     "_DecodingTrustToxicityDataset",
     "_EquityMedQADataset",
     "_FigStepDataset",
+    "_FigStepProDataset",
     "_ForbiddenQuestionsDataset",
     "_GarakAudioAchillesHeelDataset",
     "_GarakCratesDataset",

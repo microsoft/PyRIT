@@ -18,8 +18,9 @@
 # data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
-# target recommends non-existent packages that an attacker could squat), and an audio probe (which
-# delivers spoken jailbreaks to multimodal targets).
+# target recommends non-existent packages that an attacker could squat), an audio probe (which
+# delivers spoken jailbreaks to multimodal targets), and FigStep visual jailbreaks (which place
+# harmful instructions in images).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -30,9 +31,11 @@ from pathlib import Path
 from pyrit.output import output_scenario_async
 from pyrit.prompt_target import RealtimeTarget
 from pyrit.registry import TargetRegistry
+from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.garak import (
     Encoding,
     EncodingTechnique,
+    FigStep,
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
 )
@@ -88,6 +91,47 @@ scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(scenario_result)
+
+# %% [markdown]
+# ## FigStep
+#
+# Tests whether a vision-language target follows harmful instructions that appear in an image.
+# `FigStep` sends one typographic image and carrier text. `FigStep-Pro` splits the visual prompt
+# across several images. Both variants reuse the built-in SafeBench-Tiny groups, images, and carrier
+# text. PyRIT scores whether the response completes the harmful objective. It does not only check
+# whether the response contains numbered steps.
+#
+# **CLI examples:**
+#
+# ```bash
+# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep --max-dataset-size 1
+# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
+# ```
+#
+# > **Note:** The objective target must natively support multi-piece user messages and accept text
+# > and image input in the same message. Select exactly one of the `figstep` or `figstep_pro`
+# > datasets; unrelated named datasets are rejected because they do not contain the required visual
+# > payload. By default, PyRIT also sends each sampled objective as direct text. Use
+# > `--include-baseline False` to omit this comparison.
+
+# %%
+figstep_dataset_config = DatasetAttackConfiguration(dataset_names=["figstep"], max_dataset_size=1)
+
+figstep_scenario = FigStep()
+figstep_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "dataset_config": figstep_dataset_config,
+    }
+)
+await figstep_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {figstep_scenario.name}")
+print(f"Atomic attacks: {figstep_scenario.atomic_attack_count}")
+
+figstep_result = await figstep_scenario.run_async()  # type: ignore
+
+await output_scenario_async(figstep_result)
 
 # %% [markdown]
 # ## WebInjection
