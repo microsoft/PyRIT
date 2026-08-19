@@ -1,0 +1,231 @@
+# Manually triggered prototype for comparing adversarial models and technique sets.
+# Completed results are retained with the Azure DevOps pipeline run as an artifact.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: objectiveTarget
+    displayName: Objective target registry name
+    type: string
+    default: openai_chat
+  - name: adversarialTargets
+    displayName: Space-separated adversarial target registry names
+    type: string
+    default: azure_openai_gpt4o azure_gpt4o_unsafe_chat
+  - name: techniques
+    displayName: Space-separated technique names
+    type: string
+    default: >-
+      role_play_movie_script role_play_video_game role_play_trivia_game
+      role_play_persuasion role_play_persuasion_written red_teaming
+      context_compliance tap crescendo_simulated
+  - name: datasetName
+    displayName: Dataset name
+    type: string
+    default: harmbench
+  - name: maxDatasetSize
+    displayName: Maximum objectives
+    type: number
+    default: 1
+  - name: maxConcurrency
+    displayName: Maximum concurrency
+    type: number
+    default: 1
+
+jobs:
+  - job: AdversarialBenchmark
+    displayName: Run adversarial model benchmark
+    timeoutInMinutes: 360
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+      - checkout: self
+        fetchDepth: 1
+
+      - task: UsePythonVersion@0
+        displayName: Use Python 3.12
+        inputs:
+          versionSpec: "3.12"
+          addToPath: true
+
+      - bash: |
+          mkdir -p ~/.pyrit
+          mkdir -p "$(Build.ArtifactStagingDirectory)/adversarial-benchmark"
+        displayName: Create configuration and artifact directories
+
+      - task: AzureKeyVault@2
+        displayName: Retrieve PyRIT test environment
+        inputs:
+          azureSubscription: integration-test-service-connection
+          KeyVaultName: pyrit-environment
+          SecretsFilter: env-global
+          RunAsPreJob: false
+
+      - bash: |
+          set -euo pipefail
+          python -c "
+          import os
+          from pathlib import Path
+
+          secret = os.environ.get('PYRIT_TEST_SECRET')
+          if not secret:
+              raise ValueError('PYRIT_TEST_SECRET is not set')
+          config_dir = Path.home() / '.pyrit'
+          config_dir.mkdir(parents=True, exist_ok=True)
+          (config_dir / '.env').write_text(secret, encoding='utf-8')
+          "
+          cp build_scripts/env_local_integration_test ~/.pyrit/.env.local
+        displayName: Configure PyRIT environment
+        env:
+          PYRIT_TEST_SECRET: $(env-global)
+
+      - bash: |
+          set -euo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "##vso[task.prependpath]$HOME/.local/bin"
+        displayName: Install uv
+
+      - bash: uv sync
+        displayName: Install PyRIT
+
+      - task: AzureCLI@2
+        displayName: Run benchmark and capture result snapshot
+        inputs:
+          azureSubscription: integration-test-service-connection
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            set -euo pipefail
+
+            artifact_dir="$BUILD_ARTIFACTSTAGINGDIRECTORY/adversarial-benchmark"
+            config_file="$artifact_dir/benchmark.pyrit_conf"
+            scenario_log="$artifact_dir/scenario.log"
+            mkdir -p "$artifact_dir"
+
+            cat > "$config_file" <<'EOF'
+            memory_db_type: sqlite
+            silent: false
+            initializers:
+              - name: target
+                args:
+                  tags:
+                    - default
+                    - scorer
+              - name: scorer
+              - name: technique
+            EOF
+
+            az account get-access-token \
+              --scope https://cognitiveservices.azure.com/.default \
+              --output none
+            az account get-access-token \
+              --scope https://ml.azure.com/.default \
+              --output none
+
+            uv run pyrit_scan \
+              --start-server \
+              --config-file "$config_file" \
+              --startup-timeout 180
+
+            stop_server() {
+              uv run pyrit_scan --stop-server >/dev/null 2>&1 || true
+            }
+            trap stop_server EXIT
+
+            read -r -a adversarial_targets <<< "$ADVERSARIAL_TARGETS_INPUT"
+            read -r -a techniques <<< "$TECHNIQUES_INPUT"
+
+            set +e
+            uv run pyrit_scan benchmark.adversarial \
+              --target "$OBJECTIVE_TARGET_INPUT" \
+              --adversarial-targets "${adversarial_targets[@]}" \
+              --techniques "${techniques[@]}" \
+              --dataset-names "$DATASET_NAME_INPUT" \
+              --max-dataset-size "$MAX_DATASET_SIZE_INPUT" \
+              --max-concurrency "$MAX_CONCURRENCY_INPUT" \
+              2>&1 | tee "$scenario_log"
+            benchmark_exit_code=${PIPESTATUS[0]}
+            set -e
+
+            result_id="$(
+              sed -n 's/^[[:space:]]*Result ID:[[:space:]]*//p' "$scenario_log" |
+                tail -n 1 |
+                tr -d '\r'
+            )"
+            run_status="$(
+              sed -n 's/^[[:space:]]*Status:[[:space:]]*//p' "$scenario_log" |
+                tail -n 1 |
+                tr -d '\r'
+            )"
+
+            export BENCHMARK_EXIT_CODE="$benchmark_exit_code"
+            export RESULT_ID="$result_id"
+            export RUN_STATUS="$run_status"
+            export ARTIFACT_DIR="$artifact_dir"
+
+            python - <<'PY'
+            import json
+            import os
+            from datetime import datetime, timezone
+            from pathlib import Path
+
+            manifest = {
+                "pipeline_build_id": os.environ.get("BUILD_BUILDID"),
+                "source_branch": os.environ.get("BUILD_SOURCEBRANCH"),
+                "source_commit": os.environ.get("BUILD_SOURCEVERSION"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "scenario": "benchmark.adversarial",
+                "scenario_result_id": os.environ.get("RESULT_ID") or None,
+                "status": os.environ.get("RUN_STATUS") or None,
+                "exit_code": int(os.environ["BENCHMARK_EXIT_CODE"]),
+                "objective_target": os.environ["OBJECTIVE_TARGET_INPUT"],
+                "adversarial_targets": os.environ["ADVERSARIAL_TARGETS_INPUT"].split(),
+                "techniques": os.environ["TECHNIQUES_INPUT"].split(),
+                "dataset_name": os.environ["DATASET_NAME_INPUT"],
+                "max_dataset_size": int(os.environ["MAX_DATASET_SIZE_INPUT"]),
+                "max_concurrency": int(os.environ["MAX_CONCURRENCY_INPUT"]),
+            }
+            output = Path(os.environ["ARTIFACT_DIR"]) / "run-manifest.json"
+            output.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            PY
+
+            if [[ -n "$result_id" && "$benchmark_exit_code" -eq 0 ]]; then
+              uv run pyrit_scan \
+                --scenario-results "$result_id" \
+                --view overview \
+                > "$artifact_dir/overview.txt" 2>&1 || true
+              uv run pyrit_scan \
+                --scenario-results "$result_id" \
+                --view attacks \
+                > "$artifact_dir/attacks.txt" 2>&1 || true
+            fi
+
+            if [[ -f dbdata/pyrit.db ]]; then
+              cp dbdata/pyrit.db "$artifact_dir/pyrit.db"
+            fi
+            if [[ -f /tmp/pyrit_backend.log ]]; then
+              cp /tmp/pyrit_backend.log "$artifact_dir/backend.log"
+            fi
+
+            exit "$benchmark_exit_code"
+        env:
+          OBJECTIVE_TARGET_INPUT: "${{ parameters.objectiveTarget }}"
+          ADVERSARIAL_TARGETS_INPUT: "${{ parameters.adversarialTargets }}"
+          TECHNIQUES_INPUT: "${{ parameters.techniques }}"
+          DATASET_NAME_INPUT: "${{ parameters.datasetName }}"
+          MAX_DATASET_SIZE_INPUT: "${{ parameters.maxDatasetSize }}"
+          MAX_CONCURRENCY_INPUT: "${{ parameters.maxConcurrency }}"
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish benchmark snapshot
+        condition: always()
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)/adversarial-benchmark
+          artifactName: adversarial-benchmark-$(Build.BuildId)
+          publishLocation: pipeline
+
+      - bash: rm -f ~/.pyrit/.env ~/.pyrit/.env.local
+        displayName: Remove local credential files
+        condition: always()
