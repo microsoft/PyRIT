@@ -184,9 +184,9 @@ print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # ty
 
 # %%
 from pyrit.converter import (
+    SATA_TASK_TEMPLATE,
     JsonStringConverter,
     PolicyPuppetryConverter,
-    SATA_TASK_TEMPLATE,
     SATAMaskingConverter,
     SearchReplaceConverter,
     SuffixAppendConverter,
