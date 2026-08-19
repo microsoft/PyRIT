@@ -6,6 +6,7 @@ import {
   buildExportFilename,
   downloadTextFile,
   EXPORT_MIME_TYPES,
+  MAX_TOTAL_INLINE_CHARACTERS,
 } from "./conversationExport";
 import type { Message, MessageAttachment } from "../types";
 
@@ -355,6 +356,22 @@ describe("conversationExport", () => {
       );
       expect(json).not.toContain("/home/op/dbdata");
       expect(json).not.toContain("/api/media");
+    });
+
+    it("leaves the live conversation untouched while stripping the exported copy", () => {
+      const attachments: MessageAttachment[] = [
+        {
+          type: "image",
+          name: "result.png",
+          url: "/api/media?path=/home/op/dbdata/result.png",
+          mimeType: "image/png",
+        },
+      ];
+      const messages = [message({ attachments })];
+      conversationToJson(messages, "conv-1");
+      // The chat still needs the url to render the image on screen.
+      expect(attachments[0].url).toBe("/api/media?path=/home/op/dbdata/result.png");
+      expect(messages[0].attachments).toBe(attachments);
     });
 
     it("keeps an inline data uri, which is the payload rather than a pointer to it", () => {
@@ -897,13 +914,79 @@ describe("conversationExport", () => {
     });
 
     it("measures an uppercase base64 marker like a lowercase one", async () => {
-      const url = `data:image/png;BASE64,${"A".repeat(16 * 1024 * 1024)}`;
+      // Sized so the two readings disagree: decoded it is 9MB and embeds, but
+      // read as raw text it would be 12MB and would be dropped.
+      const url = `data:image/png;BASE64,${"A".repeat(12_000_000)}`;
       const html = await conversationToHtml(
         [message({ attachments: [attachment({ url })] })],
         "conv-1",
         FIXED_NOW,
       );
-      expect(html).toContain("[Image: result.png (image/png) — too large to embed]");
+      expect(html).toContain('<img src="data:image/png;BASE64,');
+      expect(html).not.toContain("too large to embed");
+    });
+
+    it("counts the data uri prefix, so a huge mime type cannot slip past the budget", async () => {
+      // The mime type is untrusted metadata and is written into the document
+      // ahead of the payload, so it has to be paid for like the payload is.
+      const hugeMime = `image/${"x".repeat(60 * 1024 * 1024)}`;
+      const url = `data:${hugeMime};base64,AAAA`;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url, mimeType: hugeMime })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("no room left in this file");
+      expect(html).not.toContain("base64,AAAA");
+    });
+
+    it("counts every place an attachment appears, even the same one twice", async () => {
+      // The summary has to match what the reader sees, not how many distinct
+      // objects produced it.
+      const shared = attachment({ url: "data:image/png;base64,AAAA" });
+      const html = await conversationToHtml(
+        [message({ attachments: [shared, shared] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect((html.match(/<img /g) ?? []).length).toBe(2);
+      expect(html).toContain("Attachments: 2 of 2 embedded");
+    });
+
+    it("keeps the summary honest when one object is used more times than the budget allows", async () => {
+      // Rendering reads each place in the document, not each distinct object,
+      // so the count and the page cannot drift apart.
+      const shared = attachment({ url: `data:image/png;base64,${"A".repeat(8 * 1024 * 1024)}` });
+      const messages = Array.from({ length: 7 }, () => message({ attachments: [shared] }));
+      const html = await conversationToHtml(messages, "conv-1", FIXED_NOW);
+      const embedded = (html.match(/<img /g) ?? []).length;
+      expect(embedded).toBeLessThan(messages.length);
+      expect(html).toContain(`Attachments: ${embedded} of ${messages.length} embedded`);
+      expect(html.length).toBeLessThanOrEqual(MAX_TOTAL_INLINE_CHARACTERS);
+    });
+
+    it("charges escaped media text, so escaping cannot push the file past the budget", async () => {
+      // A valid non-base64 data uri full of ampersands grows when escaped.
+      const svg = `data:image/svg+xml,${"%3C!--&&--%3E".repeat(120000)}`;
+      const messages = Array.from({ length: 6 }, (_, index) =>
+        message({ attachments: [attachment({ name: `s${index}.svg`, mimeType: "image/svg+xml", url: `${svg}${index}` })] }),
+      );
+      const html = await conversationToHtml(messages, "conv-1", FIXED_NOW);
+      expect(html.length).toBeLessThanOrEqual(MAX_TOTAL_INLINE_CHARACTERS);
+    });
+
+    it("counts a repeated attachment against the budget every time it appears", async () => {
+      // Reading it once saves the fetch, not the space: each copy is written
+      // into the document, so each copy has to be paid for.
+      const payload = `data:image/png;base64,${"A".repeat(8 * 1024 * 1024)}`;
+      const messages = Array.from({ length: 10 }, () =>
+        message({ attachments: [attachment({ name: "same.png", url: payload })] }),
+      );
+      const html = await conversationToHtml(messages, "conv-1", FIXED_NOW);
+      const embedded = (html.match(/<img /g) ?? []).length;
+      expect(embedded).toBeLessThan(messages.length);
+      expect(html.length).toBeLessThanOrEqual(MAX_TOTAL_INLINE_CHARACTERS);
+      expect(html).toContain("no room left in this file");
     });
 
     it("stops embedding once the whole document has used its budget", async () => {
@@ -920,7 +1003,9 @@ describe("conversationExport", () => {
       const embedded = (html.match(/<img /g) ?? []).length;
       expect(embedded).toBeGreaterThan(0);
       expect(embedded).toBeLessThan(attachments.length);
-      expect(html).toContain("too large to embed");
+      expect(html).toContain("no room left in this file");
+      // The budget bounds the document, so what it holds must stay under it.
+      expect(embedded * payload.length).toBeLessThanOrEqual(MAX_TOTAL_INLINE_CHARACTERS);
     });
 
     it("reads a repeated attachment once and embeds it in both places", async () => {

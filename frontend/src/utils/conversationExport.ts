@@ -34,25 +34,28 @@ const MEDIA_LABELS: Record<MessageAttachment['type'], string> = {
 const OMISSION_REASONS: Record<OmissionReason, string> = {
   unreadable: 'could not be read',
   'too-large': 'too large to embed',
+  'no-room': 'no room left in this file',
   'not-embeddable': 'not a media file',
 }
 
 /** Fixed order so the summary reads the same way for the same conversation. */
-const OMISSION_ORDER: OmissionReason[] = ['unreadable', 'too-large', 'not-embeddable']
+const OMISSION_ORDER: OmissionReason[] = ['unreadable', 'too-large', 'no-room', 'not-embeddable']
 
 /**
- * Largest attachment inlined into an HTML export. Base64 inflates bytes by a
- * third, so anything above this is listed by name instead of embedded to keep
- * the file openable.
+ * Largest attachment inlined into an HTML export, measured in real bytes.
+ * Base64 inflates bytes by a third, so anything above this is listed by name
+ * instead of embedded to keep the file openable.
  */
-export const MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024
+const MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 /**
- * Largest total payload inlined into one HTML export. Without it, many
- * attachments that each clear the per-attachment cap still add up to a file
- * too big to open or mail; once the budget is spent the rest are named.
+ * Largest total media text one HTML export may carry, counted in the characters
+ * actually written for it. Without it, many attachments that each clear the
+ * per-attachment cap still add up to a file too big to open or mail; once the
+ * budget is spent the rest are named. Surrounding markup is not counted, so
+ * this bounds the file closely rather than exactly.
  */
-export const MAX_TOTAL_INLINE_BYTES = 50 * 1024 * 1024
+export const MAX_TOTAL_INLINE_CHARACTERS = 50 * 1024 * 1024
 
 /**
  * The only path the export reads attachment bytes from. Any other same-origin
@@ -154,11 +157,12 @@ export function conversationToMarkdown(
 }
 
 /**
- * Serialize the in-state conversation to pretty-printed JSON, exporting exactly
- * what the GUI holds (WYSIWYG). The envelope records the conversation id, the
- * export timestamp, and the messages. Loading placeholders are dropped and the
- * non-serializable `File` handle is removed from each attachment; every other
- * field (including attachment metadata) is preserved as-is.
+ * Serialize the in-state conversation to pretty-printed JSON. The envelope
+ * records the conversation id, the export timestamp, and the messages. Loading
+ * placeholders are dropped, and each attachment loses its non-serializable
+ * `File` handle and its source URL — that URL is a signed storage link or a
+ * path on this machine, neither of which belongs in a shared file. Everything
+ * else, including the rest of the attachment metadata, is preserved as-is.
  */
 export function conversationToJson(
   messages: Message[],
@@ -205,7 +209,7 @@ export async function conversationToHtml(
 <body>
 <h1>CoPyRIT conversation export</h1>
 <p class="meta">${summary}</p>
-${exported.map((message) => renderMessage(message, media)).join('\n')}
+${exported.map((message, index) => renderMessage(message, media.perMessage[index])).join('\n')}
 </body>
 </html>
 `
@@ -217,19 +221,19 @@ ${exported.map((message) => renderMessage(message, media)).join('\n')}
  * every attachment left out is counted and explained here as well as in place.
  */
 function attachmentSummary(media: ResolvedMedia): string {
-  const outcomes = [...media.values()]
+  const outcomes = media.occurrences
   if (outcomes.length === 0) {
     return 'Attachments: none'
   }
-  const embedded = outcomes.filter((outcome) => outcome.dataUri !== null).length
+  const embedded = outcomes.filter((outcome) => outcome.source !== null).length
   const omitted = outcomes.length - embedded
   if (omitted === 0) {
     return `Attachments: ${embedded} of ${outcomes.length} embedded`
   }
   const reasons = OMISSION_ORDER.filter((reason) =>
-    outcomes.some((outcome) => outcome.dataUri === null && outcome.reason === reason),
+    outcomes.some((outcome) => outcome.source === null && outcome.reason === reason),
   ).map((reason) => {
-    const count = outcomes.filter((outcome) => outcome.dataUri === null && outcome.reason === reason).length
+    const count = outcomes.filter((outcome) => outcome.source === null && outcome.reason === reason).length
     return `${count} ${OMISSION_REASONS[reason]}`
   })
   return (
@@ -354,48 +358,70 @@ function longestBacktickRun(content: string): number {
 }
 
 /** Why an attachment is named in the document instead of embedded in it. */
-type OmissionReason = 'unreadable' | 'too-large' | 'not-embeddable'
+type OmissionReason = 'unreadable' | 'too-large' | 'no-room' | 'not-embeddable'
 
-type ResolvedAttachment = { dataUri: string } | { dataUri: null; reason: OmissionReason }
-
-type ResolvedMedia = Map<MessageAttachment, ResolvedAttachment>
+/** `source` is the escaped text written into the document, which is what it costs. */
+type ResolvedAttachment = { source: string } | { source: null; reason: OmissionReason }
 
 /**
- * Read every attachment in the conversation, mapping each to a `data:` URI or
- * to the reason its bytes were left out. Resolution is the only step that
- * touches the network; rendering stays a pure function of the result.
+ * One resolved outcome per attachment slot, held in the same shape as the
+ * messages so rendering reads each occurrence by position. Position, not object
+ * identity, is what the document is built from: the same attachment object can
+ * appear in two places and each place is written, counted, and paid for.
+ */
+type ResolvedMedia = {
+  perMessage: { attachments: ResolvedAttachment[]; originalAttachments: ResolvedAttachment[] }[]
+  occurrences: ResolvedAttachment[]
+}
+
+/**
+ * Read every attachment in the conversation, resolving each to the text that
+ * will be written for it or to the reason its bytes were left out. Resolution
+ * is the only step that touches the network; rendering stays a pure function of
+ * the result.
  *
  * Attachments are read one at a time so a long conversation cannot open a
- * fetch per attachment at once, and identical sources are read once and shared
- * so the same bytes are never embedded twice.
+ * fetch per attachment at once, and identical sources are read once and
+ * shared, so repeating one costs a write but not a second fetch.
  */
 async function resolveMedia(messages: Message[]): Promise<ResolvedMedia> {
-  const attachments = messages.flatMap((message) => [
-    ...(message.attachments ?? []),
-    ...(message.originalAttachments ?? []),
-  ])
-  const resolved: ResolvedMedia = new Map()
+  const perMessage: ResolvedMedia['perMessage'] = []
+  const occurrences: ResolvedAttachment[] = []
   const seen = new Map<string, ResolvedAttachment>()
-  let remainingBytes = MAX_TOTAL_INLINE_BYTES
+  let remaining = MAX_TOTAL_INLINE_CHARACTERS
 
-  for (const attachment of attachments) {
-    const key = `${attachment.type}\u0000${attachment.mimeType}\u0000${attachment.url}`
-    // A pending upload carries its own bytes, so it can't be keyed by URL.
-    const shared = attachment.file ? undefined : seen.get(key)
-    if (shared) {
-      resolved.set(attachment, shared)
-      continue
+  const resolveList = async (list: MessageAttachment[] | undefined): Promise<ResolvedAttachment[]> => {
+    const results: ResolvedAttachment[] = []
+    for (const attachment of list ?? []) {
+      const key = `${attachment.type}\u0000${attachment.mimeType}\u0000${attachment.url}`
+      // A pending upload carries its own bytes, so it can't be keyed by URL.
+      const shared = attachment.file ? undefined : seen.get(key)
+      // Every occurrence is written into the document, so every occurrence is
+      // billed — reading it once saves the fetch, not the space.
+      const outcome = shared ?? (await resolveAttachment(attachment, remaining))
+      const charged: ResolvedAttachment =
+        outcome.source !== null && outcome.source.length > remaining
+          ? { source: null, reason: 'no-room' }
+          : outcome
+      if (charged.source !== null) {
+        remaining -= charged.source.length
+      }
+      results.push(charged)
+      occurrences.push(charged)
+      if (!attachment.file && !shared) {
+        seen.set(key, outcome)
+      }
     }
-    const outcome = await resolveAttachment(attachment, remainingBytes)
-    if (outcome.dataUri) {
-      remainingBytes -= base64ByteLength(outcome.dataUri)
-    }
-    resolved.set(attachment, outcome)
-    if (!attachment.file) {
-      seen.set(key, outcome)
-    }
+    return results
   }
-  return resolved
+
+  for (const message of messages) {
+    perMessage.push({
+      attachments: await resolveList(message.attachments),
+      originalAttachments: await resolveList(message.originalAttachments),
+    })
+  }
+  return { perMessage, occurrences }
 }
 
 /**
@@ -408,45 +434,64 @@ async function resolveMedia(messages: Message[]): Promise<ResolvedMedia> {
  */
 async function resolveAttachment(
   attachment: MessageAttachment,
-  remainingBytes: number,
+  remaining: number,
 ): Promise<ResolvedAttachment> {
   // Only inert media is embedded. A file attachment can hold active content,
   // and this artifact is meant to be shared, so files are named instead.
   if (attachment.type === 'file') {
-    return { dataUri: null, reason: 'not-embeddable' }
+    return { source: null, reason: 'not-embeddable' }
   }
   try {
     if (attachment.url.startsWith('data:')) {
       const inlineBytes = base64ByteLength(attachment.url)
-      return inlineBytes > 0 && withinBudget(inlineBytes, remainingBytes)
-        ? { dataUri: attachment.url }
-        : { dataUri: null, reason: inlineBytes > 0 ? 'too-large' : 'unreadable' }
+      if (inlineBytes === 0) {
+        return { source: null, reason: 'unreadable' }
+      }
+      // An inline value is written escaped, so the escaped text is its cost.
+      const source = escapeHtml(attachment.url)
+      const refusal = budgetRefusal(inlineBytes, source.length, remaining)
+      return refusal ? { source: null, reason: refusal } : { source }
     }
     if (attachment.file) {
-      return await blobToDataUri(attachment.file, attachment.mimeType, remainingBytes)
+      return await blobToDataUri(attachment.file, attachment.mimeType, remaining)
     }
     if (!isMediaEndpointUrl(attachment.url)) {
-      return { dataUri: null, reason: 'unreadable' }
+      return { source: null, reason: 'unreadable' }
     }
     const response = await fetch(attachment.url)
     if (!response.ok) {
-      return { dataUri: null, reason: 'unreadable' }
+      return { source: null, reason: 'unreadable' }
     }
     // Check the advertised length before reading the body, so an oversized
     // response is abandoned instead of downloaded only to be discarded.
     const declaredBytes = Number(response.headers?.get('content-length'))
-    if (Number.isFinite(declaredBytes) && declaredBytes > 0 && !withinBudget(declaredBytes, remainingBytes)) {
-      return { dataUri: null, reason: 'too-large' }
+    const declaredRefusal = Number.isFinite(declaredBytes)
+      ? budgetRefusal(declaredBytes, dataUriLength(attachment.mimeType, declaredBytes), remaining)
+      : null
+    if (declaredBytes > 0 && declaredRefusal) {
+      return { source: null, reason: declaredRefusal }
     }
-    return await blobToDataUri(await response.blob(), attachment.mimeType, remainingBytes)
+    return await blobToDataUri(await response.blob(), attachment.mimeType, remaining)
   } catch {
-    return { dataUri: null, reason: 'unreadable' }
+    return { source: null, reason: 'unreadable' }
   }
 }
 
-/** Report whether a payload fits both the per-attachment cap and what is left of the budget. */
-function withinBudget(bytes: number, remainingBytes: number): boolean {
-  return bytes <= MAX_INLINE_ATTACHMENT_BYTES && bytes <= remainingBytes
+/**
+ * Report why a payload cannot be embedded, or `null` when it can. One limit is
+ * the size of the attachment itself; the other is the room left in the
+ * document. They are told apart so the reader is given the true reason.
+ */
+function budgetRefusal(bytes: number, writtenLength: number, remaining: number): OmissionReason | null {
+  if (bytes > MAX_INLINE_ATTACHMENT_BYTES) {
+    return 'too-large'
+  }
+  return writtenLength > remaining ? 'no-room' : null
+}
+
+/** Characters a `data:` URI occupies once `bytes` are base64-encoded behind its prefix. */
+function dataUriLength(mimeType: string, bytes: number): number {
+  return `data:${mimeType || 'application/octet-stream'};base64,`.length + Math.ceil(bytes / 3) * 4
 }
 
 /**
@@ -468,18 +513,19 @@ function base64ByteLength(dataUri: string): number {
 }
 
 /** Encode a blob as a `data:` URI, skipping empty and oversized payloads. */
-async function blobToDataUri(blob: Blob, mimeType: string, remainingBytes: number): Promise<ResolvedAttachment> {
+async function blobToDataUri(blob: Blob, mimeType: string, remaining: number): Promise<ResolvedAttachment> {
   if (blob.size === 0) {
-    return { dataUri: null, reason: 'unreadable' }
+    return { source: null, reason: 'unreadable' }
   }
-  if (!withinBudget(blob.size, remainingBytes)) {
-    return { dataUri: null, reason: 'too-large' }
+  const refusal = budgetRefusal(blob.size, dataUriLength(mimeType || blob.type, blob.size), remaining)
+  if (refusal) {
+    return { source: null, reason: refusal }
   }
   const base64 = await fileToBase64(blob)
   if (!base64) {
-    return { dataUri: null, reason: 'unreadable' }
+    return { source: null, reason: 'unreadable' }
   }
-  return { dataUri: `data:${mimeType || blob.type || 'application/octet-stream'};base64,${base64}` }
+  return { source: escapeHtml(`data:${mimeType || blob.type || 'application/octet-stream'};base64,${base64}`) }
 }
 
 function isMediaEndpointUrl(url: string): boolean {
@@ -495,7 +541,7 @@ function isMediaEndpointUrl(url: string): boolean {
   }
 }
 
-function renderMessage(message: Message, media: ResolvedMedia): string {
+function renderMessage(message: Message, resolved: ResolvedMedia['perMessage'][number]): string {
   const parts = [
     `<header><span class="role">${escapeHtml(ROLE_LABELS[message.role])}</span>` +
       `<span class="timestamp">${escapeHtml(message.timestamp)}</span></header>`,
@@ -508,14 +554,16 @@ function renderMessage(message: Message, media: ResolvedMedia): string {
   if (message.originalContent != null && message.originalContent !== message.content) {
     parts.push(labelled('Original (before conversion):', `<pre>${escapeHtml(message.originalContent)}</pre>`))
   }
-  parts.push(renderAttachments('Original attachments (before conversion):', message.originalAttachments, media))
+  parts.push(
+    renderAttachments('Original attachments (before conversion):', message.originalAttachments, resolved.originalAttachments),
+  )
   if (message.reasoningSummaries && message.reasoningSummaries.length > 0) {
     parts.push(labelled('Reasoning:', `<pre>${escapeHtml(message.reasoningSummaries.join('\n\n'))}</pre>`))
   }
   if (message.error) {
     parts.push(renderError(message.error))
   }
-  parts.push(renderAttachments('Attachments:', message.attachments, media))
+  parts.push(renderAttachments('Attachments:', message.attachments, resolved.attachments))
   return `<article class="message">\n${parts.filter(Boolean).join('\n')}\n</article>`
 }
 
@@ -527,27 +575,25 @@ function renderError(error: MessageError): string {
 function renderAttachments(
   heading: string,
   attachments: MessageAttachment[] | undefined,
-  media: ResolvedMedia,
+  resolved: ResolvedAttachment[],
 ): string {
   if (!attachments || attachments.length === 0) {
     return ''
   }
-  const rendered = attachments.map((attachment) =>
-    renderAttachment(attachment, media.get(attachment) ?? { dataUri: null, reason: 'unreadable' }),
+  const rendered = attachments.map((attachment, index) =>
+    renderAttachment(attachment, resolved[index] ?? { source: null, reason: 'unreadable' }),
   )
   return labelled(heading, rendered.join('\n'))
 }
 
 function renderAttachment(attachment: MessageAttachment, resolved: ResolvedAttachment): string {
   const caption = escapeHtml(`${attachment.name} (${attachment.mimeType})`)
-  if (resolved.dataUri === null) {
+  if (resolved.source === null) {
     // Say why the bytes are missing, so nobody mistakes an omission for a
     // message that simply had nothing in it.
     return `<p class="placeholder">[${MEDIA_LABELS[attachment.type]}: ${caption} — ${OMISSION_REASONS[resolved.reason]}]</p>`
   }
-  // The MIME type is echoed into the data URI, so escape it like any other
-  // untrusted value before it lands in an attribute.
-  const source = escapeHtml(resolved.dataUri)
+  const source = resolved.source
   const label = escapeHtml(attachment.name)
   const body =
     attachment.type === 'image'
