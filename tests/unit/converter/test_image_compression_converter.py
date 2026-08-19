@@ -9,7 +9,7 @@ import aiohttp
 import pytest
 from PIL import Image
 
-from pyrit.converter import ImageCompressionConverter
+from pyrit.converter import ImageCompressionConverter, ImageRotationConverter
 from pyrit.converter.base_image_to_image_converter import _download_image_from_url_async
 
 
@@ -32,6 +32,24 @@ async def test_download_image_from_url_async_preserves_response_semantics():
         response.read.side_effect = asyncio.CancelledError()
         with pytest.raises(asyncio.CancelledError):
             await _download_image_from_url_async("https://example.com/image")
+
+
+async def test_base_image_converter_delegates_url_download():
+    with patch(
+        "pyrit.converter.base_image_to_image_converter._download_image_from_url_async",
+        new=AsyncMock(return_value=b"image"),
+    ) as download:
+        assert await ImageRotationConverter()._read_image_from_url_async("https://example.com/image") == b"image"
+        download.assert_awaited_once_with("https://example.com/image")
+
+
+async def test_image_compression_converter_delegates_url_download():
+    with patch(
+        "pyrit.converter.image_compression_converter._download_image_from_url_async",
+        new=AsyncMock(return_value=b"image"),
+    ) as download:
+        assert await ImageCompressionConverter()._read_image_from_url_async("https://example.com/image") == b"image"
+        download.assert_awaited_once_with("https://example.com/image")
 
 
 @pytest.fixture
