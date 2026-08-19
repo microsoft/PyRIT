@@ -873,6 +873,27 @@ describe("conversationExport", () => {
       expect(html).toContain("emoji 🎉 عربى 中文");
     });
 
+    it("keeps media aligned with its message when a loading placeholder is dropped", async () => {
+      // Resolution and rendering both run over the settled messages, so an
+      // attachment after a dropped placeholder must still land in its own
+      // message rather than shifting onto another one.
+      const html = await conversationToHtml(
+        [
+          message({ content: "first" }),
+          message({ content: "typing", isLoading: true }),
+          message({
+            content: "third",
+            attachments: [attachment({ url: "data:image/png;base64,AAAA" })],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain('<img src="data:image/png;base64,AAAA"');
+      expect(html).toContain("Attachments: 1 of 1 embedded");
+      expect(html).not.toContain("could not be read");
+    });
+
     it("renders an empty conversation without messages", async () => {
       const html = await conversationToHtml([], null, FIXED_NOW);
       expect(html).toContain("Conversation: (unsaved)");
