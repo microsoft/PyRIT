@@ -95,12 +95,13 @@ class ConfigurationLoader(YamlLoadable):
         initialization_scripts: List of paths to custom initialization scripts.
             None means "use defaults", [] means "load nothing".
         env_files: List of environment file paths to load.
-            None means "use defaults (.env, .env.local)", [] means "load nothing".
+            None means auto-discover legacy ``.env`` and supported ``.env.local``;
+            [] means "load nothing".
         env_akv_ref: Ordered list of Key Vault bootstrap secret URLs.
         env_akv_strict: Whether malformed or valueless entries in a Key Vault
             bootstrap document should fail initialization.
-        env_akv_write_env: Whether to save fetched bootstrap documents to
-            ``~/.pyrit/.env`` for local inspection.
+        env_akv_write_env: Whether to save fully resolved bootstrap documents with
+            plaintext child-secret values to ``~/.pyrit/.env`` for debugging.
         silent: Whether to suppress initialization messages.
         operator: Name for the current operator, e.g. a team or username.
         operation: Name for the current operation.

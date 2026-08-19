@@ -4,13 +4,14 @@ The recommended way to configure PyRIT. A `.pyrit_conf` file declares your datab
 
 ## Quick Setup
 
-```bash
-mkdir -p ~/.pyrit
-cp .pyrit_conf_example ~/.pyrit/.pyrit_conf
-cp .env_example ~/.pyrit/.env
+Create `~/.pyrit/.pyrit_conf` and configure a Key Vault bootstrap document:
+
+```yaml
+env_akv_ref:
+  - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 ```
 
-Then edit both files for your environment. The `.pyrit_conf` tells PyRIT _how_ to initialize; the `.env` tells it _where_ your targets are.
+The Key Vault secret value uses dotenv syntax. When Azure is unavailable or you need a quick local patch, put only those values in `~/.pyrit/.env.local`.
 
 ## File Location
 
@@ -25,44 +26,34 @@ PyRIT looks for this file automatically on startup (via the CLI, shell, or `Conf
 ## Environment Configuration
 
 ```{important}
-Azure Key Vault is the recommended place for shared, CI/CD, and deployed PyRIT configuration. It avoids keeping credentials in a local `.env` file while preserving standard dotenv syntax. Existing `.env` configurations remain supported for backward compatibility and local development.
+Azure Key Vault is PyRIT's canonical environment source for shared, CI/CD, and deployed configuration. Auto-discovered `~/.pyrit/.env` is supported only as a legacy source and will be rejected in PyRIT 1.3.0. Use `~/.pyrit/.env.local` for deliberate plaintext local iteration or when Azure is unavailable.
 ```
 
 See [Populating Secrets](./populating_secrets.md) for provider-specific variable examples.
 
 ### Loading Order
 
-PyRIT loads environment sources in this order. Each later source overrides matching values from earlier sources:
+PyRIT loads environment sources in this order:
 
 1. Existing process environment variables.
-2. Key Vault bootstrap documents from `env_akv_ref`, in list order.
-3. Local dotenv files:
-   - If `env_files` is configured, those files load in list order.
-   - Otherwise, `~/.pyrit/.env` loads if present, followed by `~/.pyrit/.env.local`.
+2. Key Vault bootstrap documents, legacy auto-discovered `.env`, or explicit `env_files`. These sources fill only missing values.
+3. Files named `.env.local`. These are the only dotenv sources that override existing values.
 
-For a Key Vault-only setup, explicitly disable local dotenv loading:
-
-```yaml
-env_akv_ref:
-  - https://my-vault.vault.azure.net/secrets/my-pyrit-env
-env_files: []
-```
-
-If Key Vault and local files are both configured, PyRIT warns that local values may override the fetched configuration. Remove stale local files when Key Vault should be authoritative.
+When `env_akv_ref` is configured, PyRIT ignores an auto-discovered `~/.pyrit/.env`, emits its deprecation warning, and still loads `~/.pyrit/.env.local`. Explicit `env_files` are never blocked or deprecated based on their filename or location.
 
 ### Using .env.local for Overrides
 
-You can use `~/.pyrit/.env.local` to override values in `~/.pyrit/.env` without modifying the base file. This is useful for:
+Use `~/.pyrit/.env.local` to override process or Key Vault values deliberately. This is useful for:
 
 - Testing different targets
 - Using personal credentials instead of shared ones
 - Switching between configurations quickly
 
-Simply create `.env.local` in your `~/.pyrit/` directory and add any variables you want to override.
+Only put the values you need to patch in this file. Because it contains plaintext secrets, do not commit it.
 
 ### Authentication Options
 
-**API Keys (Default):** The simplest approach — set `OPENAI_CHAT_KEY` and similar variables in your `.env` file. Most targets support this method.
+**API keys:** Store shared API keys as Key Vault scalar secrets and reference them from the bootstrap document with `kv:`. For local-only work, place them in `.env.local`.
 
 **Azure Entra Authentication (Optional):** For Azure resources, you can use Entra auth instead of API keys. This requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) and `az login`. When using Entra auth, you don't need to set API keys for Azure resources.
 
@@ -160,11 +151,11 @@ initialization_scripts:
 
 ### `env_files`
 
-Optional local dotenv paths. Key Vault is recommended for shared or deployed configuration; use local files for backward compatibility and deliberate local overrides.
+Optional local dotenv paths. Key Vault remains the canonical shared source; explicit files support local and non-Azure workflows.
 
 | Value             | Behavior                                                 |
 | ----------------- | -------------------------------------------------------- |
-| Omitted or `null` | Load default `~/.pyrit/.env` and `~/.pyrit/.env.local`   |
+| Omitted or `null` | Auto-discover legacy `~/.pyrit/.env` and supported `~/.pyrit/.env.local` |
 | `[]` (empty list) | Load **no** environment files                            |
 | List of paths     | Load **only** the specified files (defaults are skipped) |
 
@@ -174,9 +165,11 @@ env_files:
   - /path/to/.env.local
 ```
 
-Local environment files use standard python-dotenv parsing and `${NAME}` interpolation. Interpolation follows assignment and file load order. The default `.env.local` can reference a value loaded earlier from `.env`, for example `FOOBAR=${OPENAI_CHAT_ENDPOINT}`. A `.env` value cannot reference a variable introduced only by the later `.env.local`; values are not resolved retroactively. Explicit `env_files` follow the order in which they are listed.
+Local files use standard python-dotenv parsing and `${NAME}` interpolation. Ordinary files fill missing values; any file whose basename is `.env.local` overrides existing values. Explicit files load in their listed order.
 
-`env_akv_strict` does not apply to local files: malformed local lines retain python-dotenv's existing permissive skip-and-warn behavior. Local `kv:`, `akv:`, `azure_key_vault:`, and `env_akv_ref:` values remain literal; child-secret resolution is limited to Key Vault bootstrap documents. PyRIT does not define `env:` or `literal:` interpolation syntax. Use standard `${NAME}` interpolation instead.
+Complete-value `kv:`, `akv:`, `azure_key_vault:`, and `env_akv_ref:` references resolve in local files as well as remote bootstrap documents. Local references may use any validated supported Key Vault URL; remote child references must remain in the bootstrap document's vault. A local assignment that loses to an existing value does not fetch its secret.
+
+Ordinary malformed dotenv lines retain python-dotenv's permissive behavior. `env_akv_strict` controls malformed Key Vault reference syntax in all sources: strict mode raises; non-strict mode warns and skips that assignment. Authentication, authorization, transport, missing-secret, and missing-value failures always raise.
 
 Environment loading preserves the historical non-transactional dotenv behavior. Each bootstrap document and local file updates `os.environ` as it loads. If a later source or child-secret lookup fails, assignments made by earlier sources remain in the process environment.
 
@@ -184,7 +177,7 @@ When `env_akv_ref` is not configured, an empty `env_files` list or missing defau
 
 ### `env_akv_ref`
 
-Ordered Azure Key Vault secret URLs used to obtain bootstrap environment documents. This is the recommended configuration path. Each secret value must contain dotenv-formatted entries. Authentication uses `DefaultAzureCredential`.
+Ordered Azure Key Vault secret URLs used to obtain bootstrap environment documents. This is the canonical configuration path. Each secret value contains dotenv-formatted entries. Authentication uses `DefaultAzureCredential`.
 
 ```yaml
 env_akv_ref:
@@ -192,7 +185,7 @@ env_akv_ref:
   - https://my-vault.vault.azure.net/secrets/team-pyrit-env
 ```
 
-Bootstrap documents load in list order with `override=True`; local environment files load afterward. Each document uses native dotenv interpolation against the process environment and assignments already parsed. A bootstrap document can mix literal values, `${NAME}` interpolation, and complete-value references to scalar secrets in the same vault:
+Bootstrap documents load in list order and fill values missing from the process environment. Each document uses native dotenv interpolation against the process environment and assignments already parsed. A bootstrap document can mix literal values, `${NAME}` interpolation, and complete-value references to scalar secrets in the same vault:
 
 ```dotenv
 OPENAI_CHAT_ENDPOINT="https://example.openai.azure.com/openai/v1"
@@ -212,40 +205,40 @@ References must occupy the entire value. `kv:` is the canonical Key Vault prefix
 
 A Key Vault reference must use a full HTTPS secret URL from the bootstrap document's vault. Supported vault DNS suffixes are `.vault.azure.net`, `.vault.azure.cn`, and `.vault.usgovcloudapi.net`. An unversioned URL reads the latest secret version at initialization. Include the version in the URL to pin it. Short names, malformed paths, arbitrary hosts, and cross-vault child references are rejected before a client is created.
 
-PyRIT does not cache referenced secrets. Each `kv:` occurrence in a bootstrap document performs a Key Vault read during initialization, including repeated references to the same URI. A later bootstrap or local file may override a reference after it has already been fetched.
+PyRIT does not cache referenced secrets. Each winning `kv:` occurrence performs a Key Vault read during initialization. References that lose to an existing process or earlier source are not fetched. Debug output is the exception: it resolves bootstrap references for the written file without changing runtime precedence.
 
 ```dotenv
 LATEST_KEY_URI="kv:https://my-vault.vault.azure.net/secrets/openai-chat-key"
 PINNED_KEY="kv:https://my-vault.vault.azure.net/secrets/openai-chat-key/version-id"
 ```
 
-Bootstrap documents stay in memory by default. They load before explicit `env_files` or the default `~/.pyrit/.env` and `~/.pyrit/.env.local`, allowing intentional local overrides.
+Bootstrap documents stay in memory by default. Use `.env.local` when an intentional local override is required.
 
 ### `env_akv_strict`
 
-Controls validation only of the Key Vault bootstrap document and defaults to `true`. It does not change parsing of `.env`, `.env.local`, or explicit `env_files`.
+Controls Key Vault bootstrap validation and Key Vault reference syntax in local files. It defaults to `true`.
 
 ```yaml
 env_akv_strict: false
 ```
 
-In strict mode, any malformed dotenv line or variable without an equals sign stops that bootstrap document before it mutates the environment. Empty assignments such as `OPTIONAL_VALUE=` remain valid and set the variable to an empty string. A referenced Key Vault secret whose value is an empty string is also valid. A missing value represented by `None` is treated as an error. With `env_akv_strict: false`, PyRIT emits a warning containing only malformed line numbers and valueless variable names, skips those entries, and loads the valid assignments. Secret values are never included in the warning.
+In strict mode, malformed bootstrap dotenv lines, valueless bootstrap entries, and malformed Key Vault references stop initialization. Empty assignments such as `OPTIONAL_VALUE=` remain valid. With `env_akv_strict: false`, PyRIT warns and skips malformed bootstrap entries and malformed reference assignments without logging secret values.
 
-Non-strict mode does not suppress Key Vault or reference failures. Missing secrets, invalid `kv:` URLs, and bootstrap documents with no valid assignments still stop initialization. Because loading is non-transactional, values from earlier bootstrap documents remain if a later document fails, and raw values from the current document may remain if a child-secret lookup fails.
+Non-strict mode does not suppress operational failures. Missing secrets, authentication, authorization, transport errors, and bootstrap documents with no valid assignments still stop initialization. Loading remains non-transactional, so earlier successful assignments remain.
 
 Key Vault clients use an explicit Azure retry policy with up to three retries and exponential backoff. Bootstrap parsing, invalid or missing secrets, authentication, authorization, and Azure transport failures are raised as `KeyVaultInitializationException` with the original exception preserved as the cause. The exception remains `ValueError`-compatible for callers migrating from the previous contract.
 
 ### `env_akv_write_env`
 
-Defaults to `false`. Set it to `true` to write the fetched bootstrap document to `~/.pyrit/.env` for inspecting configured targets and aliases:
+Defaults to `false`. Set it to `true` only while debugging to write a fully resolved bootstrap document to `~/.pyrit/.env`:
 
 ```yaml
 env_akv_write_env: true
 ```
 
-The written file contains the bootstrap text before child `kv:` references are resolved. This makes target configuration readable without writing referenced child-secret values. However, any literal secret already present in the bootstrap document is written as-is, so treat the file as sensitive.
+The written file contains only bootstrap assignments, comments, and fully resolved child-secret values. It excludes unrelated process and `.env.local` values, safely round-trips terminal secret text, and is always named `.env`, never `.env.new`.
 
-Writing is opt-in and overwrites an existing `~/.pyrit/.env`. PyRIT does not load the generated `.env` during that same initialization, because its unresolved `kv:` references would otherwise replace resolved values. `.env.local` and other explicit local files still load afterward. The generated file is not a secure backup and should be removed when debugging is complete.
+PyRIT refuses debug mode when `~/.pyrit/.env` already exists; rename or remove the existing file first. The file is created with owner-only permissions where supported and replaced atomically, but it contains plaintext secrets. Remove it when debugging is complete. `.env.local` still loads afterward and can override runtime values without changing the generated file.
 
 ### `silent`
 
@@ -292,7 +285,7 @@ This means you can set sensible defaults in `~/.pyrit/.pyrit_conf` and override 
 
 The 3-layer model above determines **which config values are selected**. Once resolved, the values are applied in a fixed runtime order:
 
-1. Configured AKV bootstrap documents load in order, followed by selected environment files
+1. Process values are retained, AKV or ordinary local sources fill gaps, and `.env.local` applies final overrides
 2. Default values are reset
 3. Memory database is configured (from `memory_db_type`)
 4. Initializers are executed in listed order
@@ -368,14 +361,15 @@ initializers:
 # initialization_scripts:
 #   - /path/to/my_custom_initializer.py
 
-# Recommended: ordered Azure Key Vault bootstrap environment documents
+# Canonical: ordered Azure Key Vault bootstrap environment documents
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 # env_akv_strict: true
-# env_akv_write_env: false  # Opt in to writing ~/.pyrit/.env for inspection
+# env_akv_write_env: false  # Debug only: writes fully resolved plaintext secrets
 
-# Recommended with Key Vault: disable local dotenv overrides
-# env_files: []
+# Optional plaintext local patch or non-Azure workflow
+# env_files:
+#   - /path/to/.env.local
 
 # Suppress initialization messages
 silent: false

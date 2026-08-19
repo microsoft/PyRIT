@@ -4,7 +4,7 @@
 # or specify a custom path when loading via --config-file.
 #
 # For documentation on configuration options, see:
-# https://github.com/microsoft/PyRIT/blob/main/doc/setup/configuration.md
+# https://github.com/microsoft/PyRIT/blob/main/doc/getting_started/pyrit_conf.md
 
 # Memory Database Type
 # --------------------
@@ -81,18 +81,20 @@ operation: op_trash_panda
 
 # Environment Configuration
 # -------------------------
-# Azure Key Vault is recommended for shared and deployed configurations.
+# Azure Key Vault is the canonical source for shared and deployed configuration.
 # See doc/getting_started/pyrit_conf.md for loading order, references, and migration guidance.
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 # env_akv_strict: true
-# env_akv_write_env: false  # Opt in to writing ~/.pyrit/.env for inspection.
+# env_akv_write_env: false  # Debug only: write a fully resolved, sensitive ~/.pyrit/.env.
 
-# Local dotenv files remain supported. Explicit paths load after Key Vault and override it.
-# Omit env_files to load ~/.pyrit/.env and ~/.pyrit/.env.local, or use [] for no local files.
+# Auto-discovered ~/.pyrit/.env is legacy and will be rejected in PyRIT 1.3.0.
+# Use ~/.pyrit/.env.local for quick local plaintext patches or when Azure is unavailable.
+# Process values remain authoritative; AKV and ordinary env_files fill gaps in load order.
+# Only a file named .env.local overrides existing values.
+# Explicit env_files remain supported regardless of name or location and may contain full kv: URLs.
 # env_files:
 #   - /path/to/.env.local
-# env_akv_strict: false
 
 # Max Concurrent Scenario Runs
 # ----------------------------

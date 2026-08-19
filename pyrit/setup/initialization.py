@@ -95,15 +95,15 @@ async def initialize_pyrit_async(
             ``core`` techniques and ``default`` targets are loaded — ``extra`` / per-source technique groups
             and ``scorer`` target variants remain opt-in.
         env_files (Sequence[pathlib.Path] | None): Optional sequence of environment file paths to load
-            in order. If not provided, will load default .env and .env.local files from PyRIT home if they exist.
-            All paths must be valid pathlib.Path objects.
+            in order. Ordinary files fill missing process values; files named ``.env.local`` override.
+            If omitted, PyRIT auto-discovers legacy ``.env`` and supported ``.env.local`` files.
         env_akv_ref (Sequence[str] | None): Optional ordered Azure Key Vault URLs whose secret values
-            contain bootstrap .env documents. Loaded before ``env_files`` so later bootstrap documents
-            and local files take precedence. Requires ``azure-keyvault-secrets``.
-        env_akv_strict (bool): If True, reject malformed or valueless entries in the Key Vault
-            bootstrap document. If False, warn and skip those entries. Defaults to True.
-        env_akv_write_env (bool): If True, save fetched bootstrap documents with unresolved
-            child references to ``~/.pyrit/.env``. Defaults to False.
+            contain bootstrap dotenv documents. Documents fill missing process values and support
+            complete-value references to scalar secrets. Requires ``azure-keyvault-secrets``.
+        env_akv_strict (bool): If True, reject malformed bootstrap entries and Key Vault reference
+            syntax. If False, warn and skip those entries. Operational Key Vault failures always raise.
+        env_akv_write_env (bool): If True, write fully resolved bootstrap documents with plaintext
+            child-secret values to ``~/.pyrit/.env`` for debugging. Defaults to False.
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.

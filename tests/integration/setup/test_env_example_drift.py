@@ -14,6 +14,7 @@ _REPOSITORY_ROOT_ENV = "PYRIT_REPOSITORY_ROOT"
 _ENVIRONMENT_NAME_PATTERN = re.compile(r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]*(?![A-Za-z0-9_])")
 _DOTENV_ASSIGNMENT_NAME_PATTERN = re.compile(r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=", re.MULTILINE)
 _DOTENV_COMPLETE_REFERENCE_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+_BLANK_LINE_BETWEEN_COMMENTS_PATTERN = re.compile(r"^#[^\r\n]*\r?\n[ \t]*\r?\n(?=#)", re.MULTILINE)
 
 
 def _get_repository_root() -> pathlib.Path:
@@ -102,6 +103,17 @@ def test_env_example_url_values_are_not_wrapped_in_angle_brackets() -> None:
     wrapped_names = {name for name, value in values.items() if value and ("<" in value or ">" in value)}
     assert not wrapped_names, ".env_example contains values wrapped in angle brackets: " + ", ".join(
         sorted(wrapped_names)
+    )
+
+
+def test_env_example_comment_blocks_do_not_contain_blank_lines() -> None:
+    """Keep consecutive comment lines together so the example remains compact."""
+    repository_root = _get_repository_root()
+    env_example_path = _get_env_example_path(repository_root=repository_root)
+    contents = env_example_path.read_text(encoding="utf-8")
+
+    assert not _BLANK_LINE_BETWEEN_COMMENTS_PATTERN.search(contents), (
+        ".env_example contains a blank line between consecutive comment lines."
     )
 
 

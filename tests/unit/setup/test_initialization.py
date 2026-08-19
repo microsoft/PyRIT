@@ -176,12 +176,14 @@ class ScriptInit(PyRITInitializer):
 
         mock_load_akv.return_value = None
 
-        await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs, load_defaults=False)
+        with mock.patch("pyrit.setup.akv_initialization._warn_about_akv_environment_files") as mock_warn:
+            await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs, load_defaults=False)
 
         assert mock_load_akv.await_args_list == [
-            mock.call(secret_url=refs[0], strict=True, silent=False),
-            mock.call(secret_url=refs[1], strict=True, silent=False),
+            mock.call(secret_url=refs[0], strict=True, silent=False, resolve_references_for_output=False),
+            mock.call(secret_url=refs[1], strict=True, silent=False, resolve_references_for_output=False),
         ]
+        mock_warn.assert_called_once()
         mock_load_env.assert_called_once()
         mock_set_memory.assert_called_once()
 
@@ -294,6 +296,13 @@ class ScriptInit(PyRITInitializer):
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     async def test_initialize_resolves_bootstrap_references_before_local_overrides(self, mock_set_memory):
         refs = ["https://vault.vault.azure.net/secrets/bootstrap"]
+        credential = mock.MagicMock()
+        credential.__aenter__ = mock.AsyncMock(return_value=credential)
+        credential.__aexit__ = mock.AsyncMock(return_value=None)
+        client = mock.MagicMock()
+        client.__aenter__ = mock.AsyncMock(return_value=client)
+        client.__aexit__ = mock.AsyncMock(return_value=None)
+        client.get_secret = mock.AsyncMock(return_value=mock.MagicMock(value="local-secret-value"))
         with tempfile.TemporaryDirectory() as temp_dir:
             local_file = pathlib.Path(temp_dir) / ".env.local"
             local_file.write_text(
@@ -315,6 +324,8 @@ class ScriptInit(PyRITInitializer):
                     new_callable=mock.AsyncMock,
                     side_effect=lambda **_: os.environ.update(bootstrap_environment),
                 ),
+                mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+                mock.patch("pyrit.setup.akv_initialization._create_akv_secret_client", return_value=client),
             ):
                 await initialize_pyrit_async(
                     memory_db_type=IN_MEMORY,
@@ -325,8 +336,10 @@ class ScriptInit(PyRITInitializer):
 
                 assert os.environ["OVERRIDDEN"] == "local"
                 assert os.environ["BOOTSTRAP_SECRET"] == "bootstrap-secret-value"
-                assert os.environ["LOCAL_SECRET"] == "kv:https://vault.vault.azure.net/secrets/local-secret"
+                assert os.environ["LOCAL_SECRET"] == "local-secret-value"
                 assert os.environ["LOCAL_ENV"] == "env:BOOTSTRAP_SOURCE"
+
+            client.get_secret.assert_awaited_once_with("local-secret", version=None)
 
         mock_set_memory.assert_called_once()
 
