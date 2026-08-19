@@ -588,6 +588,34 @@ async def test_cleanup_conversation_async_does_not_retain_unknown_lock(websocket
     assert "missing" not in websocket_target._conversation_locks
 
 
+async def test_cleanup_conversation_async_cancellation_finishes_closing_connection(
+    websocket_target: WebsocketTarget,
+) -> None:
+    connection = AsyncMock(spec=ClientConnection)
+    websocket_target._existing_conversation["conversation"] = connection
+    close_started = asyncio.Event()
+    finish_close = asyncio.Event()
+
+    async def close_connection() -> None:
+        close_started.set()
+        await finish_close.wait()
+
+    connection.close.side_effect = close_connection
+    cleanup_task = asyncio.create_task(websocket_target.cleanup_conversation_async("conversation"))
+    await close_started.wait()
+
+    cleanup_task.cancel()
+    await asyncio.sleep(0)
+    assert not cleanup_task.done()
+
+    finish_close.set()
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup_task
+
+    connection.close.assert_awaited_once()
+    assert websocket_target._existing_conversation == {}
+
+
 async def test_cleanup_target_async_attempts_every_connection(websocket_target: WebsocketTarget) -> None:
     failing_connection = AsyncMock(spec=ClientConnection)
     failing_connection.close.side_effect = RuntimeError("close failed")
