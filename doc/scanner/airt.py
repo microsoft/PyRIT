@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -30,9 +30,23 @@ from pyrit.setup.initializers import (
     TechniqueInitializer,
 )
 
+dataset_initializer = LoadDefaultDatasets()
+dataset_initializer.set_params_from_args(
+    args={
+        "dataset_names": [
+            "airt_hate",
+            "airt_imminent_crisis",
+            "airt_leakage",
+            "airt_malware",
+            "airt_scams",
+            "harmbench",
+        ]
+    }
+)
+
 await initialize_pyrit_async(  # type: ignore
     memory_db_type=IN_MEMORY,
-    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), LoadDefaultDatasets()],
+    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), dataset_initializer],
 )
 
 objective_target = OpenAIChatTarget()
@@ -191,6 +205,52 @@ scenario.set_params_from_args(  # type: ignore
         "objective_target": objective_target,
         "scenario_techniques": [JailbreakTechnique.DEFAULT],
         "jailbreak_names": ["aim.yaml"],
+        "dataset_config": dataset_config,
+    }
+)
+await scenario.initialize_async()  # type: ignore
+
+scenario_result = await scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(scenario_result)
+
+# %% [markdown]
+# ## Multilingual
+#
+# Tests whether target safeguards remain effective when harmful objectives are presented in other
+# languages. A run crosses registered text-compatible attack techniques with datasets and translation
+# strategies. By default, `translation` translates each objective into every selected language, and
+# `random_translation` translates individual words using the full selected language pool. A baseline
+# sends each objective without translation and is included by default.
+#
+# ```bash
+# pyrit_scan airt.multilingual \
+#   --initializers target load_default_datasets \
+#   --target openai_chat \
+#   --dataset-names harmbench \
+#   --max-dataset-size 1
+# ```
+#
+# **Available techniques:** `prompt_sending` is the default. Every registry technique (`role_play_*`,
+# `many_shot`, `tap`, …) whose built-in request converter chain ends in text is also available.
+#
+# **Translation strategies:** `translation` and `random_translation` (both default). A bare run translates
+# five objectives into five randomly selected languages, plus a word-level random language translation.
+# Pass `num_languages` to change the random sample size or `languages` to provide an explicit list.
+# The two language selectors are mutually exclusive.
+
+# %%
+from pyrit.scenario.airt import Multilingual
+
+dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
+
+scenario = Multilingual()
+scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "languages": ["French", "Spanish", "German"],
+        "translation_strategies": ["translation", "random_translation"],
         "dataset_config": dataset_config,
     }
 )
