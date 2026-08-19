@@ -187,11 +187,13 @@ function ParameterField({ parameter, value, disabled, onChange }: ParameterField
     const selected = Array.isArray(value) ? value : []
     return (
       <Field label={label} hint={parameter.description ?? undefined}>
-        <div className={styles.checkboxGroup} role="group" aria-label={parameter.name}>
+        <div className={styles.checkboxGroup} role="group" aria-labelledby={`param-${parameter.name}-group-label`}>
+          <span id={`param-${parameter.name}-group-label`} className={styles.srOnly}>{label}</span>
           {(parameter.choices ?? []).map((choice) => (
             <Checkbox
               key={choice}
               id={`param-${parameter.name}-${choice}`}
+              aria-label={choice}
               label={choice}
               checked={selected.includes(choice)}
               disabled={disabled}
