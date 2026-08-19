@@ -788,13 +788,17 @@ export default function ChatWindow({
               </MenuTrigger>
               <MenuPopover>
                 <MenuList>
-                  <MenuItem onClick={() => handleExport('markdown')} data-testid="export-markdown-item">
+                  <MenuItem
+                    onClick={() => handleExport('markdown')}
+                    disabled={isExporting}
+                    data-testid="export-markdown-item"
+                  >
                     Export as Markdown (.md)
                   </MenuItem>
-                  <MenuItem onClick={() => handleExport('json')} data-testid="export-json-item">
+                  <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
                     Export as JSON (.json)
                   </MenuItem>
-                  <MenuItem onClick={() => handleExport('html')} data-testid="export-html-item">
+                  <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
                     Export as HTML (.html)
                   </MenuItem>
                 </MenuList>

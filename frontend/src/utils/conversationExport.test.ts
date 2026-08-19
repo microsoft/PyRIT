@@ -315,6 +315,67 @@ describe("conversationExport", () => {
       expect(attachment.pieceId).toBe("piece-9");
     });
 
+    it("drops the signed storage url so a shared file carries no credentials", () => {
+      const json = conversationToJson(
+        [
+          message({
+            attachments: [
+              {
+                type: "image",
+                name: "result.png",
+                url: "https://acct.blob.core.windows.net/c/result.png?sv=2024&sig=SECRETSIG",
+                mimeType: "image/png",
+              },
+            ],
+          }),
+        ],
+        "conv-1"
+      );
+      expect(json).not.toContain("SECRETSIG");
+      expect(json).not.toContain("blob.core.windows.net");
+      expect(JSON.parse(json).messages[0].attachments[0].url).toBe("");
+      expect(JSON.parse(json).messages[0].attachments[0].name).toBe("result.png");
+    });
+
+    it("drops the local media path so a shared file does not expose the operator's disk", () => {
+      const json = conversationToJson(
+        [
+          message({
+            attachments: [
+              {
+                type: "image",
+                name: "result.png",
+                url: "/api/media?path=/home/op/dbdata/prompt-memory-entries/images/1.png",
+                mimeType: "image/png",
+              },
+            ],
+          }),
+        ],
+        "conv-1"
+      );
+      expect(json).not.toContain("/home/op/dbdata");
+      expect(json).not.toContain("/api/media");
+    });
+
+    it("keeps an inline data uri, which is the payload rather than a pointer to it", () => {
+      const json = conversationToJson(
+        [
+          message({
+            attachments: [
+              {
+                type: "image",
+                name: "result.png",
+                url: "data:image/png;base64,AAAA",
+                mimeType: "image/png",
+              },
+            ],
+          }),
+        ],
+        "conv-1"
+      );
+      expect(JSON.parse(json).messages[0].attachments[0].url).toBe("data:image/png;base64,AAAA");
+    });
+
     it("keeps a serializable metadata field named 'file' (only the attachment File handle is stripped)", () => {
       const file = new File(["x"], "local.png", { type: "image/png" });
       const json = conversationToJson(
@@ -595,7 +656,7 @@ describe("conversationExport", () => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(html).not.toContain("SECRETSIG");
       expect(html).not.toContain("blob.core.windows.net");
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — could not be read]");
     });
 
     it("names but does not embed a blob url with no local file", async () => {
@@ -606,7 +667,7 @@ describe("conversationExport", () => {
         FIXED_NOW,
       );
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — could not be read]");
     });
 
     it("falls back to a placeholder when the media endpoint refuses the file", async () => {
@@ -616,7 +677,7 @@ describe("conversationExport", () => {
         "conv-1",
         FIXED_NOW,
       );
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — could not be read]");
       expect(html).not.toContain("Access denied");
       expect(html).not.toContain("/api/media");
     });
@@ -628,7 +689,7 @@ describe("conversationExport", () => {
         "conv-1",
         FIXED_NOW,
       );
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — could not be read]");
     });
 
     it("names but does not embed an attachment over the inline size cap", async () => {
@@ -638,7 +699,7 @@ describe("conversationExport", () => {
         "conv-1",
         FIXED_NOW,
       );
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — too large to embed]");
       expect(html).not.toContain("base64");
     });
 
@@ -649,7 +710,7 @@ describe("conversationExport", () => {
         "conv-1",
         FIXED_NOW,
       );
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — too large to embed]");
       expect(html).not.toContain("base64,AAAA");
       expect(html.length).toBeLessThan(10000);
     });
@@ -660,7 +721,7 @@ describe("conversationExport", () => {
         "conv-1",
         FIXED_NOW,
       );
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — could not be read]");
       expect(html).not.toContain("<img");
     });
 
@@ -674,7 +735,7 @@ describe("conversationExport", () => {
         FIXED_NOW,
       );
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — could not be read]");
       expect(html).not.toContain("app shell");
     });
 
@@ -703,7 +764,7 @@ describe("conversationExport", () => {
         FIXED_NOW,
       );
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(html).toContain("[File: evil.html (text/html)]");
+      expect(html).toContain("[File: evil.html (text/html) — not a media file]");
       expect(html).not.toContain("<a ");
       expect(html).not.toContain("data:text/html");
     });
@@ -715,7 +776,7 @@ describe("conversationExport", () => {
         "conv-1",
         FIXED_NOW,
       );
-      expect(html).toContain("[Image: result.png (image/png)]");
+      expect(html).toContain("[Image: result.png (image/png) — could not be read]");
     });
 
     it("falls back to a generic mime type when the attachment has none", async () => {
@@ -745,7 +806,7 @@ describe("conversationExport", () => {
       );
       expect(html).toContain("<audio controls");
       expect(html).toContain("<video controls");
-      expect(html).toContain("[File: f.txt (text/plain)]");
+      expect(html).toContain("[File: f.txt (text/plain) — not a media file]");
     });
 
     it("renders original content, original attachments, reasoning, and errors like Markdown does", async () => {
@@ -785,6 +846,134 @@ describe("conversationExport", () => {
       expect(html).toContain("Conversation: (unsaved)");
       expect(html).toContain("Messages: 0");
       expect(html).not.toContain("<article");
+    });
+
+    it("reports that every attachment made it into the file", async () => {
+      mockFetchOnce("hello");
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("Attachments: 1 of 1 embedded");
+      expect(html).not.toContain("not embedded (");
+    });
+
+    it("says how many attachments were left out and why", async () => {
+      mockFetchOnce("hello");
+      const html = await conversationToHtml(
+        [
+          message({
+            attachments: [
+              attachment({ name: "a.png", url: "https://acct.blob.core.windows.net/c/a.png?sig=S" }),
+              attachment({ name: "b.png", url: `data:image/png;base64,${"A".repeat(16 * 1024 * 1024)}` }),
+              attachment({ type: "file", name: "c.txt", mimeType: "text/plain" }),
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("Attachments: 0 of 3 embedded");
+      expect(html).toContain(
+        "3 not embedded (1 could not be read; 1 too large to embed; 1 not a media file)",
+      );
+    });
+
+    it("says there are no attachments when the conversation has none", async () => {
+      const html = await conversationToHtml([message()], "conv-1", FIXED_NOW);
+      expect(html).toContain("Attachments: none");
+    });
+
+    it("measures a percent-encoded data uri instead of assuming it is small", async () => {
+      const url = `data:image/svg+xml,${"%20".repeat(4 * 1024 * 1024)}`;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: result.png (image/png) — too large to embed]");
+      expect(html).not.toContain("data:image/svg+xml");
+    });
+
+    it("measures an uppercase base64 marker like a lowercase one", async () => {
+      const url = `data:image/png;BASE64,${"A".repeat(16 * 1024 * 1024)}`;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: result.png (image/png) — too large to embed]");
+    });
+
+    it("stops embedding once the whole document has used its budget", async () => {
+      // Each attachment clears the per-attachment cap; together they do not.
+      const payload = `data:image/png;base64,${"A".repeat(8 * 1024 * 1024)}`;
+      const attachments = Array.from({ length: 12 }, (_, index) =>
+        attachment({ name: `img-${index}.png`, url: payload.replace("AAAA", `AAA${index}`) }),
+      );
+      const html = await conversationToHtml(
+        [message({ attachments })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      const embedded = (html.match(/<img /g) ?? []).length;
+      expect(embedded).toBeGreaterThan(0);
+      expect(embedded).toBeLessThan(attachments.length);
+      expect(html).toContain("too large to embed");
+    });
+
+    it("reads a repeated attachment once and embeds it in both places", async () => {
+      const fetchMock = mockFetchOnce("hello");
+      const html = await conversationToHtml(
+        [
+          message({ attachments: [attachment()] }),
+          message({ attachments: [attachment()] }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect((html.match(/data:image\/png;base64,aGVsbG8=/g) ?? []).length).toBe(2);
+      expect(html).toContain("Attachments: 2 of 2 embedded");
+    });
+
+    it("does not read the body of a response that declares it is too large", async () => {
+      const blob = jest.fn();
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => String(11 * 1024 * 1024) },
+        blob,
+      }) as unknown as typeof fetch;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(blob).not.toHaveBeenCalled();
+      expect(html).toContain("[Image: result.png (image/png) — too large to embed]");
+    });
+
+    it("gives audio and video players an accessible name", async () => {
+      const html = await conversationToHtml(
+        [
+          message({
+            attachments: [
+              attachment({ type: "audio", name: "clip.wav", mimeType: "audio/wav", url: "data:audio/wav;base64,AAAA" }),
+              attachment({ type: "video", name: "clip.mp4", mimeType: "video/mp4", url: "data:video/mp4;base64,AAAA" }),
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain('aria-label="clip.wav"');
+      expect(html).toContain('aria-label="clip.mp4"');
+    });
+
+    it("scales to the width of the screen it is opened on", async () => {
+      const html = await conversationToHtml([message()], "conv-1", FIXED_NOW);
+      expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1" />');
     });
   });
 

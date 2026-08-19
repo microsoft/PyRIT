@@ -3574,7 +3574,10 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: /export conversation/i }));
       await user.click(screen.getByTestId("export-html-item"));
 
-      // The guard, not the menu, is what stops the second export starting.
+      // The menu shows the export is already running, and the guard stops a
+      // second one from starting even if the click lands anyway.
+      expect(screen.getByTestId("export-html-item")).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByTestId("export-markdown-item")).toHaveAttribute("aria-disabled", "true");
       expect(mockedMapper.fileToBase64).toHaveBeenCalledTimes(1);
 
       releaseMedia("eA==");
