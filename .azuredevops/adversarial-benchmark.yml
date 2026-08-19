@@ -32,11 +32,11 @@ parameters:
   - name: datasetName
     displayName: Dataset name
     type: string
-    default: harmbench
+    default: harmbench-balanced-14-v1
   - name: maxDatasetSize
     displayName: Maximum objectives
     type: number
-    default: 1
+    default: 14
   - name: maxConcurrency
     displayName: Maximum concurrency
     type: number
@@ -145,6 +145,10 @@ jobs:
             az account get-access-token \
               --scope https://ml.azure.com/.default \
               --output none
+
+            if [[ "$DATASET_NAME_INPUT" == "harmbench-balanced-14-v1" ]]; then
+              uv run python build_scripts/prepare_adversarial_benchmark_dataset.py
+            fi
 
             uv run pyrit_scan \
               --start-server \
