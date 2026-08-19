@@ -82,7 +82,9 @@ dev = [
     "jupyter-book>=2.0.0",
     "jupytext>=1.17.1",
     "matplotlib>=3.10.0",
-    "ty>=0.0.32",
+    # ty 0.0.70 adds unsound-return-statement under `all = "error"`; adopting it
+    # requires a repo-wide typing cleanup.
+    "ty>=0.0.32,<0.0.70",
     "pandas>=2.2.0",
     "pre-commit>=4.2.0",
     "pytest>=9.0.3",

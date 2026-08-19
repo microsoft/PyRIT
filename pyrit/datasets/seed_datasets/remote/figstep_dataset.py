@@ -240,7 +240,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
     @override
     def dataset_name(self) -> str:
         """The dataset name."""
-        return "figstep"
+        return self.variant.value
 
     @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -660,3 +660,30 @@ class _FigStepDataset(_RemoteDatasetLoader):
 
         indexed_paths.sort(key=lambda item: item[0])
         return [path for _, path in indexed_paths]
+
+
+class _FigStepProDataset(_FigStepDataset):
+    """Provider entry for the FigStep-Pro SafeBench-Tiny variant."""
+
+    def __init__(
+        self,
+        *,
+        categories: list[FigStepCategory] | None = None,
+        source: str | None = None,
+        source_type: Literal["public_url", "file"] = "public_url",
+    ) -> None:
+        """
+        Initialize the FigStep-Pro provider.
+
+        Args:
+            categories (list[FigStepCategory] | None): Optional harmful-topic filter.
+            source (str | None): Optional question CSV URL or local path override.
+            source_type (Literal["public_url", "file"]): How to interpret ``source``.
+        """
+        super().__init__(
+            use_tiny=True,
+            variant=FigStepVariant.FIGSTEP_PRO,
+            categories=categories,
+            source=source,
+            source_type=source_type,
+        )

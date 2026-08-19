@@ -187,7 +187,7 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
         print("\nNo targets found in registry.")
         print(
             "\nTargets are registered by initializers. Include an initializer that "
-            "registers targets, for example:\n  --initializers target\n"
+            "registers targets in your config file"
         )
         return
 
