@@ -413,7 +413,7 @@ def is_content_filter_response(response: Any) -> bool:
         bool: True if ``finish_reason == "content_filter"``, False otherwise.
     """
     try:
-        return bool(response.choices) and response.choices[0].finish_reason == "content_filter"
+        return bool(response.choices) and bool(response.choices[0].finish_reason == "content_filter")
     except (AttributeError, IndexError):
         return False
 
@@ -429,9 +429,9 @@ def extract_partial_content(response: Any) -> str | None:
         str | None: The partial text, or None if none was generated.
     """
     try:
-        choice = response.choices[0]
-        if choice.message and choice.message.content:
-            return choice.message.content
+        content = response.choices[0].message.content
+        if isinstance(content, str) and content:
+            return content
     except (AttributeError, IndexError):
         pass
     return None

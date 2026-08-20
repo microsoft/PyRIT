@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
+from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.score import (
     FloatScaleScorer,
@@ -26,8 +27,9 @@ from pyrit.score import (
 @pytest.fixture
 def mock_harm_scorer():
     scorer = MagicMock(spec=FloatScaleScorer)
-    scorer._memory = MagicMock()
+    scorer._memory = MagicMock(spec=MemoryInterface)
     scorer._memory.add_message_to_memory = MagicMock()
+    scorer._memory.get_message_pieces.return_value = []
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_456"
@@ -40,8 +42,9 @@ def mock_harm_scorer():
 @pytest.fixture
 def mock_objective_scorer():
     scorer = MagicMock(spec=TrueFalseScorer)
-    scorer._memory = MagicMock()
+    scorer._memory = MagicMock(spec=MemoryInterface)
     scorer._memory.add_message_to_memory = MagicMock()
+    scorer._memory.get_message_pieces.return_value = []
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_123"
