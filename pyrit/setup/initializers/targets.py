@@ -338,18 +338,18 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
     TargetConfig(
         registry_name="openai_image_azure",
         target_class=OpenAIImageTarget,
-        endpoint_var="AZURE_OPENAI_IMAGE_ENDPOINT1",
-        key_var="AZURE_OPENAI_IMAGE_API_KEY1",
-        model_var="AZURE_OPENAI_IMAGE_MODEL1",
-        underlying_model_var="AZURE_OPENAI_IMAGE_UNDERLYING_MODEL1",
+        endpoint_var="OPENAI_IMAGE_ENDPOINT1",
+        key_var="OPENAI_IMAGE_API_KEY1",
+        model_var="OPENAI_IMAGE_MODEL1",
+        underlying_model_var="OPENAI_IMAGE_UNDERLYING_MODEL1",
     ),
     TargetConfig(
         registry_name="openai_image_platform",
         target_class=OpenAIImageTarget,
-        endpoint_var="AZURE_OPENAI_IMAGE_ENDPOINT2",
-        key_var="AZURE_OPENAI_IMAGE_API_KEY2",
-        model_var="AZURE_OPENAI_IMAGE_MODEL2",
-        underlying_model_var="AZURE_OPENAI_IMAGE_UNDERLYING_MODEL2",
+        endpoint_var="OPENAI_IMAGE_ENDPOINT2",
+        key_var="OPENAI_IMAGE_API_KEY2",
+        model_var="OPENAI_IMAGE_MODEL2",
+        underlying_model_var="OPENAI_IMAGE_UNDERLYING_MODEL2",
     ),
     # ============================================
     # TTS Targets (OpenAITTSTarget)
@@ -357,18 +357,18 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
     TargetConfig(
         registry_name="openai_tts_azure",
         target_class=OpenAITTSTarget,
-        endpoint_var="AZURE_OPENAI_TTS_ENDPOINT1",
-        key_var="AZURE_OPENAI_TTS_KEY1",
-        model_var="AZURE_OPENAI_TTS_MODEL1",
-        underlying_model_var="AZURE_OPENAI_TTS_UNDERLYING_MODEL1",
+        endpoint_var="OPENAI_TTS_ENDPOINT1",
+        key_var="OPENAI_TTS_KEY1",
+        model_var="OPENAI_TTS_MODEL1",
+        underlying_model_var="OPENAI_TTS_UNDERLYING_MODEL1",
     ),
     TargetConfig(
         registry_name="openai_tts_platform",
         target_class=OpenAITTSTarget,
-        endpoint_var="AZURE_OPENAI_TTS_ENDPOINT2",
-        key_var="AZURE_OPENAI_TTS_KEY2",
-        model_var="AZURE_OPENAI_TTS_MODEL2",
-        underlying_model_var="AZURE_OPENAI_TTS_UNDERLYING_MODEL2",
+        endpoint_var="OPENAI_TTS_ENDPOINT2",
+        key_var="OPENAI_TTS_KEY2",
+        model_var="OPENAI_TTS_MODEL2",
+        underlying_model_var="OPENAI_TTS_UNDERLYING_MODEL2",
     ),
     # ============================================
     # Video Targets (OpenAIVideoTarget)

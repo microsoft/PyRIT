@@ -108,14 +108,10 @@ jobs:
       cp -r $PyRIT_DIR/doc $NEW_DIR
       cp -r $PyRIT_DIR/assets $NEW_DIR
       cp -r $PyRIT_DIR/tests/${{ parameters.testsFolder }} $NEW_DIR/tests
-      cp $PyRIT_DIR/.env_example $NEW_DIR/.env_example
       cd $NEW_DIR
     displayName: "Create and switch to new test directory"
   - task: AzureCLI@2
     displayName: "Authenticate with service principal, cache Cognitive Services access token, and run tests"
-    env:
-      PYRIT_ENV_EXAMPLE_PATH: $(Build.SourcesDirectory)/../${{ parameters.newDir }}/.env_example
-      PYRIT_REPOSITORY_ROOT: $(Build.SourcesDirectory)
     inputs:
       azureSubscription: ${{ parameters.testAzureSubscription }}
       scriptType: 'bash'

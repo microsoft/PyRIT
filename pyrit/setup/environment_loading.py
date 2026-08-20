@@ -5,14 +5,15 @@
 
 import asyncio
 import contextlib
-import io
 import logging
 import os
 import pathlib
 import tempfile
 import urllib.parse
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from io import StringIO
+from typing import TYPE_CHECKING
 
 import dotenv
 from dotenv.parser import parse_stream
@@ -21,6 +22,7 @@ from pyrit.common import path, print_deprecation_message
 from pyrit.exceptions import KeyVaultInitializationException
 
 if TYPE_CHECKING:
+    from azure.core.credentials_async import AsyncTokenCredential
     from azure.keyvault.secrets.aio import SecretClient
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,15 @@ _AKV_ENV_FILE_NAME = ".env"
 _LEGACY_ENV_REMOVED_IN = "1.3.0"
 
 
-def _validate_akv_boolean_options(*, env_akv_strict: object, env_akv_write_env: object) -> None:
+@dataclass(frozen=True)
+class _EnvironmentValueCandidate:
+    """An ordered environment value and whether local AKV resolution applies."""
+
+    value: str
+    resolve_akv_reference: bool
+
+
+def validate_akv_boolean_options(*, env_akv_strict: object, env_akv_write_env: object) -> None:
     """
     Require real booleans for Key Vault behavior flags.
 
@@ -48,12 +58,12 @@ def _validate_akv_boolean_options(*, env_akv_strict: object, env_akv_write_env: 
             raise TypeError(f"{option_name} must be a bool, got {type(option_value).__name__}.")
 
 
-def _load_environment_files(
+def load_environment_files(
     env_files: Sequence[pathlib.Path] | None,
     *,
     silent: bool = False,
     include_default_base: bool = True,
-    assignment_fallbacks: dict[str, str | None] | None = None,
+    assignment_candidates: dict[str, list[_EnvironmentValueCandidate]] | None = None,
 ) -> bool:
     """
     Load environment files in the order they are provided.
@@ -68,8 +78,9 @@ def _load_environment_files(
             Defaults to False.
         include_default_base: If False and env_files is None, skips the default
             .env file while still loading .env.local. Defaults to True.
-        assignment_fallbacks: Optional output mapping from assignments that win
-            precedence to the value they replaced, if any.
+        assignment_candidates: Optional output mapping containing each applicable
+            local value in ascending precedence order. Existing process or AKV values
+            are retained as non-resolvable baseline candidates.
 
     Returns:
         True if at least one environment file was loaded, otherwise False.
@@ -84,16 +95,30 @@ def _load_environment_files(
     )
     for env_file in selected_files:
         override = env_file.name == ".env.local"
-        if assignment_fallbacks is not None:
-            assignment_names = dotenv.dotenv_values(dotenv_path=env_file, interpolate=False)
-            for variable_name in assignment_names:
-                if override or variable_name not in os.environ:
-                    assignment_fallbacks[variable_name] = os.environ.get(variable_name)
-        dotenv.load_dotenv(
+        applicable_names: list[str] = []
+        previous_values: dict[str, str | None] = {}
+        if assignment_candidates is not None:
+            assignment_values = dotenv.dotenv_values(dotenv_path=env_file, interpolate=False)
+            applicable_names = [
+                variable_name
+                for variable_name, value in assignment_values.items()
+                if value is not None and (override or variable_name not in os.environ)
+            ]
+            previous_values = {variable_name: os.environ.get(variable_name) for variable_name in applicable_names}
+        loaded = dotenv.load_dotenv(
             dotenv_path=env_file,
             override=override,
             interpolate=True,
         )
+        if assignment_candidates is not None and loaded:
+            for variable_name in applicable_names:
+                candidates = assignment_candidates.setdefault(variable_name, [])
+                previous_value = previous_values[variable_name]
+                if not candidates and previous_value is not None:
+                    candidates.append(_EnvironmentValueCandidate(value=previous_value, resolve_akv_reference=False))
+                loaded_value = os.environ.get(variable_name)
+                if loaded_value is not None:
+                    candidates.append(_EnvironmentValueCandidate(value=loaded_value, resolve_akv_reference=True))
         if not silent:
             _print_msg(f"Loaded environment file: {env_file}", quiet=silent, log=True)
 
@@ -264,7 +289,7 @@ def _is_valid_akv_identifier(identifier: str) -> bool:
     )
 
 
-def _create_akv_secret_client(*, vault_url: str, credential: Any) -> "SecretClient":
+def _create_akv_secret_client(*, vault_url: str, credential: "AsyncTokenCredential") -> "SecretClient":
     """
     Create an asynchronous Key Vault client with an explicit retry policy.
 
@@ -286,7 +311,7 @@ def _create_akv_secret_client(*, vault_url: str, credential: Any) -> "SecretClie
 
 async def _fetch_akv_secret_value_async(
     *,
-    client: Any,
+    client: "SecretClient",
     secret_name: str,
     secret_version: str | None,
     variable_name: str,
@@ -343,7 +368,7 @@ def _validate_dotenv_document(
     Raises:
         ValueError: If strict is True and the document contains invalid entries.
     """
-    bindings = list(parse_stream(io.StringIO(document)))
+    bindings = list(parse_stream(StringIO(document)))
     malformed_lines = [str(binding.original.line) for binding in bindings if binding.error]
     valueless_names = [binding.key for binding in bindings if binding.key is not None and binding.value is None]
     issues: list[str] = []
@@ -419,12 +444,12 @@ async def _load_env_from_akv_async(
                     raise ValueError(f"AKV environment secret has no value: {secret_url}")
 
                 validated_document = _validate_dotenv_document(secret.value, strict=strict, silent=silent)
-                parsed_environment = dotenv.dotenv_values(stream=io.StringIO(validated_document), interpolate=True)
+                parsed_environment = dotenv.dotenv_values(stream=StringIO(validated_document), interpolate=True)
                 if not parsed_environment:
                     raise ValueError(f"AKV environment secret contains no environment entries: {secret_url}")
                 existing_environment_names = set(os.environ)
                 loaded = dotenv.load_dotenv(
-                    stream=io.StringIO(validated_document),
+                    stream=StringIO(validated_document),
                     override=False,
                     interpolate=True,
                 )
@@ -500,7 +525,7 @@ async def _load_env_from_akv_async(
         raise wrapped_error from error
 
 
-async def _load_environment_async(
+async def load_environment_async(
     *,
     env_akv_ref: Sequence[str] | None,
     env_files: Sequence[pathlib.Path] | None,
@@ -561,16 +586,16 @@ async def _load_environment_async(
         written_path = written_env_file.resolve()
         selected_env_files = [env_file for env_file in env_files if env_file.expanduser().resolve() != written_path]
 
-    assignment_fallbacks: dict[str, str | None] = {}
+    assignment_candidates: dict[str, list[_EnvironmentValueCandidate]] = {}
     await asyncio.to_thread(
-        _load_environment_files,
+        load_environment_files,
         env_files=selected_env_files,
         silent=silent,
         include_default_base=not (env_akv_ref and env_files is None),
-        assignment_fallbacks=assignment_fallbacks,
+        assignment_candidates=assignment_candidates,
     )
     await _resolve_local_akv_references_async(
-        assignment_fallbacks=assignment_fallbacks,
+        assignment_candidates=assignment_candidates,
         strict=env_akv_strict,
         silent=silent,
     )
@@ -656,7 +681,7 @@ def _merge_akv_documents_for_debug(*, documents: Sequence[str]) -> str:
     merged_bindings: list[str] = []
     for document in documents:
         document_names: set[str] = set()
-        for binding in parse_stream(io.StringIO(document)):
+        for binding in parse_stream(StringIO(document)):
             if binding.key is None or binding.key not in established_names:
                 merged_bindings.append(binding.original.string)
             if binding.key is not None:
@@ -680,7 +705,7 @@ def _render_resolved_akv_document(
     """
     skipped_reference_indexes = skipped_reference_indexes or set()
     rendered_bindings: list[str] = []
-    for binding_index, binding in enumerate(parse_stream(io.StringIO(document))):
+    for binding_index, binding in enumerate(parse_stream(StringIO(document))):
         variable_name = binding.key
         if binding_index in skipped_reference_indexes:
             continue
@@ -711,7 +736,7 @@ def _get_final_assignment_indexes(*, document: str) -> dict[str, int]:
     """
     return {
         binding.key: binding_index
-        for binding_index, binding in enumerate(parse_stream(io.StringIO(document)))
+        for binding_index, binding in enumerate(parse_stream(StringIO(document)))
         if binding.key is not None
     }
 
@@ -791,7 +816,7 @@ def _parse_akv_reference_url(
 
 async def _resolve_local_akv_references_async(
     *,
-    assignment_fallbacks: Mapping[str, str | None],
+    assignment_candidates: Mapping[str, Sequence[_EnvironmentValueCandidate]],
     strict: bool,
     silent: bool,
 ) -> None:
@@ -802,36 +827,38 @@ async def _resolve_local_akv_references_async(
         KeyVaultInitializationException: If strict validation or secret retrieval fails.
     """
     parsed_references: list[tuple[str, str, str, str | None]] = []
-    for variable_name, fallback_value in assignment_fallbacks.items():
-        value = os.environ.get(variable_name)
-        if value is None:
-            continue
-        target = _parse_akv_reference(value)
-        if target is None:
-            continue
-        try:
-            vault_url, secret_name, secret_version = _parse_akv_reference_url(
-                target=target,
-                variable_name=variable_name,
-            )
-        except ValueError as error:
-            if strict:
-                wrapped_error = _key_vault_initialization_error(
-                    message=f"Invalid AKV reference for environment variable '{variable_name}'",
-                    error=error,
+    for variable_name, candidates in assignment_candidates.items():
+        for candidate in reversed(candidates):
+            if not candidate.resolve_akv_reference:
+                os.environ[variable_name] = candidate.value
+                break
+            target = _parse_akv_reference(candidate.value)
+            if target is None:
+                os.environ[variable_name] = candidate.value
+                break
+            try:
+                vault_url, secret_name, secret_version = _parse_akv_reference_url(
+                    target=target,
+                    variable_name=variable_name,
                 )
-                raise wrapped_error from error
-            if fallback_value is None:
-                os.environ.pop(variable_name, None)
-            else:
-                os.environ[variable_name] = fallback_value
-            _warn_about_invalid_akv_reference(
-                variable_name=variable_name,
-                error=error,
-                silent=silent,
-            )
-            continue
-        parsed_references.append((variable_name, vault_url, secret_name, secret_version))
+            except ValueError as error:
+                if strict:
+                    wrapped_error = _key_vault_initialization_error(
+                        message=f"Invalid AKV reference for environment variable '{variable_name}'",
+                        error=error,
+                    )
+                    raise wrapped_error from error
+                _warn_about_invalid_akv_reference(
+                    variable_name=variable_name,
+                    error=error,
+                    silent=silent,
+                )
+                continue
+            os.environ[variable_name] = candidate.value
+            parsed_references.append((variable_name, vault_url, secret_name, secret_version))
+            break
+        else:
+            os.environ.pop(variable_name, None)
 
     if not parsed_references:
         return
@@ -840,7 +867,7 @@ async def _resolve_local_akv_references_async(
 
     async with DefaultAzureCredential() as credential:
         async with contextlib.AsyncExitStack() as client_stack:
-            clients: dict[str, Any] = {}
+            clients: dict[str, SecretClient] = {}
             for variable_name, vault_url, secret_name, secret_version in parsed_references:
                 try:
                     client = clients.get(vault_url)

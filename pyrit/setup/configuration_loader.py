@@ -21,7 +21,7 @@ from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
-from pyrit.setup.akv_initialization import _validate_akv_boolean_options
+from pyrit.setup.environment_loading import validate_akv_boolean_options
 from pyrit.setup.initialization import (
     AZURE_SQL,
     IN_MEMORY,
@@ -154,7 +154,7 @@ class ConfigurationLoader(YamlLoadable):
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
-        _validate_akv_boolean_options(
+        validate_akv_boolean_options(
             env_akv_strict=self.env_akv_strict,
             env_akv_write_env=self.env_akv_write_env,
         )

@@ -27,7 +27,7 @@ from pathlib import Path
 from pyrit.executor.promptgen.gcg.config import GCGConfig, GCGDataConfig, GCGOutputConfig
 from pyrit.executor.promptgen.gcg.data import load_goals_and_targets
 from pyrit.executor.promptgen.gcg.generator import GCGGenerator
-from pyrit.setup.akv_initialization import _load_environment_files
+from pyrit.setup.environment_loading import load_environment_files
 
 
 def _parse_arguments() -> argparse.Namespace:
@@ -85,7 +85,7 @@ def _resolve_output(*, output: GCGOutputConfig, output_dir: str | None) -> GCGOu
 
 
 async def _main_async(config_path: str, data_path: str, output_dir: str | None = None) -> None:
-    _load_environment_files(env_files=None)
+    load_environment_files(env_files=None)
     config = GCGConfig.from_json_file(config_path)
     data = GCGDataConfig.from_json_file(data_path)
     if config.hf_token is None:

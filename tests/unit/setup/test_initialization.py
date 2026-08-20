@@ -119,7 +119,7 @@ class TestInitializePyrit:
         reset_default_values()
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
-    @mock.patch("pyrit.setup.akv_initialization._load_environment_files", return_value=False)
+    @mock.patch("pyrit.setup.environment_loading.load_environment_files", return_value=False)
     async def test_initialize_basic(self, mock_load_env, mock_set_memory):
         """Test basic initialization."""
         await initialize_pyrit_async(memory_db_type=IN_MEMORY, load_defaults=False)
@@ -128,7 +128,7 @@ class TestInitializePyrit:
         mock_set_memory.assert_called_once()
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
-    @mock.patch("pyrit.setup.akv_initialization._load_environment_files", return_value=False)
+    @mock.patch("pyrit.setup.environment_loading.load_environment_files", return_value=False)
     async def test_initialize_with_script(self, mock_load_env, mock_set_memory):
         """Test initialization with a script."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -158,15 +158,15 @@ class ScriptInit(PyRITInitializer):
         finally:
             os.unlink(script_path)
 
-    @mock.patch("pyrit.setup.akv_initialization._load_environment_files", return_value=False)
+    @mock.patch("pyrit.setup.environment_loading.load_environment_files", return_value=False)
     async def test_invalid_memory_type_raises_error(self, mock_load_env):
         """Test that invalid memory type raises ValueError."""
         with pytest.raises(ValueError, match="is not a supported type"):
             await initialize_pyrit_async(memory_db_type="InvalidType", load_defaults=False)  # type: ignore[arg-type]
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
-    @mock.patch("pyrit.setup.akv_initialization._load_environment_files", return_value=False)
-    @mock.patch("pyrit.setup.akv_initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
+    @mock.patch("pyrit.setup.environment_loading.load_environment_files", return_value=False)
+    @mock.patch("pyrit.setup.environment_loading._load_env_from_akv_async", new_callable=mock.AsyncMock)
     async def test_initialize_with_env_akv_ref(self, mock_load_akv, mock_load_env, mock_set_memory):
         """Test that env_akv_ref loads bootstrap secrets in order."""
         refs = [
@@ -176,7 +176,7 @@ class ScriptInit(PyRITInitializer):
 
         mock_load_akv.return_value = None
 
-        with mock.patch("pyrit.setup.akv_initialization._warn_about_akv_environment_files") as mock_warn:
+        with mock.patch("pyrit.setup.environment_loading._warn_about_akv_environment_files") as mock_warn:
             await initialize_pyrit_async(memory_db_type=IN_MEMORY, env_akv_ref=refs, load_defaults=False)
 
         assert mock_load_akv.await_args_list == [
@@ -188,8 +188,8 @@ class ScriptInit(PyRITInitializer):
         mock_set_memory.assert_called_once()
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
-    @mock.patch("pyrit.setup.akv_initialization._load_environment_files", return_value=False)
-    @mock.patch("pyrit.setup.akv_initialization._load_env_from_akv_async", new_callable=mock.AsyncMock)
+    @mock.patch("pyrit.setup.environment_loading.load_environment_files", return_value=False)
+    @mock.patch("pyrit.setup.environment_loading._load_env_from_akv_async", new_callable=mock.AsyncMock)
     async def test_initialize_with_empty_env_akv_ref_does_not_load_akv(
         self, mock_load_akv, mock_load_env, mock_set_memory
     ):
@@ -213,7 +213,7 @@ class ScriptInit(PyRITInitializer):
     @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
     async def test_initialize_rejects_non_boolean_akv_options_before_loading(self, option_name, invalid_value):
         with mock.patch(
-            "pyrit.setup.initialization._load_environment_async", new_callable=mock.AsyncMock
+            "pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock
         ) as mock_load_environment:
             with pytest.raises(TypeError, match=rf"{option_name} must be a bool"):
                 if option_name == "env_akv_strict":
@@ -238,7 +238,7 @@ class ScriptInit(PyRITInitializer):
     async def test_initialize_forwards_boolean_akv_options(self, env_akv_strict, env_akv_write_env):
         with (
             mock.patch(
-                "pyrit.setup.initialization._load_environment_async", new_callable=mock.AsyncMock
+                "pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock
             ) as mock_load_environment,
             mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance"),
         ):
@@ -261,9 +261,9 @@ class ScriptInit(PyRITInitializer):
 
         with mock.patch.dict(os.environ, {}, clear=True):
             with (
-                mock.patch("pyrit.setup.akv_initialization._warn_about_akv_environment_files"),
+                mock.patch("pyrit.setup.environment_loading._warn_about_akv_environment_files"),
                 mock.patch(
-                    "pyrit.setup.akv_initialization._load_env_from_akv_async",
+                    "pyrit.setup.environment_loading._load_env_from_akv_async",
                     new_callable=mock.AsyncMock,
                     side_effect=lambda **_: os.environ.update({"FROM_AKV": "resolved"}),
                 ),
@@ -289,9 +289,9 @@ class ScriptInit(PyRITInitializer):
 
             with (
                 mock.patch.dict(os.environ, {}, clear=True),
-                mock.patch("pyrit.setup.akv_initialization._warn_about_akv_environment_files"),
+                mock.patch("pyrit.setup.environment_loading._warn_about_akv_environment_files"),
                 mock.patch(
-                    "pyrit.setup.akv_initialization._load_env_from_akv_async",
+                    "pyrit.setup.environment_loading._load_env_from_akv_async",
                     new_callable=mock.AsyncMock,
                     side_effect=lambda **_: os.environ.update({"BASE": "akv", "ONLY_AKV": "shared"}),
                 ),
@@ -319,10 +319,10 @@ class ScriptInit(PyRITInitializer):
 
             with (
                 mock.patch.dict(os.environ, {}, clear=True),
-                mock.patch("pyrit.setup.akv_initialization.path.CONFIGURATION_DIRECTORY_PATH", temp_path),
-                mock.patch("pyrit.setup.akv_initialization._warn_about_akv_environment_files"),
+                mock.patch("pyrit.setup.environment_loading.path.CONFIGURATION_DIRECTORY_PATH", temp_path),
+                mock.patch("pyrit.setup.environment_loading._warn_about_akv_environment_files"),
                 mock.patch(
-                    "pyrit.setup.akv_initialization._load_env_from_akv_async",
+                    "pyrit.setup.environment_loading._load_env_from_akv_async",
                     new_callable=mock.AsyncMock,
                     side_effect=lambda **_: os.environ.update({"VALUE": "akv"}),
                 ),
@@ -363,14 +363,14 @@ class ScriptInit(PyRITInitializer):
 
             with (
                 mock.patch.dict(os.environ, {"SOURCE_VALUE": "ambient-value"}, clear=True),
-                mock.patch("pyrit.setup.akv_initialization._warn_about_akv_environment_files"),
+                mock.patch("pyrit.setup.environment_loading._warn_about_akv_environment_files"),
                 mock.patch(
-                    "pyrit.setup.akv_initialization._load_env_from_akv_async",
+                    "pyrit.setup.environment_loading._load_env_from_akv_async",
                     new_callable=mock.AsyncMock,
                     side_effect=lambda **_: os.environ.update(bootstrap_environment),
                 ),
                 mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
-                mock.patch("pyrit.setup.akv_initialization._create_akv_secret_client", return_value=client),
+                mock.patch("pyrit.setup.environment_loading._create_akv_secret_client", return_value=client),
             ):
                 await initialize_pyrit_async(
                     memory_db_type=IN_MEMORY,
@@ -415,7 +415,7 @@ class TestInitializePyritSilent:
         """Clear default values before each test."""
         reset_default_values()
 
-    @mock.patch("pyrit.setup.akv_initialization._load_environment_files", return_value=True)
+    @mock.patch("pyrit.setup.environment_loading.load_environment_files", return_value=True)
     async def test_initialize_silent_produces_no_output(self, mock_load_env, capsys):
         """initialize_pyrit_async with silent=True must not print anything to stdout."""
         await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True, load_defaults=False)
@@ -423,7 +423,7 @@ class TestInitializePyritSilent:
         captured = capsys.readouterr()
         assert captured.out == ""
 
-    @mock.patch("pyrit.setup.akv_initialization._load_environment_files", return_value=True)
+    @mock.patch("pyrit.setup.environment_loading.load_environment_files", return_value=True)
     async def test_initialize_not_silent_prints_migration_message(self, mock_load_env, capsys):
         """Without silent, the Alembic schema-check message is printed and tagged as Alembic output."""
         await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=False, load_defaults=False)

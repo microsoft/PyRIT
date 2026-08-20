@@ -104,9 +104,9 @@ class TestTargetInitializerInitialize:
         os.environ["PLATFORM_OPENAI_CHAT_MODEL"] = "gpt-4o"
 
         # Set up openai_image_platform (uses ENDPOINT2/KEY2/MODEL2)
-        os.environ["AZURE_OPENAI_IMAGE_ENDPOINT2"] = "https://api.openai.com/v1"
-        os.environ["AZURE_OPENAI_IMAGE_API_KEY2"] = "test_image_key"
-        os.environ["AZURE_OPENAI_IMAGE_MODEL2"] = "dall-e-3"
+        os.environ["OPENAI_IMAGE_ENDPOINT2"] = "https://api.openai.com/v1"
+        os.environ["OPENAI_IMAGE_API_KEY2"] = "test_image_key"
+        os.environ["OPENAI_IMAGE_MODEL2"] = "dall-e-3"
 
         init = TargetInitializer()
         await init.initialize_async()
@@ -115,6 +115,54 @@ class TestTargetInitializerInitialize:
         assert len(registry.instances) == 2
         assert "platform_openai_chat" in registry.instances
         assert "openai_image_platform" in registry.instances
+
+    @pytest.mark.parametrize(
+        ("registry_name", "endpoint_var", "key_var", "model_var", "endpoint"),
+        [
+            (
+                "openai_image_azure",
+                "OPENAI_IMAGE_ENDPOINT1",
+                "OPENAI_IMAGE_API_KEY1",
+                "OPENAI_IMAGE_MODEL1",
+                "https://image.openai.azure.com/openai/v1",
+            ),
+            (
+                "openai_image_platform",
+                "OPENAI_IMAGE_ENDPOINT2",
+                "OPENAI_IMAGE_API_KEY2",
+                "OPENAI_IMAGE_MODEL2",
+                "https://api.openai.com/v1",
+            ),
+            (
+                "openai_tts_azure",
+                "OPENAI_TTS_ENDPOINT1",
+                "OPENAI_TTS_KEY1",
+                "OPENAI_TTS_MODEL1",
+                "https://tts.openai.azure.com/openai/v1",
+            ),
+            (
+                "openai_tts_platform",
+                "OPENAI_TTS_ENDPOINT2",
+                "OPENAI_TTS_KEY2",
+                "OPENAI_TTS_MODEL2",
+                "https://api.openai.com/v1",
+            ),
+        ],
+    )
+    async def test_media_targets_use_main_environment_contract(
+        self, registry_name, endpoint_var, key_var, model_var, endpoint
+    ):
+        with patch.dict(
+            os.environ,
+            {endpoint_var: endpoint, key_var: "test-key", model_var: "test-model"},
+            clear=True,
+        ):
+            await TargetInitializer().initialize_async()
+
+            target = TargetRegistry.get_registry_singleton().instances.get(registry_name)
+            assert target is not None
+            assert target._endpoint == endpoint
+            assert target._model_name == "test-model"
 
     async def test_registers_azure_content_safety_without_model(self):
         """Test that PromptShieldTarget is registered without model_name (it doesn't use one)."""

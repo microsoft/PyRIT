@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
-from pyrit.setup.akv_initialization import _load_environment_async, _validate_akv_boolean_options
+from pyrit.setup.environment_loading import load_environment_async, validate_akv_boolean_options
 
 if TYPE_CHECKING:
     from pyrit.setup.pyrit_initializer import PyRITInitializer
@@ -112,11 +112,11 @@ async def initialize_pyrit_async(
         TypeError: If ``env_akv_strict`` or ``env_akv_write_env`` is not a bool.
         ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
     """
-    _validate_akv_boolean_options(
+    validate_akv_boolean_options(
         env_akv_strict=env_akv_strict,
         env_akv_write_env=env_akv_write_env,
     )
-    await _load_environment_async(
+    await load_environment_async(
         env_akv_ref=env_akv_ref,
         env_files=env_files,
         env_akv_strict=env_akv_strict,

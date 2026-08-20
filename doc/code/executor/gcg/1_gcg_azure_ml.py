@@ -29,9 +29,9 @@
 # %%
 import os
 
-from pyrit.setup.akv_initialization import _load_environment_files
+from pyrit.setup.environment_loading import load_environment_files
 
-_load_environment_files(env_files=None)
+load_environment_files(env_files=None)
 
 subscription_id = os.environ.get("AZURE_ML_SUBSCRIPTION_ID")
 resource_group = os.environ.get("AZURE_ML_RESOURCE_GROUP")

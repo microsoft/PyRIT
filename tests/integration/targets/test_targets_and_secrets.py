@@ -561,23 +561,23 @@ async def test_connect_openai_completion(sqlite_instance: SQLiteMemory) -> None:
     [
         ("OPENAI_IMAGE_ENDPOINT", None, "OPENAI_IMAGE_MODEL"),
         pytest.param(
-            "AZURE_OPENAI_IMAGE_ENDPOINT1",
+            "OPENAI_IMAGE_ENDPOINT1",
             None,
-            "AZURE_OPENAI_IMAGE_MODEL1",
+            "OPENAI_IMAGE_MODEL1",
             marks=pytest.mark.run_only_if_all_tests,
         ),  # gpt-image-1.5
         pytest.param(
-            "AZURE_OPENAI_IMAGE_ENDPOINT1",
-            "AZURE_OPENAI_IMAGE_API_KEY1",
-            "AZURE_OPENAI_IMAGE_MODEL1",
+            "OPENAI_IMAGE_ENDPOINT1",
+            "OPENAI_IMAGE_API_KEY1",
+            "OPENAI_IMAGE_MODEL1",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
             id="openai-image1-api-key",
         ),
-        ("AZURE_OPENAI_IMAGE_ENDPOINT2", None, "AZURE_OPENAI_IMAGE_MODEL2"),  # gpt-image-1
+        ("OPENAI_IMAGE_ENDPOINT2", None, "OPENAI_IMAGE_MODEL2"),  # gpt-image-1
         pytest.param(
-            "AZURE_OPENAI_IMAGE_ENDPOINT2",
-            "AZURE_OPENAI_IMAGE_API_KEY2",
-            "AZURE_OPENAI_IMAGE_MODEL2",
+            "OPENAI_IMAGE_ENDPOINT2",
+            "OPENAI_IMAGE_API_KEY2",
+            "OPENAI_IMAGE_MODEL2",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
             id="openai-image2-api-key",
         ),
@@ -626,7 +626,7 @@ async def test_connect_image(
     [
         pytest.param(None, id="entra"),
         pytest.param(
-            "AZURE_OPENAI_IMAGE_API_KEY2",
+            "OPENAI_IMAGE_API_KEY2",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
             id="api-key",
         ),
@@ -645,8 +645,8 @@ async def test_image_editing_single_image(
     2. The edit endpoint is correctly called
     3. The output image file is created
     """
-    endpoint_value = _get_required_env_var("AZURE_OPENAI_IMAGE_ENDPOINT2")
-    model_name_value = os.getenv("AZURE_OPENAI_IMAGE_MODEL2") or "gpt-image-1"
+    endpoint_value = _get_required_env_var("OPENAI_IMAGE_ENDPOINT2")
+    model_name_value = os.getenv("OPENAI_IMAGE_MODEL2") or "gpt-image-1"
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
@@ -686,7 +686,7 @@ async def test_image_editing_single_image(
     [
         pytest.param(None, id="entra"),
         pytest.param(
-            "AZURE_OPENAI_IMAGE_API_KEY2",
+            "OPENAI_IMAGE_API_KEY2",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
             id="api-key",
         ),
@@ -704,8 +704,8 @@ async def test_image_editing_multiple_images(
     1. Multiple images can be passed to the edit endpoint
     2. The model processes multiple image inputs correctly
     """
-    endpoint_value = _get_required_env_var("AZURE_OPENAI_IMAGE_ENDPOINT2")
-    model_name_value = os.getenv("AZURE_OPENAI_IMAGE_MODEL2") or "gpt-image-1"
+    endpoint_value = _get_required_env_var("OPENAI_IMAGE_ENDPOINT2")
+    model_name_value = os.getenv("OPENAI_IMAGE_MODEL2") or "gpt-image-1"
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
@@ -749,19 +749,19 @@ async def test_image_editing_multiple_images(
 @pytest.mark.parametrize(
     ("endpoint", "api_key_env_var", "model_name"),
     [
-        ("AZURE_OPENAI_TTS_ENDPOINT1", None, "AZURE_OPENAI_TTS_MODEL1"),
+        ("OPENAI_TTS_ENDPOINT1", None, "OPENAI_TTS_MODEL1"),
         pytest.param(
-            "AZURE_OPENAI_TTS_ENDPOINT1",
-            "AZURE_OPENAI_TTS_KEY1",
-            "AZURE_OPENAI_TTS_MODEL1",
+            "OPENAI_TTS_ENDPOINT1",
+            "OPENAI_TTS_KEY1",
+            "OPENAI_TTS_MODEL1",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
             id="openai-tts1-api-key",
         ),
-        ("AZURE_OPENAI_TTS_ENDPOINT2", None, "AZURE_OPENAI_TTS_MODEL2"),
+        ("OPENAI_TTS_ENDPOINT2", None, "OPENAI_TTS_MODEL2"),
         pytest.param(
-            "AZURE_OPENAI_TTS_ENDPOINT2",
-            "AZURE_OPENAI_TTS_KEY2",
-            "AZURE_OPENAI_TTS_MODEL2",
+            "OPENAI_TTS_ENDPOINT2",
+            "OPENAI_TTS_KEY2",
+            "OPENAI_TTS_MODEL2",
             marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
             id="openai-tts2-api-key",
         ),

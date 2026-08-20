@@ -153,7 +153,7 @@ class TestResolveOutput:
 class TestMainAsyncCli:
     """Tests for ``run.py``'s ``--config`` + ``--data`` CLI wrapper around GCGGenerator.execute_async."""
 
-    @patch("pyrit.executor.promptgen.gcg.experiments.run._load_environment_files")
+    @patch("pyrit.executor.promptgen.gcg.experiments.run.load_environment_files")
     async def test_raises_when_no_token_anywhere(self, mock_load_env: MagicMock, tmp_path: Path) -> None:
         config = GCGConfig(models=[GCGModelConfig(name="org/model")])
         config_path = tmp_path / "config.json"
@@ -166,7 +166,7 @@ class TestMainAsyncCli:
             with pytest.raises(ValueError, match="No HuggingFace token available"):
                 await _main_async(str(config_path), str(data_path))
 
-    @patch("pyrit.executor.promptgen.gcg.experiments.run._load_environment_files")
+    @patch("pyrit.executor.promptgen.gcg.experiments.run.load_environment_files")
     @patch("pyrit.executor.promptgen.gcg.experiments.run.load_goals_and_targets")
     async def test_passes_loaded_goals_to_generator_and_uses_env_token(
         self,
