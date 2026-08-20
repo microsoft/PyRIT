@@ -47,7 +47,9 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "onTimeout: reject" in self.pipeline
         assert "approvers: '$(prodApprovers)'" in self.pipeline
         assert "allowApproversToApproveTheirOwnRuns: false" in self.pipeline
-        approval_stage = self.pipeline[self.pipeline.index("stage: ApproveProd") : self.pipeline.index("stage: DeployProd")]
+        approval_stage = self.pipeline[
+            self.pipeline.index("stage: ApproveProd") : self.pipeline.index("stage: DeployProd")
+        ]
         assert "- group: copyrit-gui-prod" in approval_stage
         assert '"$BUILD_SOURCEBRANCH" != refs/heads/main' in self.pipeline
         assert "eq(variables['Build.SourceBranch'], 'refs/heads/main')" in self.pipeline
@@ -59,7 +61,7 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "variable=immutableImage;isOutput=true" in self.pipeline
         assert "stageDependencies.Build.BuildAndPush.outputs['BuildImage.immutableImage']" in self.pipeline
         assert "PYRIT_CONTAINER_IMAGE: $(immutableImage)" in self.pipeline
-        assert '@(sha256:[0-9a-fA-F]{64})' in self.deploy_script
+        assert "@(sha256:[0-9a-fA-F]{64})" in self.deploy_script
         assert 'immutable_image="$registry_server/$repository@$digest"' in self.deploy_script
         assert '"containerImage=$immutable_image"' in self.deploy_script
         assert "az acr repository show" not in self.deploy_script
@@ -89,7 +91,9 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "uuid.UUID" in self.deploy_script
         assert "Microsoft\\.KeyVault/vaults" in self.deploy_script
         assert "database\\.windows\\.net" in self.deploy_script
-        assert self.deploy_script.index("ipaddress.ip_network") < self.deploy_script.index("az deployment group what-if")
+        assert self.deploy_script.index("ipaddress.ip_network") < self.deploy_script.index(
+            "az deployment group what-if"
+        )
 
     def test_deploy_preserves_existing_network_and_tags(self):
         assert "Front Door cannot use an ACA client CIDR restriction" in self.deploy_script
@@ -180,12 +184,14 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert result.returncode == 0, result.stderr
 
     def test_what_if_validator_rejects_each_protected_topology_violation(self):
+        other_resource_group_id = f"/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/other"
+        workspace_provider_id = f"{RESOURCE_GROUP_ID}/providers/Microsoft.OperationalInsights"
         fixtures: dict[str, tuple[dict[str, object], str]] = {
             "delete": ({"changeType": "Delete", "resourceId": PIP_ID}, "delete"),
             "cross-resource-group": (
                 {
                     "changeType": "Modify",
-                    "resourceId": f"/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/other/providers/Microsoft.App/containerApps/app",
+                    "resourceId": f"{other_resource_group_id}/providers/Microsoft.App/containerApps/app",
                     "delta": [{"path": "properties.configuration"}],
                 },
                 "cross-resource-group write",
@@ -209,7 +215,7 @@ class PipelineGuardrailTests(unittest.TestCase):
             "workspace-create": (
                 {
                     "changeType": "Create",
-                    "resourceId": f"{RESOURCE_GROUP_ID}/providers/Microsoft.OperationalInsights/workspaces/copyrit-prod-v2-logs",
+                    "resourceId": f"{workspace_provider_id}/workspaces/copyrit-prod-v2-logs",
                 },
                 "core resource create",
             ),

@@ -91,9 +91,10 @@ class BicepTopologyTests(unittest.TestCase):
         environment_properties = environment["properties"]
         assert environment_properties["publicNetworkAccess"] == "Enabled"
         assert environment_properties["vnetConfiguration"]["internal"] is False
-        assert "outputs.infrastructureSubnetId.value" in environment_properties["vnetConfiguration"][
-            "infrastructureSubnetId"
-        ]
+        assert (
+            "outputs.infrastructureSubnetId.value"
+            in environment_properties["vnetConfiguration"]["infrastructureSubnetId"]
+        )
 
         container_app = _resources(template, "Microsoft.App/containerApps")[0]
         assert container_app["properties"]["configuration"]["registries"][0]["identity"] == (

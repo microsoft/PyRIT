@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 """Reject ARM what-if results that can replace protected deployment topology."""
@@ -29,13 +28,13 @@ _CORE_RESOURCE_ID_PATTERN = re.compile(
 def _expect_object(value: object, *, context: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise WhatIfFormatError(f"{context} must be a JSON object")
-    return cast(dict[str, object], value)
+    return cast("dict[str, object]", value)
 
 
 def _expect_array(value: object, *, context: str) -> list[object]:
     if not isinstance(value, list):
         raise WhatIfFormatError(f"{context} must be a JSON array")
-    return cast(list[object], value)
+    return cast("list[object]", value)
 
 
 def _expect_string(value: object, *, context: str) -> str:
@@ -117,17 +116,17 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     """Validate a FullResourcePayloads what-if file for the internal update path."""
     parsed = _parse_args()
-    what_if_file = Path(cast(str, parsed.what_if_file))
+    what_if_file = Path(cast("str", parsed.what_if_file))
 
     try:
         payload: object = json.loads(what_if_file.read_text(encoding="utf-8"))
         violations = validate_what_if(
             payload,
-            deployment_resource_group_id=cast(str, parsed.deployment_resource_group_id),
-            expected_pip_id=cast(str, parsed.expected_pip_id),
-            expected_nat_id=cast(str, parsed.expected_nat_id),
-            expected_vnet_id=cast(str, parsed.expected_vnet_id),
-            expected_subnet_id=cast(str, parsed.expected_subnet_id),
+            deployment_resource_group_id=cast("str", parsed.deployment_resource_group_id),
+            expected_pip_id=cast("str", parsed.expected_pip_id),
+            expected_nat_id=cast("str", parsed.expected_nat_id),
+            expected_vnet_id=cast("str", parsed.expected_vnet_id),
+            expected_subnet_id=cast("str", parsed.expected_subnet_id),
         )
     except (OSError, json.JSONDecodeError, WhatIfFormatError) as error:
         print(f"What-if validation failed closed: {error}", file=sys.stderr)

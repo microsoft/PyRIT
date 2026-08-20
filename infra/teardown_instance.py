@@ -83,14 +83,14 @@ def _expect_json_object(value: object, *, context: str) -> dict[str, object]:
     """Require a JSON object with string keys at an Azure CLI response boundary."""
     if not isinstance(value, dict):
         raise RuntimeError(f"Azure CLI returned invalid {context} data")
-    return cast(dict[str, object], value)
+    return cast("dict[str, object]", value)
 
 
 def _expect_json_array(value: object, *, context: str) -> list[object]:
     """Require a JSON array at an Azure CLI response boundary."""
     if not isinstance(value, list):
         raise RuntimeError(f"Azure CLI returned invalid {context} data")
-    return cast(list[object], value)
+    return cast("list[object]", value)
 
 
 def _expect_string(value: object, *, context: str) -> str:
@@ -219,9 +219,7 @@ def main(args: list[str] | None = None) -> int:
             raise RuntimeError("--resource-group-id does not match the active subscription and derived instance name")
 
         group_info = _expect_json_object(
-            run_az_json(
-                args=["group", "show", "--name", rg_name, "--query", "{id:id,name:name,tags:tags}"]
-            ),
+            run_az_json(args=["group", "show", "--name", rg_name, "--query", "{id:id,name:name,tags:tags}"]),
             context="resource group",
         )
         group_id = _expect_string(group_info.get("id"), context="resource group ID")
@@ -250,10 +248,7 @@ def main(args: list[str] | None = None) -> int:
                 ),
                 context="Entra application",
             )
-            if (
-                entra_app.get("appId") != parsed.entra_app_id
-                or entra_app.get("displayName") != entra_app_name
-            ):
+            if entra_app.get("appId") != parsed.entra_app_id or entra_app.get("displayName") != entra_app_name:
                 raise RuntimeError("--entra-app-id does not identify the expected instance application")
 
         egress_ip_value = run_az_json(

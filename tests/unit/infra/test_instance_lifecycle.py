@@ -8,8 +8,11 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
-from types import ModuleType
+from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

@@ -52,9 +52,7 @@ _MICROSOFT_GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 _GRAPH_USER_READ_SCOPE_ID = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"
 _INSTANCE_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,11}[a-z0-9])?$")
 _ACR_NAME_RE = re.compile(r"^[a-z0-9]{5,50}$")
-_GROUP_ID_RE = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
+_GROUP_ID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _IMAGE_REPOSITORY_RE = r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*"
 _IMAGE_VERSION_RE = r"(?:[A-Za-z0-9_][A-Za-z0-9_.-]*|sha256:[0-9a-fA-F]{64})"
 
@@ -110,14 +108,14 @@ def _expect_json_object(value: object, *, context: str) -> dict[str, object]:
     """Require a JSON object with string keys at an Azure CLI response boundary."""
     if not isinstance(value, dict):
         raise RuntimeError(f"Azure CLI returned invalid {context} data")
-    return cast(dict[str, object], value)
+    return cast("dict[str, object]", value)
 
 
 def _expect_json_array(value: object, *, context: str) -> list[object]:
     """Require a JSON array at an Azure CLI response boundary."""
     if not isinstance(value, list):
         raise RuntimeError(f"Azure CLI returned invalid {context} data")
-    return cast(list[object], value)
+    return cast("list[object]", value)
 
 
 def _expect_string(value: object, *, context: str) -> str:
