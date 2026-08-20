@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.converter import Base64Converter, ROT13Converter
+from pyrit.converter import Base64Converter, QRCodeConverter, ROT13Converter, TranslationConverter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
@@ -177,6 +177,34 @@ class TestFactoryInit:
                 attack_class=PromptSendingAttack,
                 attack_kwargs={"nonexistent_param": 42},
             )
+
+    @pytest.mark.parametrize("baked_converter", [None, Base64Converter()])
+    def test_can_append_request_converter_to_text_chain(self, baked_converter):
+        attack_kwargs = {}
+        if baked_converter:
+            attack_kwargs["attack_converter_config"] = AttackConverterConfig(
+                request_converters=ConverterConfiguration.from_converters(converters=[baked_converter])
+            )
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            attack_kwargs=attack_kwargs,
+        )
+
+        assert factory.can_append_request_converter(converter_type=TranslationConverter)
+
+    def test_cannot_append_text_converter_to_image_chain(self):
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(converters=[QRCodeConverter()])
+                )
+            },
+        )
+
+        assert not factory.can_append_request_converter(converter_type=TranslationConverter)
 
 
 class TestFactoryCreate:
