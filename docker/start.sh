@@ -37,10 +37,8 @@ fi
 echo "Checking PyRIT installation..."
 python -c "import pyrit; print(f'Running PyRIT version: {pyrit.__version__}')"
 
-# Write .env file from PYRIT_ENV_CONTENTS (injected as the Container App's
-# inline `env-file` secret; previously a Key Vault secretRef, but ACA isn't on
-# Key Vault's "trusted services" list so SFI-locked-down KVs can't be read at
-# runtime — see infra/main.bicep for details).
+# Write .env from PYRIT_ENV_CONTENTS, which references the Container App's
+# inline or Key Vault-backed `env-file` secret (see infra/main.bicep).
 if [ -n "$PYRIT_ENV_CONTENTS" ]; then
     mkdir -p ~/.pyrit
     echo "$PYRIT_ENV_CONTENTS" > ~/.pyrit/.env
