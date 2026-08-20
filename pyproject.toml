@@ -82,7 +82,9 @@ dev = [
     "jupyter-book>=2.0.0",
     "jupytext>=1.17.1",
     "matplotlib>=3.10.0",
-    "ty>=0.0.32",
+    # ty 0.0.70 adds unsound-return-statement under `all = "error"`; adopting it
+    # requires a repo-wide typing cleanup.
+    "ty>=0.0.32,<0.0.70",
     "pandas>=2.2.0",
     "pre-commit>=4.2.0",
     "pytest>=9.0.3",
@@ -120,7 +122,7 @@ playwright = [
     "playwright>=1.49.0",
 ]
 fairness_bias = [
-    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
+    "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
 ]
 opencv = [
     "opencv-python>=4.11.0.86",
@@ -156,7 +158,7 @@ all = [
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
     "pyarrow>=22.0.0; python_version >= '3.14'",
-    "spacy>=3.8.13,!=3.8.14",  # 3.8.14 missing cp314 wheels
+    "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
     "torch>=2.7.0",
 ]
 
@@ -172,6 +174,11 @@ addopts = [
 pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
+filterwarnings = [
+    # Keep the in-repo suite on the scorable/expectation contract. Tests that cover the
+    # shim itself opt back in with pytest.warns.
+    "error:Scorer\\.score_async:DeprecationWarning",
+]
 
 [tool.ty]
 [tool.ty.rules]

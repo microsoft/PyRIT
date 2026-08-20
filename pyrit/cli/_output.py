@@ -16,6 +16,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pyrit.cli._results import AttacksTablePayload
     from pyrit.models import ScenarioResult
     from pyrit.models.catalog import (
         RegisteredInitializer,
@@ -186,7 +187,7 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
         print("\nNo targets found in registry.")
         print(
             "\nTargets are registered by initializers. Include an initializer that "
-            "registers targets, for example:\n  --initializers target\n"
+            "registers targets in your config file"
         )
         return
 
@@ -403,7 +404,7 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
 
 async def print_scenario_result_async(*, result: ScenarioResult) -> None:
     """
-    Print detailed scenario results using the output module.
+    Print scenario overview using the output module.
 
     Args:
         result: Deserialized ``ScenarioResult`` from the REST API.
@@ -412,6 +413,47 @@ async def print_scenario_result_async(*, result: ScenarioResult) -> None:
 
     printer = PrettyScenarioResultMemoryPrinter()
     await printer.write_async(result)
+
+
+# Outcome -> color, mirroring the pretty printer's inverted palette (a
+# successful attack is a failure for the defender, so it is shown in red).
+_OUTCOME_COLORS = {
+    "success": "red",
+    "failure": "green",
+    "error": "yellow",
+    "undetermined": None,
+}
+
+
+def print_attacks_table(*, payload: AttacksTablePayload) -> None:
+    """
+    Print the per-attack table for a scenario run.
+
+    Args:
+        payload (AttacksTablePayload): The rows to render plus the pre-limit total.
+    """
+    if not payload.rows:
+        print(f"\nNo attack results found for scenario {payload.scenario_result_id}.")
+        return
+
+    _header(f"Attack Results — scenario {payload.scenario_result_id}")
+    for index, row in enumerate(payload.rows, start=1):
+        outcome = row.outcome.upper()
+        score = row.score_value if row.score_value is not None else "—"
+        _cprint(
+            f"  {index}. [{outcome}] turns={row.executed_turns}  score={score}",
+            color=_OUTCOME_COLORS.get(row.outcome),
+            bold=True,
+        )
+        print(f"       id:        {row.attack_result_id}")
+        print(f"       technique: {row.atomic_attack_name}")
+        print(f"       objective: {row.objective}")
+
+    shown = len(payload.rows)
+    if shown < payload.total:
+        print(f"\nShowing {shown} of {payload.total} attacks (use --limit to change).")
+    else:
+        print(f"\nTotal attacks: {payload.total}")
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,11 @@
  * ts-jest AST transformer that replaces `import.meta.env.X` with
  * `process.env.X` so that ts-jest (CommonJS mode) can parse files
  * using Vite's `import.meta.env` convention.
+ *
+ * Scope: TypeScript sources only. ts-jest never runs `astTransformers` over
+ * .js files, so node_modules dependencies are handled by
+ * jest-esm-js-transformer.cjs instead — extending this file does not reach
+ * them.
  */
 import ts from 'typescript'
 

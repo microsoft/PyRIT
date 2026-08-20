@@ -4,11 +4,13 @@
  */
 
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import App from "./App";
 import { ThemeProvider } from "./hooks/useTheme";
 
-import { attacksApi } from "./services/api";
+import { attacksApi, targetsApi } from "./services/api";
+import { makeTarget } from "./test-utils/targetFixtures";
 
 const mockGetActiveAccount = jest.fn();
 
@@ -56,6 +58,10 @@ jest.mock("./services/api", () => ({
     createAttack: jest.fn(),
     deleteAttack: jest.fn(),
   },
+  targetsApi: {
+    listTargets: jest.fn(),
+    getTarget: jest.fn(),
+  },
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
   },
@@ -65,6 +71,8 @@ jest.mock("./services/api", () => ({
 const mockedVersionApi = jest.requireMock("./services/api").versionApi;
 
 const mockGetAttack = attacksApi.getAttack as jest.Mock;
+const mockListTargets = targetsApi.listTargets as jest.Mock;
+const mockGetTarget = targetsApi.getTarget as jest.Mock;
 
 // Mock the child components to isolate App logic
 jest.mock("./components/Labels/LabelsBar", () => {
@@ -120,6 +128,8 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId,
     activeConversationId,
     attackTarget,
+    targetResolutionStatus,
+    onRetryTargetResolution,
     onConversationCreated,
     onSelectConversation,
     labels,
@@ -130,6 +140,8 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId: string | null;
     activeConversationId: string | null;
     attackTarget?: { identifier_hash?: string | null } | null;
+    targetResolutionStatus?: string;
+    onRetryTargetResolution?: () => void;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
@@ -140,7 +152,11 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="conversation-id">{conversationId ?? "none"}</span>
         <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="active-target-name">
+          {(activeTarget as { target_registry_name?: string } | null)?.target_registry_name ?? "none"}
+        </span>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
+        <span data-testid="target-resolution-status">{targetResolutionStatus ?? "none"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <button onClick={onNewAttack} data-testid="new-attack">
@@ -158,6 +174,11 @@ jest.mock("./components/Chat/ChatWindow", () => {
         >
           Select Conv
         </button>
+        {onRetryTargetResolution && (
+          <button onClick={onRetryTargetResolution} data-testid="retry-target-resolution">
+            Retry target resolution
+          </button>
+        )}
       </div>
     );
   };
@@ -310,6 +331,11 @@ describe("App", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetActiveAccount.mockReturnValue(null);
+    mockListTargets.mockResolvedValue({
+      items: [],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+    mockGetTarget.mockRejectedValue({ isAxiosError: true, response: { status: 404 } });
     window.localStorage.clear();
   });
 
@@ -403,7 +429,7 @@ describe("App", () => {
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
   });
 
-  it("retains the active target identifier when creating an attack", () => {
+  it("retains and trusts the active target when creating an attack", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
@@ -412,6 +438,40 @@ describe("App", () => {
     fireEvent.click(screen.getByTestId("set-conversation"));
 
     expect(screen.getByTestId("attack-target-hash")).toHaveTextContent("test-target-hash");
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("retains a route-resolved target when branching to a new attack", async () => {
+    const resolvedTarget = makeTarget({
+      target_registry_name: "branch-target",
+      identifier_hash: "branch-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-source",
+      conversation_id: "conv-source",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "branch-target-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [resolvedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-source");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("branch-target")
+    );
+
+    fireEvent.click(screen.getByTestId("set-conversation"));
+
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("branch-target");
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockListTargets).toHaveBeenCalledTimes(1);
   });
 
   it("clears conversationId on new attack", () => {
@@ -774,5 +834,652 @@ describe("App", () => {
     expect(
       JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
     ).toBe("success");
+  });
+
+  it("restores the exact registered target from a direct attack URL across registry pages", async () => {
+    const nearDuplicate = makeTarget({
+      target_registry_name: "near-duplicate",
+      target_type: "OpenAIChatTarget",
+      endpoint: "https://example.test",
+      model_name: "gpt-test",
+      identifier_hash: "persisted-full-hash-near",
+    });
+    const exactTarget = makeTarget({
+      target_registry_name: "exact-target",
+      target_type: "OpenAIChatTarget",
+      endpoint: "https://example.test",
+      model_name: "gpt-test",
+      identifier_hash: "persisted-full-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-direct",
+      conversation_id: "conv-direct",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        endpoint: "https://example.test",
+        model_name: "gpt-test",
+        identifier_hash: "persisted-full-hash",
+      },
+    });
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [nearDuplicate],
+        pagination: { limit: 200, has_more: true, next_cursor: "page-2" },
+      })
+      .mockResolvedValueOnce({
+        items: [exactTarget],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      });
+
+    renderApp("/attacks/ar-direct");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("exact-target")
+    );
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockListTargets).toHaveBeenNthCalledWith(1, 200, undefined);
+    expect(mockListTargets).toHaveBeenNthCalledWith(2, 200, "page-2");
+  });
+
+  it("restores a named target directly after validating its full hash", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      identifier_hash: "persisted-alias-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-named",
+      conversation_id: "conv-named",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "persisted-alias-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(exactTarget);
+
+    renderApp("/attacks/ar-named");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias")
+    );
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockGetTarget).toHaveBeenCalledWith("persisted-alias");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("falls back to full-hash resolution when a persisted alias points to a different target", async () => {
+    const staleAliasTarget = makeTarget({
+      target_registry_name: "reused-alias",
+      identifier_hash: "different-hash",
+    });
+    const renamedTarget = makeTarget({
+      target_registry_name: "renamed-target",
+      identifier_hash: "original-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-reused-alias",
+      conversation_id: "conv-reused-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "reused-alias",
+        identifier_hash: "original-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(staleAliasTarget);
+    mockListTargets.mockResolvedValue({
+      items: [staleAliasTarget, renamedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-reused-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("renamed-target")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("reused-alias");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("falls back to full-hash resolution when a persisted alias was removed", async () => {
+    const renamedTarget = makeTarget({
+      target_registry_name: "renamed-target",
+      identifier_hash: "original-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-removed-alias",
+      conversation_id: "conv-removed-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "removed-alias",
+        identifier_hash: "original-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [renamedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-removed-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("renamed-target")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("removed-alias");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("falls back when a reserved alias returns a non-target response", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "catalog",
+      identifier_hash: "catalog-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-catalog-alias",
+      conversation_id: "conv-catalog-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "catalog",
+        identifier_hash: "catalog-target-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue({ items: [] });
+    mockListTargets.mockResolvedValue({
+      items: [exactTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-catalog-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("catalog")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("catalog");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("retries named-target registry failures without masking them with a list fallback", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      identifier_hash: "persisted-alias-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-named-error",
+      conversation_id: "conv-named-error",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "persisted-alias-hash",
+      },
+    });
+    mockGetTarget
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 500 } })
+      .mockResolvedValueOnce(exactTarget);
+    const user = userEvent.setup();
+
+    renderApp("/attacks/ar-named-error");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+    expect(mockListTargets).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("retry-target-resolution"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias")
+    );
+    expect(mockGetTarget).toHaveBeenCalledTimes(2);
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when registry pagination does not advance", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-stalled-pagination",
+      conversation_id: "conv-stalled-pagination",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "pagination-hash",
+      },
+    });
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: true, next_cursor: "same-cursor" },
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: true, next_cursor: "same-cursor" },
+      });
+
+    renderApp("/attacks/ar-stalled-pagination");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
+  it("restores the target again after an app remount", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "remounted-target",
+      identifier_hash: "remount-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-remount",
+      conversation_id: "conv-remount",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "remount-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [exactTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    const firstRender = renderApp("/attacks/ar-remount");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("remounted-target")
+    );
+    firstRender.unmount();
+
+    renderApp("/attacks/ar-remount");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("remounted-target")
+    );
+    expect(mockListTargets).toHaveBeenCalledTimes(2);
+  });
+
+  it("revokes a restored target when it is removed before remount", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "removed-target",
+      identifier_hash: "removed-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-removed",
+      conversation_id: "conv-removed",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "removed-hash",
+      },
+    });
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [exactTarget],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      });
+
+    const firstRender = renderApp("/attacks/ar-removed");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("removed-target")
+    );
+    firstRender.unmount();
+
+    renderApp("/attacks/ar-removed");
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("unavailable")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
+  it("revalidates a previously resolved target when revisiting the same attack", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "revisited-target",
+      identifier_hash: "revisited-hash",
+    });
+    let resolveRevisitAttack: (value: unknown) => void = () => {};
+    let resolveRevisit: (value: unknown) => void = () => {};
+    const attack = {
+      attack_result_id: "ar-attack-1",
+      conversation_id: "conv-revisited",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "revisited-hash",
+      },
+    };
+    mockGetAttack
+      .mockResolvedValueOnce(attack)
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveRevisitAttack = resolve;
+        })
+      );
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [exactTarget],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      })
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveRevisit = resolve;
+        })
+      );
+    const user = userEvent.setup();
+    renderApp("/attacks/ar-attack-1");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("revisited-target")
+    );
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+
+    resolveRevisitAttack(attack);
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("loading")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+
+    resolveRevisit({
+      items: [exactTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("revisited-target")
+    );
+  });
+
+  it("keeps a near-duplicate target read-only when its full hash differs", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-near",
+      conversation_id: "conv-near",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        endpoint: "https://example.test",
+        model_name: "gpt-test",
+        identifier_hash: "required-full-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [
+        makeTarget({
+          target_registry_name: "near-target",
+          target_type: "OpenAIChatTarget",
+          endpoint: "https://example.test",
+          model_name: "gpt-test",
+          identifier_hash: "different-full-hash",
+        }),
+      ],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-near");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("unavailable")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
+  it("keeps duplicate exact target identities read-only as ambiguous", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-ambiguous",
+      conversation_id: "conv-ambiguous",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "duplicate-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [
+        makeTarget({
+          target_registry_name: "duplicate-a",
+          identifier_hash: "duplicate-hash",
+        }),
+        makeTarget({
+          target_registry_name: "duplicate-b",
+          identifier_hash: "duplicate-hash",
+        }),
+      ],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-ambiguous");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("ambiguous")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
+  it("preserves an explicitly selected different target and reports a cross-target state", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-other-target",
+      conversation_id: "conv-other-target",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "other-target-hash",
+      },
+    });
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByTestId("nav-config"));
+    await user.click(screen.getByTestId("set-target"));
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("explicit-mismatch")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("hash-validates an explicitly selected matching target against the registry", async () => {
+    const selectedTarget = makeTarget({
+      target_registry_name: "test_target",
+      target_type: "OpenAIChatTarget",
+      identifier_hash: "test-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-same-target",
+      conversation_id: "conv-same-target",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        identifier_hash: "test-target-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [selectedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByTestId("nav-config"));
+    await user.click(screen.getByTestId("set-target"));
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("preserves an explicitly selected alias with the same canonical hash", async () => {
+    const persistedAliasTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      target_type: "OpenAIChatTarget",
+      identifier_hash: "test-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-same-identity",
+      conversation_id: "conv-same-identity",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "test-target-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(persistedAliasTarget);
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByTestId("nav-config"));
+    await user.click(screen.getByTestId("set-target"));
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(mockGetTarget).toHaveBeenCalledWith("persisted-alias");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 500])(
+    "keeps the attack read-only after a registry %s and resolves it on retry",
+    async (status: number) => {
+      const exactTarget = makeTarget({
+        target_registry_name: "retry-target",
+        identifier_hash: "retry-hash",
+      });
+      mockGetAttack.mockResolvedValue({
+        attack_result_id: "ar-retry",
+        conversation_id: "conv-retry",
+        labels: {},
+        related_conversation_ids: [],
+        target: {
+          target_type: "TextTarget",
+          identifier_hash: "retry-hash",
+        },
+      });
+      mockListTargets
+        .mockRejectedValueOnce({ isAxiosError: true, response: { status } })
+        .mockResolvedValueOnce({
+          items: [exactTarget],
+          pagination: { limit: 200, has_more: false, next_cursor: null },
+        });
+      const user = userEvent.setup();
+      renderApp("/attacks/ar-retry");
+
+      await waitFor(() =>
+        expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
+      );
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+
+      await user.click(screen.getByTestId("retry-target-resolution"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("active-target-name")).toHaveTextContent("retry-target")
+      );
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    }
+  );
+
+  it("ignores a stale target registry response after navigating to another attack", async () => {
+    let resolveFirstRegistryPage: (value: unknown) => void = () => {};
+    mockGetAttack.mockImplementation(async (attackId: string) => ({
+      attack_result_id: attackId,
+      conversation_id: `conv-${attackId}`,
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: `${attackId}-hash`,
+      },
+    }));
+    mockListTargets
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveFirstRegistryPage = resolve;
+        })
+      )
+      .mockResolvedValueOnce({
+        items: [
+          makeTarget({
+            target_registry_name: "attack-2-target",
+            identifier_hash: "ar-attack-2-hash",
+          }),
+        ],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      });
+    const user = userEvent.setup();
+    renderApp("/history");
+
+    await user.click(screen.getByTestId("open-attack"));
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("loading")
+    );
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack-2"));
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("attack-2-target")
+    );
+
+    resolveFirstRegistryPage({
+      items: [
+        makeTarget({
+          target_registry_name: "stale-attack-1-target",
+          identifier_hash: "ar-attack-1-hash",
+        }),
+      ],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("attack-2-target")
+    );
+  });
+
+  it("keeps legacy attacks without complete target metadata read-only", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-legacy",
+      conversation_id: "conv-legacy",
+      labels: {},
+      related_conversation_ids: [],
+      target: null,
+    });
+
+    renderApp("/attacks/ar-legacy");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("legacy")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+    expect(mockListTargets).not.toHaveBeenCalled();
   });
 });

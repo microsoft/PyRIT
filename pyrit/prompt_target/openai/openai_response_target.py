@@ -30,9 +30,6 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
-    TokenUsage,
-    read_usage_int,
-    read_usage_value,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -41,9 +38,9 @@ from pyrit.prompt_target.common.utils import (
     limit_requests_per_minute,
     validate_temperature,
     validate_top_p,
-    warn_truncated_response,
 )
-from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
+from pyrit.prompt_target.openai._response_adapter import ResponsesResponseAdapter
+from pyrit.prompt_target.openai._response_adapter import token_usage_from_responses as token_usage_from_responses
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 if TYPE_CHECKING:
@@ -80,47 +77,6 @@ class MessagePieceType(str, Enum):
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
 
-def token_usage_from_responses(usage: Any) -> TokenUsage:
-    """
-    Build a ``TokenUsage`` from a Responses API ``usage`` payload.
-
-    The Responses API reports usage under different names than Chat Completions -- top-level
-    ``input_tokens`` / ``output_tokens`` / ``total_tokens`` with ``input_tokens_details`` and
-    ``output_tokens_details`` breakdowns -- so the field names are resolved here rather than by
-    ``token_usage_from_chat_completion``. Both parsers share the format-agnostic reads
-    (``read_usage_value`` / ``read_usage_int``), so a partial usage payload contributes only the
-    counts the provider actually reports. ``total_tokens`` is derived when the provider omits it.
-
-    Args:
-        usage (Any): The Responses API usage object.
-
-    Returns:
-        TokenUsage: The parsed token usage.
-    """
-    input_details = read_usage_value(source=usage, name="input_tokens_details")
-    output_details = read_usage_value(source=usage, name="output_tokens_details")
-
-    input_tokens = read_usage_int(source=usage, name="input_tokens")
-    output_tokens = read_usage_int(source=usage, name="output_tokens")
-    total_tokens = read_usage_int(source=usage, name="total_tokens")
-    if total_tokens is None and input_tokens is not None and output_tokens is not None:
-        total_tokens = input_tokens + output_tokens
-
-    extra: dict[str, int] = {}
-    cache_write_tokens = read_usage_int(source=input_details, name="cache_write_tokens")
-    if cache_write_tokens is not None:
-        extra["cache_write_tokens"] = cache_write_tokens
-
-    return TokenUsage(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_tokens=total_tokens,
-        reasoning_tokens=read_usage_int(source=output_details, name="reasoning_tokens"),
-        cached_tokens=read_usage_int(source=input_details, name="cached_tokens"),
-        extra=extra,
-    )
-
-
 class OpenAIResponseTarget(OpenAITarget):
     """
     Enables communication with endpoints that support the OpenAI Response API.
@@ -150,6 +106,7 @@ class OpenAIResponseTarget(OpenAITarget):
             ),
         )
     )
+    _response_adapter = ResponsesResponseAdapter()
 
     @forward_init_parameters
     def __init__(
@@ -492,140 +449,6 @@ class OpenAIResponseTarget(OpenAITarget):
         logger.info("Using json_object format without schema - consider providing a schema for better results")
         return {"format": {"type": "json_object"}}
 
-    def _check_content_filter(self, response: Any) -> bool:
-        """
-        Check if a Response API response has a content filter error.
-
-        The Responses API signals content filtering in two ways:
-        1. Via ``response.error`` with a content_filter code (older/alternative path)
-        2. Via ``response.status == "incomplete"`` with
-           ``response.incomplete_details.reason == "content_filter"``
-
-        Args:
-            response: A Response object from the OpenAI SDK.
-
-        Returns:
-            True if content was filtered, False otherwise.
-        """
-        # Path 1: error-based detection (e.g., error.code == "content_filter")
-        if hasattr(response, "error") and response.error is not None:
-            response_dict = response.model_dump()
-            if _is_content_filter_error(response_dict):
-                return True
-
-        # Path 2: incomplete status with content_filter reason
-        if getattr(response, "status", None) == "incomplete":
-            incomplete_details = getattr(response, "incomplete_details", None)
-            if incomplete_details and getattr(incomplete_details, "reason", None) == "content_filter":
-                return True
-
-        return False
-
-    def _extract_partial_content(self, response: Any) -> str | None:
-        """
-        Extract partial content from a Response API response that was content-filtered.
-
-        When the Responses API triggers a content filter, the response may contain partial
-        output in ``response.output`` message sections with ``status='completed'``. Messages
-        with ``status='incomplete'`` typically contain refusal text and are excluded.
-
-        Args:
-            response: A Response object from the OpenAI SDK.
-
-        Returns:
-            The partial text content from completed output messages, or None if no
-            partial content was generated.
-        """
-        try:
-            if not hasattr(response, "output") or not response.output:
-                return None
-            parts: list[str] = []
-            for section in response.output:
-                if getattr(section, "type", None) != MessagePieceType.MESSAGE:
-                    continue
-                # Only include completed messages — incomplete messages contain refusal text
-                if getattr(section, "status", None) != "completed":
-                    continue
-                content = getattr(section, "content", None)
-                parts.extend(
-                    content_item.text
-                    for content_item in content or []
-                    if isinstance(content_item, ResponseOutputText) and content_item.text
-                )
-            return "\n".join(parts) if parts else None
-        except (AttributeError, IndexError, TypeError):
-            return None
-
-    def _validate_response(self, response: Response, request: MessagePiece) -> None:
-        """
-        Validate a Response API response for errors.
-
-        Checks for:
-        - Error responses (excluding content filtering which is checked separately)
-        - Truncation at the token limit (``max_output_tokens``), which is warned about, not raised
-        - Invalid status
-        - Empty output
-
-        Truncation is treated as valid, with a warning, so that
-        ``_construct_message_from_response_async`` can preserve any completed output (reasoning,
-        partial text) or fall back to a graceful empty response. Genuinely empty responses (no
-        truncation) are raised so the retry logic can attempt to get a complete response. Content
-        filter responses are handled separately by ``_check_content_filter``.
-
-        Args:
-            response: The Response object from the OpenAI SDK.
-            request: The original request MessagePiece.
-
-        Raises:
-            PyritException: For unexpected response structures or errors.
-            EmptyResponseException: When the API returns no valid output (and was not truncated).
-        """
-        # Check for error response - error is a ResponseError object or None
-        # (content_filter is handled by _check_content_filter)
-        if response.error is not None and response.error.code != "content_filter":
-            raise PyritException(message=f"Response error: {response.error.code} - {response.error.message}")
-
-        # Truncation: the model hit max_output_tokens. Mirroring OpenAIChatTarget's handling of
-        # finish_reason == "length", warn instead of raising so the run continues -- reasoning models
-        # can spend the whole budget on hidden reasoning before emitting a visible answer, and a low
-        # limit may be a deliberate configuration. Construction preserves any completed output
-        # (reasoning, partial text) and falls back to a graceful empty response.
-        if self._is_truncated_response(response):
-            warn_truncated_response(
-                signal="status='incomplete', reason='max_output_tokens'",
-                limit_parameter="max_output_tokens",
-            )
-            return
-
-        # Check status - should be "completed" for successful responses
-        if response.status != "completed":
-            raise PyritException(message=f"Unexpected status: {response.status}")
-
-        # Check for empty output
-        if not response.output:
-            logger.error("The response returned no valid output.")
-            raise EmptyResponseException(message="The response returned an empty response.")
-
-    def _is_truncated_response(self, response: Response) -> bool:
-        """
-        Return True if the response was cut off by the ``max_output_tokens`` limit.
-
-        The Responses API signals truncation via ``status == "incomplete"`` with
-        ``incomplete_details.reason == "max_output_tokens"`` (``content_filter`` is handled
-        separately by ``_check_content_filter``).
-
-        Args:
-            response: A Response object from the OpenAI SDK.
-
-        Returns:
-            bool: True if the response was truncated at the token limit, False otherwise.
-        """
-        if response.status != "incomplete":
-            return False
-        incomplete_details = response.incomplete_details
-        reason = incomplete_details.reason if incomplete_details else None
-        return reason == "max_output_tokens"
-
     async def _construct_message_from_response_async(self, response: Response, request: MessagePiece) -> Message:
         """
         Construct a Message from a Response API response.
@@ -682,12 +505,11 @@ class OpenAIResponseTarget(OpenAITarget):
         # This must stay ahead of the metadata writes below, which target the first piece.
         extracted_response_pieces.sort(key=lambda piece: piece.converted_value_data_type == "reasoning")
 
-        # Capture token usage in the first piece's metadata. This also runs on the truncated path:
-        # usage is populated on token-limit responses and is most valuable there, since the whole
-        # budget may have been spent on hidden reasoning with no visible answer.
-        usage = getattr(response, "usage", None)
-        if usage is not None and extracted_response_pieces:
-            extracted_response_pieces[0].prompt_metadata.update(token_usage_from_responses(usage).to_metadata())
+        # Capture token usage and the stop reason in the first piece's metadata. This also runs on
+        # the truncated path: usage is populated on token-limit responses and is most valuable
+        # there, since the whole budget may have been spent on hidden reasoning with no visible
+        # answer.
+        self._capture_response_metadata(response=response, pieces=extracted_response_pieces)
 
         if truncated and extracted_response_pieces:
             extracted_response_pieces[0].mark_as_truncated()

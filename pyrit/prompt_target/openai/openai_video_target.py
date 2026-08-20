@@ -2,17 +2,16 @@
 # Licensed under the MIT license.
 
 import logging
-from mimetypes import guess_type
 from pathlib import Path
 from typing import Any, cast
 
 from openai.types import VideoSeconds, VideoSize
 
-from pyrit.common import forward_init_parameters
+from pyrit.common import forward_init_parameters, get_mime_type
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
-from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -262,7 +261,8 @@ class OpenAIVideoTarget(OpenAITarget):
         logger.info("Text+Image-to-video mode: Using image as first frame")
         input_file = await self._prepare_image_input_async(image_piece=image_piece)
         return await self._handle_openai_request_async(
-            api_call=lambda: self._client.videos.create_and_poll(
+            # Azure continues to support the Videos API despite its OpenAI deprecation.
+            api_call=lambda: self._client.videos.create_and_poll(  # ty: ignore[deprecated]
                 model=self._model_name,
                 prompt=prompt,
                 size=self._size,
@@ -284,7 +284,8 @@ class OpenAIVideoTarget(OpenAITarget):
             The response Message with the generated video path.
         """
         return await self._handle_openai_request_async(
-            api_call=lambda: self._client.videos.create_and_poll(
+            # Azure continues to support the Videos API despite its OpenAI deprecation.
+            api_call=lambda: self._client.videos.create_and_poll(  # ty: ignore[deprecated]
                 model=self._model_name,
                 prompt=prompt,
                 size=self._size,
@@ -314,9 +315,7 @@ class OpenAIVideoTarget(OpenAITarget):
         )
         image_bytes = await image_serializer.read_data_async()
 
-        mime_type = DataTypeSerializer.get_mime_type(image_path)
-        if not mime_type:
-            mime_type, _ = guess_type(image_path, strict=False)
+        mime_type = get_mime_type(image_path)
         if not mime_type or mime_type not in self.SUPPORTED_IMAGE_FORMATS:
             raise ValueError(
                 f"Unsupported image format: {mime_type or 'unknown'}. "
@@ -340,11 +339,12 @@ class OpenAIVideoTarget(OpenAITarget):
         Returns:
             The completed Video object from the OpenAI SDK.
         """
-        video = await self._client.videos.remix(video_id, prompt=prompt)
+        # Azure continues to support the Videos API despite its OpenAI deprecation.
+        video = await self._client.videos.remix(video_id, prompt=prompt)  # ty: ignore[deprecated]
 
         # Poll until completion if not already done
         if video.status not in ["completed", "failed"]:
-            video = await self._client.videos.poll(video.id)
+            video = await self._client.videos.poll(video.id)  # ty: ignore[deprecated]
 
         return video
 
@@ -394,7 +394,8 @@ class OpenAIVideoTarget(OpenAITarget):
                 logger.info(f"Video was remixed from: {video.remixed_from_video_id}")
 
             # Download video content using SDK
-            video_response = await self._client.videos.download_content(video.id)
+            # Azure continues to support the Videos API despite its OpenAI deprecation.
+            video_response = await self._client.videos.download_content(video.id)  # ty: ignore[deprecated]
             # Extract bytes from HttpxBinaryResponseContent
             video_content = video_response.content
 

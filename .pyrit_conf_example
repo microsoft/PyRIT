@@ -33,7 +33,7 @@ memory_db_type: sqlite
 # - A dictionary with 'name' and optional 'args' for parameters
 #
 # Parameters are lists of strings. Use the CLI command
-# `pyrit_scan --list-initializers` to see available parameters.
+# `pyrit_scan list-initializers` to see available parameters.
 #
 # Example:
 # initializers:
@@ -126,6 +126,18 @@ max_concurrent_scenario_runs: 3
 #
 # Default: false
 allow_custom_initializers: false
+
+# Local Backend Server
+# --------------------
+# Client settings used by pyrit_scan when connecting to or launching a backend.
+# - url: Backend URL used when --server-url is omitted.
+# - startup_timeout: Seconds to wait for --start-server before cleaning up the
+#   spawned process and returning an error.
+#
+# Both settings can be overridden with --server-url and --startup-timeout.
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
 
 # Silent Mode
 # -----------

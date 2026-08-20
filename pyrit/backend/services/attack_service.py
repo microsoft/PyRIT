@@ -361,6 +361,7 @@ class AttackService:
             timestamp=now,
             metadata={
                 "created_at": now.isoformat(),
+                "target_registry_name": request.target_registry_name,
             },
             labels=labels,
         )

@@ -69,6 +69,7 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from pathlib import Path
 
     from pyrit.models.literals import PromptDataType
@@ -337,6 +338,7 @@ class _TreeOfAttacksNode:
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
+        use_score_as_feedback: bool = True,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
@@ -363,6 +365,8 @@ class _TreeOfAttacksNode:
                 whether prior media should travel back to the adversarial chat or forward to
                 the objective target, and fills adversarial-placeholder pieces in seed
                 messages. Typically shared across all nodes of the same attack.
+            use_score_as_feedback (bool): Whether subsequent adversarial prompts include
+                the objective score. Defaults to True.
             memory_labels (dict[str, str] | None): Labels for memory storage.
             parent_id (str | None): ID of the parent node, if this is a child node
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts and responses.
@@ -385,6 +389,7 @@ class _TreeOfAttacksNode:
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
         self._modality_router = modality_router
+        self._use_score_as_feedback = use_score_as_feedback
 
         # Initialize utilities
         self._memory = CentralMemory.get_memory_instance()
@@ -875,6 +880,7 @@ class _TreeOfAttacksNode:
             attack_id=self._attack_id,
             attack_strategy_name=self._attack_strategy_name,
             modality_router=self._modality_router,
+            use_score_as_feedback=self._use_score_as_feedback,
             memory_labels=self._memory_labels,
             desired_response_prefix=self._desired_response_prefix,
             parent_id=self.node_id,
@@ -1169,7 +1175,9 @@ class _TreeOfAttacksNode:
         logger.debug(f"Node {self.node_id}: Using response {target_response_piece.id} for next prompt")
 
         # Get score for the response
-        score = await self._get_response_score_async(str(target_response_piece.id))
+        score = (
+            await self._get_response_score_async(str(target_response_piece.id)) if self._use_score_as_feedback else ""
+        )
 
         # Generate prompt using template
         return self._adversarial_chat_prompt_template.render_template_value(
@@ -1259,6 +1267,72 @@ class _TreeOfAttacksNode:
         )
 
     __repr__ = __str__
+
+
+class _TreeOfAttacksNodeExecutor:
+    """Execute independent tree nodes with bounded concurrency."""
+
+    def __init__(
+        self,
+        *,
+        batch_size: int,
+        logger: logging.Logger | logging.LoggerAdapter[logging.Logger],
+    ) -> None:
+        """
+        Initialize the node executor.
+
+        Args:
+            batch_size (int): Maximum number of nodes to execute concurrently.
+            logger (logging.Logger | logging.LoggerAdapter[logging.Logger]): Logger
+                used for execution progress.
+        """
+        self._batch_size = batch_size
+        self._logger = logger
+
+    async def execute_nodes_async(
+        self,
+        *,
+        nodes: list[_TreeOfAttacksNode],
+        objective: str,
+    ) -> AsyncIterator[tuple[int, list[_TreeOfAttacksNode]]]:
+        """
+        Execute nodes in ordered batches and yield each completed batch.
+
+        Node instances own all branch-specific mutable state. This executor only
+        schedules their existing execution protocol, so failures and cancellation
+        retain ``asyncio.gather`` semantics.
+
+        Args:
+            nodes (list[_TreeOfAttacksNode]): Nodes to execute.
+            objective (str): Objective passed to every node.
+
+        Yields:
+            tuple[int, list[_TreeOfAttacksNode]]: The batch start offset and nodes
+                after every node in that batch has completed.
+        """
+        for batch_start in range(0, len(nodes), self._batch_size):
+            batch_nodes = nodes[batch_start : batch_start + self._batch_size]
+            self._log_batch_start(batch_start=batch_start, batch_nodes=batch_nodes, total_nodes=len(nodes))
+
+            await asyncio.gather(*(node.send_prompt_async(objective=objective) for node in batch_nodes))
+
+            yield batch_start, batch_nodes
+
+    def _log_batch_start(
+        self,
+        *,
+        batch_start: int,
+        batch_nodes: list[_TreeOfAttacksNode],
+        total_nodes: int,
+    ) -> None:
+        """Log the batch and node dispatch order."""
+        batch_end = batch_start + len(batch_nodes)
+        self._logger.debug(
+            f"Processing batch {batch_start // self._batch_size + 1} "
+            f"(nodes {batch_start + 1}-{batch_end} of {total_nodes})"
+        )
+        for node_index in range(batch_start + 1, batch_end + 1):
+            self._logger.debug(f"Preparing prompt for node {node_index}/{total_nodes}")
 
 
 class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackResult]):
@@ -1402,6 +1476,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         super().__init__(objective_target=objective_target, logger=logger, context_type=TAPAttackContext)
 
         self._memory = CentralMemory.get_memory_instance()
+        self._node_executor = _TreeOfAttacksNodeExecutor(
+            batch_size=self._configuration.batch_size,
+            logger=self._logger,
+        )
 
         # Initialize adversarial configuration
         self._adversarial_chat = attack_adversarial_config.target
@@ -1885,25 +1963,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             context.tree_visualization.create_node(f"{context.executed_turns}: ", vis_id, parent=node._vis_node_id)
             node._vis_node_id = vis_id
 
-        # Process nodes in batches
-        for batch_start in range(0, len(context.nodes), self._configuration.batch_size):
-            batch_end = min(batch_start + self._configuration.batch_size, len(context.nodes))
-            batch_nodes = context.nodes[batch_start:batch_end]
-
-            self._logger.debug(
-                f"Processing batch {batch_start // self._configuration.batch_size + 1} "
-                f"(nodes {batch_start + 1}-{batch_end} of {len(context.nodes)})"
-            )
-
-            # Create tasks for parallel execution
-            tasks = []
-            for node_index, node in enumerate(batch_nodes, start=batch_start + 1):
-                self._logger.debug(f"Preparing prompt for node {node_index}/{len(context.nodes)}")
-                task = node.send_prompt_async(objective=context.objective)
-                tasks.append(task)
-
-            await asyncio.gather(*tasks)
-
+        async for batch_start, batch_nodes in self._node_executor.execute_nodes_async(
+            nodes=context.nodes,
+            objective=context.objective,
+        ):
             # Update visualization with results after batch completes
             for node_index, node in enumerate(batch_nodes, start=batch_start + 1):
                 result_string = self._format_node_result(node)
@@ -2034,6 +2097,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_id=self.get_identifier(),
             attack_strategy_name=self.__class__.__name__,
             modality_router=self._modality_router,
+            use_score_as_feedback=self._attack_scoring_config.use_score_as_feedback,
             memory_labels=context.memory_labels,
             desired_response_prefix=self._configuration.desired_response_prefix,
             parent_id=parent_id,

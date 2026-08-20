@@ -175,6 +175,25 @@ env_files:
 
 If `true`, suppresses print statements during initialization. Useful for non-interactive environments or when embedding PyRIT in other tools. Defaults to `false`.
 
+### `server`
+
+Client settings for connecting to or launching a PyRIT backend.
+
+| Field | Description | Default |
+|---|---|---|
+| `url` | Backend URL used when `--server-url` is omitted | `http://localhost:8000` |
+| `startup_timeout` | Seconds `pyrit_scan start-server` waits for a healthy backend before terminating the spawned process | `120` |
+
+`startup_timeout` must be a finite number greater than zero. The `--startup-timeout` CLI option overrides the configured value for an individual scanner invocation.
+
+Set `server: null` to reset all server settings, including values inherited from an earlier configuration layer, to their defaults.
+
+```yaml
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
+```
+
 ## Configuration Precedence
 
 PyRIT uses a 3-layer configuration precedence model. **Later layers override earlier ones:**
@@ -189,7 +208,7 @@ flowchart LR
 | -------- | ---------------------- | ----------------------------------------------------------------------- |
 | Lowest   | `~/.pyrit/.pyrit_conf` | Loaded automatically if it exists                                       |
 | Medium   | Explicit config file   | Passed via `--config-file` (CLI) or `config_file` parameter             |
-| Highest  | Individual arguments   | CLI flags like `--database`, `--initializers`, or API keyword arguments |
+| Highest  | Individual arguments   | CLI flags like `--initializers` or API keyword arguments               |
 
 This means you can set sensible defaults in `~/.pyrit/.pyrit_conf` and override specific values on a per-run basis without modifying the file.
 
@@ -211,10 +230,10 @@ Because initializers run last, they can modify anything set up in earlier steps 
 The CLI and shell automatically load `~/.pyrit/.pyrit_conf`. You can also point to a different config file:
 
 ```bash
-pyrit_scan run --config-file ./my_project_config.yaml --database InMemory
+pyrit_scan run airt.scam --config-file ./my_project_config.yaml
 ```
 
-Individual CLI arguments (like `--database`) override values from the config file.
+Individual CLI arguments (like `--initializers`) override values from the config file.
 
 ### From Python
 
@@ -282,6 +301,11 @@ initializers:
 
 # Suppress initialization messages
 silent: false
+
+# Backend connection and local startup settings
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
 ```
 
 ## What's Next?

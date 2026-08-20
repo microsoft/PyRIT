@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -922,6 +923,29 @@ class TestPromptGeneration:
         assert "0.30" in result  # Score value
         assert failure_objective_score.score_rationale in result
 
+    def test_build_adversarial_prompt_without_score_feedback(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CrescendoAttackContext,
+        sample_response: Message,
+        failure_objective_score: Score,
+    ):
+        """The response remains available when objective-score feedback is disabled."""
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            attack_scoring_config=AttackScoringConfig(use_score_as_feedback=False),
+        )
+        basic_context.last_response = sample_response
+        basic_context.last_score = failure_objective_score
+
+        result = attack._build_adversarial_prompt(context=basic_context, refused_text="")
+
+        assert "Test response" in result
+        assert "received a score of" not in result
+        assert failure_objective_score.score_rationale not in result
+
     async def test_generate_next_prompt_raises_when_adversarial_chat_returns_no_response(
         self,
         mock_objective_target: MagicMock,
@@ -1200,10 +1224,10 @@ class TestResponseScoring:
 
         await attack._check_refusal_async(context=basic_context, objective="test task")
 
-        # Verify score_async was called with skip_on_error_result=False
+        # Verify message policy does not skip error results
         mock_refusal_scorer.score_async.assert_called_once()
-        call_kwargs = mock_refusal_scorer.score_async.call_args.kwargs
-        assert call_kwargs.get("skip_on_error_result") is False, (
+        message_options = mock_refusal_scorer.score_async.call_args.kwargs["message_options"]
+        assert message_options.skip_on_error_result is False, (
             "Refusal scorer must be called with skip_on_error_result=False "
             "to ensure error responses are scored (treated as refusals) rather than skipped"
         )
@@ -2548,21 +2572,46 @@ class TestEdgeCases:
         context1 = CrescendoAttackContext(params=AttackParameters(objective="Objective 1"))
         context2 = CrescendoAttackContext(params=AttackParameters(objective="Objective 2"))
 
-        # Mock conversation manager for both setups
-        mock_state1 = ConversationState(turn_count=0)
-        mock_state2 = ConversationState(turn_count=0)
+        setup_started: set[str] = set()
+        both_setups_started = asyncio.Event()
+
+        async def initialize_context_async(
+            *,
+            context: CrescendoAttackContext,
+            **_kwargs: object,
+        ) -> ConversationState:
+            setup_started.add(context.objective)
+            if len(setup_started) == 2:
+                both_setups_started.set()
+            await both_setups_started.wait()
+            return ConversationState(turn_count=0)
 
         with patch.object(
-            attack._conversation_manager, "initialize_context_async", side_effect=[mock_state1, mock_state2]
+            attack._conversation_manager,
+            "initialize_context_async",
+            new_callable=AsyncMock,
+            side_effect=initialize_context_async,
         ):
-            # Simulate concurrent setup - both contexts use the same attack instance
-            await attack._setup_async(context=context1)
-            await attack._setup_async(context=context2)
+            # The first setup waits for the second to start, guaranteeing real overlap.
+            await asyncio.gather(
+                attack._setup_async(context=context1),
+                attack._setup_async(context=context2),
+            )
 
         # Verify contexts remain independent
         # Each should maintain its own state without interference
-        assert context1.objective == "Objective 1"
-        assert context2.objective == "Objective 2"
+        assert setup_started == {"Objective 1", "Objective 2"}
+        calls = mock_adversarial_chat.set_system_prompt.call_args_list
+        assert len(calls) == 2
+        actual = {(call.kwargs["conversation_id"], call.kwargs["system_prompt"]) for call in calls}
+        assert any(
+            context1.session.adversarial_chat_conversation_id == conversation_id and "Objective 1" in prompt
+            for conversation_id, prompt in actual
+        )
+        assert any(
+            context2.session.adversarial_chat_conversation_id == conversation_id and "Objective 2" in prompt
+            for conversation_id, prompt in actual
+        )
         # Most importantly, they should have different conversation IDs
         assert context1.session.conversation_id != context2.session.conversation_id
 

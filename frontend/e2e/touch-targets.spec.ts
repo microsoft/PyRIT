@@ -150,6 +150,37 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/initializers/settings" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          baseline: [],
+          additional: [],
+        })
+      );
+      return;
+    }
+    if (apiPath === "/initializers" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          items: [
+            {
+              initializer_name: "load_default_datasets",
+              initializer_type: "DatasetInitializer",
+              description: "Loads the default datasets.",
+              required_env_vars: [],
+              supported_parameters: [],
+            },
+          ],
+          pagination: {
+            limit: 200,
+            has_more: false,
+            next_cursor: null,
+            prev_cursor: null,
+          },
+        })
+      );
+      return;
+    }
     if (apiPath === "/targets/catalog") {
       await route.fulfill(
         jsonResponse({
@@ -403,6 +434,15 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
   });
 
+  test("keeps the Initializer selector at least 44px", async ({ page }) => {
+    await page.goto("/initializers");
+
+    await expectMinimumTouchTarget(
+      page.getByRole("combobox", { name: "Initializer to add" })
+    );
+    await expectNoDocumentOverflow(page);
+  });
+
   test("keeps Chat message, input, and conversation controls at least 44px", async ({
     page,
   }) => {
@@ -521,6 +561,11 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   );
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Expand inner targets" })
+  );
+
+  await page.goto("/initializers");
+  await expectCompactDesktopTarget(
+    page.getByRole("combobox", { name: "Initializer to add" })
   );
 
   await startChatWithMessages(page);

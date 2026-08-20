@@ -33,20 +33,21 @@ Set up a PyRIT development environment on your local machine.
    wget -qO- https://astral.sh/uv/install.sh | sh
    ```
 
-2. **Python 3.12**: uv will automatically download and use the correct Python version based on `.python-version`
+2. **Python 3.10-3.14**: PyRIT supports these versions, and CI tests all of them. The repository does
+   not pin an interpreter, so `uv` selects a compatible one for you (downloading it if needed).
 
 3. **Git**. Git is required to clone the repo locally. It is available to download [here](https://git-scm.com/downloads).
     ```bash
     git clone https://github.com/microsoft/PyRIT
     ```
 
-4. **Node.js and npm**. Required for building the TypeScript/React frontend. Download [Node.js](https://nodejs.org/) (which includes npm). Version 18 or higher is recommended.
+4. **Node.js and npm**. Required for building the TypeScript/React frontend. Download [Node.js](https://nodejs.org/) (which includes npm). Version 22 or higher is required (the frontend's `react-router` dependency requires Node >= 22.22.0).
 
 ### Installation
 
 1. Navigate to the directory where you cloned the PyRIT repo.
 
-2. The repository includes a `.python-version` file that pins Python 3.12. Run:
+2. From the root of your clone, run:
 
 ```bash
 uv sync
@@ -54,10 +55,13 @@ uv sync
 
 This command will:
 - Create a `.venv` directory with a virtual environment
-- Install Python 3.12 if not already available
+- Download a supported Python version if none is already available
 - Install PyRIT in editable mode; `uv sync` by default installs in editable mode so no extra flag is necessary
 - Install all dependencies including dev tools (pytest, ruff, etc.) via the `dev` dependency group
 - Create a `uv.lock` file for reproducible builds
+
+To pin your checkout to a single version, run `uv python pin 3.12`. That writes a
+`.python-version` file, which is local to your working copy and not tracked by the repository.
 
 
 3. Verify Installation

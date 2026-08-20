@@ -6,7 +6,7 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import get_mock_target_identifier, store_message
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory
@@ -16,6 +16,7 @@ from pyrit.score import (
     ContentClassifier,
     ContentClassifierCategory,
     ContentClassifierPaths,
+    MessageScorable,
     SelfAskCategoryScorer,
 )
 
@@ -255,14 +256,24 @@ async def test_score_prompts_batch_async(
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock()
     chat_target._max_requests_per_minute = max_requests_per_minute
-    with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
+
+    prompt = MessagePiece(role="assistant", original_value="test").to_message()
+    prompt2 = MessagePiece(role="assistant", original_value="test 2").to_message()
+
+    # Scoring resolves a scorable through memory, so the fake has to answer id lookups.
+    # A real database is not wanted here: the scorer would persist the same mocked
+    # response twice and collide on its primary key.
+    known = {str(piece.id): piece for message in (prompt, prompt2) for piece in message.message_pieces}
+    memory = MagicMock()
+    memory.get_message_pieces.side_effect = lambda **kwargs: [
+        known[str(piece_id)] for piece_id in kwargs.get("prompt_ids", []) if str(piece_id) in known
+    ]
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=chat_target,
             content_classifier=HARM_CLASSIFIER,
         )
-
-        prompt = MessagePiece(role="assistant", original_value="test").to_message()
-        prompt2 = MessagePiece(role="assistant", original_value="test 2").to_message()
 
         with patch.object(chat_target, "send_prompt_async", return_value=[scorer_category_response_false]):
             if batch_size != 1 and max_requests_per_minute:
@@ -298,7 +309,7 @@ async def test_blocked_response_returns_false_without_invoking_llm(patch_central
     )
     blocked_message = Message(message_pieces=[blocked_piece])
 
-    scores = await scorer.score_async(blocked_message)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(blocked_message)))
 
     chat_target.send_prompt_async.assert_not_called()
     assert len(scores) == 1
