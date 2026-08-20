@@ -69,7 +69,7 @@ class ScorerPromptValidator:
 
     @property
     def is_objective_required(self) -> bool:
-        """Return whether the scorer uses the objective as a required criterion."""
+        """Whether the scorer uses the objective as a required criterion."""
         return self._is_objective_required
 
     def validate(self, message: Message, objective: str | None) -> None:
