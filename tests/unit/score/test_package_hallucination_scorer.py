@@ -89,7 +89,7 @@ class TestPackageHallucinationScorerScoring:
     async def test_score_async_full_path_on_assistant_message(self):
         scorer = PackageHallucinationScorer(known_packages={"requests"}, ecosystem=PackageEcosystem.PYTHON)
         message = _assistant_piece("import requests\nimport madeuppkg\n").to_message()
-        score = (await scorer.score_async(message))[0]
+        score = (await scorer.score_message_async(message=message))[0]
         assert score.get_value() is True
 
     async def test_score_text_async_user_role_filtered_returns_false(self):

@@ -10,7 +10,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from pyrit.memory import AzureSQLMemory, CentralMemory, PromptMemoryEntry
+from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, PromptMemoryEntry
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -316,6 +316,61 @@ def get_audio_message_piece() -> MessagePiece:
             original_value_data_type="audio_path",
             converted_value_data_type="audio_path",
         )
+
+
+def mock_memory_resolving(*messages: Message) -> MagicMock:
+    """
+    Return a fake memory that can resolve the given messages by piece id.
+
+    Scoring resolves a scorable through memory, so a fake that answers nothing makes every
+    score fail. This keeps the test free of a real database while still supporting lookups.
+
+    Args:
+        *messages (Message): Messages the fake should be able to resolve.
+
+    Returns:
+        MagicMock: A MemoryInterface stand-in with a working get_message_pieces.
+    """
+    known = {str(piece.id): piece for message in messages for piece in message.message_pieces}
+    memory = MagicMock(MemoryInterface)
+    memory.get_message_pieces.side_effect = lambda **kwargs: [
+        known[str(piece_id)] for piece_id in kwargs.get("prompt_ids", []) or [] if str(piece_id) in known
+    ]
+    return memory
+
+
+def store_message(message: Message) -> Message:
+    """
+    Persist a message so a scorable can name its pieces, and return it.
+
+    A ``MessageScorable`` is a reference: it names piece ids and resolves them from memory.
+    Tests that build a message by hand have to store it first, or resolution has nothing to
+    find. This fills in whatever persistence needs — a conversation id, and the
+    ``not_in_memory`` flag some fixtures set — so a hand-built message becomes storable.
+    Storing is idempotent, so the helper is safe to apply to an already-persisted message.
+
+    Args:
+        message (Message): The message to persist.
+
+    Returns:
+        Message: The same message.
+    """
+    memory = CentralMemory.get_memory_instance()
+    piece_ids = [piece.id for piece in message.message_pieces if piece.id is not None]
+    if not piece_ids or memory.get_message_pieces(prompt_ids=piece_ids):
+        return message
+
+    conversation_id = next(
+        (piece.conversation_id for piece in message.message_pieces if piece.conversation_id),
+        str(uuid.uuid4()),
+    )
+    for piece in message.message_pieces:
+        piece.not_in_memory = False
+        if not piece.conversation_id:
+            piece.conversation_id = conversation_id
+
+    memory.add_message_to_memory(request=message)
+    return message
 
 
 def get_test_message_piece() -> MessagePiece:

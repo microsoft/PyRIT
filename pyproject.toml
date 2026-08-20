@@ -82,9 +82,7 @@ dev = [
     "jupyter-book>=2.0.0",
     "jupytext>=1.17.1",
     "matplotlib>=3.10.0",
-    # ty 0.0.70 adds unsound-return-statement under `all = "error"`; adopting it
-    # requires a repo-wide typing cleanup.
-    "ty>=0.0.32,<0.0.70",
+    "ty>=0.0.32",
     "pandas>=2.2.0",
     "pre-commit>=4.2.0",
     "pytest>=9.0.3",
@@ -174,6 +172,11 @@ addopts = [
 pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
+filterwarnings = [
+    # Keep the in-repo suite on the scorable/expectation contract. Tests that cover the
+    # shim itself opt back in with pytest.warns.
+    "error:Scorer\\.score_async:DeprecationWarning",
+]
 
 [tool.ty]
 [tool.ty.rules]

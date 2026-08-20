@@ -95,7 +95,7 @@ class PyRITApiClient:
             if resp.status_code != 200:
                 return False
             payload = resp.json()
-            return payload.get("status") == "healthy" and payload.get("service") == "pyrit-backend"
+            return bool(payload.get("status") == "healthy" and payload.get("service") == "pyrit-backend")
         except httpx.ConnectError:
             return False
         except Exception:
@@ -405,9 +405,9 @@ class PyRITApiClient:
         if isinstance(text, bytes):
             text = text.decode(errors="replace")
         if isinstance(text, str):
-            text = text.strip()
-            if text:
-                return text
+            stripped_text: str = text.strip()
+            if stripped_text:
+                return stripped_text
         return None
 
     @staticmethod
