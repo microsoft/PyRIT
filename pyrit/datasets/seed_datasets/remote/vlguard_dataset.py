@@ -326,7 +326,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         if cache and json_path.exists() and image_dir.exists() and any(image_dir.iterdir()):
             logger.info("Using cached VLGuard dataset")
             with open(json_path, encoding="utf-8") as f:
-                metadata = json.load(f)
+                metadata: list[dict[str, str]] = json.load(f)
             return metadata, image_dir
 
         logger.info("Downloading VLGuard dataset from HuggingFace...")
@@ -357,6 +357,6 @@ class _VLGuardDataset(_RemoteDatasetLoader):
             await asyncio.to_thread(safe_extract_zip, source=zip_path, dest_dir=cache_dir)
 
         with open(json_path, encoding="utf-8") as f:
-            metadata = json.load(f)
+            metadata: list[dict[str, str]] = json.load(f)
 
         return metadata, image_dir

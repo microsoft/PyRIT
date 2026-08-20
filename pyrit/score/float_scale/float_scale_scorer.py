@@ -5,19 +5,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import (
-    Message,
-    Score,
-)
-from pyrit.score.scorer import Scorer
+from pyrit.models import Message, Score
+from pyrit.score.message_scorer import MessageScorer
 
 if TYPE_CHECKING:
     from pyrit.prompt_target.common.prompt_target import PromptTarget
+    from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
-class FloatScaleScorer(Scorer):
+class FloatScaleScorer(MessageScorer):
     """
     Base class for scorers that return floating-point scores in the range [0, 1].
 
@@ -38,7 +36,13 @@ class FloatScaleScorer(Scorer):
     "blocked = True") should override ``_score_piece_async`` or ``_build_fallback_score``.
     """
 
-    def __init__(self, *, validator: ScorerPromptValidator, chat_target: PromptTarget | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        validator: ScorerPromptValidator,
+        chat_target: PromptTarget | None = None,
+        message_resolver: MessageScorableResolver | None = None,
+    ) -> None:
         """
         Initialize the FloatScaleScorer.
 
@@ -46,8 +50,13 @@ class FloatScaleScorer(Scorer):
             validator: A validator object used to validate scores.
             chat_target: Optional chat target used by the scorer, forwarded to the base class
                 for validation against ``TARGET_REQUIREMENTS``.
+            message_resolver: Message evidence resolver.
         """
-        super().__init__(validator=validator, chat_target=chat_target)
+        super().__init__(
+            validator=validator,
+            chat_target=chat_target,
+            message_resolver=message_resolver,
+        )
 
     def _build_fallback_score(
         self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
@@ -127,9 +136,7 @@ class FloatScaleScorer(Scorer):
         Returns:
             HarmScorerMetrics: The metrics for this scorer, or None if not found or not configured.
         """
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_harm_metrics_by_eval_hash,
-        )
+        from pyrit.score.scorer_evaluation.scorer_metrics_io import find_harm_metrics_by_eval_hash
 
         if self.evaluation_file_mapping is None or self.evaluation_file_mapping.harm_category is None:
             return None

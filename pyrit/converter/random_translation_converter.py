@@ -11,7 +11,7 @@ from pyrit.converter.converter import ConverterResult
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
-from pyrit.models import PromptDataType, SeedDataset, SeedPrompt
+from pyrit.models import ComponentIdentifier, PromptDataType, SeedDataset, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,22 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
             self.languages = [prompt.value for prompt in default_languages.prompts]
         else:
             self.languages = languages
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with the random translation language pool.
+
+        Returns:
+            ComponentIdentifier: The converter identifier.
+        """
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(
+            params={
+                **base_identifier.params,
+                "languages": sorted(self.languages, key=str.casefold),
+            },
+            converter_target=self._converter_target.get_identifier(),
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """

@@ -968,9 +968,12 @@ class TestResponseScoring:
 
         response_piece = MagicMock(spec=MessagePiece)
         response_piece.is_blocked.return_value = True
+        response_piece.id = uuid.uuid4()
 
         basic_context.last_response = MagicMock(spec=Message)
         basic_context.last_response.get_piece.return_value = response_piece
+        # A scorable names piece ids, so the mock has to expose its pieces.
+        basic_context.last_response.message_pieces = [response_piece]
 
         # Configure the mock scorer to return empty list for blocked response
         mock_objective_scorer.score_async = AsyncMock(return_value=[])

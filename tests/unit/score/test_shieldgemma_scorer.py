@@ -5,13 +5,14 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import get_mock_target_identifier, store_message
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
+    MessageScorable,
     ShieldGemmaGuideline,
     ShieldGemmaMessageRole,
     ShieldGemmaPolicy,
@@ -142,7 +143,7 @@ async def test_response_scoring_excludes_a_stored_user_turn(sqlite_instance: Mem
     target = _mock_target("No")
     scorer = ShieldGemmaScorer(chat_target=target, guideline=CUSTOM_GUIDELINE)
 
-    await scorer.score_async(response)
+    await scorer.score_async(scorable=MessageScorable.from_message(store_message(response)))
 
     sent = _sent_request(target)
     assert "Chatbot Response: A response judged on its own." in sent
@@ -231,7 +232,7 @@ async def test_multiple_pieces_keep_every_verdict_and_report_the_aggregate(
     )
     message.set_response_not_in_memory()
 
-    scores = await scorer.score_async(message)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
 
     assert target.send_prompt_async.call_count == 2
     assert scores[0].get_value() is True

@@ -71,6 +71,7 @@ class PyRITShell(cmd.Cmd):
         list-initializers          - List all available initializers
         list-targets               - List all available targets
         list-converters            - List all registered converter instances
+        add-initializer <file>...  - Register initializer(s) from Python script file(s)
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
         scenario-results [id]      - Inspect a run: --view overview|attacks

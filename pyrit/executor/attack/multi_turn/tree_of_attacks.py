@@ -154,8 +154,14 @@ class TAPAttackScoringConfig(AttackScoringConfig):
 
         Returns:
             float: The threshold value from the FloatScaleThresholdScorer.
+
+        Raises:
+            TypeError: If the configured objective scorer has an unexpected type.
         """
-        return self.objective_scorer.threshold  # type: ignore[ty:unresolved-attribute]
+        objective_scorer = self.objective_scorer
+        if not isinstance(objective_scorer, FloatScaleThresholdScorer):
+            raise TypeError("TAP objective scorer must be a FloatScaleThresholdScorer")
+        return objective_scorer.threshold
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,7 +239,8 @@ class TAPAttackResult(AttackResult):
     @property
     def tree_visualization(self) -> Tree | None:
         """The tree visualization from metadata."""
-        return self.metadata.get("tree_visualization", None)
+        tree: Tree | None = self.metadata.get("tree_visualization")
+        return tree
 
     @tree_visualization.setter
     def tree_visualization(self, value: Tree) -> None:

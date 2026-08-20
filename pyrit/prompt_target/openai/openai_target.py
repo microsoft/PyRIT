@@ -180,8 +180,9 @@ class OpenAITarget(PromptTarget):
         match = re.search(r"/deployments/([^/]+)/", url)
         if match:
             deployment = match.group(1)
-            logger.info(f"Extracted deployment name from URL: {deployment}")
-            return deployment
+            if isinstance(deployment, str):
+                logger.info(f"Extracted deployment name from URL: {deployment}")
+                return deployment
 
         return ""
 
