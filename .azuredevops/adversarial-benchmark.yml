@@ -212,7 +212,7 @@ jobs:
 
             echo "run-benchmark" > "$artifact_dir/phase.txt"
             set +e
-            uv run pyrit_scan benchmark.adversarial \
+            uv run pyrit_scan run benchmark.adversarial \
               --log-level "$LOG_LEVEL_INPUT" \
               --target "$OBJECTIVE_TARGET_INPUT" \
               --adversarial-targets "${adversarial_targets[@]}" \
