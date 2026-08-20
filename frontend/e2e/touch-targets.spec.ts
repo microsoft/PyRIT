@@ -485,18 +485,18 @@ test.describe("Mobile touch targets", () => {
     await scoreStack.click();
 
     const scoreTabs = page.locator('[data-testid^="message-score-tab-1-"]');
-    await expect(scoreTabs).toHaveCount(3);
+    await expect(scoreTabs).toHaveCount(2);
     await expectMinimumTouchTargets(scoreTabs);
 
     const moreScores = page.getByRole("button", {
-      name: "Choose from 6 scores",
+      name: "More scores, 7 hidden",
     });
     await expect(moreScores).toBeVisible();
     await expectMinimumTouchTarget(moreScores);
     await moreScores.click();
 
     const scoreMenuItems = page.getByRole("menuitem");
-    await expect(scoreMenuItems).toHaveCount(6);
+    await expect(scoreMenuItems).toHaveCount(7);
     await expectMinimumTouchTargets(scoreMenuItems);
     await page.keyboard.press("Escape");
     await expect(scoreMenuItems).toHaveCount(0);

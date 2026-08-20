@@ -198,7 +198,7 @@ interface ScoreOverflowMenuProps {
 
 const SCORE_TAB_WIDTH_PX = 72
 const SCORE_TAB_GAP_PX = 4
-const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 32
+const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 112
 
 function ScoreOverflowMenu({ scores, onSelect }: ScoreOverflowMenuProps) {
   const styles = useMessageListStyles()
@@ -211,10 +211,12 @@ function ScoreOverflowMenu({ scores, onSelect }: ScoreOverflowMenuProps) {
           size="small"
           icon={<MoreHorizontalRegular />}
           className={styles.scoreOverflowButton}
-          aria-label={`Choose from ${scores.length} scores`}
+          aria-label={`More scores, ${scores.length} hidden`}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => event.stopPropagation()}
-        />
+        >
+          More scores
+        </Button>
       </MenuTrigger>
       <MenuPopover>
         <MenuList>

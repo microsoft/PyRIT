@@ -198,7 +198,8 @@ export const useMessageListStyles = makeStyles({
   scoreOverflowButton: {
     position: 'relative',
     zIndex: 1,
-    minWidth: '32px',
+    width: '112px',
+    minWidth: '112px',
     flexShrink: 0,
     ...mobileTouchTarget,
   },

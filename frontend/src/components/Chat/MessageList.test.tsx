@@ -381,7 +381,7 @@ describe("MessageList", () => {
       screen.getByRole("tab", { name: /overflowscorer/i })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /choose from/i })
+      screen.queryByRole("button", { name: /more scores/i })
     ).not.toBeInTheDocument();
   });
 
@@ -429,7 +429,9 @@ describe("MessageList", () => {
       name: /score 1 from objectivescorer, objective score/i,
     });
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
-    await user.click(screen.getByRole("button", { name: "Choose from 2 scores" }));
+    const moreScoresButton = screen.getByRole("button", { name: "More scores, 2 hidden" });
+    expect(moreScoresButton).toHaveTextContent("More scores");
+    await user.click(moreScoresButton);
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
 
     const overflowScore = screen.getByRole("menuitem", {
@@ -452,7 +454,7 @@ describe("MessageList", () => {
       screen.queryByRole("tab", { name: /score 0 from firstscorer/i })
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Choose from 2 scores" }));
+    await user.click(screen.getByRole("button", { name: "More scores, 2 hidden" }));
     expect(
       screen.getByRole("menuitem", { name: /0 · firstscorer/i })
     ).toBeInTheDocument();
@@ -500,7 +502,7 @@ describe("MessageList", () => {
     await user.click(screen.getByRole("button", { name: /view 3 scores/i }));
     expect(screen.getAllByRole("tab")).toHaveLength(2);
 
-    await user.click(screen.getByRole("button", { name: "Choose from 1 scores" }));
+    await user.click(screen.getByRole("button", { name: "More scores, 1 hidden" }));
     await user.click(screen.getByRole("menuitem", { name: /2 · thirdscorer/i }));
 
     expect(screen.getAllByRole("tab")).toHaveLength(2);
