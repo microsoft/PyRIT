@@ -276,21 +276,27 @@ jobs:
                 "$artifact_dir/scenario-result.json"
             )"
 
+            export_exit_code=0
+            if [[ -n "$result_id" ]]; then
+              echo "export-results" > "$artifact_dir/phase.txt"
+              set +e
+              uv run python -m build_scripts.export_adversarial_benchmark_result \
+                --scenario-result-id "$result_id" \
+                --output-dir "$artifact_dir"
+              export_exit_code=$?
+              set -e
+              echo "$export_exit_code" > "$artifact_dir/export-exit-code.txt"
+            fi
+
             if [[ "$benchmark_exit_code" -eq 0 ]]; then
               if [[ -z "$result_id" || "$run_status" != "COMPLETED" ]]; then
                 echo "Benchmark exited successfully without a completed persisted scenario result." >&2
                 exit 3
               fi
-
-              echo "export-results" > "$artifact_dir/phase.txt"
-              uv run pyrit_scan \
-                scenario-results "$result_id" \
-                --view overview \
-                > "$artifact_dir/overview.txt" 2>&1
-              uv run pyrit_scan \
-                scenario-results "$result_id" \
-                --view attacks \
-                > "$artifact_dir/attacks.txt" 2>&1
+              if [[ "$export_exit_code" -ne 0 ]]; then
+                echo "Failed to export completed benchmark result." >&2
+                exit "$export_exit_code"
+              fi
             fi
 
             if [[ "$benchmark_exit_code" -eq 0 ]]; then
@@ -367,6 +373,7 @@ jobs:
               "last_phase": read_text("phase.txt"),
               "execution_exit_code": read_text("execution-exit-code.txt"),
               "benchmark_exit_code": read_text("benchmark-exit-code.txt"),
+              "export_exit_code": read_text("export-exit-code.txt"),
               "objective_target": os.environ["OBJECTIVE_TARGET_INPUT"],
               "adversarial_targets": os.environ["ADVERSARIAL_TARGETS_INPUT"].split(),
               "technique_preset": preset,
