@@ -2471,6 +2471,22 @@ def test_tap_init_raises_when_objective_scorer_is_none():
         )
 
 
+def test_tap_scoring_config_threshold_raises_for_reassigned_invalid_scorer():
+    """threshold re-validates objective_scorer at access time, not just at construction.
+
+    __init__ already rejects a non-FloatScaleThresholdScorer objective_scorer, so this
+    exercises the defensive re-check by mutating the attribute after construction.
+    """
+    mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+    mock_threshold_scorer.threshold = 0.8
+    scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
+
+    scoring_config.objective_scorer = MagicMock(spec=Scorer)
+
+    with pytest.raises(TypeError, match="TAP objective scorer must be a FloatScaleThresholdScorer"):
+        _ = scoring_config.threshold
+
+
 def test_tap_attack_result_tree_visualization_getter_returns_value():
     """Test that TAPAttackResult.tree_visualization returns the stored tree."""
     tree = Tree()

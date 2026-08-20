@@ -3,6 +3,7 @@
 
 """Tests for the AttackTechniqueFactory class."""
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -946,3 +947,39 @@ class TestUnwrapOptional:
         """A non-type annotation (e.g., string forward ref) returns None."""
         result = AttackTechniqueFactory._unwrap_optional("SomeForwardRef")
         assert result is None
+
+    def test_unwrap_typing_optional_with_none(self):
+        """typing.Optional[X] (legacy typing.Union syntax) should unwrap to X."""
+        # Intentionally uses the legacy typing.Optional/Union construct (rather than `X | None`)
+        # to exercise _unwrap_optional's typing.Union-origin branch specifically.
+        result = AttackTechniqueFactory._unwrap_optional(typing.Optional[AttackScoringConfig])  # noqa: UP045
+        assert result is AttackScoringConfig
+
+    def test_unwrap_typing_union_multi_returns_none(self):
+        """typing.Union of more than one non-None type returns None (ambiguous)."""
+        # Intentionally uses typing.Union (rather than `X | Y`) to exercise _unwrap_optional's
+        # typing.Union-origin branch specifically.
+        result = AttackTechniqueFactory._unwrap_optional(typing.Union[int, str, None])  # noqa: UP007
+        assert result is None
+
+
+class TestGetScoringConfigType:
+    """Tests for AttackTechniqueFactory._get_scoring_config_type."""
+
+    def test_returns_none_when_annotation_is_not_attack_scoring_config_subclass(self):
+        """A resolved, narrowed annotation that isn't an AttackScoringConfig subclass yields None."""
+
+        class _WrongAnnotationAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: int | None = None):
+                pass
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_WrongAnnotationAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_WrongAnnotationAttack,
+            scorer_override_policy=ScorerOverridePolicy.SKIP,
+        )
+
+        assert factory._get_scoring_config_type() is None
