@@ -13,11 +13,12 @@ flowchart TB
 
   subgraph azure["Azure subscription"]
     frontDoor["Azure Front Door Premium<br/>Optional managed HTTPS entry point"]
-    ingress["ACA-managed HTTPS ingress<br/>Public endpoint optionally disabled"]
+    privateLink["AFD-managed Private Link<br/>Optional origin isolation"]
+    ingress["ACA-managed HTTPS ingress<br/>Public network access enabled or disabled"]
 
     subgraph vnet["Virtual network"]
       subgraph subnet["Delegated ACA infrastructure subnet"]
-        environment["Public ACA workload-profiles environment"]
+        environment["External ACA workload-profiles environment"]
         app["Container App<br/>React SPA + FastAPI API"]
         environment --> app
       end
@@ -36,7 +37,9 @@ flowchart TB
   end
 
   user -->|"HTTPS when Front Door enabled"| frontDoor
-  frontDoor -->|"HTTPS public origin or Private Link"| ingress
+  frontDoor -.->|"Public HTTPS origin when Private Link is disabled"| ingress
+  frontDoor -->|"Private origin when enabled"| privateLink
+  privateLink --> ingress
   user -.->|"Direct ACA URL when public access is enabled"| ingress
   ingress --> environment
   user -->|"MSAL PKCE sign-in"| entra
