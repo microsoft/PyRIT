@@ -3,7 +3,7 @@
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleAggregatorFunc,
     FloatScaleScorerByCategory,
@@ -113,6 +113,30 @@ class VideoFloatScaleScorer(
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             sub_scorers=sub_scorer_ids,
         )
+
+    def matched_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report the union of conditions matched by the media scorers.
+
+        Returns:
+            frozenset[type[Condition]]: The matched condition types.
+        """
+        scorers = [self._video_helper.image_scorer]
+        if self.audio_scorer:
+            scorers.append(self.audio_scorer)
+        return frozenset().union(*(scorer.matched_conditions() for scorer in scorers))
+
+    def required_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report the union of conditions required by the media scorers.
+
+        Returns:
+            frozenset[type[Condition]]: The required condition types.
+        """
+        scorers = [self._video_helper.image_scorer]
+        if self.audio_scorer:
+            scorers.append(self.audio_scorer)
+        return frozenset().union(*(scorer.required_conditions() for scorer in scorers))
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
