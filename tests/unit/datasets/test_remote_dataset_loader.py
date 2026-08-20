@@ -4,6 +4,7 @@
 import io
 import json
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -153,6 +154,22 @@ class TestRemoteDatasetLoader:
         )
 
         assert standardized == ["HATE_SPEECH", "REPRESENTATIONAL"]
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, None),
+            ("", None),
+            ("not-a-date", None),
+            ("2026-06-15T14:54:11.981Z", datetime(2026, 6, 15, 14, 54, 11, 981000, tzinfo=timezone.utc)),
+            (
+                "2025-09-20T04:09:11.080923+00:00",
+                datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=timezone.utc),
+            ),
+        ],
+    )
+    def test_parse_datetime(self, value: str | None, expected: datetime | None) -> None:
+        assert ConcreteRemoteLoader._parse_datetime(value) == expected
 
     def test_fetch_from_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()

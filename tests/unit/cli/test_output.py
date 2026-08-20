@@ -278,7 +278,7 @@ def test_print_target_list_empty(capsys):
     _output.print_target_list(items=[])
     captured = capsys.readouterr()
     assert "No targets found in registry" in captured.out
-    assert "--initializers target" in captured.out
+    assert "config file" in captured.out
 
 
 def test_print_target_list_full(capsys):
