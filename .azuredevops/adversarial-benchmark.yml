@@ -147,7 +147,7 @@ jobs:
               --output none
 
             if [[ "$DATASET_NAME_INPUT" == "harmbench-balanced-14-v1" ]]; then
-              uv run python build_scripts/prepare_adversarial_benchmark_dataset.py
+              uv run python -m build_scripts.prepare_adversarial_benchmark_dataset
             fi
 
             uv run pyrit_scan \
