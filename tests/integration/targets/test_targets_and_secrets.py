@@ -576,17 +576,16 @@ async def test_realtime_target_same_conversation_multi_turn(
         first_response = await _send_realtime_text_async(
             target=target,
             conversation_id=conversation_id,
-            text="Remember the codeword zephyr-quartz. Reply only with acknowledged.",
+            text="What is the capital of France?",
         )
         second_response = await _send_realtime_text_async(
             target=target,
             conversation_id=conversation_id,
-            text="What codeword did I ask you to remember? Reply only with the codeword.",
+            text="What country is the city from your previous answer in?",
         )
 
-        assert first_response
-        normalized_second_response = "".join(character for character in second_response.lower() if character.isalpha())
-        assert "zephyrquartz" in normalized_second_response
+        assert "paris" in first_response.lower()
+        assert "france" in second_response.lower()
         assert set(target._existing_conversation) == {conversation_id}
     finally:
         await target.cleanup_target_async()

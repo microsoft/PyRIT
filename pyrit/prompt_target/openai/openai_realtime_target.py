@@ -581,6 +581,7 @@ class RealtimeTarget(OpenAITarget):
         result = RealtimeTargetResult()
         audio_buffer = bytearray()
         audio_done_deadline: float | None = None
+        current_response_id: str | None = None
         current_turn_event_count = 0
         grace_period_sec = 1.0  # Wait 1 second after audio.done before soft-finishing
         loop = asyncio.get_running_loop()
@@ -623,6 +624,16 @@ class RealtimeTarget(OpenAITarget):
 
                 event_type = event.type
                 event_kind = _OpenAIRealtimeEventRouter.classify_event(event_type)
+                event_response_id = _OpenAIRealtimeEventRouter.get_response_id(event=event)
+                if event_kind is _OpenAIRealtimeEventKind.RESPONSE_CREATED and current_response_id is None:
+                    current_response_id = event_response_id
+                elif event_response_id is not None and event_response_id != current_response_id:
+                    logger.debug(
+                        f"Skipping event '{event_type}' for response {event_response_id}; "
+                        f"current response is {current_response_id}"
+                    )
+                    continue
+
                 current_turn_event_count += 1
                 logger.debug(f"Processing event type: {event_type}")
                 audio_size_before = len(audio_buffer)
