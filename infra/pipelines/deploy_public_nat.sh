@@ -326,7 +326,8 @@ rollback_public_origin() {
     while IFS= read -r connection_id; do
       [[ -z "$connection_id" ]] && continue
       if [[ "${connection_id,,}" == "${expected_environment_id,,}/privateendpointconnections/"* ]]; then
-        az network private-endpoint-connection delete --id "$connection_id" --yes || true
+        az rest --method delete \
+          --url "https://management.azure.com${connection_id}?api-version=2024-10-02-preview" || true
       fi
     done < <(jq -r --arg message "$rollback_request_message" \
       '.[] | select(.properties.privateLinkServiceConnectionState.description == $message) | .id' \
@@ -413,9 +414,16 @@ while IFS=$'\t' read -r connection_id connection_status; do
     exit 1
   fi
   if [[ "$connection_status" == "Pending" ]]; then
-    az network private-endpoint-connection approve \
-      --id "$connection_id" \
-      --description "$private_link_request_message" -o none
+    connection_name=${connection_id##*/}
+    connection_suffix=${connection_name:0:8}
+    az deployment group create \
+      --name "$deployment_name-private-link-approval-$connection_suffix" \
+      --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
+      --template-file "$PYRIT_SOURCE_DIRECTORY/infra/modules/aca_private_endpoint_approval.bicep" \
+      --parameters \
+        "environmentName=$PYRIT_APP_NAME-env" \
+        "connectionName=$connection_name" \
+        "approvalDescription=$private_link_request_message" -o none
   fi
 done < <(jq -r '.[] | [.id, .properties.privateLinkServiceConnectionState.status] | @tsv' \
   <<< "$matching_connections")
@@ -483,13 +491,13 @@ if [[ "$egress_ip" != "$expected_egress_ip" \
   exit 1
 fi
 front_door_health=""
-for attempt in {1..20}; do
+for attempt in {1..60}; do
   front_door_health=$(curl \
     --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --max-time 30 "https://$front_door_fqdn/api/health" || true)
-  echo "Front Door health attempt $attempt/20: ${front_door_health:-<connection-failed>}"
+  echo "Front Door health attempt $attempt/60: ${front_door_health:-<connection-failed>}"
   [[ "$front_door_health" == "200" ]] && break
-  [[ "$attempt" -lt 20 ]] && sleep 30
+  [[ "$attempt" -lt 60 ]] && sleep 30
 done
 if [[ "$front_door_health" != "200" ]]; then
   echo "##vso[task.logissue type=error]Front Door did not route a healthy response"

@@ -41,6 +41,7 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "stage: ApproveProd" in self.pipeline
         assert "stage: DeployProd" in self.pipeline
         assert "DeployReplacement" not in self.pipeline
+        assert self.pipeline.count("timeoutInMinutes: 120") == 2
         assert self.pipeline.count("scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'") == 2
 
     def test_production_remains_opt_in_and_independently_approved(self):
@@ -120,15 +121,17 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert '"https://$app_fqdn/api/health"' in self.deploy_script
         assert '[[ "$direct_aca_health" == "200" ]]' in self.deploy_script
         assert "Front Door did not route a healthy response" in self.deploy_script
-        assert "private-endpoint-connection approve" in self.deploy_script
-        assert '--description "$private_link_request_message"' in self.deploy_script
+        assert "aca_private_endpoint_approval.bicep" in self.deploy_script
+        assert "connection_suffix=${connection_name:0:8}" in self.deploy_script
+        assert '"$deployment_name-private-link-approval-$connection_suffix"' in self.deploy_script
+        assert '"approvalDescription=$private_link_request_message"' in self.deploy_script
         assert "sharedPrivateLinkResource.status" in self.deploy_script
         assert "sharedPrivateLinkResource.privateLink.id" in self.deploy_script
         assert "approved_connection_count=" in self.deploy_script
         assert "ACA approval and AFD health determine readiness" in self.deploy_script
         assert "cutover_in_progress=true" in self.deploy_script
         assert '"$deployment_name-rollback-origin"' in self.deploy_script
-        assert "private-endpoint-connection delete" in self.deploy_script
+        assert "az rest --method delete" in self.deploy_script
         assert '"$deployment_name-rollback"' in self.deploy_script
         assert '"${rollback_parameters[@]}"' in self.deploy_script
         assert "Direct ACA public access remains reachable" in self.deploy_script

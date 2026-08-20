@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 MAIN_BICEP = REPO_ROOT / "infra" / "main.bicep"
 NETWORK_BICEP = REPO_ROOT / "infra" / "modules" / "aca_nat_network.bicep"
 FRONT_DOOR_BICEP = REPO_ROOT / "infra" / "modules" / "aca_front_door.bicep"
+PRIVATE_ENDPOINT_APPROVAL_BICEP = REPO_ROOT / "infra" / "modules" / "aca_private_endpoint_approval.bicep"
 AZ_CLI = shutil.which("az")
 
 
@@ -199,6 +200,15 @@ class BicepTopologyTests(unittest.TestCase):
         assert route["properties"]["forwardingProtocol"] == "HttpsOnly"
         assert route["properties"]["httpsRedirect"] == "Enabled"
         assert "cacheConfiguration" not in route["properties"]
+
+    def test_private_endpoint_approval_preserves_discovery_description(self):
+        template = _compile_bicep(PRIVATE_ENDPOINT_APPROVAL_BICEP, self.output_directory / "approval.json")
+
+        connections = _resources(template, "Microsoft.App/managedEnvironments/privateEndpointConnections")
+        assert len(connections) == 1
+        state = connections[0]["properties"]["privateLinkServiceConnectionState"]
+        assert state["status"] == "Approved"
+        assert state["description"] == "[parameters('approvalDescription')]"
 
 
 if __name__ == "__main__":

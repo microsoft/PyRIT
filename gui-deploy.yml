@@ -134,6 +134,7 @@ stages:
     jobs:
       - deployment: DeployToTest
         displayName: 'Deploy test environment'
+        timeoutInMinutes: 120
         environment: 'copyrit-test'
         strategy:
           runOnce:
@@ -211,6 +212,7 @@ stages:
     jobs:
       - deployment: DeployToProd
         displayName: 'Deploy production environment'
+        timeoutInMinutes: 120
         environment: 'copyrit-prod'
         strategy:
           runOnce:

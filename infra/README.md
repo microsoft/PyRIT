@@ -383,7 +383,7 @@ az deployment group show -g <rg> -n <deployment-name> \
 4. Run a full ARM `what-if` through a fail-closed validator; reject malformed results, deletions, cross-resource-group writes, protected-network deltas other than the documented read-only NAT/PIP normalization, and core network, app, or Log Analytics workspace creates. The expected PIP protection lock may be created.
 5. Preserve policy-managed PIP tags and deploy with Front Door Private Link, ACA public access disabled, and PIP protection enabled.
 6. Validate the AFD origin targets the expected ACA environment, approve only active requests with the deterministic message, and require the ACA-side connection to report `Approved`. AFD can continue to display `Pending` after approval, so successful AFD health is the data-plane readiness signal.
-7. Verify ACA public access is disabled, the digest-pinned revision and Front Door `/api/health` are healthy, direct ACA access is unavailable, and the PIP resource ID/address is unchanged.
+7. Allow up to 30 minutes for Front Door propagation, then verify ACA public access is disabled, the digest-pinned revision and Front Door `/api/health` are healthy, direct ACA access is unavailable, and the PIP resource ID/address is unchanged.
 8. If cutover validation fails, redeploy the prior public AFD origin and re-enable ACA public access; otherwise print the Front Door URL and static egress IPv4.
 
 Qualifying merges to `main` automatically deploy test. Production deployment is independent of PyRIT package releases: manually queue a commit merged to `main` with `deployToProd=true`. The workflow deploys test first, then requires a timeout-rejecting manual approval whose requester cannot self-approve.
