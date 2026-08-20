@@ -200,6 +200,8 @@ interface ScoreOverflowMenuProps {
   onSelect: (scoreId: string) => void
 }
 
+// Keep these measurements synchronized with scoreTab, scoreTabs.columnGap,
+// and scoreOverflowButton in MessageList.styles.ts.
 const SCORE_TAB_WIDTH_PX = 72
 const SCORE_TAB_GAP_PX = 4
 const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 112
