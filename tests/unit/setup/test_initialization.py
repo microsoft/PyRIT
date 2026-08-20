@@ -209,6 +209,49 @@ class ScriptInit(PyRITInitializer):
                 load_defaults=False,
             )
 
+    @pytest.mark.parametrize("option_name", ["env_akv_strict", "env_akv_write_env"])
+    @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
+    async def test_initialize_rejects_non_boolean_akv_options_before_loading(self, option_name, invalid_value):
+        with mock.patch(
+            "pyrit.setup.initialization._load_environment_async", new_callable=mock.AsyncMock
+        ) as mock_load_environment:
+            with pytest.raises(TypeError, match=rf"{option_name} must be a bool"):
+                if option_name == "env_akv_strict":
+                    await initialize_pyrit_async(
+                        memory_db_type=IN_MEMORY,
+                        env_akv_strict=invalid_value,  # type: ignore[arg-type]
+                        load_defaults=False,
+                    )
+                else:
+                    await initialize_pyrit_async(
+                        memory_db_type=IN_MEMORY,
+                        env_akv_write_env=invalid_value,  # type: ignore[arg-type]
+                        load_defaults=False,
+                    )
+
+        mock_load_environment.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        ("env_akv_strict", "env_akv_write_env"),
+        [(True, False), (False, True)],
+    )
+    async def test_initialize_forwards_boolean_akv_options(self, env_akv_strict, env_akv_write_env):
+        with (
+            mock.patch(
+                "pyrit.setup.initialization._load_environment_async", new_callable=mock.AsyncMock
+            ) as mock_load_environment,
+            mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance"),
+        ):
+            await initialize_pyrit_async(
+                memory_db_type=IN_MEMORY,
+                env_akv_strict=env_akv_strict,
+                env_akv_write_env=env_akv_write_env,
+                load_defaults=False,
+            )
+
+        assert mock_load_environment.await_args.kwargs["env_akv_strict"] is env_akv_strict
+        assert mock_load_environment.await_args.kwargs["env_akv_write_env"] is env_akv_write_env
+
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     async def test_initialize_keeps_akv_values_when_local_file_loading_fails(self, mock_set_memory):
         refs = ["https://vault.vault.azure.net/secrets/bootstrap"]

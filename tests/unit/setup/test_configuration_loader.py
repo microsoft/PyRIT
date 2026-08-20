@@ -46,6 +46,15 @@ class TestConfigurationLoader:
         assert config.env_akv_write_env is False
         assert config.silent is False
 
+    @pytest.mark.parametrize("option_name", ["env_akv_strict", "env_akv_write_env"])
+    @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
+    def test_rejects_non_boolean_akv_options(self, option_name, invalid_value):
+        with pytest.raises(TypeError, match=rf"{option_name} must be a bool"):
+            if option_name == "env_akv_strict":
+                ConfigurationLoader(env_akv_strict=invalid_value)  # type: ignore[arg-type]
+            else:
+                ConfigurationLoader(env_akv_write_env=invalid_value)  # type: ignore[arg-type]
+
     def test_valid_memory_db_types_snake_case(self):
         """Test all valid memory database types in snake_case."""
         for db_type in ["in_memory", "sqlite", "azure_sql"]:
@@ -236,6 +245,23 @@ silent: true
             assert config.silent is True
         finally:
             pathlib.Path(yaml_path).unlink()
+
+    @pytest.mark.parametrize("option_name", ["env_akv_strict", "env_akv_write_env"])
+    def test_from_yaml_rejects_quoted_boolean_akv_options(self, tmp_path, option_name):
+        yaml_path = tmp_path / "quoted-boolean.yaml"
+        yaml_path.write_text(f'{option_name}: "false"\n', encoding="utf-8")
+
+        with pytest.raises(TypeError, match=rf"{option_name} must be a bool"):
+            ConfigurationLoader.from_yaml_file(yaml_path)
+
+    def test_from_yaml_accepts_native_boolean_akv_options(self, tmp_path):
+        yaml_path = tmp_path / "native-booleans.yaml"
+        yaml_path.write_text("env_akv_strict: false\nenv_akv_write_env: true\n", encoding="utf-8")
+
+        config = ConfigurationLoader.from_yaml_file(yaml_path)
+
+        assert config.env_akv_strict is False
+        assert config.env_akv_write_env is True
 
     def test_from_empty_yaml_file_raises_value_error(self, tmp_path):
         """Test that an empty YAML file raises a clear ValueError."""

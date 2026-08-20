@@ -33,6 +33,21 @@ _AKV_ENV_FILE_NAME = ".env"
 _LEGACY_ENV_REMOVED_IN = "1.3.0"
 
 
+def _validate_akv_boolean_options(*, env_akv_strict: object, env_akv_write_env: object) -> None:
+    """
+    Require real booleans for Key Vault behavior flags.
+
+    Raises:
+        TypeError: If either option is not a bool.
+    """
+    for option_name, option_value in (
+        ("env_akv_strict", env_akv_strict),
+        ("env_akv_write_env", env_akv_write_env),
+    ):
+        if not isinstance(option_value, bool):
+            raise TypeError(f"{option_name} must be a bool, got {type(option_value).__name__}.")
+
+
 def _load_environment_files(
     env_files: Sequence[pathlib.Path] | None,
     *,
