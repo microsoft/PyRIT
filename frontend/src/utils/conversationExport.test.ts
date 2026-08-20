@@ -1031,6 +1031,53 @@ describe("conversationExport", () => {
       expect(html).toContain("no room left in this file");
     });
 
+    it("spends the budget on the converted attachment before the original it came from", async () => {
+      // Three fit, so the pair in the last message decides the point: the
+      // converted result the operator is sharing is charged before the original
+      // it came from, and the original is the one left without room.
+      const payload = `data:image/png;base64,${"A".repeat(Math.floor((10 * 1024 * 1024 * 4) / 3) - 64)}`;
+      const html = await conversationToHtml(
+        [
+          message({ attachments: [attachment({ name: "earlier.png", url: `${payload}1` })] }),
+          message({ attachments: [attachment({ name: "also-earlier.png", url: `${payload}2` })] }),
+          message({
+            content: "converted",
+            originalContent: "original",
+            originalAttachments: [attachment({ name: "before.png", url: `${payload}3` })],
+            attachments: [attachment({ name: "after.png", url: `${payload}4` })],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: before.png (image/png) — no room left in this file]");
+      expect(html).not.toContain("[Image: after.png");
+    });
+
+    it("keeps filling after an attachment does not fit, so a smaller one later still lands", async () => {
+      // The walk does not stop at the first refusal. The docs and the constant
+      // both say so, and a reader sees the omission above embedded media.
+      const big = `data:image/png;base64,${"A".repeat(Math.floor((10 * 1024 * 1024 * 4) / 3) - 64)}`;
+      const html = await conversationToHtml(
+        [
+          message({
+            attachments: [
+              attachment({ name: "one.png", url: `${big}1` }),
+              attachment({ name: "two.png", url: `${big}2` }),
+              attachment({ name: "three.png", url: `${big}3` }),
+              attachment({ name: "does-not-fit.png", url: `${big}4` }),
+              attachment({ name: "still-fits.png", url: "data:image/png;base64,AAAA" }),
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("[Image: does-not-fit.png (image/png) — no room left in this file]");
+      expect(html.indexOf("does-not-fit.png")).toBeLessThan(html.lastIndexOf("<img "));
+      expect(html).toContain("Attachments: 4 of 5 embedded");
+    });
+
     it("stops embedding once the whole document has used its budget", async () => {
       // Each attachment clears the per-attachment cap; together they do not.
       const payload = `data:image/png;base64,${"A".repeat(8 * 1024 * 1024)}`;

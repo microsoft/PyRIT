@@ -50,10 +50,16 @@ const MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 /**
  * Largest total media text one HTML export may carry, counted in the characters
- * actually written for it. Without it, many attachments that each clear the
- * per-attachment cap still add up to a file too big to open or mail; once the
- * budget is spent the rest are named. Surrounding markup is not counted, so
- * this bounds the file closely rather than exactly.
+ * actually written for it. This is a ceiling against runaway growth rather than
+ * a size to aim for: because base64 costs a third on top, 50 MiB of text holds
+ * roughly 37 MiB of real media. An ordinary conversation uses a fraction of
+ * that, one carrying a dozen full-size images can approach it, and a file at
+ * the ceiling still opens in a few seconds. It is not a promise the file will
+ * fit an email. Surrounding markup is not counted, so this bounds the file
+ * closely rather than exactly.
+ *
+ * Reaching it does not stop the walk: a later attachment that still fits is
+ * embedded, so an omission can sit above media that made it in.
  */
 export const MAX_TOTAL_INLINE_CHARACTERS = 50 * 1024 * 1024
 
@@ -383,6 +389,12 @@ type ResolvedMedia = {
  * Attachments are read one at a time so a long conversation cannot open a
  * fetch per attachment at once, and identical sources are read once and
  * shared, so repeating one costs a write but not a second fetch.
+ *
+ * The budget is spent first come, first served in conversation order, and
+ * within a message on the converted attachment before the original it was
+ * converted from, so the result the operator is sharing wins the space when it
+ * is tight. Choosing by size would fit a few more attachments but would leave a
+ * reader no way to tell why one of them made it and the next did not.
  */
 async function resolveMedia(messages: Message[]): Promise<ResolvedMedia> {
   const perMessage: ResolvedMedia['perMessage'] = []
