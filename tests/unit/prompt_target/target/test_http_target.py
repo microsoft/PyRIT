@@ -281,6 +281,22 @@ async def test_send_prompt_async_rejects_newlines_outside_body(
 
 
 @patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_rejects_newline_when_placeholder_spans_header_and_body(
+    mock_request, patch_central_database
+):
+    target = HTTPTarget(
+        http_request="POST / HTTP/1.1\nHost: example.com\nX-Prompt: {PROMPT_HEADER}\n\n{PROMPT_BODY}",
+        prompt_regex_string=r"\{PROMPT_HEADER\}\n\n\{PROMPT_BODY\}",
+    )
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="first\nsecond")])
+
+    with pytest.raises(ValueError, match="cannot contain CR or LF"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_awaited()
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
 async def test_send_prompt_async_allows_multiline_body_prompt(mock_request, patch_central_database):
     target = HTTPTarget(
         http_request="POST / HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n\nbefore:{PROMPT}:after"

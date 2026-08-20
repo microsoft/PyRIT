@@ -84,7 +84,8 @@ class HTTPXAPITarget(HTTPTarget):
             params (dict, Optional): Query parameters to include in the request URL (for GET/HEAD).
             headers (dict, Optional): Headers to include in the request.
             http2 (bool, Optional): Whether to use HTTP/2. If None, defaults to False.
-            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to True.
+            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to True for backward compatibility;
+                set to False when redirects are unnecessary or the destination must remain fixed.
             callback_function (Callable, Optional): Function to parse the HTTP response.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for this target

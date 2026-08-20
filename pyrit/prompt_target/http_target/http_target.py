@@ -60,7 +60,8 @@ class HTTPTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             client (httpx.AsyncClient, Optional): Pre-configured httpx client.
             model_name (str): The model name. Defaults to empty string.
-            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to True.
+            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to True for backward compatibility;
+                set to False when redirects are unnecessary or the destination must remain fixed.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **httpx_client_kwargs: Additional keyword arguments for httpx.AsyncClient.
@@ -127,7 +128,8 @@ class HTTPTarget(PromptTarget):
             prompt_regex_string: the placeholder for the prompt
             callback_function: function to parse HTTP response
             max_requests_per_minute: Optional rate limiting
-            follow_redirects: Whether to follow HTTP redirects. Defaults to True.
+            follow_redirects: Whether to follow HTTP redirects. Defaults to True for backward compatibility; set to
+                False when redirects are unnecessary or the destination must remain fixed.
 
         Returns:
             HTTPTarget: an instance of HTTPTarget
@@ -320,8 +322,10 @@ class HTTPTarget(PromptTarget):
         if "\r" not in prompt and "\n" not in prompt:
             return
 
-        header_section = self.http_request.replace("\r\n", "\n").split("\n\n", 1)[0]
-        if pattern.search(header_section):
+        separator = re.search(r"\r?\n\r?\n", self.http_request)
+        header_end = separator.start() if separator else len(self.http_request)
+
+        if any(match.start() < header_end for match in pattern.finditer(self.http_request)):
             raise ValueError("Prompts substituted into the HTTP request line or headers cannot contain CR or LF.")
 
     @staticmethod
