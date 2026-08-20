@@ -1,6 +1,10 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-import { mobileTouchTargetHeight } from '@/styles/touchTargets'
+import {
+  MINIMUM_TOUCH_TARGET_SIZE,
+  TOUCH_INPUT_QUERY,
+  mobileTouchTargetHeight,
+} from '@/styles/touchTargets'
 
 export const useInitializersStyles = makeStyles({
   root: {
@@ -55,6 +59,11 @@ export const useInitializersStyles = makeStyles({
   addInitializerSelect: {
     minWidth: '220px',
     ...mobileTouchTargetHeight,
+    '& > select': {
+      [TOUCH_INPUT_QUERY]: {
+        minHeight: MINIMUM_TOUCH_TARGET_SIZE,
+      },
+    },
   },
   touchTarget: {
     ...mobileTouchTargetHeight,
