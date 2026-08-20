@@ -394,7 +394,7 @@ def _discover_verbs() -> frozenset[str]:
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             return frozenset(action.choices)
-    return frozenset()
+    return frozenset[str]()
 
 
 #: Every valid subcommand verb (used by the legacy-argv shim to detect new-style calls).
@@ -1045,9 +1045,17 @@ async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) ->
 
     Returns:
         int: Exit code from the dispatched command.
+
+    Raises:
+        TypeError: If the dispatched handler returns a non-int exit code.
     """
     handler = _CLIENT_HANDLERS[parsed_args.command]
-    return await handler(client=client, parsed_args=parsed_args)
+    result = await handler(client=client, parsed_args=parsed_args)
+    if not isinstance(result, int):
+        raise TypeError(
+            f"Handler for '{parsed_args.command}' must return an int exit code, got {type(result).__name__}"
+        )
+    return result
 
 
 async def _run_async(*, parsed_args: Namespace) -> int:
