@@ -3,7 +3,6 @@
 
 import logging
 import os
-from datetime import datetime
 from enum import Enum
 from typing import Any, ClassVar
 
@@ -192,23 +191,6 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
                 page += 1
 
         return all_prompts
-
-    def _parse_datetime(self, date_str: str | None) -> datetime | None:
-        """
-        Parse an ISO 8601 datetime string from the API.
-
-        Args:
-            date_str: ISO format datetime string, or None.
-
-        Returns:
-            datetime or None if parsing fails.
-        """
-        if not date_str:
-            return None
-        try:
-            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
-            return None
 
     def _build_metadata(self, record: dict[str, Any]) -> dict[str, str | int]:
         """
