@@ -482,9 +482,10 @@ interface RenderMessagePiece {
 
 function getRenderMessagePieces(message: Message, messageIndex: number): RenderMessagePiece[] {
   if (message.displayPieces) {
+    const hasMultiplePieces = message.displayPieces.length > 1
     return message.displayPieces.map((piece) => ({
       piece,
-      groupId: `${messageIndex}-piece-${piece.pieceIndex}`,
+      groupId: hasMultiplePieces ? `${messageIndex}-piece-${piece.pieceIndex}` : messageIndex,
       markdownTestId: `message-markdown-${messageIndex}-${piece.pieceIndex}`,
     }))
   }

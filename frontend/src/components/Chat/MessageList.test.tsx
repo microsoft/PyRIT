@@ -840,6 +840,41 @@ describe("MessageList", () => {
     expect(within(pieces[2]).queryByRole("button", { name: /first-only/i })).not.toBeInTheDocument();
   });
 
+  it("should preserve the message-level score test ID for a single display piece", () => {
+    const scores = ["FirstScorer", "SecondScorer"].map((scorerType, index) => ({
+      id: `score-${index}`,
+      message_piece_id: "piece-1",
+      scorer_type: scorerType,
+      score_type: "float_scale",
+      score_value: `${index}`,
+      pieceIndex: 0,
+      pieceType: "text",
+      sourceLabel: "Piece 1 · text",
+      timestamp: `2026-02-15T00:0${index}:00Z`,
+    }));
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[{
+            role: "assistant",
+            content: "Scored response",
+            timestamp: new Date().toISOString(),
+            displayPieces: [{
+              type: "text",
+              pieceId: "piece-1",
+              pieceIndex: 0,
+              content: "Scored response",
+              scores,
+            }],
+          }]}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("message-score-stack-0")).toBeInTheDocument();
+  });
+
   it("should not show a score chip when the message has no score", () => {
     render(
       <TestWrapper>
