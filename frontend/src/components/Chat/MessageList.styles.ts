@@ -170,8 +170,9 @@ export const useMessageListStyles = makeStyles({
     overflowY: 'hidden',
   },
   scoreTab: {
-    flex: '0 1 auto',
-    minWidth: 0,
+    flex: '0 0 72px',
+    width: '72px',
+    minWidth: '72px',
     padding: `0 ${tokens.spacingHorizontalM}`,
     border: `1px solid transparent`,
     borderRadius: '999px',

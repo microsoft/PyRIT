@@ -4,11 +4,19 @@ import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import MessageList from "./MessageList";
 import { BackendScore, Message } from "../../types";
 
+const originalClientWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
 
 describe("MessageList", () => {
+  afterEach(() => {
+    if (originalClientWidthDescriptor) {
+      Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidthDescriptor);
+    }
+  });
+
   const mockMessages: Message[] = [
     {
       role: "user",
@@ -199,7 +207,7 @@ describe("MessageList", () => {
     );
 
     const stackedScoreButton = screen.getByRole("button", {
-      name: /view 2 scores, selected score false from oldscorer, objective score/i,
+      name: /view 2 scores, displayed score false from oldscorer, objective score/i,
     });
     expect(stackedScoreButton).toBeInTheDocument();
 
@@ -239,9 +247,64 @@ describe("MessageList", () => {
     expect(screen.getByText("No")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: /view 2 scores, selected score 0.9 from newscorer/i,
+        name: /view 2 scores, displayed score false from oldscorer, objective score/i,
       })
     ).toBeInTheDocument();
+    expect(stackedScoreButton).toHaveTextContent("False");
+  });
+
+  it("should display the latest score when there is no objective score", async () => {
+    const user = userEvent.setup();
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Scored response",
+        timestamp: new Date().toISOString(),
+        scores: [
+          {
+            id: "score-old",
+            message_piece_id: "piece-1",
+            scorer_type: "OldScorer",
+            score_type: "true_false",
+            score_value: "False",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:00:00Z",
+          },
+          {
+            id: "score-new",
+            message_piece_id: "piece-1",
+            scorer_type: "NewScorer",
+            score_type: "float_scale",
+            score_value: "0.9",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:01:00Z",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    const stackedScoreButton = screen.getByRole("button", {
+      name: /view 2 scores, displayed score 0.9 from newscorer/i,
+    });
+    expect(stackedScoreButton).toHaveTextContent("0.9");
+
+    await user.click(stackedScoreButton);
+    await user.click(screen.getByRole("tab", {
+      name: /score false from oldscorer/i,
+    }));
+
+    expect(screen.getByText("OldScorer")).toBeInTheDocument();
+    expect(stackedScoreButton).toHaveTextContent("0.9");
   });
 
   it("should not show a stacked control when the message has only one score", () => {
@@ -280,7 +343,7 @@ describe("MessageList", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("should list only scores beyond the first three in the More menu", async () => {
+  it("should show every score tab when they fit in the available space", async () => {
     const user = userEvent.setup();
     const scores = ["FirstScorer", "ObjectiveScorer", "ThirdScorer", "OverflowScorer"].map(
       (scorerType, index) => ({
@@ -313,15 +376,60 @@ describe("MessageList", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /view 4 scores/i }));
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getAllByRole("tab")).toHaveLength(4);
     expect(
-      screen.queryByRole("tab", { name: /overflowscorer/i })
+      screen.getByRole("tab", { name: /overflowscorer/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /choose from/i })
     ).not.toBeInTheDocument();
+  });
+
+  it("should move only score tabs that do not fit into the More menu", async () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return this.hasAttribute("data-score-tab-bar") ? 250 : 0;
+      },
+    });
+    const user = userEvent.setup();
+    const scores = ["FirstScorer", "ObjectiveScorer", "ThirdScorer", "OverflowScorer"].map(
+      (scorerType, index) => ({
+        id: `score-${index}`,
+        message_piece_id: "piece-1",
+        scorer_type: scorerType,
+        score_type: "float_scale",
+        score_value: `${index}`,
+        is_objective_score: index === 1,
+        pieceIndex: 0,
+        pieceType: "text",
+        sourceLabel: "Piece 1 · text",
+        timestamp: `2026-02-15T00:0${index}:00Z`,
+      })
+    );
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[
+            {
+              role: "assistant",
+              content: "Scored response",
+              timestamp: new Date().toISOString(),
+              scores,
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /view 4 scores/i }));
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
     const objectiveTab = screen.getByRole("tab", {
       name: /score 1 from objectivescorer, objective score/i,
     });
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
-    await user.click(screen.getByRole("button", { name: "Choose from 1 scores" }));
+    await user.click(screen.getByRole("button", { name: "Choose from 2 scores" }));
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
 
     const overflowScore = screen.getByRole("menuitem", {
@@ -341,12 +449,66 @@ describe("MessageList", () => {
       screen.getByRole("tab", { name: /score 3 from overflowscorer/i })
     ).toHaveAttribute("aria-selected", "true");
     expect(
-      screen.queryByRole("tab", { name: /score 2 from thirdscorer/i })
+      screen.queryByRole("tab", { name: /score 0 from firstscorer/i })
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Choose from 1 scores" }));
+    await user.click(screen.getByRole("button", { name: "Choose from 2 scores" }));
     expect(
-      screen.getByRole("menuitem", { name: /2 · thirdscorer/i })
+      screen.getByRole("menuitem", { name: /0 · firstscorer/i })
+    ).toBeInTheDocument();
+  });
+
+  it("should keep another score tab visible when only one tab fits naturally", async () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return this.hasAttribute("data-score-tab-bar") ? 150 : 0;
+      },
+    });
+
+    const user = userEvent.setup();
+    const scores = ["FirstScorer", "ObjectiveScorer", "ThirdScorer"].map(
+      (scorerType, index) => ({
+        id: `score-${index}`,
+        message_piece_id: "piece-1",
+        scorer_type: scorerType,
+        score_type: "float_scale",
+        score_value: `${index}`,
+        is_objective_score: index === 1,
+        pieceIndex: 0,
+        pieceType: "text",
+        sourceLabel: "Piece 1 · text",
+        timestamp: `2026-02-15T00:0${index}:00Z`,
+      })
+    );
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[
+            {
+              role: "assistant",
+              content: "Scored response",
+              timestamp: new Date().toISOString(),
+              scores,
+            },
+          ]}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /view 3 scores/i }));
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "Choose from 1 scores" }));
+    await user.click(screen.getByRole("menuitem", { name: /2 · thirdscorer/i }));
+
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(
+      screen.getByRole("tab", { name: /score 2 from thirdscorer/i })
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByRole("tab", { name: /objectivescorer/i })
     ).toBeInTheDocument();
   });
 
@@ -408,12 +570,12 @@ describe("MessageList", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "View 2 scores, selected score True from SharedScorer, objective score, Piece 1 · text",
+        name: "View 2 scores, displayed score True from SharedScorer, objective score, Piece 1 · text",
       })
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "View 2 scores, selected score True from SharedScorer, objective score, Piece 2 · image_path · test.png",
+        name: "View 2 scores, displayed score True from SharedScorer, objective score, Piece 2 · image_path · test.png",
       })
     ).toBeInTheDocument();
   });

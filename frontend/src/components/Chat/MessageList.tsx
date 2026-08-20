@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Text,
   Avatar,
@@ -196,6 +196,10 @@ interface ScoreOverflowMenuProps {
   onSelect: (scoreId: string) => void
 }
 
+const SCORE_TAB_WIDTH_PX = 72
+const SCORE_TAB_GAP_PX = 4
+const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 32
+
 function ScoreOverflowMenu({ scores, onSelect }: ScoreOverflowMenuProps) {
   const styles = useMessageListStyles()
 
@@ -227,27 +231,100 @@ function ScoreOverflowMenu({ scores, onSelect }: ScoreOverflowMenuProps) {
   )
 }
 
+function getVisibleScores(
+  orderedScores: DisplayScore[],
+  selectedScoreId: string,
+  visibleCount: number
+): DisplayScore[] {
+  const initialVisibleScores = orderedScores.slice(0, visibleCount)
+  if (
+    initialVisibleScores.some((score) => score.id === selectedScoreId)
+    || initialVisibleScores.length === orderedScores.length
+  ) {
+    return initialVisibleScores
+  }
+
+  const selectedScore = orderedScores.find((score) => score.id === selectedScoreId)
+  return selectedScore
+    ? [...initialVisibleScores.slice(0, -1), selectedScore]
+    : initialVisibleScores
+}
+
+function getDisplayedScore(scores: DisplayScore[]): DisplayScore {
+  const objectiveScores = scores.filter((score) => score.is_objective_score)
+  const displayCandidates = objectiveScores.length > 0 ? objectiveScores : scores
+
+  return displayCandidates.reduce((latestScore, score) => (
+    new Date(score.timestamp).getTime() > new Date(latestScore.timestamp).getTime()
+      ? score
+      : latestScore
+  ))
+}
+
 /**
  * Renders a single score chip or, for multiple scores, a stacked trigger whose
  * popover uses tabs to switch the visible score details.
  */
 function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: string | number }) {
   const styles = useMessageListStyles()
-  const defaultScore = scores.find((score) => score.is_objective_score) ?? scores[0]
-  const [selectedScoreId, setSelectedScoreId] = useState(defaultScore.id)
-  const selectedScore = scores.find((score) => score.id === selectedScoreId) ?? defaultScore
+  const displayedScore = getDisplayedScore(scores)
+  const [selectedScoreId, setSelectedScoreId] = useState(displayedScore.id)
+  const [visibleCount, setVisibleCount] = useState(Infinity)
+  const [isScorePopoverOpen, setIsScorePopoverOpen] = useState(false)
+  const tabBarRef = useRef<HTMLDivElement>(null)
+  const selectedScore = scores.find((score) => score.id === selectedScoreId) ?? displayedScore
   const selectedIndex = scores.indexOf(selectedScore)
-  const orderedScores = [
-    ...scores.filter((score) => score.is_objective_score),
-    ...scores.filter((score) => !score.is_objective_score),
-  ]
-  const initialVisibleScores = orderedScores.slice(0, 3)
-  const visibleScores = initialVisibleScores.some((score) => score.id === selectedScore.id)
-    ? initialVisibleScores
-    : [...initialVisibleScores.slice(0, 2), selectedScore]
+  const orderedScores = useMemo(
+    () => [
+      ...scores.filter((score) => score.is_objective_score),
+      ...scores.filter((score) => !score.is_objective_score),
+    ],
+    [scores]
+  )
+  const visibleScores = getVisibleScores(orderedScores, selectedScore.id, visibleCount)
   const overflowScores = orderedScores.filter(
     (score) => !visibleScores.some((visibleScore) => visibleScore.id === score.id)
   )
+
+  useLayoutEffect(() => {
+    const tabBar = tabBarRef.current
+    if (!tabBar) return
+
+    const measure = () => {
+      if (tabBar.clientWidth === 0) {
+        setVisibleCount(Infinity)
+        return
+      }
+
+      const totalTabWidth = (
+        orderedScores.length * SCORE_TAB_WIDTH_PX
+        + Math.max(orderedScores.length - 1, 0) * SCORE_TAB_GAP_PX
+      )
+      if (totalTabWidth <= tabBar.clientWidth) {
+        setVisibleCount(orderedScores.length)
+        return
+      }
+
+      const availableWidth = (
+        tabBar.clientWidth
+        - SCORE_OVERFLOW_BUTTON_WIDTH_PX
+        - SCORE_TAB_GAP_PX
+      )
+      const fittingCount = Math.max(
+        Math.min(2, orderedScores.length),
+        Math.floor(
+          (availableWidth + SCORE_TAB_GAP_PX)
+          / (SCORE_TAB_WIDTH_PX + SCORE_TAB_GAP_PX)
+        )
+      )
+      setVisibleCount(fittingCount)
+    }
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(tabBar)
+    measure()
+    return () => observer.disconnect()
+  }, [isScorePopoverOpen, orderedScores, selectedScore.id])
 
   if (scores.length === 1) {
     return (
@@ -259,26 +336,30 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
 
   return (
     <div className={styles.scoreList}>
-      <Popover withArrow>
+      <Popover
+        withArrow
+        open={isScorePopoverOpen}
+        onOpenChange={(_event: unknown, data: { open: boolean }) => setIsScorePopoverOpen(data.open)}
+      >
         <PopoverTrigger disableButtonEnhancement>
           <Button
             appearance="subtle"
             size="small"
             className={styles.stackedScoreButton}
-            aria-label={`View ${scores.length} scores, selected score ${selectedScore.score_value} from ${selectedScore.scorer_type}${selectedScore.is_objective_score ? ', objective score' : ''}${selectedScore.sourceLabel ? `, ${selectedScore.sourceLabel}` : ''}`}
+            aria-label={`View ${scores.length} scores, displayed score ${displayedScore.score_value} from ${displayedScore.scorer_type}${displayedScore.is_objective_score ? ', objective score' : ''}${displayedScore.sourceLabel ? `, ${displayedScore.sourceLabel}` : ''}`}
             data-testid={`message-score-stack-${groupId}`}
           >
             <span className={styles.scoreStack} aria-hidden="true">
               <span className={styles.scoreStackOvalBack} />
               <span className={styles.scoreStackOvalMiddle} />
               <span className={styles.scoreStackOvalFront}>
-                {selectedScore.score_value}
+                {displayedScore.score_value}
               </span>
             </span>
           </Button>
         </PopoverTrigger>
         <PopoverSurface className={styles.multiScorePopover}>
-          <div className={styles.scoreTabBar}>
+          <div ref={tabBarRef} className={styles.scoreTabBar} data-score-tab-bar>
             <TabList
               selectedValue={selectedScore.id}
               onTabSelect={(_event: unknown, data: { value: unknown }) => setSelectedScoreId(String(data.value))}
