@@ -11,6 +11,7 @@ import zipfile
 from abc import ABC
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Literal, TextIO, cast
@@ -122,6 +123,24 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             List of standardized HarmCategory enum names.
         """
         return standardize_harm_categories(raw_categories, alias_overrides=alias_overrides)
+
+    @staticmethod
+    def _parse_datetime(date_str: str | None) -> datetime | None:
+        """
+        Parse an ISO 8601 datetime string from a remote source.
+
+        Args:
+            date_str (str | None): ISO 8601 datetime string, or None.
+
+        Returns:
+            datetime | None: The parsed datetime, or None if parsing fails.
+        """
+        if not date_str:
+            return None
+        try:
+            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
         """

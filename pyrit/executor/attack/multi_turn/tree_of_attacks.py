@@ -338,6 +338,7 @@ class _TreeOfAttacksNode:
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
+        use_score_as_feedback: bool = True,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
@@ -364,6 +365,8 @@ class _TreeOfAttacksNode:
                 whether prior media should travel back to the adversarial chat or forward to
                 the objective target, and fills adversarial-placeholder pieces in seed
                 messages. Typically shared across all nodes of the same attack.
+            use_score_as_feedback (bool): Whether subsequent adversarial prompts include
+                the objective score. Defaults to True.
             memory_labels (dict[str, str] | None): Labels for memory storage.
             parent_id (str | None): ID of the parent node, if this is a child node
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts and responses.
@@ -386,6 +389,7 @@ class _TreeOfAttacksNode:
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
         self._modality_router = modality_router
+        self._use_score_as_feedback = use_score_as_feedback
 
         # Initialize utilities
         self._memory = CentralMemory.get_memory_instance()
@@ -876,6 +880,7 @@ class _TreeOfAttacksNode:
             attack_id=self._attack_id,
             attack_strategy_name=self._attack_strategy_name,
             modality_router=self._modality_router,
+            use_score_as_feedback=self._use_score_as_feedback,
             memory_labels=self._memory_labels,
             desired_response_prefix=self._desired_response_prefix,
             parent_id=self.node_id,
@@ -1170,7 +1175,9 @@ class _TreeOfAttacksNode:
         logger.debug(f"Node {self.node_id}: Using response {target_response_piece.id} for next prompt")
 
         # Get score for the response
-        score = await self._get_response_score_async(str(target_response_piece.id))
+        score = (
+            await self._get_response_score_async(str(target_response_piece.id)) if self._use_score_as_feedback else ""
+        )
 
         # Generate prompt using template
         return self._adversarial_chat_prompt_template.render_template_value(
@@ -2090,6 +2097,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_id=self.get_identifier(),
             attack_strategy_name=self.__class__.__name__,
             modality_router=self._modality_router,
+            use_score_as_feedback=self._attack_scoring_config.use_score_as_feedback,
             memory_labels=context.memory_labels,
             desired_response_prefix=self._configuration.desired_response_prefix,
             parent_id=parent_id,

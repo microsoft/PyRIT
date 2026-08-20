@@ -25,11 +25,11 @@
 #
 # Adversarial targets are user-provided via the `adversarial_targets` scenario parameter. Each name
 # must already be registered in `TargetRegistry` — typically by `TargetInitializer` from the
-# `ADVERSARIAL_CHAT_*` env vars (see `.env_example`). Use `pyrit_scan --list-targets` to see every
+# `ADVERSARIAL_CHAT_*` env vars (see `.env_example`). Use `pyrit_scan list-targets` to see every
 # target currently registered.
 #
 # ```bash
-# pyrit_scan benchmark.adversarial \
+# pyrit_scan run benchmark.adversarial \
 #   --initializers target \
 #   --target openai_chat \
 #   --adversarial-targets adversarial_chat_singleturn adversarial_chat_multiturn \

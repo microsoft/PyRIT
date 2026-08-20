@@ -923,6 +923,29 @@ class TestPromptGeneration:
         assert "0.30" in result  # Score value
         assert failure_objective_score.score_rationale in result
 
+    def test_build_adversarial_prompt_without_score_feedback(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CrescendoAttackContext,
+        sample_response: Message,
+        failure_objective_score: Score,
+    ):
+        """The response remains available when objective-score feedback is disabled."""
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            attack_scoring_config=AttackScoringConfig(use_score_as_feedback=False),
+        )
+        basic_context.last_response = sample_response
+        basic_context.last_score = failure_objective_score
+
+        result = attack._build_adversarial_prompt(context=basic_context, refused_text="")
+
+        assert "Test response" in result
+        assert "received a score of" not in result
+        assert failure_objective_score.score_rationale not in result
+
     async def test_generate_next_prompt_raises_when_adversarial_chat_returns_no_response(
         self,
         mock_objective_target: MagicMock,
