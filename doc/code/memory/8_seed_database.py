@@ -140,7 +140,6 @@ print(f"Seeds remaining in dataset: {len(seeds)}")
 # `remove_seeds_from_memory` deletes only the individual seeds that match your filters. Because a seed group (for example a multimodal prompt made of text plus an image, or a multi-turn conversation) is stored as several seeds sharing a `prompt_group_id`, filtering by a single modality or attribute can leave a **partial group** behind. Some consequences to be aware of:
 #
 # - Deleting the sole objective while leaving its prompts produces an invalid `AttackSeedGroup`, and scenario initialization will raise a `ValueError`.
-# - Deleting one modality (e.g. the image) leaves a group that is still valid but now sends only text.
 # - Deleting one turn of a multi-turn conversation leaves the group with an incomplete context.
 # - Deleting the only role-bearing prompt in a sequence can cause a surviving multi-sequence group to fail role validation.
 #
