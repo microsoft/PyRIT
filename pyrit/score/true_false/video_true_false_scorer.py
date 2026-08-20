@@ -101,7 +101,10 @@ class VideoTrueFalseScorer(TrueFalseScorer):
         scorers = [self._video_helper.image_scorer]
         if self.audio_scorer:
             scorers.append(self.audio_scorer)
-        return frozenset().union(*(scorer.matched_conditions() for scorer in scorers))
+        conditions: set[type[Condition]] = set()
+        for scorer in scorers:
+            conditions.update(scorer.matched_conditions())
+        return frozenset(conditions)
 
     def required_conditions(self) -> frozenset[type[Condition]]:
         """
@@ -113,7 +116,10 @@ class VideoTrueFalseScorer(TrueFalseScorer):
         scorers = [self._video_helper.image_scorer]
         if self.audio_scorer:
             scorers.append(self.audio_scorer)
-        return frozenset().union(*(scorer.required_conditions() for scorer in scorers))
+        conditions: set[type[Condition]] = set()
+        for scorer in scorers:
+            conditions.update(scorer.required_conditions())
+        return frozenset(conditions)
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """

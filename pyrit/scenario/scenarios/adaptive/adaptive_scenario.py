@@ -309,14 +309,20 @@ class AdaptiveScenario(Scenario):
             AttackScoringConfig | None: The most specific config that could
                 be built, or ``None`` if the technique is incompatible with
                 the scenario scorer.
+
+        Raises:
+            TypeError: If a factory returns a non-``AttackScoringConfig`` instance.
         """
         required = factory.scoring_config_type
         if required is None or required is AttackScoringConfig:
             return AttackScoringConfig(objective_scorer=self._objective_scorer)
         try:
-            return required(objective_scorer=self._objective_scorer)
+            config = required(objective_scorer=self._objective_scorer)
         except (TypeError, ValueError):
             return None
+        if not isinstance(config, AttackScoringConfig):
+            raise TypeError(f"Scoring config factory returned unsupported type: {type(config).__name__}")
+        return config
 
     async def _build_atomics_for_dataset_async(
         self,

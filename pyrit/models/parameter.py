@@ -535,7 +535,8 @@ def _render_type_name(param_type: Any) -> str:
     param_type = _unwrap_optional(param_type)
     if get_origin(param_type) is Literal:
         args = get_args(param_type)
-        return type(args[0]).__name__ if args else "str"
+        literal_type_name: str = type(args[0]).__name__ if args else "str"
+        return literal_type_name
     if get_origin(param_type) is list:
         type_args = get_args(param_type)
         element_type = _unwrap_optional(type_args[0]) if type_args else str
