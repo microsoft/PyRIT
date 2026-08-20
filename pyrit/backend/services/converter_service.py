@@ -13,6 +13,7 @@ Converters can be:
 """
 
 import base64
+import binascii
 import mimetypes
 import uuid
 from functools import lru_cache
@@ -200,6 +201,8 @@ class ConverterService:
                 try:
                     is_existing_file = Path(original_value).is_file()
                 except (OSError, ValueError):
+                    if not self._is_raw_base64(original_value):
+                        raise
                     is_existing_file = False
 
                 if not is_existing_file:
@@ -360,6 +363,20 @@ class ConverterService:
             )
 
         return steps, current_value, current_type
+
+    @staticmethod
+    def _is_raw_base64(value: str) -> bool:
+        """
+        Determine whether a value is syntactically valid raw base64.
+
+        Returns:
+            True when the value is valid raw base64, otherwise False.
+        """
+        try:
+            base64.b64decode(value, validate=True)
+        except binascii.Error:
+            return False
+        return True
 
 
 # ============================================================================

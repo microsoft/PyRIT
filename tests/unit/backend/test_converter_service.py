@@ -441,7 +441,7 @@ class TestPreviewConversion:
         mock_serializer.value = "/tmp/persisted.wav"
         mock_serializer.save_b64_image_async = AsyncMock()
 
-        raw_b64 = "UklGRiQ" + "A" * 5000
+        raw_b64 = base64.b64encode(b"RIFF" + b"\0" * 5000).decode()
         request = ConverterPreviewRequest(
             original_value=raw_b64,
             original_value_data_type="audio_path",
@@ -461,7 +461,10 @@ class TestPreviewConversion:
         mock_serializer.save_b64_image_async.assert_awaited_once_with(data=raw_b64)
         assert result.model_dump(mode="json")["original_value"] == raw_b64
 
-    async def test_preview_conversion_persists_raw_base64_when_path_inspection_fails(self) -> None:
+    @pytest.mark.parametrize("path_error", [OSError("path inspection failed"), ValueError("invalid path")])
+    async def test_preview_conversion_persists_raw_base64_when_path_inspection_fails(
+        self, path_error: OSError | ValueError
+    ) -> None:
         """Filesystem inspection failures classify the value as raw base64."""
         service = ConverterService()
         mock_serializer = MagicMock()
@@ -475,7 +478,7 @@ class TestPreviewConversion:
         )
 
         with (
-            patch.object(Path, "is_file", side_effect=OSError("path inspection failed")),
+            patch.object(Path, "is_file", side_effect=path_error),
             patch(
                 "pyrit.backend.services.converter_service.data_serializer_factory",
                 return_value=mock_serializer,
@@ -486,13 +489,31 @@ class TestPreviewConversion:
         mock_serializer.save_b64_image_async.assert_awaited_once_with(data=raw_b64)
         assert result.converted_value == "/tmp/persisted.wav"
 
+    async def test_preview_conversion_propagates_non_base64_path_inspection_error(self) -> None:
+        """Filesystem errors for non-base64 values remain visible to callers."""
+        service = ConverterService()
+        request = ConverterPreviewRequest(
+            original_value="not raw base64!",
+            original_value_data_type="audio_path",
+            converter_ids=[],
+        )
+
+        with (
+            patch.object(Path, "is_file", side_effect=PermissionError("permission denied")),
+            patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory,
+            pytest.raises(PermissionError, match="permission denied"),
+        ):
+            await service.preview_conversion_async(request=request)
+
+        mock_factory.assert_not_called()
+
     async def test_preview_conversion_propagates_invalid_base64_error_after_path_failure(self) -> None:
         """Errors from raw base64 persistence are not mistaken for path inspection failures."""
         service = ConverterService()
         mock_serializer = MagicMock()
         mock_serializer.save_b64_image_async = AsyncMock(side_effect=ValueError("invalid base64"))
         request = ConverterPreviewRequest(
-            original_value="A",
+            original_value="UklGRiQAAABXQVZF",
             original_value_data_type="audio_path",
             converter_ids=[],
         )
