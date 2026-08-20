@@ -249,8 +249,10 @@ class ScriptInit(PyRITInitializer):
                 load_defaults=False,
             )
 
-        assert mock_load_environment.await_args.kwargs["env_akv_strict"] is env_akv_strict
-        assert mock_load_environment.await_args.kwargs["env_akv_write_env"] is env_akv_write_env
+        await_args = mock_load_environment.await_args
+        assert await_args is not None
+        assert await_args.kwargs["env_akv_strict"] is env_akv_strict
+        assert await_args.kwargs["env_akv_write_env"] is env_akv_write_env
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     async def test_initialize_keeps_akv_values_when_local_file_loading_fails(self, mock_set_memory):

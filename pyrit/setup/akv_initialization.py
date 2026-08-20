@@ -431,8 +431,9 @@ async def _load_env_from_akv_async(
                 if not loaded:
                     return validated_document
 
-                resolved_reference_values: dict[str, str] = {}
-                skipped_reference_names: set[str] = set()
+                final_assignment_indexes = _get_final_assignment_indexes(document=validated_document)
+                resolved_reference_values: dict[int, str] = {}
+                skipped_reference_indexes: set[int] = set()
                 for variable_name, value in parsed_environment.items():
                     if value is None:
                         continue
@@ -457,12 +458,12 @@ async def _load_env_from_akv_async(
                             raise wrapped_error from error
                         if assignment_wins:
                             os.environ.pop(variable_name, None)
-                        skipped_reference_names.add(variable_name)
                         _warn_about_invalid_akv_reference(
                             variable_name=variable_name,
                             error=error,
                             silent=silent,
                         )
+                        skipped_reference_indexes.add(final_assignment_indexes[variable_name])
                         continue
                     try:
                         resolved_value = await _fetch_akv_secret_value_async(
@@ -471,7 +472,7 @@ async def _load_env_from_akv_async(
                             secret_version=referenced_version,
                             variable_name=variable_name,
                         )
-                        resolved_reference_values[variable_name] = resolved_value
+                        resolved_reference_values[final_assignment_indexes[variable_name]] = resolved_value
                         if assignment_wins:
                             os.environ[variable_name] = resolved_value
                     except KeyVaultInitializationException:
@@ -486,7 +487,7 @@ async def _load_env_from_akv_async(
                     return _render_resolved_akv_document(
                         document=validated_document,
                         resolved_reference_values=resolved_reference_values,
-                        skipped_reference_names=skipped_reference_names,
+                        skipped_reference_indexes=skipped_reference_indexes,
                     )
                 return validated_document
     except KeyVaultInitializationException:
@@ -529,10 +530,7 @@ async def _load_environment_async(
             raise ValueError("env_akv_ref must contain only non-empty Azure Key Vault secret URLs.")
         env_file = path.CONFIGURATION_DIRECTORY_PATH / _AKV_ENV_FILE_NAME
         if env_akv_write_env and (env_file.exists() or env_file.is_symlink()):
-            raise ValueError(
-                f"Cannot write the resolved Key Vault environment because {env_file} already exists; "
-                "rename or remove it before enabling env_akv_write_env."
-            )
+            raise ValueError(_get_akv_env_file_exists_message(env_file=env_file))
         await asyncio.to_thread(
             _warn_about_akv_environment_files,
             env_files=env_files,
@@ -586,12 +584,15 @@ def _write_akv_env_file(*, documents: Sequence[str], silent: bool) -> pathlib.Pa
         pathlib.Path: Path to the written dotenv file.
 
     Raises:
-        ValueError: If the destination is a symbolic link.
+        ValueError: If the destination already exists or is a symbolic link.
+        OSError: If the filesystem cannot atomically publish the completed file.
     """
     env_file = path.CONFIGURATION_DIRECTORY_PATH / _AKV_ENV_FILE_NAME
     env_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if env_file.is_symlink():
         raise ValueError(f"Refusing to write the AKV environment through a symbolic link: {env_file}")
+    if env_file.exists():
+        raise ValueError(_get_akv_env_file_exists_message(env_file=env_file))
 
     content = _merge_akv_documents_for_debug(documents=documents)
     file_descriptor: int | None = None
@@ -612,10 +613,10 @@ def _write_akv_env_file(*, documents: Sequence[str], silent: bool) -> pathlib.Pa
         file_descriptor = None
         with stream:
             stream.write(content)
-        if env_file.is_symlink():
-            raise ValueError(f"Refusing to replace a symbolic link with the AKV environment: {env_file}")
-        os.replace(temporary_file, env_file)
-        temporary_file = None
+        try:
+            os.link(temporary_file, env_file)
+        except FileExistsError as error:
+            raise ValueError(_get_akv_env_file_exists_message(env_file=env_file)) from error
     finally:
         if file_descriptor is not None:
             os.close(file_descriptor)
@@ -625,6 +626,19 @@ def _write_akv_env_file(*, documents: Sequence[str], silent: bool) -> pathlib.Pa
 
     _print_msg(f"Saved Key Vault bootstrap environment file: {env_file}", quiet=silent, log=True)
     return env_file
+
+
+def _get_akv_env_file_exists_message(*, env_file: pathlib.Path) -> str:
+    """
+    Create the message used when debug output would clobber an existing path.
+
+    Returns:
+        str: Error message containing recovery guidance for the user.
+    """
+    return (
+        f"Cannot write the resolved Key Vault environment because {env_file} already exists; "
+        "rename or remove it before enabling env_akv_write_env."
+    )
 
 
 def _merge_akv_documents_for_debug(*, documents: Sequence[str]) -> str:
@@ -655,8 +669,8 @@ def _merge_akv_documents_for_debug(*, documents: Sequence[str]) -> str:
 def _render_resolved_akv_document(
     *,
     document: str,
-    resolved_reference_values: Mapping[str, str],
-    skipped_reference_names: set[str] | None = None,
+    resolved_reference_values: Mapping[int, str],
+    skipped_reference_indexes: set[int] | None = None,
 ) -> str:
     """
     Replace resolved Key Vault reference assignments with native dotenv values.
@@ -664,14 +678,13 @@ def _render_resolved_akv_document(
     Returns:
         str: Dotenv text that preserves non-reference bindings and comments.
     """
-    skipped_reference_names = skipped_reference_names or set()
+    skipped_reference_indexes = skipped_reference_indexes or set()
     rendered_bindings: list[str] = []
-    for binding in parse_stream(io.StringIO(document)):
+    for binding_index, binding in enumerate(parse_stream(io.StringIO(document))):
         variable_name = binding.key
-        is_reference = binding.value is not None and _parse_akv_reference(binding.value) is not None
-        if variable_name in skipped_reference_names and is_reference:
+        if binding_index in skipped_reference_indexes:
             continue
-        if variable_name is not None and variable_name in resolved_reference_values and is_reference:
+        if variable_name is not None and binding_index in resolved_reference_values:
             original = binding.original.string
             export_prefix = "export " if original.lstrip().startswith("export ") else ""
             if original.endswith("\r\n"):
@@ -682,11 +695,25 @@ def _render_resolved_akv_document(
                 newline = ""
             rendered_bindings.append(
                 f"{export_prefix}{variable_name}="
-                f"{_serialize_terminal_dotenv_value(resolved_reference_values[variable_name])}{newline}"
+                f"{_serialize_terminal_dotenv_value(resolved_reference_values[binding_index])}{newline}"
             )
         else:
             rendered_bindings.append(binding.original.string)
     return "".join(rendered_bindings)
+
+
+def _get_final_assignment_indexes(*, document: str) -> dict[str, int]:
+    """
+    Map each variable name to its final assignment occurrence in a dotenv document.
+
+    Returns:
+        dict[str, int]: Final parsed binding index for each assigned variable.
+    """
+    return {
+        binding.key: binding_index
+        for binding_index, binding in enumerate(parse_stream(io.StringIO(document)))
+        if binding.key is not None
+    }
 
 
 def _serialize_terminal_dotenv_value(value: str) -> str:
@@ -699,7 +726,7 @@ def _serialize_terminal_dotenv_value(value: str) -> str:
     Returns:
         str: A single-quoted dotenv value.
     """
-    escaped_value = value.replace("'", "\\'").replace("${", "${:-$}{")
+    escaped_value = value.replace("\\", "\\\\").replace("'", "\\'").replace("${", "${:-$}{")
     return f"'{escaped_value}'"
 
 

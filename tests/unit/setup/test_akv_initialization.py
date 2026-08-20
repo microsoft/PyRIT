@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import io
 import os
 import pathlib
 import tempfile
@@ -20,6 +21,7 @@ from pyrit.setup.akv_initialization import (
     _load_environment_files,
     _parse_akv_reference,
     _parse_akv_secret_url,
+    _serialize_terminal_dotenv_value,
     _warn_about_akv_environment_files,
     _write_akv_env_file,
 )
@@ -299,6 +301,25 @@ class TestLoadEnvironmentFiles:
                 assert loaded is True
                 assert "DISABLED_VALUE" not in os.environ
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "single\\backslash",
+            "double\\\\backslash",
+            "four\\\\\\\\backslashes",
+            "\\leading-and-trailing\\",
+            r"C:\Users\name\secret.txt",
+            "quote'\\${LITERAL}\nline\\two",
+        ],
+    )
+    def test_serialize_terminal_dotenv_value_preserves_backslashes(self, value):
+        document = f"VALUE={_serialize_terminal_dotenv_value(value)}\n"
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            reloaded_value = dotenv_values(stream=io.StringIO(document), interpolate=True)["VALUE"]
+
+        assert reloaded_value == value
+
     async def test_load_environment_async_write_env_writes_resolved_native_bootstrap(self):
         credential, client = _create_mock_akv_clients()
         document = (
@@ -456,15 +477,15 @@ class TestLoadEnvironmentFiles:
                     side_effect=lambda *args, **kwargs: events.append("fdopen") or stream,
                 ),
                 mock.patch(
-                    "pyrit.setup.akv_initialization.os.replace",
-                    side_effect=lambda *args: events.append("replace"),
+                    "pyrit.setup.akv_initialization.os.link",
+                    side_effect=lambda *args: events.append("link"),
                 ),
             ):
                 _write_akv_env_file(documents=["VALUE=bootstrap\n"], silent=True)
 
-        assert events == ["create", "fchmod", "fdopen", "write:VALUE=bootstrap\n", "replace"]
+        assert events == ["create", "fchmod", "fdopen", "write:VALUE=bootstrap\n", "link"]
 
-    def test_write_akv_env_file_preserves_existing_file_when_replace_fails(self):
+    def test_write_akv_env_file_rejects_existing_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = pathlib.Path(temp_dir)
             env_file = temp_path / ".env"
@@ -472,12 +493,42 @@ class TestLoadEnvironmentFiles:
 
             with (
                 mock.patch("pyrit.setup.akv_initialization.path.CONFIGURATION_DIRECTORY_PATH", temp_path),
-                mock.patch("pyrit.setup.akv_initialization.os.replace", side_effect=OSError("replace failed")),
-                pytest.raises(OSError, match="replace failed"),
+                pytest.raises(ValueError, match="already exists.*rename or remove"),
             ):
                 _write_akv_env_file(documents=["NEW=value\n"], silent=True)
 
             assert env_file.read_text(encoding="utf-8") == "ORIGINAL=value\n"
+            assert list(temp_path.glob(".env.*.tmp")) == []
+
+    def test_write_akv_env_file_does_not_clobber_file_created_before_publish(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = pathlib.Path(temp_dir)
+            env_file = temp_path / ".env"
+            real_fdopen = os.fdopen
+
+            class CompetingFileStream:
+                def __init__(self, *args, **kwargs):
+                    self._stream = real_fdopen(*args, **kwargs)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc_value, traceback):
+                    result = self._stream.__exit__(exc_type, exc_value, traceback)
+                    env_file.write_text("CREATED_BY_OTHER_PROCESS=value\n", encoding="utf-8")
+                    return result
+
+                def write(self, content):
+                    return self._stream.write(content)
+
+            with (
+                mock.patch("pyrit.setup.akv_initialization.path.CONFIGURATION_DIRECTORY_PATH", temp_path),
+                mock.patch("pyrit.setup.akv_initialization.os.fdopen", side_effect=CompetingFileStream),
+                pytest.raises(ValueError, match="already exists.*rename or remove"),
+            ):
+                _write_akv_env_file(documents=["NEW=value\n"], silent=True)
+
+            assert env_file.read_text(encoding="utf-8") == "CREATED_BY_OTHER_PROCESS=value\n"
             assert list(temp_path.glob(".env.*.tmp")) == []
 
     @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits are not enforced on this platform.")
@@ -916,6 +967,57 @@ class TestAkvEnvironmentLoading:
         client.__aenter__.assert_awaited_once()
         client.__aexit__.assert_awaited_once()
         mock_print_msg.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("document", "expected_values", "expected_child_fetches"),
+        [
+            (
+                "A=kv:https://myvault.vault.azure.net/secrets/key\nB=${A}\nA=literal\n",
+                {"A": "literal", "B": "resolved-key"},
+                1,
+            ),
+            (
+                "A=literal\nB=${A}\nA=kv:https://myvault.vault.azure.net/secrets/key\n",
+                {"A": "resolved-key", "B": "literal"},
+                1,
+            ),
+            (
+                "A=kv:https://myvault.vault.azure.net/secrets/key\nB=${A}\nC=${B}\nB=literal\n",
+                {"A": "resolved-key", "B": "literal", "C": "resolved-key"},
+                2,
+            ),
+        ],
+    )
+    async def test_debug_document_matches_runtime_for_interpolated_reference_assignments(
+        self, document, expected_values, expected_child_fetches
+    ):
+        credential, client = _create_mock_akv_clients()
+        client.get_secret = mock.AsyncMock(
+            side_effect=[types.SimpleNamespace(value=document)]
+            + [types.SimpleNamespace(value="resolved-key")] * expected_child_fetches
+        )
+
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+            mock.patch("azure.keyvault.secrets.aio.SecretClient", return_value=client),
+        ):
+            rendered_document = await _load_env_from_akv_async(
+                secret_url="https://myvault.vault.azure.net/secrets/bootstrap",
+                silent=True,
+                resolve_references_for_output=True,
+            )
+            runtime_values = {name: os.environ[name] for name in expected_values}
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            reloaded_values = dict(dotenv_values(stream=io.StringIO(rendered_document), interpolate=True))
+
+        assert runtime_values == expected_values
+        assert reloaded_values == expected_values
+        assert (
+            client.get_secret.await_args_list
+            == [mock.call("bootstrap", version=None)] + [mock.call("key", version=None)] * expected_child_fetches
+        )
 
     async def test_load_env_from_akv_async_preserves_process_values_without_fetching_overridden_child(self):
         credential, client = _create_mock_akv_clients()
