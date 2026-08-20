@@ -13,17 +13,8 @@ parameters:
     displayName: Space-separated adversarial target registry names
     type: string
     default: azure_openai_gpt4o azure_gpt4o_unsafe_chat
-  - name: techniquePreset
-    displayName: Technique set
-    type: string
-    default: union
-    values:
-      - current-default
-      - candidate
-      - union
-      - custom
-  - name: customTechniques
-    displayName: Custom space-separated techniques (used when Technique set is custom)
+  - name: techniques
+    displayName: Space-separated technique names
     type: string
     default: >-
       role_play_movie_script role_play_video_game role_play_trivia_game
@@ -182,32 +173,13 @@ jobs:
               --startup-timeout 180
             server_started=true
 
-            case "$TECHNIQUE_PRESET_INPUT" in
-              current-default)
-                resolved_techniques="light"
-                ;;
-              candidate)
-                resolved_techniques="role_play_movie_script red_teaming context_compliance tap crescendo_simulated"
-                ;;
-              union)
-                resolved_techniques="light tap crescendo_simulated"
-                ;;
-              custom)
-                resolved_techniques="$CUSTOM_TECHNIQUES_INPUT"
-                ;;
-              *)
-                echo "Unknown technique preset: $TECHNIQUE_PRESET_INPUT" >&2
-                exit 2
-                ;;
-            esac
-
-            if [[ -z "${resolved_techniques// }" ]]; then
+            if [[ -z "${TECHNIQUES_INPUT// }" ]]; then
               echo "At least one technique is required." >&2
               exit 2
             fi
 
             read -r -a adversarial_targets <<< "$ADVERSARIAL_TARGETS_INPUT"
-            read -r -a techniques <<< "$resolved_techniques"
+            read -r -a techniques <<< "$TECHNIQUES_INPUT"
             memory_labels="$(printf '{"pipeline_build_id":"%s"}' "$BUILD_BUILDID")"
 
             echo "run-benchmark" > "$artifact_dir/phase.txt"
@@ -308,8 +280,7 @@ jobs:
         env:
           OBJECTIVE_TARGET_INPUT: "${{ parameters.objectiveTarget }}"
           ADVERSARIAL_TARGETS_INPUT: "${{ parameters.adversarialTargets }}"
-          TECHNIQUE_PRESET_INPUT: "${{ parameters.techniquePreset }}"
-          CUSTOM_TECHNIQUES_INPUT: "${{ parameters.customTechniques }}"
+          TECHNIQUES_INPUT: "${{ parameters.techniques }}"
           DATASET_NAME_INPUT: "${{ parameters.datasetName }}"
           MAX_DATASET_SIZE_INPUT: "${{ parameters.maxDatasetSize }}"
           MAX_CONCURRENCY_INPUT: "${{ parameters.maxConcurrency }}"
@@ -347,19 +318,6 @@ jobs:
 
           result_path = artifact_dir / "scenario-result.json"
           result = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else {}
-          preset = os.environ["TECHNIQUE_PRESET_INPUT"]
-          presets = {
-              "current-default": ["light"],
-              "candidate": [
-                  "role_play_movie_script",
-                  "red_teaming",
-                  "context_compliance",
-                  "tap",
-                  "crescendo_simulated",
-              ],
-              "union": ["light", "tap", "crescendo_simulated"],
-          }
-          techniques = presets.get(preset, os.environ["CUSTOM_TECHNIQUES_INPUT"].split())
 
           manifest = {
               "pipeline_build_id": os.environ.get("BUILD_BUILDID"),
@@ -376,8 +334,7 @@ jobs:
               "export_exit_code": read_text("export-exit-code.txt"),
               "objective_target": os.environ["OBJECTIVE_TARGET_INPUT"],
               "adversarial_targets": os.environ["ADVERSARIAL_TARGETS_INPUT"].split(),
-              "technique_preset": preset,
-              "techniques": techniques,
+              "techniques": os.environ["TECHNIQUES_INPUT"].split(),
               "dataset_name": os.environ["DATASET_NAME_INPUT"],
               "max_dataset_size": int(os.environ["MAX_DATASET_SIZE_INPUT"]),
               "max_concurrency": int(os.environ["MAX_CONCURRENCY_INPUT"]),
@@ -394,8 +351,7 @@ jobs:
         env:
           OBJECTIVE_TARGET_INPUT: "${{ parameters.objectiveTarget }}"
           ADVERSARIAL_TARGETS_INPUT: "${{ parameters.adversarialTargets }}"
-          TECHNIQUE_PRESET_INPUT: "${{ parameters.techniquePreset }}"
-          CUSTOM_TECHNIQUES_INPUT: "${{ parameters.customTechniques }}"
+          TECHNIQUES_INPUT: "${{ parameters.techniques }}"
           DATASET_NAME_INPUT: "${{ parameters.datasetName }}"
           MAX_DATASET_SIZE_INPUT: "${{ parameters.maxDatasetSize }}"
           MAX_CONCURRENCY_INPUT: "${{ parameters.maxConcurrency }}"
