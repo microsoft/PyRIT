@@ -1224,10 +1224,10 @@ class TestResponseScoring:
 
         await attack._check_refusal_async(context=basic_context, objective="test task")
 
-        # Verify score_async was called with skip_on_error_result=False
+        # Verify message policy does not skip error results
         mock_refusal_scorer.score_async.assert_called_once()
-        call_kwargs = mock_refusal_scorer.score_async.call_args.kwargs
-        assert call_kwargs.get("skip_on_error_result") is False, (
+        message_options = mock_refusal_scorer.score_async.call_args.kwargs["message_options"]
+        assert message_options.skip_on_error_result is False, (
             "Refusal scorer must be called with skip_on_error_result=False "
             "to ensure error responses are scored (treated as refusals) rather than skipped"
         )

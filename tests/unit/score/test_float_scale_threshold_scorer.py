@@ -5,10 +5,11 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import store_message
 
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.score import FloatScaleThresholdScorer
+from pyrit.score import FloatScaleThresholdScorer, MessageScorable
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -19,8 +20,8 @@ def create_mock_float_scorer(score_value: float):
         class_name="MockScorer",
         class_module="test.mock",
     )
-    scorer = AsyncMock()
-    scorer.score_async = AsyncMock(
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._score_nested_message_async = AsyncMock(
         return_value=[
             Score(
                 score_value=str(score_value),
@@ -72,9 +73,9 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
     )
 
     # Mock a scorer that returns multiple scores (like AzureContentFilterScorer)
-    scorer = AsyncMock()
+    scorer = MagicMock(spec=FloatScaleScorer)
     prompt_id = uuid.uuid4()
-    scorer.score_async = AsyncMock(
+    scorer._score_nested_message_async = AsyncMock(
         return_value=[
             Score(
                 score_value="0.2",
@@ -140,8 +141,8 @@ async def test_float_scale_threshold_scorer_handles_empty_scores():
     memory = MagicMock(MemoryInterface)
 
     # Mock a scorer that returns empty list (all pieces filtered)
-    scorer = AsyncMock()
-    scorer.score_async = AsyncMock(return_value=[])
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._score_nested_message_async = AsyncMock(return_value=[])
     # get_identifier() returns a ComponentIdentifier
     mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
@@ -170,15 +171,13 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
     Test that FloatScaleThresholdScorer raises ValueError when using RAISE_ON_EMPTY aggregator
     and the underlying scorer returns no scores.
     """
-    from pyrit.score.float_scale.float_scale_score_aggregator import (
-        FloatScaleScoreAggregator,
-    )
+    from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleScoreAggregator
 
     memory = MagicMock(MemoryInterface)
 
     # Mock a scorer that returns empty list (all pieces filtered)
-    scorer = AsyncMock()
-    scorer.score_async = AsyncMock(return_value=[])
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._score_nested_message_async = AsyncMock(return_value=[])
     # get_identifier() returns a ComponentIdentifier
     mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
@@ -262,10 +261,15 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     )
     blocked_message = Message(message_pieces=[blocked_piece])
 
-    scores = await threshold_scorer.score_async(blocked_message)
+    scores = await threshold_scorer.score_async(scorable=MessageScorable.from_message(store_message(blocked_message)))
 
     assert len(scores) == 1
     binary_score = scores[0]
     assert binary_score.score_type == "true_false"
     assert binary_score.get_value() is False
     assert "Normalized scale score: 0.0" in binary_score.score_rationale
+
+    memory = CentralMemory.get_memory_instance()
+    persisted_scores = memory.get_scores(score_type="true_false")
+    assert len(persisted_scores) == 1
+    assert memory.get_scores(score_type="float_scale") == []

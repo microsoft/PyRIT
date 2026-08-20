@@ -7,7 +7,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import (
+    ComponentIdentifier,
+    Condition,
+    Message,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -54,32 +61,44 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
-    async def _score_async(
+    def matched_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report what the wrapped scorer matches.
+
+        Returns:
+            frozenset[type[Condition]]: The condition types the wrapped scorer routes.
+        """
+        return self._scorer.matched_conditions()
+
+    def required_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report what the wrapped scorer requires.
+
+        Returns:
+            frozenset[type[Condition]]: The required condition types.
+        """
+        return self._scorer.required_conditions()
+
+    async def _score_prepared_message_async(
         self,
-        message: Message,
         *,
-        objective: str | None = None,
-        role_filter: ChatMessageRole | None = None,
+        message: Message,
+        expectation: ScoringExpectation | None,
     ) -> list[Score]:
         """
         Scores the piece using the underlying true-false scorer and returns the inverted score.
 
         Args:
             message (Message): The message to score.
-            objective (str | None): The objective to evaluate against (the original attacker model's objective).
-                Defaults to None.
-            role_filter (ChatMessageRole | None): Optional filter for message roles. Defaults to None.
+            expectation (ScoringExpectation | None): What the wrapped scorer should look for.
 
         Returns:
             list[Score]: A list containing a single Score object with the inverted true/false value.
         """
-        scores = await self._scorer.score_async(
-            message,
-            objective=objective,
-            role_filter=role_filter,
+        scores = await self._scorer._score_nested_message_async(
+            message=message,
+            expectation=expectation,
         )
-
-        # TrueFalseScorers only have a single score
         inv_score = scores[0]
 
         inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
