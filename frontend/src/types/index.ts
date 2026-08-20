@@ -22,17 +22,35 @@ export interface MessageAttachment {
   scores?: DisplayScore[]
 }
 
+export interface MessageTextDisplayPiece {
+  type: 'text'
+  pieceId: string
+  pieceIndex: number
+  content: string
+  scores?: DisplayScore[]
+}
+
+export interface MessageMediaDisplayPiece {
+  type: 'media'
+  pieceId: string
+  pieceIndex: number
+  attachment: MessageAttachment
+}
+
+export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
+
 export interface Message {
   role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
   content: string
   timestamp: string
   /**
-   * Scores attached to the message's text piece(s), newest first. Scores for
-   * media pieces travel with their corresponding `attachments[].scores` entry
-   * instead, so each score renders next to the piece it was computed on.
+   * Legacy scores for messages created directly by the frontend. Backend
+   * messages keep scores on their corresponding `displayPieces` entry.
    */
   scores?: DisplayScore[]
   attachments?: MessageAttachment[]
+  /** Converted text and media pieces in backend order, with piece-local scores. */
+  displayPieces?: MessageDisplayPiece[]
   /** If the backend returned an error for this message */
   error?: MessageError
   /** True while waiting for the backend response */

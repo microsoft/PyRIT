@@ -5,6 +5,7 @@ import type {
   DisplayScore,
   Message,
   MessageAttachment,
+  MessageDisplayPiece,
   MessageError,
   MessagePieceRequest,
 } from '../types'
@@ -163,19 +164,23 @@ function pieceToAttachment(
   const valueUrl = isOriginal ? piece.original_value_url : piece.converted_value_url
   const mimeField = isOriginal ? piece.original_value_mime_type : piece.converted_value_mime_type
 
-  if (!isMediaDataType(dataType) || !value) return null
+  if (!isMediaDataType(dataType)) return null
+
+  const mediaValue = value || ''
+  const hasRenderableMedia = Boolean(valueUrl || mediaValue)
+  if (!hasRenderableMedia && (isOriginal || piece.scores.length === 0)) return null
 
   const mime = mimeField || defaultMimeForDataType(dataType)
   // Detect base64-encoded content while excluding file paths and URL schemes.
   // Base64 charset includes '/' so naive regex would match relative paths.
-  const looksLikePathOrScheme = /^[A-Za-z]:\\/.test(value) || // Windows path
-    value.startsWith('/') ||                                   // Unix absolute path
-    /^[a-z][a-z0-9+.-]*:/i.test(value)                        // URI scheme (file:, blob:, etc.)
+  const looksLikePathOrScheme = /^[A-Za-z]:\\/.test(mediaValue) || // Windows path
+    mediaValue.startsWith('/') ||                                   // Unix absolute path
+    /^[a-z][a-z0-9+.-]*:/i.test(mediaValue)                        // URI scheme (file:, blob:, etc.)
   const isBase64 = !looksLikePathOrScheme &&
-    value.length >= 16 && /^[A-Za-z0-9+/=\n]+$/.test(value)
+    mediaValue.length >= 16 && /^[A-Za-z0-9+/=\n]+$/.test(mediaValue)
   // Prefer the mapper-resolved URL when present; fall back to existing logic
   // (base64 inline data URI or raw value-as-URL) for compatibility.
-  const url = valueUrl || (isBase64 ? buildDataUri(value, mime) : value)
+  const url = valueUrl || (isBase64 ? buildDataUri(mediaValue, mime) : mediaValue)
   const prefix = isOriginal ? 'original_' : ''
   const filename = isOriginal ? piece.original_filename : piece.converted_filename
   const fallbackName = `${prefix}${dataType}_${piece.id.slice(0, 8)}`
@@ -183,7 +188,7 @@ function pieceToAttachment(
   // For base64-inlined media, derive the decoded byte count. For path / URL
   // values the string length is meaningless (e.g. /api/media?path=... is a
   // reference, not the payload), so size is omitted and the UI must hide it.
-  const size = isBase64 && !valueUrl ? decodedBase64ByteCount(value) : undefined
+  const size = isBase64 && !valueUrl ? decodedBase64ByteCount(mediaValue) : undefined
 
   // Scores belong to the piece, not to "converted" vs "original" — attach them
   // only to the converted attachment (the one actually rendered by default) so
@@ -218,23 +223,6 @@ function pieceToError(piece: BackendMessagePiece): MessageError | undefined {
 }
 
 /**
- * Collect scores attached to the message's non-media (text) pieces, sorted
- * newest first. Media piece scores are attached directly to their
- * `MessageAttachment` in `pieceToAttachment` instead, so each score renders
- * next to the piece it was actually computed on rather than all together.
- */
-function getTextScores(messagePieces: BackendMessagePiece[]): DisplayScore[] {
-  const scores = messagePieces
-    .flatMap((piece, pieceIndex) => {
-      if (isMediaDataType(piece.converted_value_data_type) || isReasoningDataType(piece.converted_value_data_type)) {
-        return []
-      }
-      return piece.scores.map((score) => scoreWithProvenance(score, { piece, pieceIndex }))
-    })
-  return scores.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-}
-
-/**
  * Convert a single backend Message DTO to a frontend Message for rendering.
  */
 export function backendMessageToFrontend(msg: BackendMessage): Message {
@@ -242,6 +230,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
   const originalTextParts: string[] = []
   const attachments: MessageAttachment[] = []
   const originalAttachments: MessageAttachment[] = []
+  const displayPieces: MessageDisplayPiece[] = []
   const reasoningSummaries: string[] = []
   let error: MessageError | undefined
 
@@ -264,6 +253,18 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
       if (piece.converted_value) {
         textParts.push(piece.converted_value)
       }
+      const scores = piece.scores
+        .map((score) => scoreWithProvenance(score, { piece, pieceIndex }))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      if (piece.converted_value || scores.length > 0) {
+        displayPieces.push({
+          type: 'text',
+          pieceId: piece.id,
+          pieceIndex,
+          content: piece.converted_value,
+          scores: scores.length > 0 ? scores : undefined,
+        })
+      }
     }
 
     // Extract original text content
@@ -275,6 +276,12 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     const att = pieceToAttachment(piece, pieceIndex)
     if (att) {
       attachments.push(att)
+      displayPieces.push({
+        type: 'media',
+        pieceId: piece.id,
+        pieceIndex,
+        attachment: att,
+      })
     }
 
     // Extract original media attachments
@@ -290,7 +297,6 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
 
   const convertedContent = textParts.join('\n')
   const originalContent = originalTextParts.join('\n')
-  const textScores = getTextScores(msg.message_pieces)
 
   // Only include originalContent when it actually differs from converted
   const hasTextDiff = originalContent !== '' && originalContent !== convertedContent
@@ -301,8 +307,8 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     role: role as Message['role'],
     content: convertedContent,
     timestamp: msg.created_at,
-    scores: textScores.length > 0 ? textScores : undefined,
     attachments: attachments.length > 0 ? attachments : undefined,
+    displayPieces: displayPieces.length > 0 ? displayPieces : undefined,
     error,
     reasoningSummaries: reasoningSummaries.length > 0 ? reasoningSummaries : undefined,
     originalContent: hasTextDiff ? originalContent : undefined,

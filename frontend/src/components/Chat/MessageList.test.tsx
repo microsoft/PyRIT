@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import MessageList from "./MessageList";
@@ -153,7 +153,7 @@ describe("MessageList", () => {
       name: /score 0.9 from selfaskscalescorer, objective score/i,
     });
     expect(scoreButton).toBeInTheDocument();
-    expect(screen.getByText("0.9")).toBeInTheDocument();
+    expect(scoreButton).toHaveTextContent("0.9");
 
     await user.click(scoreButton);
 
@@ -163,6 +163,47 @@ describe("MessageList", () => {
     expect(screen.getByText("Piece 1 · text")).toBeInTheDocument();
     expect(screen.getByText("harmful")).toBeInTheDocument();
     expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
+  });
+
+  it("should preserve a long single-score value outside its ellipsized chip", async () => {
+    const user = userEvent.setup();
+    const longScoreValue = "a".repeat(200);
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Scored response",
+        timestamp: new Date().toISOString(),
+        scores: [
+          {
+            id: "score-long",
+            message_piece_id: "piece-1",
+            scorer_type: "UnknownScorer",
+            score_type: "unknown",
+            score_value: longScoreValue,
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:00:00Z",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    const scoreButton = screen.getByRole("button", {
+      name: `Score ${longScoreValue} from UnknownScorer, Piece 1 · text`,
+    });
+    await user.hover(scoreButton);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(longScoreValue);
+
+    await user.unhover(scoreButton);
+    await user.click(scoreButton);
+    expect(screen.getByTestId("message-score-details-0-0")).toHaveTextContent(longScoreValue);
   });
 
   it("should show a stacked score control with tabs for multiple scores", async () => {
@@ -251,6 +292,59 @@ describe("MessageList", () => {
       })
     ).toBeInTheDocument();
     expect(stackedScoreButton).toHaveTextContent("False");
+  });
+
+  it("should preserve a long stacked-score value outside its ellipsized chip", async () => {
+    const user = userEvent.setup();
+    const longScoreValue = "b".repeat(200);
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Scored response",
+        timestamp: new Date().toISOString(),
+        scores: [
+          {
+            id: "score-long",
+            message_piece_id: "piece-1",
+            scorer_type: "UnknownScorer",
+            score_type: "unknown",
+            score_value: longScoreValue,
+            is_objective_score: true,
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:00:00Z",
+          },
+          {
+            id: "score-short",
+            message_piece_id: "piece-1",
+            scorer_type: "OtherScorer",
+            score_type: "true_false",
+            score_value: "False",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:01:00Z",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    const stackedScoreButton = screen.getByRole("button", {
+      name: `View 2 scores, displayed score ${longScoreValue} from UnknownScorer, objective score, Piece 1 · text`,
+    });
+    await user.hover(stackedScoreButton);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(longScoreValue);
+
+    await user.unhover(stackedScoreButton);
+    await user.click(stackedScoreButton);
+    expect(screen.getByRole("tabpanel")).toHaveTextContent(longScoreValue);
   });
 
   it("should display the latest score when there is no objective score", async () => {
@@ -514,6 +608,79 @@ describe("MessageList", () => {
     ).toBeInTheDocument();
   });
 
+  it("should disambiguate identical overflow scores with piece, category, and ordinal context", async () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return this.hasAttribute("data-score-tab-bar") ? 150 : 0;
+      },
+    });
+    const user = userEvent.setup();
+    const scores = [
+      {
+        id: "score-objective",
+        message_piece_id: "piece-1",
+        scorer_type: "ObjectiveScorer",
+        score_type: "true_false",
+        score_value: "True",
+        is_objective_score: true,
+        pieceIndex: 0,
+        pieceType: "text",
+        sourceLabel: "Piece 1 · text",
+        timestamp: "2026-02-15T00:00:00Z",
+      },
+      {
+        id: "score-visible",
+        message_piece_id: "piece-1",
+        scorer_type: "VisibleScorer",
+        score_type: "float_scale",
+        score_value: "0.1",
+        pieceIndex: 0,
+        pieceType: "text",
+        sourceLabel: "Piece 1 · text",
+        timestamp: "2026-02-15T00:01:00Z",
+      },
+      ...["piece-2", "piece-3", "piece-3"].map((pieceId, index) => ({
+        id: `score-shared-${index}`,
+        message_piece_id: pieceId,
+        scorer_type: "SharedScorer",
+        score_type: "float_scale",
+        score_value: "0.5",
+        score_category: index === 0 ? ["alpha"] : ["beta"],
+        pieceIndex: index === 0 ? 1 : 2,
+        pieceType: "text",
+        sourceLabel: index === 0 ? "Piece 2 · text" : "Piece 3 · text",
+        timestamp: `2026-02-15T00:0${index + 2}:00Z`,
+      })),
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[{
+            role: "assistant",
+            content: "Scored response",
+            timestamp: new Date().toISOString(),
+            scores,
+          }]}
+        />
+      </TestWrapper>
+    );
+
+    await user.click(screen.getByRole("button", { name: /view 5 scores/i }));
+    await user.click(screen.getByRole("button", { name: "More scores, 3 hidden" }));
+
+    expect(screen.getByRole("menuitem", {
+      name: "0.5 · SharedScorer · Piece 2 · text · Categories: alpha",
+    })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", {
+      name: "0.5 · SharedScorer · Piece 3 · text · Categories: beta · 1 of 2",
+    })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", {
+      name: "0.5 · SharedScorer · Piece 3 · text · Categories: beta · 2 of 2",
+    })).toBeInTheDocument();
+  });
+
   it("should distinguish text and attachment score controls by source label", () => {
     const sharedScores: Array<Omit<BackendScore, "message_piece_id">> = [
       {
@@ -580,6 +747,97 @@ describe("MessageList", () => {
         name: "View 2 scores, displayed score True from SharedScorer, objective score, Piece 2 · image_path · test.png",
       })
     ).toBeInTheDocument();
+  });
+
+  it("should render ordered display pieces with only their own scores", () => {
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "First text\nSecond text",
+        timestamp: new Date().toISOString(),
+        displayPieces: [
+          {
+            type: "text",
+            pieceId: "piece-1",
+            pieceIndex: 0,
+            content: "First text",
+            scores: [
+              {
+                id: "score-1",
+                message_piece_id: "piece-1",
+                scorer_type: "FirstScorer",
+                score_type: "unknown",
+                score_value: "first-only",
+                pieceIndex: 0,
+                pieceType: "text",
+                sourceLabel: "Piece 1 · text",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+          },
+          {
+            type: "media",
+            pieceId: "piece-2",
+            pieceIndex: 1,
+            attachment: {
+              type: "image",
+              name: "test.png",
+              url: "data:image/png;base64,iVBORw0KGgo=",
+              mimeType: "image/png",
+              scores: [
+                {
+                  id: "score-2",
+                  message_piece_id: "piece-2",
+                  scorer_type: "ImageScorer",
+                  score_type: "unknown",
+                  score_value: "image-only",
+                  pieceIndex: 1,
+                  pieceType: "image_path",
+                  sourceLabel: "Piece 2 · image_path · test.png",
+                  timestamp: "2026-02-15T00:01:00Z",
+                },
+              ],
+            },
+          },
+          {
+            type: "text",
+            pieceId: "piece-3",
+            pieceIndex: 2,
+            content: "Second text",
+            scores: [
+              {
+                id: "score-3",
+                message_piece_id: "piece-3",
+                scorer_type: "SecondScorer",
+                score_type: "unknown",
+                score_value: "second-only",
+                pieceIndex: 2,
+                pieceType: "text",
+                sourceLabel: "Piece 3 · text",
+                timestamp: "2026-02-15T00:02:00Z",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    const pieces = screen.getAllByTestId(/^message-piece-0-/);
+    expect(pieces).toHaveLength(3);
+    expect(pieces[0]).toHaveTextContent("First text");
+    expect(within(pieces[0]).getByRole("button", { name: /score first-only from firstscorer/i })).toBeInTheDocument();
+    expect(within(pieces[0]).queryByRole("button", { name: /second-only/i })).not.toBeInTheDocument();
+    expect(within(pieces[1]).getByAltText("test.png")).toBeInTheDocument();
+    expect(within(pieces[1]).getByRole("button", { name: /score image-only from imagescorer/i })).toBeInTheDocument();
+    expect(pieces[2]).toHaveTextContent("Second text");
+    expect(within(pieces[2]).getByRole("button", { name: /score second-only from secondscorer/i })).toBeInTheDocument();
+    expect(within(pieces[2]).queryByRole("button", { name: /first-only/i })).not.toBeInTheDocument();
   });
 
   it("should not show a score chip when the message has no score", () => {

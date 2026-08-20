@@ -122,9 +122,7 @@ describe("messageMapper", () => {
       expect(result.scores).toBeUndefined();
     });
 
-    it("should collect scores across text pieces, newest first", () => {
-      // Newest score is on the second piece so a naive "first piece wins"
-      // or "concatenation order" implementation would fail this assertion.
+    it("should preserve text pieces with their own scores in backend order", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
@@ -173,22 +171,37 @@ describe("messageMapper", () => {
 
       const result = backendMessageToFrontend(msg);
 
-      expect(result.scores).toEqual([
-        expect.objectContaining({
-          ...msg.message_pieces[1].scores[0],
-          pieceIndex: 1,
-          pieceType: "text",
-          sourceLabel: "Piece 2 · text",
-        }),
-        expect.objectContaining({
-          ...msg.message_pieces[0].scores[0],
+      expect(result.scores).toBeUndefined();
+      expect(result.displayPieces).toEqual([
+        {
+          type: "text",
+          pieceId: "p1",
           pieceIndex: 0,
-          pieceType: "text",
-          sourceLabel: "Piece 1 · text",
-        }),
+          content: "Hello",
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[0].scores[0],
+              pieceIndex: 0,
+              pieceType: "text",
+              sourceLabel: "Piece 1 · text",
+            }),
+          ],
+        },
+        {
+          type: "text",
+          pieceId: "p2",
+          pieceIndex: 1,
+          content: "there",
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[1].scores[0],
+              pieceIndex: 1,
+              pieceType: "text",
+              sourceLabel: "Piece 2 · text",
+            }),
+          ],
+        },
       ]);
-      expect(result.scores?.map((score) => score.message_piece_id)).toEqual(["p2", "p1"]);
-      expect(result.scores?.[0]).not.toHaveProperty("sourcePieceId");
     });
 
     it("should attach an image piece's scores to its attachment, not to message.scores", () => {
@@ -223,12 +236,68 @@ describe("messageMapper", () => {
 
       expect(result.scores).toBeUndefined();
       expect(result.attachments).toHaveLength(1);
+      expect(result.displayPieces).toEqual([
+        expect.objectContaining({
+          type: "media",
+          pieceId: "p1",
+          pieceIndex: 0,
+          attachment: result.attachments![0],
+        }),
+      ]);
       expect(result.attachments![0].scores).toEqual([
         expect.objectContaining({
           ...msg.message_pieces[0].scores[0],
           pieceIndex: 0,
           pieceType: "image_path",
           sourceLabel: "Piece 1 · image_path · image_path_p1",
+        }),
+      ]);
+    });
+
+    it("should retain an empty media piece as a score-only attachment", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p1",
+            original_value_data_type: "image_path",
+            converted_value_data_type: "image_path",
+            original_value: "/api/media?path=output%2Foriginal.png",
+            converted_value: "",
+            converted_value_mime_type: "image/png",
+            scores: [
+              {
+                id: "score-image",
+                message_piece_id: "p1",
+                scorer_type: "ImageScorer",
+                score_type: "true_false",
+                score_value: "False",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.scores).toBeUndefined();
+      expect(result.attachments).toEqual([
+        expect.objectContaining({
+          type: "image",
+          url: "",
+          pieceId: "p1",
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[0].scores[0],
+              pieceIndex: 0,
+              pieceType: "image_path",
+              sourceLabel: "Piece 1 · image_path · image_path_p1",
+            }),
+          ],
         }),
       ]);
     });
@@ -456,6 +525,7 @@ describe("messageMapper", () => {
       expect(result.content).toBe("Here is the image:");
       expect(result.attachments).toHaveLength(1);
       expect(result.attachments![0].type).toBe("image");
+      expect(result.displayPieces?.map((piece) => piece.type)).toEqual(["text", "media"]);
     });
 
     it("should map user role correctly", () => {

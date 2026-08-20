@@ -30,7 +30,7 @@ import {
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
-import type { DisplayScore, Message, MessageAttachment } from '../../types'
+import type { DisplayScore, Message, MessageAttachment, MessageDisplayPiece } from '../../types'
 import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
 
@@ -153,19 +153,21 @@ function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; gro
 
   return (
     <Popover withArrow>
-      <PopoverTrigger disableButtonEnhancement>
-        <Button
-          appearance="subtle"
-          size="small"
-          className={styles.scoreChip}
-          aria-label={`Score ${score.score_value} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`}
-          data-testid={`message-score-${groupId}-${scoreIndex}`}
-        >
-          <Badge appearance="tint" color="brand" size="medium">
-            {score.score_value}
-          </Badge>
-        </Button>
-      </PopoverTrigger>
+      <Tooltip content={score.score_value} relationship="description" withArrow>
+        <PopoverTrigger disableButtonEnhancement>
+          <Button
+            appearance="subtle"
+            size="small"
+            className={styles.scoreChip}
+            aria-label={`Score ${score.score_value} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`}
+            data-testid={`message-score-${groupId}-${scoreIndex}`}
+          >
+            <Badge appearance="tint" color="brand" size="medium" className={styles.scoreChipValue}>
+              {score.score_value}
+            </Badge>
+          </Button>
+        </PopoverTrigger>
+      </Tooltip>
       <PopoverSurface>
         <ScoreDetails score={score} testId={`message-score-details-${groupId}-${scoreIndex}`} />
       </PopoverSurface>
@@ -175,18 +177,20 @@ function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; gro
 
 interface ScoreOverflowMenuItemProps {
   score: DisplayScore
+  label: string
   onSelect: (scoreId: string) => void
 }
 
-function ScoreOverflowMenuItem({ score, onSelect }: ScoreOverflowMenuItemProps) {
+function ScoreOverflowMenuItem({ score, label, onSelect }: ScoreOverflowMenuItemProps) {
   const styles = useMessageListStyles()
 
   return (
     <MenuItem
       className={styles.scoreMenuItem}
+      aria-label={label}
       onClick={() => onSelect(score.id)}
     >
-      {score.score_value} · {score.scorer_type}{score.is_objective_score ? ' (Objective)' : ''}
+      {label}
     </MenuItem>
   )
 }
@@ -200,8 +204,33 @@ const SCORE_TAB_WIDTH_PX = 72
 const SCORE_TAB_GAP_PX = 4
 const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 112
 
+function getScoreOverflowLabels(scores: DisplayScore[]): string[] {
+  const baseLabels = scores.map((score) => {
+    const categories = score.score_category?.filter(Boolean) ?? []
+    return [
+      score.score_value,
+      score.scorer_type,
+      score.is_objective_score ? 'Objective' : '',
+      score.sourceLabel,
+      categories.length > 0 ? `Categories: ${categories.join(', ')}` : '',
+    ].filter(Boolean).join(' · ')
+  })
+  const labelCounts = new Map<string, number>()
+  baseLabels.forEach((label) => labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1))
+
+  const labelOrdinals = new Map<string, number>()
+  return baseLabels.map((label) => {
+    const count = labelCounts.get(label) ?? 1
+    if (count === 1) return label
+    const ordinal = (labelOrdinals.get(label) ?? 0) + 1
+    labelOrdinals.set(label, ordinal)
+    return `${label} · ${ordinal} of ${count}`
+  })
+}
+
 function ScoreOverflowMenu({ scores, onSelect }: ScoreOverflowMenuProps) {
   const styles = useMessageListStyles()
+  const labels = getScoreOverflowLabels(scores)
 
   return (
     <Menu>
@@ -220,10 +249,11 @@ function ScoreOverflowMenu({ scores, onSelect }: ScoreOverflowMenuProps) {
       </MenuTrigger>
       <MenuPopover>
         <MenuList>
-          {scores.map((score) => (
+          {scores.map((score, index) => (
             <ScoreOverflowMenuItem
               key={score.id}
               score={score}
+              label={labels[index]}
               onSelect={onSelect}
             />
           ))}
@@ -343,23 +373,25 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
         open={isScorePopoverOpen}
         onOpenChange={(_event: unknown, data: { open: boolean }) => setIsScorePopoverOpen(data.open)}
       >
-        <PopoverTrigger disableButtonEnhancement>
-          <Button
-            appearance="subtle"
-            size="small"
-            className={styles.stackedScoreButton}
-            aria-label={`View ${scores.length} scores, displayed score ${displayedScore.score_value} from ${displayedScore.scorer_type}${displayedScore.is_objective_score ? ', objective score' : ''}${displayedScore.sourceLabel ? `, ${displayedScore.sourceLabel}` : ''}`}
-            data-testid={`message-score-stack-${groupId}`}
-          >
-            <span className={styles.scoreStack} aria-hidden="true">
-              <span className={styles.scoreStackOvalBack} />
-              <span className={styles.scoreStackOvalMiddle} />
-              <span className={styles.scoreStackOvalFront}>
-                {displayedScore.score_value}
+        <Tooltip content={displayedScore.score_value} relationship="description" withArrow>
+          <PopoverTrigger disableButtonEnhancement>
+            <Button
+              appearance="subtle"
+              size="small"
+              className={styles.stackedScoreButton}
+              aria-label={`View ${scores.length} scores, displayed score ${displayedScore.score_value} from ${displayedScore.scorer_type}${displayedScore.is_objective_score ? ', objective score' : ''}${displayedScore.sourceLabel ? `, ${displayedScore.sourceLabel}` : ''}`}
+              data-testid={`message-score-stack-${groupId}`}
+            >
+              <span className={styles.scoreStack} aria-hidden="true">
+                <span className={styles.scoreStackOvalBack} />
+                <span className={styles.scoreStackOvalMiddle} />
+                <span className={styles.scoreStackOvalFront}>
+                  {displayedScore.score_value}
+                </span>
               </span>
-            </span>
-          </Button>
-        </PopoverTrigger>
+            </Button>
+          </PopoverTrigger>
+        </Tooltip>
         <PopoverSurface className={styles.multiScorePopover}>
           <div ref={tabBarRef} className={styles.scoreTabBar} data-score-tab-bar>
             <TabList
@@ -385,10 +417,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
                       id={`message-score-tab-${groupId}-${scoreIndex}`}
                       aria-label={scoreContext}
                       aria-controls={`message-score-panel-${groupId}`}
-                      className={mergeClasses(
-                        styles.scoreTab,
-                        score.is_objective_score && styles.objectiveScoreTab
-                      )}
+                      className={styles.scoreTab}
                       data-testid={`message-score-tab-${groupId}-${scoreIndex}`}
                     >
                       <span className={styles.scoreTabValue}>
@@ -441,6 +470,50 @@ function tryFormatJson(text: string): string | null {
   } catch {
     return null
   }
+}
+
+interface RenderMessagePiece {
+  piece: MessageDisplayPiece
+  groupId: string | number
+  markdownTestId: string
+}
+
+function getRenderMessagePieces(message: Message, messageIndex: number): RenderMessagePiece[] {
+  if (message.displayPieces) {
+    return message.displayPieces.map((piece) => ({
+      piece,
+      groupId: `${messageIndex}-piece-${piece.pieceIndex}`,
+      markdownTestId: `message-markdown-${messageIndex}-${piece.pieceIndex}`,
+    }))
+  }
+
+  const pieces: RenderMessagePiece[] = []
+  if (message.content || message.scores?.length) {
+    pieces.push({
+      piece: {
+        type: 'text',
+        pieceId: `message-${messageIndex}-text`,
+        pieceIndex: 0,
+        content: message.content,
+        scores: message.scores,
+      },
+      groupId: messageIndex,
+      markdownTestId: `message-markdown-${messageIndex}`,
+    })
+  }
+  message.attachments?.forEach((attachment, attachmentIndex) => {
+    pieces.push({
+      piece: {
+        type: 'media',
+        pieceId: attachment.pieceId ?? `message-${messageIndex}-attachment-${attachmentIndex}`,
+        pieceIndex: attachmentIndex,
+        attachment,
+      },
+      groupId: `${messageIndex}-att-${attachmentIndex}`,
+      markdownTestId: `message-markdown-${messageIndex}-att-${attachmentIndex}`,
+    })
+  })
+  return pieces
 }
 
 export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false }: MessageListProps) {
@@ -497,6 +570,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
         const isSimulated = message.role === 'simulated_assistant'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
         const avatarName = isUser ? 'User' : isSimulated ? 'Simulated' : 'Assistant'
+        const renderPieces = getRenderMessagePieces(message, index)
 
         return (
           <div
@@ -569,97 +643,91 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                 </>
               )}
 
-              {/* Text content (converted / primary), with its scores below it. */}
-              {Boolean(message.content || message.scores?.length) && (
-                <div className={styles.pieceRow}>
-                  {(() => {
-                    if (message.isLoading) {
+              {/* Converted pieces in backend order, each with only its own scores. */}
+              {renderPieces.length > 0 && (
+                <div className={styles.displayPiecesContainer}>
+                  {renderPieces.map(({ piece, groupId, markdownTestId }) => {
+                    if (piece.type === 'text') {
+                      const formatted = !message.isLoading && !globalMarkdown && !isUser
+                        ? tryFormatJson(piece.content)
+                        : null
                       return (
-                        <Text className={styles.loadingEllipsis}>
-                          {message.content}
-                        </Text>
-                      )
-                    }
-                    // When Markdown rendering is enabled, it takes precedence over
-                    // the JSON auto-format below.
-                    if (globalMarkdown) {
-                      return (
-                        <MarkdownContent
-                          content={message.content}
-                          testId={`message-markdown-${index}`}
-                        />
-                      )
-                    }
-                    // For assistant / simulated_assistant messages, detect
-                    // structured JSON responses (e.g. PromptShield verdicts) and
-                    // render them pretty-printed inside a <pre> so the user can
-                    // actually read them. User-typed JSON is left as-is.
-                    const formatted = !isUser ? tryFormatJson(message.content) : null
-                    if (formatted !== null) {
-                      return (
-                        <pre className={styles.messageJsonBlock} data-testid={`message-json-${index}`}>
-                          {formatted}
-                        </pre>
-                      )
-                    }
-                    return (
-                      <Text className={styles.messageText}>
-                        {message.content}
-                      </Text>
-                    )
-                  })()}
-                  {message.scores && message.scores.length > 0 && (
-                    <MessageScores scores={message.scores} groupId={index} />
-                  )}
-                </div>
-              )}
-
-              {/* Attachments (images, audio, video, files) */}
-              {message.attachments && message.attachments.length > 0 && (
-                <div className={styles.attachmentsContainer}>
-                  {message.attachments.map((att, attIndex) => (
-                    <div key={attIndex} className={styles.attachmentItem}>
-                      {att.type === 'image' && (
-                        <ImageWithSpinner
-                          src={att.url}
-                          alt={att.name}
-                          className={styles.attachmentPreview}
-                          hiddenClassName={styles.attachmentPreviewHidden}
-                          containerClassName={styles.imageContainer}
-                          spinnerClassName={styles.imageSpinner}
-                        />
-                      )}
-                      {att.type === 'video' && (
-                        <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />
-                      )}
-                      {att.type === 'audio' && (
-                        <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />
-                      )}
-                      {att.type === 'file' && (
-                        <div className={styles.attachmentFile}>
-                          <Text size={200} className={styles.attachmentFileName}>📄 {att.name}</Text>
-                          {att.url && (
-                            <Tooltip content="Open in new tab" relationship="label">
-                              <a
-                                href={att.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className={styles.attachmentOpenLink}
-                                data-testid={`attachment-open-${index}-${attIndex}`}
-                              >
-                                <OpenRegular fontSize={14} />
-                                <span>Open</span>
-                              </a>
-                            </Tooltip>
+                        <div
+                          key={piece.pieceId}
+                          className={styles.pieceRow}
+                          data-testid={`message-piece-${index}-${piece.pieceIndex}`}
+                        >
+                          {message.isLoading ? (
+                            <Text className={styles.loadingEllipsis}>{piece.content}</Text>
+                          ) : globalMarkdown ? (
+                            <MarkdownContent content={piece.content} testId={markdownTestId} />
+                          ) : formatted !== null ? (
+                            <pre
+                              className={styles.messageJsonBlock}
+                              data-testid={message.displayPieces
+                                ? `message-json-${index}-${piece.pieceIndex}`
+                                : `message-json-${index}`}
+                            >
+                              {formatted}
+                            </pre>
+                          ) : (
+                            <Text className={styles.messageText}>{piece.content}</Text>
+                          )}
+                          {piece.scores && piece.scores.length > 0 && (
+                            <MessageScores scores={piece.scores} groupId={groupId} />
                           )}
                         </div>
-                      )}
-                      {/* Scores for this attachment's piece — shown directly below it. */}
-                      {att.scores && att.scores.length > 0 && (
-                        <MessageScores scores={att.scores} groupId={`${index}-att-${attIndex}`} />
-                      )}
-                    </div>
-                  ))}
+                      )
+                    }
+
+                    const att = piece.attachment
+                    return (
+                      <div
+                        key={piece.pieceId}
+                        className={styles.attachmentItem}
+                        data-testid={`message-piece-${index}-${piece.pieceIndex}`}
+                      >
+                        {att.type === 'image' && att.url && (
+                          <ImageWithSpinner
+                            src={att.url}
+                            alt={att.name}
+                            className={styles.attachmentPreview}
+                            hiddenClassName={styles.attachmentPreviewHidden}
+                            containerClassName={styles.imageContainer}
+                            spinnerClassName={styles.imageSpinner}
+                          />
+                        )}
+                        {att.type === 'video' && att.url && (
+                          <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />
+                        )}
+                        {att.type === 'audio' && att.url && (
+                          <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />
+                        )}
+                        {att.type === 'file' && (
+                          <div className={styles.attachmentFile}>
+                            <Text size={200} className={styles.attachmentFileName}>📄 {att.name}</Text>
+                            {att.url && (
+                              <Tooltip content="Open in new tab" relationship="label">
+                                <a
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={styles.attachmentOpenLink}
+                                  data-testid={`attachment-open-${index}-${piece.pieceIndex}`}
+                                >
+                                  <OpenRegular fontSize={14} />
+                                  <span>Open</span>
+                                </a>
+                              </Tooltip>
+                            )}
+                          </div>
+                        )}
+                        {att.scores && att.scores.length > 0 && (
+                          <MessageScores scores={att.scores} groupId={groupId} />
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 
