@@ -53,9 +53,10 @@ class BicepTopologyTests(unittest.TestCase):
             "infrastructureSubnetId",
             "infrastructureNsgName",
             "applicationGatewayNsgName",
-            "enableFrontDoorPrivateLink",
         }
         assert unsupported_parameters.isdisjoint(template["parameters"])
+        assert template["parameters"]["enableFrontDoorPrivateLink"]["defaultValue"] is False
+        assert template["parameters"]["disableContainerAppsPublicAccess"]["defaultValue"] is False
 
         existing_identity = template["parameters"]["existingManagedIdentityResourceId"]
         assert existing_identity["defaultValue"] == ""
@@ -68,6 +69,14 @@ class BicepTopologyTests(unittest.TestCase):
         front_door_module = next(module for module in modules if "aca-front-door" in module["name"])
         assert "condition" not in network_module
         assert "parameters('enableFrontDoor')" in front_door_module["condition"]
+        assert (
+            "effectiveFrontDoorPrivateLink"
+            in front_door_module["properties"]["parameters"]["enablePrivateLink"]["value"]
+        )
+        assert (
+            "Microsoft.App/managedEnvironments"
+            in front_door_module["properties"]["parameters"]["originResourceId"]["value"]
+        )
 
         nested_types = {
             resource_type
@@ -89,8 +98,17 @@ class BicepTopologyTests(unittest.TestCase):
 
         environment = _resources(template, "Microsoft.App/managedEnvironments")[0]
         environment_properties = environment["properties"]
-        assert environment_properties["publicNetworkAccess"] == "Enabled"
+        assert environment_properties["publicNetworkAccess"] == "[variables('effectiveContainerAppsPublicAccess')]"
+        effective_public_access = template["variables"]["effectiveContainerAppsPublicAccess"]
+        assert "disableContainerAppsPublicAccess" in effective_public_access
+        assert "effectiveFrontDoorPrivateLink" in effective_public_access
+        assert "fail(" in effective_public_access
         assert environment_properties["vnetConfiguration"]["internal"] is False
+        assert (
+            environment_properties["appLogsConfiguration"]["logAnalyticsConfiguration"]["dynamicJsonColumns"] is False
+        )
+        assert environment_properties["peerAuthentication"]["mtls"]["enabled"] is False
+        assert environment_properties["peerTrafficConfiguration"]["encryption"]["enabled"] is False
         assert (
             "outputs.infrastructureSubnetId.value"
             in environment_properties["vnetConfiguration"]["infrastructureSubnetId"]
@@ -167,9 +185,15 @@ class BicepTopologyTests(unittest.TestCase):
         assert probe["probeRequestType"] == "GET"
 
         origin = _resources(template, "Microsoft.Cdn/profiles/originGroups/origins")[0]
-        assert origin["properties"]["originHostHeader"] == "[parameters('originHostName')]"
-        assert origin["properties"]["enforceCertificateNameCheck"] is True
-        assert "sharedPrivateLinkResource" not in origin["properties"]
+        origin_properties = origin["properties"]
+        assert "originHostHeader" in origin_properties
+        assert "enforceCertificateNameCheck" in origin_properties
+        assert "parameters('enablePrivateLink')" in origin_properties
+        assert "sharedPrivateLinkResource" in origin_properties
+        assert "managedEnvironments" in origin_properties
+        assert "effectiveOriginResourceId" in origin_properties
+        assert "effectiveOriginLocation" in origin_properties
+        assert "Pending" in origin_properties
 
         route = _resources(template, "Microsoft.Cdn/profiles/afdEndpoints/routes")[0]
         assert route["properties"]["forwardingProtocol"] == "HttpsOnly"

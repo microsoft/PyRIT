@@ -51,6 +51,7 @@ def validate_what_if(
     expected_nat_id: str,
     expected_vnet_id: str,
     expected_subnet_id: str,
+    expected_environment_id: str,
 ) -> list[str]:
     """Return every destructive, cross-scope, protected, or core-create violation."""
     document = _expect_object(payload, context="what-if result")
@@ -61,6 +62,10 @@ def validate_what_if(
         expected_nat_id.rstrip("/").casefold(): {"properties.scope", "sku.tier"},
         expected_vnet_id.rstrip("/").casefold(): set(),
         expected_subnet_id.rstrip("/").casefold(): set(),
+        expected_environment_id.rstrip("/").casefold(): {
+            "properties.appLogsConfiguration.logAnalyticsConfiguration.customerId",
+            "properties.publicNetworkAccess",
+        },
     }
     violations: list[str] = []
 
@@ -110,6 +115,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-nat-id", required=True)
     parser.add_argument("--expected-vnet-id", required=True)
     parser.add_argument("--expected-subnet-id", required=True)
+    parser.add_argument("--expected-environment-id", required=True)
     return parser.parse_args()
 
 
@@ -127,6 +133,7 @@ def main() -> int:
             expected_nat_id=cast("str", parsed.expected_nat_id),
             expected_vnet_id=cast("str", parsed.expected_vnet_id),
             expected_subnet_id=cast("str", parsed.expected_subnet_id),
+            expected_environment_id=cast("str", parsed.expected_environment_id),
         )
     except (OSError, json.JSONDecodeError, WhatIfFormatError) as error:
         print(f"What-if validation failed closed: {error}", file=sys.stderr)

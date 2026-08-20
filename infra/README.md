@@ -13,7 +13,7 @@ flowchart TB
 
   subgraph azure["Azure subscription"]
     frontDoor["Azure Front Door Premium<br/>Optional managed HTTPS entry point"]
-    ingress["ACA-managed public HTTPS ingress<br/>Optional allowedCidr restriction"]
+    ingress["ACA-managed HTTPS ingress<br/>Public endpoint optionally disabled"]
 
     subgraph vnet["Virtual network"]
       subgraph subnet["Delegated ACA infrastructure subnet"]
@@ -36,8 +36,8 @@ flowchart TB
   end
 
   user -->|"HTTPS when Front Door enabled"| frontDoor
-  frontDoor -->|"HTTPS origin"| ingress
-  user -->|"Direct ACA public URL"| ingress
+  frontDoor -->|"HTTPS public origin or Private Link"| ingress
+  user -.->|"Direct ACA URL when public access is enabled"| ingress
   ingress --> environment
   user -->|"MSAL PKCE sign-in"| entra
   entra -->|"Delegated Graph token"| user
@@ -64,7 +64,7 @@ flowchart TB
   app -.->|"Traces after agent setup"| appInsights
 ```
 
-The base topology is public ACA-managed HTTPS ingress plus VNet-integrated fixed NAT egress. `enableFrontDoor=true` adds Front Door Premium as the preferred managed HTTPS URL while the ACA origin remains concurrently public. Requests can therefore bypass Front Door through the ACA hostname; Front Door is a routing and reliability layer, not the exclusive ingress security boundary. The Microsoft team ADO workflow enables Front Door; community deployments leave it disabled by default. Front Door mode requires `allowedCidr` to be empty; Bicep rejects that combination instead of silently dropping a requested client restriction. Front Door changes inbound routing only: outbound connections from ACA continue to use the NAT Gateway's static IPv4.
+The base topology is public ACA-managed HTTPS ingress plus VNet-integrated fixed NAT egress. `enableFrontDoor=true` adds Front Door Premium as the preferred managed HTTPS URL. By default, the ACA origin remains concurrently public and can bypass Front Door. `enableFrontDoorPrivateLink=true` instead connects Premium Front Door to the ACA environment through Private Link; setting `disableContainerAppsPublicAccess=true` then removes the direct public ACA path. Bicep rejects public-access shutdown unless both Front Door and its Private Link origin are enabled. The team ADO workflow uses this isolated-origin mode; community examples leave all three Front Door settings disabled. Front Door mode requires `allowedCidr` to be empty because ACA sees Front Door rather than the original client. Front Door changes inbound routing only: outbound connections from ACA continue to use the NAT Gateway's static IPv4.
 
 ## Development Workflow
 
@@ -97,9 +97,9 @@ Community users can deploy `main.bicep` directly using the instructions below. F
 - **Authentication**: [MSAL](https://learn.microsoft.com/en-us/entra/msal/) [PKCE](https://oauth.net/2/pkce/) on the frontend (`@azure/msal-browser`) + Microsoft Graph-backed middleware on the backend. The frontend sends a delegated Graph token, and the backend authenticates it through Graph `/me`. PKCE (public client) requires no client secrets or certificates.
 - **Authorization**: Entra group check via `allowedGroupObjectIds` param. Requires delegated Graph `User.Read`; the backend calls `/me/checkMemberGroups` and compares the returned transitive memberships with the configured group IDs. Each security group must also be assigned to the enterprise app (see Prerequisites §3). Authenticated deployments require at least one allowed group and fail to start without one. `/api/health`, `/api/auth/config`, and `/api/media` are intentional public exceptions; other `/api` routes require authentication when auth is enabled. Successful identity and membership results are cached in-process for 60 seconds, keyed by a SHA-256 token digest, to reduce Graph latency and throttling. Bearer tokens themselves are not stored in the cache.
 - **Identity**: `deploy_instance.py` creates its user-assigned managed identity (UAMI) and grants AcrPull and Storage Blob Data Contributor before deploying Bicep. A direct Bicep deployment can create `<appName>-identity`, but the template creates no role assignments, so its first revision can remain unhealthy until required roles are granted and the revision is restarted. A healthy one-pass direct deployment uses an existing, pre-authorized UAMI. `AZURE_CLIENT_ID` is set to the UAMI's client ID so `DefaultAzureCredential` selects the correct identity.
-- **Network**: The template always creates a VNet-integrated public Container Apps environment, one delegated ACA infrastructure subnet, a Standard NAT Gateway, and a static outbound IPv4. ACA supplies the generated HTTPS hostname and trusted certificate. In direct-ACA mode, `allowedCidr` optionally restricts public ingress to one IPv4 CIDR; an empty value permits public ingress. Front Door mode requires `allowedCidr` to be empty because ACA sees Front Door backend addresses, not the original client; Bicep and the internal pipeline reject the invalid combination. Entra sign-in, enterprise-app assignment, and backend group checks remain mandatory application access controls.
-- **Front Door**: `enableFrontDoor=true` creates a Premium profile, managed `azurefd.net` endpoint, HTTPS ACA origin, `/api/health` probe, and uncached catch-all route. The module does not create a WAF policy or isolate the public ACA origin, so application authentication and authorization remain mandatory on both hostnames.
-- **Routing**: Public inbound requests reach ACA either directly or through Front Door and do not traverse the NAT Gateway. Outbound connections from the ACA environment that leave the virtual network use the NAT Gateway's static public IPv4.
+- **Network**: The template always creates a VNet-integrated external Container Apps environment, one delegated ACA infrastructure subnet, a Standard NAT Gateway, and a static outbound IPv4. ACA supplies the generated HTTPS hostname and trusted certificate. In direct-ACA mode, `allowedCidr` optionally restricts public ingress to one IPv4 CIDR; an empty value permits public ingress. Front Door mode requires `allowedCidr` to be empty because ACA sees Front Door backend addresses, not the original client; Bicep and the team pipeline reject the invalid combination. Entra sign-in, enterprise-app assignment, and backend group checks remain mandatory application access controls.
+- **Front Door**: `enableFrontDoor=true` creates a Premium profile, managed `azurefd.net` endpoint, HTTPS ACA origin, `/api/health` probe, and uncached catch-all route. `enableFrontDoorPrivateLink=true` targets the ACA managed environment with group ID `managedEnvironments`. The resulting private endpoint connection must be approved before AFD can route privately. `disableContainerAppsPublicAccess=true` disables the ACA environment public endpoint and CORS then permits only the AFD origin. The module does not create a WAF policy; application authentication and authorization remain mandatory.
+- **Routing**: Inbound requests through Front Door do not traverse the NAT Gateway. When ACA public access remains enabled, users can also reach ACA directly. When Private Link is enabled and public access is disabled, all public application traffic enters through Front Door. Outbound connections from the ACA environment that leave the virtual network use the NAT Gateway's static public IPv4.
 - **Response headers**: `SecurityHeadersMiddleware` adds [CSP](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP), HTTP Strict Transport Security (HSTS, production only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, and Cache-Control (`no-store` on API routes). Swagger/OpenAPI disabled in production.
 - **Data**: Azure SQL with managed identity authentication (no passwords)
 - **Secrets**: When `envFileContents` is nonempty, Bicep stores it as an inline ACA secret. Otherwise, Bicep creates a versionless Key Vault reference to `envSecretName` using the app UAMI; that path requires `Key Vault Secrets User` and network access to the vault. `deploy_instance.py` uses the inline path.
@@ -114,7 +114,7 @@ Community users can deploy `main.bicep` directly using the instructions below. F
 
 The Bicep template creates the Container Apps resources, dedicated network, NAT Gateway, static egress IP, and (unless supplied) Log Analytics workspace. It can also declare an ACR and UAMI, but it does not push an image or create RBAC role assignments. The supported one-pass workflows therefore use an existing ACR; a healthy one-pass direct Bicep deployment also uses an existing, pre-authorized UAMI. Entra resources must be created separately through Microsoft Graph. Bicep requires an existing Key Vault. See [Post-Deployment §2](#post-deployment) for direct-deployment RBAC.
 
-Front Door is optional. When enabled, the subscription must have the `Microsoft.Cdn` resource provider registered.
+Front Door is optional. When enabled, the subscription must have the `Microsoft.Cdn` resource provider registered. Private Link requires Front Door Premium and a workload-profiles ACA environment in a [supported Private Link region](https://learn.microsoft.com/azure/frontdoor/private-link#region-availability). The deployment principal also needs permission to read AFD origins and approve `Microsoft.App/managedEnvironments/privateEndpointConnections`. Azure requires ACA public network access to be disabled before private endpoints can be enabled, so converting an existing public origin has an unavoidable interval while the request is pending and AFD propagates the approval. The team workflow performs this cutover in a maintenance window and redeploys the prior public-origin configuration if post-cutover validation fails.
 
 > **Migration boundary:** This template owns a dedicated VNet and creates a VNet-integrated workload-profiles environment. ACA environment network type is creation-time configuration. Do not apply this template in place to a legacy environment created without this VNet or with the former private-endpoint parameters. Deploy a parallel resource group/app/environment, validate it, and then migrate users and redirect URIs.
 
@@ -162,18 +162,21 @@ az ad sp create --id "$APP_ID" --output none
 az account show --query tenantId -o tsv
 ```
 
-> **Fresh app registrations only**: The ACA and optional Front Door hostnames are known after deployment. For a newly created app with no existing SPA redirects, register both the direct ACA URL and selected public URL (they are identical when Front Door is disabled):
+> **Fresh app registrations only**: The ACA and optional Front Door hostnames are known after deployment. For a newly created app with no existing SPA redirects, register the selected public URL and add the ACA URL only while ACA public access is enabled:
 >
 > ```bash
 > ACA_FQDN=$(az deployment group show -g <rg> -n <deployment-name> \
 >   --query properties.outputs.appFqdn.value -o tsv)
 > PUBLIC_FQDN=$(az deployment group show -g <rg> -n <deployment-name> \
 >   --query properties.outputs.publicFqdn.value -o tsv)
+> ACA_PUBLIC_ACCESS=$(az deployment group show -g <rg> -n <deployment-name> \
+>   --query properties.outputs.containerAppsPublicNetworkAccess.value -o tsv)
 > APP_OBJECT_ID=$(az ad app show --id "$APP_ID" --query id -o tsv)
 > REDIRECT_URIS=$(jq -cn \
 >   --arg aca "https://$ACA_FQDN" \
 >   --arg public "https://$PUBLIC_FQDN" \
->   '[$aca, $public] | unique')
+>   --arg publicAccess "$ACA_PUBLIC_ACCESS" \
+>   '(if $publicAccess == "Disabled" then [$public] else [$aca, $public] end) | unique')
 > PATCH_BODY=$(jq -cn --argjson uris "$REDIRECT_URIS" \
 >   '{spa:{redirectUris:$uris}}')
 > az rest --method PATCH \
@@ -354,7 +357,9 @@ Use deployment outputs rather than reconstructing public hostnames:
 | --- | --- |
 | `publicFqdn` | User-facing hostname: Front Door when enabled, otherwise ACA |
 | `frontDoorFqdn`, `frontDoorUrl` | Managed Front Door hostname/URL; empty when disabled |
-| `appFqdn` | Direct public ACA origin for diagnostics and rollback |
+| `appFqdn` | Generated ACA hostname; inaccessible when ACA public access is disabled |
+| `containerAppsPublicNetworkAccess` | Effective ACA environment public-access state |
+| `frontDoorPrivateLinkRequestMessage` | Deterministic Private Link approval request message; empty when disabled |
 | `egressPublicIpAddress` | Static outbound NAT IPv4 for provider allowlists |
 | `natGatewayId`, `acaInfrastructureSubnetId`, `vnetName` | Created network resources |
 | `managedIdentityPrincipalId`, `managedIdentityResourceId` | UAMI identifiers for RBAC and SQL setup |
@@ -376,9 +381,10 @@ az deployment group show -g <rg> -n <deployment-name> \
 2. Capture the exact pushed digest and pass it across stages.
 3. Require the existing app, environment, VNet, subnet, NAT, and reserved PIP; validate their IDs, prefixes, tags, SKU, allocation, and attachments.
 4. Run a full ARM `what-if` through a fail-closed validator; reject malformed results, deletions, cross-resource-group writes, protected-network deltas other than the documented read-only NAT/PIP normalization, and core network, app, or Log Analytics workspace creates. The expected PIP protection lock may be created.
-5. Preserve policy-managed PIP tags and deploy with `enableFrontDoor=true` and `protectEgressPublicIp=true`.
-6. Verify the digest-pinned ACA revision, Front Door `/api/health`, and the same PIP resource ID/address after deployment.
-7. Print the Front Door URL, direct ACA origin, and static egress IPv4.
+5. Preserve policy-managed PIP tags and deploy with Front Door Private Link, ACA public access disabled, and PIP protection enabled.
+6. Validate the AFD origin targets the expected ACA environment, approve only active requests with the deterministic message, and require the ACA-side connection to report `Approved`. AFD can continue to display `Pending` after approval, so successful AFD health is the data-plane readiness signal.
+7. Verify ACA public access is disabled, the digest-pinned revision and Front Door `/api/health` are healthy, direct ACA access is unavailable, and the PIP resource ID/address is unchanged.
+8. If cutover validation fails, redeploy the prior public AFD origin and re-enable ACA public access; otherwise print the Front Door URL and static egress IPv4.
 
 Qualifying merges to `main` automatically deploy test. Production deployment is independent of PyRIT package releases: manually queue a commit merged to `main` with `deployToProd=true`. The workflow deploys test first, then requires a timeout-rejecting manual approval whose requester cannot self-approve.
 
@@ -415,7 +421,7 @@ The resource group, registry, image-pull authorization, managed identity, Key Va
 
 The internal workflow is update-only for networking: its app name and prefixes must resolve to the existing app/environment/VNet/subnet/NAT/PIP. It records the current PIP resource ID and address before preview, requires protected resources to remain unchanged except Azure read-only normalization, and verifies the same PIP/address after deployment.
 
-The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. The validated Front Door origin is the public ACA hostname; direct ACA access remains available and can bypass Front Door.
+The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. Its validated Front Door origin uses Private Link to the ACA environment, and the ACA public endpoint is disabled after deployment.
 
 ## Post-Deployment
 
@@ -426,6 +432,8 @@ The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. The 
      --query properties.outputs.appFqdn.value -o tsv)
    PUBLIC_FQDN=$(az deployment group show -g <rg> -n <deployment-name> \
      --query properties.outputs.publicFqdn.value -o tsv)
+   ACA_PUBLIC_ACCESS=$(az deployment group show -g <rg> -n <deployment-name> \
+     --query properties.outputs.containerAppsPublicNetworkAccess.value -o tsv)
    APP_OBJECT_ID=$(az ad app show --id <entraClientId> --query id -o tsv)
    CURRENT_URIS=$(az rest --method GET \
      --uri "https://graph.microsoft.com/v1.0/applications/$APP_OBJECT_ID?\$select=spa" \
@@ -434,7 +442,8 @@ The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. The 
      --argjson existing "$CURRENT_URIS" \
      --arg aca "https://$ACA_FQDN" \
      --arg public "https://$PUBLIC_FQDN" \
-     '($existing // []) + [$aca, $public] | unique')
+    --arg publicAccess "$ACA_PUBLIC_ACCESS" \
+    '($existing // []) + (if $publicAccess == "Disabled" then [$public] else [$aca, $public] end) | unique')
    PATCH_BODY=$(jq -cn --argjson uris "$UPDATED_URIS" '{spa:{redirectUris:$uris}}')
    az rest --method PATCH \
      --uri "https://graph.microsoft.com/v1.0/applications/$APP_OBJECT_ID" \
@@ -498,13 +507,10 @@ The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. The 
 ```bash
 PUBLIC_FQDN=$(az deployment group show -g <rg> -n <deployment-name> \
   --query properties.outputs.publicFqdn.value -o tsv)
-ACA_FQDN=$(az deployment group show -g <rg> -n <deployment-name> \
-  --query properties.outputs.appFqdn.value -o tsv)
 echo "Public URL: https://$PUBLIC_FQDN"
-echo "Direct ACA origin: https://$ACA_FQDN"
 ```
 
-Open the public URL and verify unauthenticated users are redirected to Entra and only assigned users in an allowed backend group can complete access. When Front Door is enabled, the direct ACA origin remains publicly reachable and bypasses Front Door; retain it only as an intentional diagnostic/rollback path.
+Open the public URL and verify unauthenticated users are redirected to Entra and only assigned users in an allowed backend group can complete access. When `containerAppsPublicNetworkAccess` is `Disabled`, verify the generated ACA hostname is no longer publicly reachable.
 
 ## Configuration: .pyrit_conf and .env
 
@@ -568,7 +574,7 @@ Supported Azure integrations, including OpenAI, Content Safety, and Speech, can 
 
 ## Notes
 
-- **Network topology**: Public ACA-managed HTTPS ingress with optional `allowedCidr` plus VNet-integrated fixed NAT egress is the base topology. Front Door Premium is an optional inbound layer and is enabled by the internal ADO workflow. `allowedCidr` must be empty when Front Door is enabled; Bicep rejects the combination.
+- **Network topology**: Public ACA-managed HTTPS ingress with optional `allowedCidr` plus VNet-integrated fixed NAT egress is the base topology. Front Door Premium is an optional inbound layer. Private Link plus disabled ACA public access makes Front Door the only public application path. The team ADO workflow enables this isolated-origin mode. `allowedCidr` must be empty when Front Door is enabled; Bicep rejects the combination.
 - **Ingress vs. egress**: Front Door affects inbound requests only. The reserved NAT public IP remains the source for ACA-originated outbound connections.
 - **NAT routing**: NAT Gateway supplies the outbound source IP only while the subnet's effective default route remains `Internet`. A UDR or propagated BGP `0.0.0.0/0` route to a firewall or gateway takes precedence; in that topology, allow-list the egress device's public IP instead.
 - **Network outputs**: `egressPublicIpAddress`, `natGatewayId`, `acaInfrastructureSubnetId`, and `vnetName` describe the created network.

@@ -22,6 +22,7 @@ PIP_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.Network/publicIPAddresses/cop
 NAT_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.Network/natGateways/copyrit-prod-v2-nat"
 VNET_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.Network/virtualNetworks/copyrit-prod-v2-vnet"
 SUBNET_ID = f"{VNET_ID}/subnets/copyrit-prod-v2-aca-subnet"
+ENVIRONMENT_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.App/managedEnvironments/copyrit-prod-v2-env"
 
 
 class PipelineGuardrailTests(unittest.TestCase):
@@ -73,7 +74,8 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "networkMode=" not in self.deploy_script
         assert "enablePrivateEndpoint=" not in self.deploy_script
         assert '"enableFrontDoor=true"' in self.deploy_script
-        assert "enableFrontDoorPrivateLink=" not in self.deploy_script
+        assert '"enableFrontDoorPrivateLink=true"' in self.deploy_script
+        assert '"disableContainerAppsPublicAccess=true"' in self.deploy_script
 
     def test_pipeline_passes_values_via_environment(self):
         deploy_yaml = self.pipeline[self.pipeline.index("stage: DeployTest") :]
@@ -89,7 +91,9 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "subnet.subnet_of(vnet)" in self.deploy_script
         assert "subnet.prefixlen > 27" in self.deploy_script
         assert "uuid.UUID" in self.deploy_script
-        assert "Microsoft\\.KeyVault/vaults" in self.deploy_script
+        assert "normalized_managed_identity_resource_id=" in self.deploy_script
+        assert "normalized_key_vault_resource_id=" in self.deploy_script
+        assert "microsoft\\.keyvault/vaults" in self.deploy_script
         assert "database\\.windows\\.net" in self.deploy_script
         assert self.deploy_script.index("ipaddress.ip_network") < self.deploy_script.index(
             "az deployment group what-if"
@@ -104,6 +108,7 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "--result-format FullResourcePayloads" in self.deploy_script
         assert "--expected-pip-id" in self.deploy_script
         assert "--expected-subnet-id" in self.deploy_script
+        assert "--expected-environment-id" in self.deploy_script
         assert "Reserved egress PIP identity or address changed" in self.deploy_script
         assert self.deploy_script.index("expected_egress_ip=") < self.deploy_script.index("az deployment group what-if")
         assert self.deploy_script.index("actual_pip_id=") > self.deploy_script.index("az deployment group create")
@@ -111,9 +116,23 @@ class PipelineGuardrailTests(unittest.TestCase):
     def test_data_plane_health_probe_respects_ingress_restrictions(self):
         assert "properties.outputs.frontDoorFqdn.value" in self.deploy_script
         assert '"https://$front_door_fqdn/api/health"' in self.deploy_script
-        assert '"https://$app_fqdn/api/health"' not in self.deploy_script
+        assert "direct_aca_health=$(curl" in self.deploy_script
+        assert '"https://$app_fqdn/api/health"' in self.deploy_script
+        assert '[[ "$direct_aca_health" == "200" ]]' in self.deploy_script
         assert "Front Door did not route a healthy response" in self.deploy_script
-        assert "ACA origin: https://$app_fqdn" in self.deploy_script
+        assert "private-endpoint-connection approve" in self.deploy_script
+        assert '--description "$private_link_request_message"' in self.deploy_script
+        assert "sharedPrivateLinkResource.status" in self.deploy_script
+        assert "sharedPrivateLinkResource.privateLink.id" in self.deploy_script
+        assert "approved_connection_count=" in self.deploy_script
+        assert "ACA approval and AFD health determine readiness" in self.deploy_script
+        assert "cutover_in_progress=true" in self.deploy_script
+        assert '"$deployment_name-rollback-origin"' in self.deploy_script
+        assert "private-endpoint-connection delete" in self.deploy_script
+        assert '"$deployment_name-rollback"' in self.deploy_script
+        assert '"${rollback_parameters[@]}"' in self.deploy_script
+        assert "Direct ACA public access remains reachable" in self.deploy_script
+        assert "ACA public access: disabled" in self.deploy_script
 
     def test_manual_parameter_files_use_the_single_topology(self):
         example = json.loads(EXAMPLE_PARAMETERS.read_text(encoding="utf-8"))
@@ -126,7 +145,6 @@ class PipelineGuardrailTests(unittest.TestCase):
             "networkMode",
             "infrastructureNsgName",
             "applicationGatewayNsgName",
-            "enableFrontDoorPrivateLink",
         }
         assert unsupported.isdisjoint(example["parameters"])
         assert unsupported.isdisjoint(demo["parameters"])
@@ -134,6 +152,10 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "infrastructureSubnetAddressPrefix" in example["parameters"]
         assert example["parameters"]["acrName"]["value"]
         assert example["parameters"]["existingManagedIdentityResourceId"]["value"]
+        assert example["parameters"]["enableFrontDoorPrivateLink"]["value"] is False
+        assert example["parameters"]["disableContainerAppsPublicAccess"]["value"] is False
+        assert demo["parameters"]["enableFrontDoorPrivateLink"]["value"] is False
+        assert demo["parameters"]["disableContainerAppsPublicAccess"]["value"] is False
         assert demo["parameters"]["existingManagedIdentityResourceId"]["value"]
 
     def _run_what_if_validator(
@@ -161,6 +183,8 @@ class PipelineGuardrailTests(unittest.TestCase):
                     VNET_ID,
                     "--expected-subnet-id",
                     expected_subnet_id,
+                    "--expected-environment-id",
+                    ENVIRONMENT_ID,
                 ],
                 capture_output=True,
                 text=True,
@@ -176,6 +200,14 @@ class PipelineGuardrailTests(unittest.TestCase):
                 "delta": [{"path": "properties.scope"}, {"path": "sku.tier"}],
             },
             {"changeType": "Modify", "resourceId": PIP_ID, "delta": [{"path": "sku.tier"}]},
+            {
+                "changeType": "Modify",
+                "resourceId": ENVIRONMENT_ID,
+                "delta": [
+                    {"path": "properties.appLogsConfiguration.logAnalyticsConfiguration.customerId"},
+                    {"path": "properties.publicNetworkAccess"},
+                ],
+            },
             {"changeType": "Create", "resourceId": lock_id},
         ]
 
@@ -205,6 +237,14 @@ class PipelineGuardrailTests(unittest.TestCase):
                 "protected-resource delta",
             ),
             "opaque-protected-change": ({"changeType": "Modify", "resourceId": VNET_ID}, "opaque"),
+            "protected-environment": (
+                {
+                    "changeType": "Modify",
+                    "resourceId": ENVIRONMENT_ID,
+                    "delta": [{"path": "properties.vnetConfiguration.internal"}],
+                },
+                "protected-resource delta",
+            ),
             "container-app-create": (
                 {
                     "changeType": "Create",

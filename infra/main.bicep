@@ -148,10 +148,22 @@ param enableOtel bool = false
 @description('Create Azure Front Door Premium as the public application endpoint')
 param enableFrontDoor bool = false
 
+@description('Connect Azure Front Door Premium to the ACA environment through Private Link')
+param enableFrontDoorPrivateLink bool = false
+
+@description('Disable the ACA environment public endpoint after Front Door Private Link is configured')
+param disableContainerAppsPublicAccess bool = false
+
 // Determine whether to create or reference existing resources
 var effectiveAllowedCidr = enableFrontDoor && !empty(allowedCidr)
   ? fail('allowedCidr must be empty when enableFrontDoor is true')
   : allowedCidr
+var effectiveFrontDoorPrivateLink = enableFrontDoorPrivateLink && !enableFrontDoor
+  ? fail('enableFrontDoor must be true when enableFrontDoorPrivateLink is true')
+  : enableFrontDoorPrivateLink
+var effectiveContainerAppsPublicAccess = disableContainerAppsPublicAccess
+  ? (effectiveFrontDoorPrivateLink ? 'Disabled' : fail('Front Door Private Link is required before ACA public access can be disabled'))
+  : 'Enabled'
 var createLogAnalytics = logAnalyticsWorkspaceId == ''
 var createAcr = acrResourceId == '' && acrName == ''
 var useInlineEnvFile = !empty(envFileContents)
@@ -291,10 +303,21 @@ resource acaEnvironment 'Microsoft.App/managedEnvironments@2024-10-02-preview' =
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
         customerId: effectiveLogAnalyticsCustomerIdValue
+        dynamicJsonColumns: false
         sharedKey: effectiveLogAnalyticsKeyValue
       }
     }
-    publicNetworkAccess: 'Enabled'
+    peerAuthentication: {
+      mtls: {
+        enabled: false
+      }
+    }
+    peerTrafficConfiguration: {
+      encryption: {
+        enabled: false
+      }
+    }
+    publicNetworkAccess: effectiveContainerAppsPublicAccess
     workloadProfiles: [
       {
         name: 'Consumption'
@@ -316,6 +339,9 @@ module acaFrontDoor './modules/aca_front_door.bicep' = if (enableFrontDoor) {
     namePrefix: appName
     originHostName: acaOriginHostName
     tags: tags
+    enablePrivateLink: effectiveFrontDoorPrivateLink
+    originResourceId: acaEnvironment.id
+    originLocation: location
   }
 }
 
@@ -448,11 +474,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AZURE_CLIENT_ID'
               value: effectiveManagedIdentityClientId
             }
-            // Permit both the rollback ACA URL and the Front Door cutover URL.
+            // The ACA URL is usable only while environment public access remains enabled.
             {
               name: 'PYRIT_CORS_ORIGINS'
               value: enableFrontDoor
-                ? 'https://${acaOriginHostName},https://${acaFrontDoor!.outputs.endpointHostName}'
+                ? (effectiveContainerAppsPublicAccess == 'Disabled'
+                  ? 'https://${acaFrontDoor!.outputs.endpointHostName}'
+                  : 'https://${acaOriginHostName},https://${acaFrontDoor!.outputs.endpointHostName}')
                 : 'https://${acaOriginHostName}'
             }
           ]
@@ -481,7 +509,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 // Outputs
 // ============================================================================
 
-@description('The FQDN of the deployed Container App')
+@description('The generated ACA FQDN; inaccessible when ACA public network access is disabled')
 output appFqdn string = containerApp.properties.configuration.ingress.fqdn
 
 @description('The Azure Front Door managed HTTPS hostname')
@@ -489,6 +517,14 @@ output frontDoorFqdn string = enableFrontDoor ? acaFrontDoor!.outputs.endpointHo
 
 @description('The Azure Front Door public URL')
 output frontDoorUrl string = enableFrontDoor ? 'https://${acaFrontDoor!.outputs.endpointHostName}' : ''
+
+@description('The deterministic ACA Private Link approval request message; empty when Private Link is disabled')
+output frontDoorPrivateLinkRequestMessage string = effectiveFrontDoorPrivateLink
+  ? acaFrontDoor!.outputs.privateLinkRequestMessage
+  : ''
+
+@description('ACA environment public network access state')
+output containerAppsPublicNetworkAccess string = effectiveContainerAppsPublicAccess
 
 @description('The public application FQDN selected for this deployment')
 output publicFqdn string = enableFrontDoor ? acaFrontDoor!.outputs.endpointHostName : containerApp.properties.configuration.ingress.fqdn

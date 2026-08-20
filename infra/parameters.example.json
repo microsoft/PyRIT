@@ -45,6 +45,12 @@
     "enableFrontDoor": {
       "value": false
     },
+    "enableFrontDoorPrivateLink": {
+      "value": false
+    },
+    "disableContainerAppsPublicAccess": {
+      "value": false
+    },
     "vnetAddressPrefix": {
       "value": "10.0.0.0/16"
     },
