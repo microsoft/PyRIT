@@ -5,7 +5,7 @@
 
 import asyncio
 
-from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 from pyrit.setup import SQLITE, initialize_pyrit_async
@@ -64,7 +64,8 @@ async def _main_async() -> None:
         env_files=[],
         silent=True,
     )
-    source_dataset = await _HarmBenchDataset().fetch_dataset_async()
+    source_datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["harmbench"])
+    source_dataset = source_datasets[0]
     benchmark_dataset = _build_balanced_dataset(source_dataset=source_dataset)
     memory = CentralMemory.get_memory_instance()
     await memory.add_seed_datasets_to_memory_async(
