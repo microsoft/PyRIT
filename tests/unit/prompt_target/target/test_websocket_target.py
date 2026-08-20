@@ -616,6 +616,35 @@ async def test_cleanup_conversation_async_cancellation_finishes_closing_connecti
     assert websocket_target._existing_conversation == {}
 
 
+async def test_cleanup_conversation_async_cancellation_preserved_when_close_fails(
+    websocket_target: WebsocketTarget,
+) -> None:
+    connection = AsyncMock(spec=ClientConnection)
+    websocket_target._existing_conversation["conversation"] = connection
+    close_started = asyncio.Event()
+    finish_close = asyncio.Event()
+    close_error = ConnectionError("close failed")
+
+    async def close_connection() -> None:
+        close_started.set()
+        await finish_close.wait()
+        raise close_error
+
+    connection.close.side_effect = close_connection
+    cleanup_task = asyncio.create_task(websocket_target.cleanup_conversation_async("conversation"))
+    await close_started.wait()
+
+    cleanup_task.cancel()
+    finish_close.set()
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await cleanup_task
+
+    assert exc_info.value.__cause__ is close_error
+    connection.close.assert_awaited_once()
+    assert websocket_target._existing_conversation == {}
+
+
 async def test_cleanup_target_async_attempts_every_connection(websocket_target: WebsocketTarget) -> None:
     failing_connection = AsyncMock(spec=ClientConnection)
     failing_connection.close.side_effect = RuntimeError("close failed")

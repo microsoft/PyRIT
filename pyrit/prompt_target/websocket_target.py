@@ -200,8 +200,11 @@ class WebsocketTarget(PromptTarget):
             close_future = asyncio.ensure_future(websocket.close())
             try:
                 await asyncio.shield(close_future)
-            except asyncio.CancelledError:
-                await close_future
+            except asyncio.CancelledError as cancellation_error:
+                try:
+                    await close_future
+                except BaseException as close_error:
+                    raise cancellation_error from close_error
                 raise
             logger.info("Disconnected WebSocket conversation: %s", conversation_id)
 
