@@ -134,6 +134,7 @@ project:
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
             - file: code/targets/use_huggingface_chat_target.ipynb
+            - file: code/targets/websocket_target.ipynb
             - file: code/targets/round_robin_target.ipynb
         - file: code/converters/0_converters.ipynb
           children:
