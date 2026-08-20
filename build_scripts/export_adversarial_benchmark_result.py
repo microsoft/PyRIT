@@ -61,10 +61,18 @@ def _write_attacks(*, result: ScenarioResult, output_dir: Path) -> None:
 def _build_technique_metrics(*, result: ScenarioResult) -> list[dict[str, Any]]:
     """Aggregate persisted outcomes by technique and adversarial model."""
     grouped: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    retry_records: Counter[tuple[str, str]] = Counter()
     for atomic_attack_name, attack_results in result.attack_results.items():
         technique_name = atomic_attack_name.split("__", 1)[0]
         display_group = result.display_group_map.get(atomic_attack_name, "<ungrouped>")
+        group_key = (technique_name, display_group)
+        latest_by_objective = {}
         for attack_result in attack_results:
+            current = latest_by_objective.get(attack_result.objective)
+            if current is None or attack_result.timestamp > current.timestamp:
+                latest_by_objective[attack_result.objective] = attack_result
+        retry_records[group_key] += len(attack_results) - len(latest_by_objective)
+        for attack_result in latest_by_objective.values():
             grouped[(technique_name, display_group)][attack_result.outcome.value.lower()] += 1
 
     metrics: list[dict[str, Any]] = []
@@ -80,6 +88,7 @@ def _build_technique_metrics(*, result: ScenarioResult) -> list[dict[str, Any]]:
                 "failure": counts["failure"],
                 "error": counts["error"],
                 "undetermined": counts["undetermined"],
+                "retry_records": retry_records[(technique_name, display_group)],
                 "success_rate": round(success_count / total, 4) if total else 0.0,
             }
         )
@@ -99,6 +108,7 @@ def _write_technique_metrics(*, result: ScenarioResult, output_dir: Path) -> Non
         "failure",
         "error",
         "undetermined",
+        "retry_records",
         "success_rate",
     ]
     with open(output_dir / "technique-metrics.csv", "w", encoding="utf-8", newline="") as output:
@@ -107,20 +117,21 @@ def _write_technique_metrics(*, result: ScenarioResult, output_dir: Path) -> Non
         writer.writerows(metrics)
 
     lines = [
-        "{:<32} {:<30} {:>4} {:>8} {:>8} {:>6} {:>8}".format(
+        "{:<32} {:<30} {:>4} {:>8} {:>8} {:>6} {:>8} {:>8}".format(
             "Technique",
             "Adversarial model",
             "N",
             "Success",
             "Failure",
             "Error",
+            "Retries",
             "ASR",
         )
     ]
     lines.extend(
         (
             "{technique:<32} {adversarial_model:<30} {total:>4} {success:>8} "
-            "{failure:>8} {error:>6} {success_rate:>7.1%}"
+            "{failure:>8} {error:>6} {retry_records:>8} {success_rate:>7.1%}"
         ).format(**metric)
         for metric in metrics
     )
