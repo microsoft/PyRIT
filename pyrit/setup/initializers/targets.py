@@ -713,7 +713,47 @@ class TargetInitializer(PyRITInitializer):
         self._registered_names.append(config.registry_name)
         logger.info(f"Registered target: {config.registry_name}")
 
-    def _configure_adversarial_chat(self) -> None:
+def _configure_adversarial_chat(self) -> None:
+    member_names = [
+        name for name in self._ADVERSARIAL_CHAT_NAMES if name in self._registered_names
+    ]
+    self._registered_names = [
+        name for name in self._registered_names if name not in self._ADVERSARIAL_CHAT_NAMES
+    ]
+    if not member_names:
+        return
+
+    registry = TargetRegistry.get_registry_singleton()
+    targets = [
+        target
+        for name in member_names
+        if (target := registry.instances.get(name)) is not None
+    ]
+
+    if len(targets) == 1:
+        canonical_target = targets[0]
+    else:
+        try:
+            canonical_target = RoundRobinTarget(targets=targets)
+        except ValueError as ex:
+            raise ValueError(
+                f"Adversarial chat round-robin targets are incompatible: {ex}"
+            ) from ex
+
+    if "adversarial_chat" in member_names:
+        primary = registry.instances.get("adversarial_chat")
+        if primary is not None:
+            registry.instances.register(
+                primary,
+                name="adversarial_chat_primary",
+                tags=[TargetInitializerTags.DEFAULT],
+            )
+
+    registry.instances.register(
+        canonical_target,
+        name="adversarial_chat",
+        tags=[TargetInitializerTags.DEFAULT],
+    )
         """
         Publish the configured adversarial endpoints under the canonical target name.
 
