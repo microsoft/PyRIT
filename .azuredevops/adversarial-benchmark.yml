@@ -324,15 +324,6 @@ jobs:
 
           export ARTIFACT_DIR="$artifact_dir"
           export JOB_STATUS="${AGENT_JOBSTATUS:-unknown}"
-          export OBJECTIVE_TARGET_INPUT="${{ parameters.objectiveTarget }}"
-          export ADVERSARIAL_TARGETS_INPUT="${{ parameters.adversarialTargets }}"
-          export TECHNIQUE_PRESET_INPUT="${{ parameters.techniquePreset }}"
-          export CUSTOM_TECHNIQUES_INPUT="${{ parameters.customTechniques }}"
-          export DATASET_NAME_INPUT="${{ parameters.datasetName }}"
-          export MAX_DATASET_SIZE_INPUT="${{ parameters.maxDatasetSize }}"
-          export MAX_CONCURRENCY_INPUT="${{ parameters.maxConcurrency }}"
-          export MAX_RETRIES_INPUT="${{ parameters.maxRetries }}"
-          export LOG_LEVEL_INPUT="${{ parameters.logLevel }}"
 
           python - <<'PY'
           import json
@@ -393,6 +384,16 @@ jobs:
           PY
         displayName: Collect benchmark diagnostics
         condition: always()
+        env:
+          OBJECTIVE_TARGET_INPUT: "${{ parameters.objectiveTarget }}"
+          ADVERSARIAL_TARGETS_INPUT: "${{ parameters.adversarialTargets }}"
+          TECHNIQUE_PRESET_INPUT: "${{ parameters.techniquePreset }}"
+          CUSTOM_TECHNIQUES_INPUT: "${{ parameters.customTechniques }}"
+          DATASET_NAME_INPUT: "${{ parameters.datasetName }}"
+          MAX_DATASET_SIZE_INPUT: "${{ parameters.maxDatasetSize }}"
+          MAX_CONCURRENCY_INPUT: "${{ parameters.maxConcurrency }}"
+          MAX_RETRIES_INPUT: "${{ parameters.maxRetries }}"
+          LOG_LEVEL_INPUT: "${{ parameters.logLevel }}"
 
       - task: PublishPipelineArtifact@1
         displayName: Publish benchmark snapshot
