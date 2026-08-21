@@ -83,6 +83,7 @@ operation: op_trash_panda
 # -------------------------
 # Azure Key Vault is the canonical source for shared and deployed configuration.
 # See doc/getting_started/pyrit_conf.md for loading order, references, and migration guidance.
+# The list may contain at most one bootstrap secret URL.
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 # env_akv_strict: true

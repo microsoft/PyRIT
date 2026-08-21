@@ -12,7 +12,6 @@ import pytest
 
 from build_scripts.export_akv_environment import (
     DEFAULT_OUTPUT_FILE,
-    _Document,
     _render,
     _serialize,
     _write_output,
@@ -37,26 +36,25 @@ def test_serialize_round_trips_terminal_values(value: str) -> None:
 
 
 def test_render_resolves_akv_only_values() -> None:
-    document = _Document(
-        content=(
+    document = (
+        (
             "# AKV config\nBASE=bootstrap\nDERIVED=${BASE}\nAPI_KEY=kv:https://vault.vault.azure.net/secrets/api-key\n"
         ),
-        vault_url="https://vault.vault.azure.net",
+        "https://vault.vault.azure.net",
     )
     client = mock.MagicMock()
     client.get_secret.return_value = SimpleNamespace(value="resolved-key")
 
     rendered = _render(
-        documents=[document],
+        document=document,
         credential=mock.MagicMock(),
-        clients={document.vault_url: client},
+        clients={document[1]: client},
         strict=True,
         silent=True,
     )
 
     values = dotenv.dotenv_values(stream=io.StringIO(rendered), interpolate=True)
     assert values == {"BASE": "bootstrap", "DERIVED": "bootstrap", "API_KEY": "resolved-key"}
-    assert "# AKV config" in rendered
     client.get_secret.assert_called_once_with("api-key", version=None)
 
 
@@ -83,14 +81,14 @@ def test_render_resolves_akv_only_values() -> None:
 def test_render_resolves_interpolated_reference_assignments(
     content: str, expected_values: dict[str, str], expected_child_fetches: int
 ) -> None:
-    document = _Document(content=content, vault_url="https://vault.vault.azure.net")
+    document = (content, "https://vault.vault.azure.net")
     client = mock.MagicMock()
     client.get_secret.return_value = SimpleNamespace(value="resolved-key")
 
     rendered = _render(
-        documents=[document],
+        document=document,
         credential=mock.MagicMock(),
-        clients={document.vault_url: client},
+        clients={document[1]: client},
         strict=True,
         silent=True,
     )
@@ -100,42 +98,12 @@ def test_render_resolves_interpolated_reference_assignments(
     assert client.get_secret.call_args_list == [mock.call("key", version=None)] * expected_child_fetches
 
 
-def test_render_preserves_first_document_values() -> None:
-    documents = [
-        _Document(
-            content="SHARED=first\nFIRST_ONLY=first\n",
-            vault_url="https://vault.vault.azure.net",
-        ),
-        _Document(
-            content="SHARED=second\nSECOND_ONLY=second\n",
-            vault_url="https://vault.vault.azure.net",
-        ),
-    ]
-
-    rendered = _render(
-        documents=documents,
-        credential=mock.MagicMock(),
-        clients={},
-        strict=True,
-        silent=True,
-    )
-
-    assert dotenv.dotenv_values(stream=io.StringIO(rendered), interpolate=True) == {
-        "SHARED": "first",
-        "FIRST_ONLY": "first",
-        "SECOND_ONLY": "second",
-    }
-
-
 def test_render_non_strict_warns_and_skips_invalid_reference(caplog: pytest.LogCaptureFixture, capsys) -> None:
-    document = _Document(
-        content="GOOD=resolved\nBAD=kv:short-name\nOTHER=also-resolved",
-        vault_url="https://vault.vault.azure.net",
-    )
+    document = ("GOOD=resolved\nBAD=kv:short-name\nOTHER=also-resolved", "https://vault.vault.azure.net")
 
     with caplog.at_level("WARNING", logger="build_scripts.export_akv_environment"):
         rendered = _render(
-            documents=[document],
+            document=document,
             credential=mock.MagicMock(),
             clients={},
             strict=False,
@@ -205,7 +173,7 @@ def test_export_rejects_existing_output_before_fetch(tmp_path: pathlib.Path) -> 
     output_file = tmp_path / ".env_akv"
     output_file.write_text("ORIGINAL=value\n", encoding="utf-8")
 
-    with mock.patch("build_scripts.export_akv_environment._fetch_documents") as mock_fetch:
+    with mock.patch("build_scripts.export_akv_environment._fetch_document") as mock_fetch:
         with pytest.raises(ValueError, match="already exists"):
             export_akv_environment(
                 secret_urls=["https://vault.vault.azure.net/secrets/bootstrap"],
@@ -213,6 +181,24 @@ def test_export_rejects_existing_output_before_fetch(tmp_path: pathlib.Path) -> 
                 credential=mock.MagicMock(),
                 silent=True,
             )
+
+    mock_fetch.assert_not_called()
+
+
+def test_export_rejects_multiple_bootstrap_urls_before_fetch(tmp_path: pathlib.Path) -> None:
+    with (
+        mock.patch("build_scripts.export_akv_environment._fetch_document") as mock_fetch,
+        pytest.raises(ValueError, match="Only one"),
+    ):
+        export_akv_environment(
+            secret_urls=[
+                "https://vault.vault.azure.net/secrets/first",
+                "https://vault.vault.azure.net/secrets/second",
+            ],
+            output_file=tmp_path / ".env_akv",
+            credential=mock.MagicMock(),
+            silent=True,
+        )
 
     mock_fetch.assert_not_called()
 

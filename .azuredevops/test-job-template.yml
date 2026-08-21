@@ -26,40 +26,24 @@ jobs:
       versionSpec: '3.12'
       addToPath: true
   - bash: |
-      install -d -m 700 ~/.pyrit
+      mkdir -p ~/.pyrit
     displayName: "Create PyRIT configuration directory"
     name: create_pyrit_dir
   - task: AzureKeyVault@2
-    displayName: Azure Key Vault - retrieve environment secrets
+    displayName: Azure Key Vault - retrieve .env file secret
     inputs:
       azureSubscription: 'integration-test-service-connection'
       KeyVaultName: 'pyrit-environment'
       SecretsFilter: 'env-global'
       RunAsPreJob: false
   - bash: |
-      python - <<'PY'
-      import os
-      import pathlib
-      import tempfile
-
-      secret = os.environ.get("PYRIT_TEST_SECRET")
+      python -c "
+      import os;
+      secret = os.environ.get('PYRIT_TEST_SECRET');
       if not secret:
-        raise ValueError("PYRIT_TEST_SECRET is not set")
-
-      env_file = pathlib.Path.home() / ".pyrit" / ".env"
-      file_descriptor, temporary_name = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=env_file.parent)
-      temporary_file = pathlib.Path(temporary_name)
-      try:
-        os.fchmod(file_descriptor, 0o600)
-        with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="") as stream:
-          file_descriptor = -1
-          stream.write(secret)
-        os.replace(temporary_file, env_file)
-      finally:
-        if file_descriptor >= 0:
-          os.close(file_descriptor)
-        temporary_file.unlink(missing_ok=True)
-      PY
+        raise ValueError('PYRIT_TEST_SECRET is not set');
+      with open(os.path.expanduser('~/.pyrit/.env'), 'w') as file:
+        file.write(secret)"
     env:
       PYRIT_TEST_SECRET: $(env-global)
     name: create_env_file

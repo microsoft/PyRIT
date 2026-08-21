@@ -331,10 +331,7 @@ class TestConfigurationLoaderResolvers:
 
     def testresolve_env_akv_ref_returns_configured_values(self):
         """Test that the configured AKV references are returned unchanged."""
-        refs = [
-            "https://vault.vault.azure.net/secrets/first",
-            "https://vault.vault.azure.net/secrets/second/version",
-        ]
+        refs = ["https://vault.vault.azure.net/secrets/bootstrap"]
         config = ConfigurationLoader(env_akv_ref=refs)
         assert config.resolve_env_akv_ref() == refs
 
@@ -345,6 +342,15 @@ class TestConfigurationLoaderResolvers:
     def test_env_akv_ref_rejects_scalar_or_invalid_entries(self, env_akv_ref):
         with pytest.raises(ValueError, match="env_akv_ref must"):
             ConfigurationLoader(env_akv_ref=env_akv_ref)  # type: ignore[arg-type]
+
+    def test_env_akv_ref_rejects_multiple_bootstrap_urls(self):
+        with pytest.raises(ValueError, match="at most one"):
+            ConfigurationLoader(
+                env_akv_ref=[
+                    "https://vault.vault.azure.net/secrets/first",
+                    "https://vault.vault.azure.net/secrets/second",
+                ]
+            )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -371,10 +377,7 @@ class TestConfigurationLoaderInitialization:
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     async def test_initialize_pyrit_async_with_env_akv_ref(self, mock_init):
         """Test initialization forwards env_akv_ref to initialize_pyrit_async."""
-        refs = [
-            "https://vault.vault.azure.net/secrets/first",
-            "https://vault.vault.azure.net/secrets/second/version",
-        ]
+        refs = ["https://vault.vault.azure.net/secrets/bootstrap"]
         config = ConfigurationLoader(
             memory_db_type="in_memory",
             env_akv_ref=refs,

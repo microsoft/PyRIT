@@ -98,7 +98,7 @@ class ConfigurationLoader(YamlLoadable):
         env_files: List of environment file paths to load.
             None means auto-discover supported ``.env`` and ``.env.local``;
             [] means "load nothing".
-        env_akv_ref: Ordered list of Key Vault bootstrap secret URLs.
+        env_akv_ref: List containing at most one Key Vault bootstrap secret URL.
         env_akv_strict: Whether malformed or valueless entries in a Key Vault
             bootstrap document should fail initialization.
         silent: Whether to suppress initialization messages.
@@ -168,6 +168,8 @@ class ConfigurationLoader(YamlLoadable):
             return
         if not isinstance(self.env_akv_ref, list):
             raise ValueError("env_akv_ref must be a list of Azure Key Vault secret URLs.")
+        if len(self.env_akv_ref) > 1:
+            raise ValueError("env_akv_ref supports at most one Azure Key Vault bootstrap secret URL.")
         if any(not isinstance(secret_url, str) or not secret_url.strip() for secret_url in self.env_akv_ref):
             raise ValueError("env_akv_ref must contain only non-empty Azure Key Vault secret URLs.")
 
@@ -439,7 +441,7 @@ class ConfigurationLoader(YamlLoadable):
             initializers: Override for initializer list.
             initialization_scripts: Override for initialization script paths.
             env_files: Override for environment file paths.
-            env_akv_ref: Override for the ordered Azure Key Vault bootstrap secret URLs.
+            env_akv_ref: Override containing at most one Azure Key Vault bootstrap secret URL.
             env_akv_strict: Override for strict Key Vault bootstrap validation.
 
         Returns:

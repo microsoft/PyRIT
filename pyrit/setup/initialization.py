@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
-from pyrit.setup.environment_loading import load_environment_async, validate_env_akv_strict
+from pyrit.setup.environment_loading import (
+    load_environment_async,
+    load_environment_files as _load_environment_files,
+    validate_env_akv_strict,
+)
 
 if TYPE_CHECKING:
     from pyrit.setup.pyrit_initializer import PyRITInitializer
@@ -96,9 +100,9 @@ async def initialize_pyrit_async(
         env_files (Sequence[pathlib.Path] | None): Optional sequence of environment file paths to load
             in order. Ordinary files fill missing process values; files named ``.env.local`` override.
             If omitted, PyRIT auto-discovers supported ``.env`` and ``.env.local`` files.
-        env_akv_ref (Sequence[str] | None): Optional ordered Azure Key Vault URLs whose secret values
-            contain bootstrap dotenv documents. Documents fill missing process values and support
-            complete-value references to scalar secrets. Requires ``azure-keyvault-secrets``.
+        env_akv_ref (Sequence[str] | None): Optional zero-or-one-item sequence containing an Azure Key Vault
+            URL whose secret value is a bootstrap dotenv document. The document fills missing process values
+            and supports complete-value references to scalar secrets. Requires ``azure-keyvault-secrets``.
         env_akv_strict (bool): If True, reject malformed bootstrap entries and Key Vault reference
             syntax. If False, warn and skip those entries. Operational Key Vault failures always raise.
         silent (bool): If True, suppresses print statements about environment file loading and
