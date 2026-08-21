@@ -554,17 +554,28 @@ export default function ChatWindow({
   // Message action handlers (4 buttons on each assistant message)
   // -------------------------------------------------------------------
 
+  const copyMessageToInput = useCallback((message: Message): void => {
+    const inputBox = inputBoxRef.current
+    if (!inputBox) { return }
+
+    if (message.content) {
+      inputBox.setText(message.content)
+    }
+    if (!message.attachments) { return }
+
+    for (const attachment of message.attachments) {
+      if (attachment.type !== 'file') {
+        inputBox.addAttachment(attachment)
+      }
+    }
+  }, [])
+
   /** 1. Copy the clicked message's content/attachments into the current conversation's input box */
   const handleCopyToInput = useCallback((messageIndex: number) => {
     const msg = messages[messageIndex]
     if (!msg) { return }
-    if (msg.content) { inputBoxRef.current?.setText(msg.content) }
-    if (msg.attachments) {
-      msg.attachments.filter(a => a.type !== 'file').forEach(att => {
-        inputBoxRef.current?.addAttachment(att)
-      })
-    }
-  }, [messages])
+    copyMessageToInput(msg)
+  }, [copyMessageToInput, messages])
 
   /** 2. Create a new conversation in the same attack and copy ONLY this message to its input box */
   const handleCopyToNewConversation = useCallback(async (messageIndex: number) => {
@@ -578,12 +589,7 @@ export default function ChatWindow({
       setIsPanelOpen(!isNarrowScreen)
       // Small delay so the panel/messages update first
       setTimeout(() => {
-        if (msg.content) inputBoxRef.current?.setText(msg.content)
-        if (msg.attachments) {
-          msg.attachments.filter(a => a.type !== 'file').forEach(att => {
-            inputBoxRef.current?.addAttachment(att)
-          })
-        }
+        copyMessageToInput(msg)
       }, 100)
     } catch {
       // If creating fails, fall back to current conversation
@@ -591,6 +597,7 @@ export default function ChatWindow({
     }
   }, [
     attackResultId,
+    copyMessageToInput,
     isNarrowScreen,
     isMutationLocked,
     messages,
