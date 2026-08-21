@@ -8,7 +8,6 @@ import contextlib
 import logging
 import os
 import pathlib
-import tempfile
 import urllib.parse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -16,9 +15,10 @@ from io import StringIO
 from typing import TYPE_CHECKING
 
 import dotenv
+from dotenv.main import DotEnv
 from dotenv.parser import parse_stream
 
-from pyrit.common import path, print_deprecation_message
+from pyrit.common import path
 from pyrit.exceptions import KeyVaultInitializationException
 
 if TYPE_CHECKING:
@@ -27,35 +27,44 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "load_environment_async",
+    "load_environment_files",
+    "validate_env_akv_strict",
+]
+
 _AKV_REFERENCE_PREFIXES = frozenset({"akv", "kv", "azure_key_vault", "env_akv_ref"})
 _AKV_VAULT_DNS_SUFFIXES = frozenset({"vault.azure.net", "vault.azure.cn", "vault.usgovcloudapi.net"})
 _AKV_RETRY_TOTAL = 3
 _AKV_RETRY_BACKOFF_FACTOR = 0.8
-_AKV_ENV_FILE_NAME = ".env"
-_LEGACY_ENV_REMOVED_IN = "1.3.0"
 
 
 @dataclass(frozen=True)
 class _EnvironmentValueCandidate:
-    """An ordered environment value and whether local AKV resolution applies."""
+    """An ordered environment value and its Key Vault resolution policy."""
 
     value: str
     resolve_akv_reference: bool
+    expected_vault_url: str | None = None
 
 
-def validate_akv_boolean_options(*, env_akv_strict: object, env_akv_write_env: object) -> None:
+@dataclass(frozen=True)
+class _AkvEnvironmentDocument:
+    """A validated Key Vault bootstrap document and its source vault."""
+
+    content: str
+    vault_url: str
+
+
+def validate_env_akv_strict(*, env_akv_strict: object) -> None:
     """
-    Require real booleans for Key Vault behavior flags.
+    Require a real boolean for Key Vault strict-mode behavior.
 
     Raises:
-        TypeError: If either option is not a bool.
+        TypeError: If env_akv_strict is not a bool.
     """
-    for option_name, option_value in (
-        ("env_akv_strict", env_akv_strict),
-        ("env_akv_write_env", env_akv_write_env),
-    ):
-        if not isinstance(option_value, bool):
-            raise TypeError(f"{option_name} must be a bool, got {type(option_value).__name__}.")
+    if not isinstance(env_akv_strict, bool):
+        raise TypeError(f"env_akv_strict must be a bool, got {type(env_akv_strict).__name__}.")
 
 
 def load_environment_files(
@@ -63,6 +72,26 @@ def load_environment_files(
     *,
     silent: bool = False,
     include_default_base: bool = True,
+) -> bool:
+    """
+    Load local environment files using PyRIT's standard precedence.
+
+    Returns:
+        bool: Whether at least one environment file was selected.
+    """
+    return _load_environment_files(
+        env_files=env_files,
+        silent=silent,
+        include_default_base=include_default_base,
+        assignment_candidates=None,
+    )
+
+
+def _load_environment_files(
+    env_files: Sequence[pathlib.Path] | None,
+    *,
+    silent: bool,
+    include_default_base: bool,
     assignment_candidates: dict[str, list[_EnvironmentValueCandidate]] | None = None,
 ) -> bool:
     """
@@ -94,35 +123,80 @@ def load_environment_files(
         include_default_base=include_default_base,
     )
     for env_file in selected_files:
-        override = env_file.name == ".env.local"
-        applicable_names: list[str] = []
-        previous_values: dict[str, str | None] = {}
-        if assignment_candidates is not None:
-            assignment_values = dotenv.dotenv_values(dotenv_path=env_file, interpolate=False)
-            applicable_names = [
-                variable_name
-                for variable_name, value in assignment_values.items()
-                if value is not None and (override or variable_name not in os.environ)
-            ]
-            previous_values = {variable_name: os.environ.get(variable_name) for variable_name in applicable_names}
-        loaded = dotenv.load_dotenv(
+        loaded = _load_dotenv_source(
             dotenv_path=env_file,
-            override=override,
-            interpolate=True,
+            override=env_file.name == ".env.local",
+            assignment_candidates=assignment_candidates,
         )
-        if assignment_candidates is not None and loaded:
-            for variable_name in applicable_names:
-                candidates = assignment_candidates.setdefault(variable_name, [])
-                previous_value = previous_values[variable_name]
-                if not candidates and previous_value is not None:
-                    candidates.append(_EnvironmentValueCandidate(value=previous_value, resolve_akv_reference=False))
-                loaded_value = os.environ.get(variable_name)
-                if loaded_value is not None:
-                    candidates.append(_EnvironmentValueCandidate(value=loaded_value, resolve_akv_reference=True))
         if not silent:
             _print_msg(f"Loaded environment file: {env_file}", quiet=silent, log=True)
 
     return bool(selected_files)
+
+
+def _load_dotenv_source(
+    *,
+    override: bool,
+    assignment_candidates: dict[str, list[_EnvironmentValueCandidate]] | None,
+    dotenv_path: pathlib.Path | None = None,
+    document: str | None = None,
+    expected_vault_url: str | None = None,
+) -> bool:
+    """
+    Load one dotenv source and record values that participate in precedence.
+
+    Returns:
+        bool: Whether python-dotenv loaded at least one assignment.
+
+    Raises:
+        ValueError: If both or neither source representations are provided.
+    """
+    if (dotenv_path is None) == (document is None):
+        raise ValueError("Exactly one dotenv_path or document must be provided.")
+
+    if dotenv_path is not None:
+        assignment_values = DotEnv(
+            dotenv_path=dotenv_path,
+            override=override,
+            interpolate=True,
+        ).dict()
+    else:
+        assignment_values = DotEnv(
+            dotenv_path=None,
+            stream=StringIO(document or ""),
+            override=override,
+            interpolate=True,
+        ).dict()
+    previous_values = {variable_name: os.environ.get(variable_name) for variable_name in assignment_values}
+
+    if dotenv_path is not None:
+        loaded = dotenv.load_dotenv(dotenv_path=dotenv_path, override=override, interpolate=True)
+    else:
+        loaded = dotenv.load_dotenv(stream=StringIO(document or ""), override=override, interpolate=True)
+    if assignment_candidates is None or not loaded:
+        return loaded
+
+    for variable_name, loaded_value in assignment_values.items():
+        if loaded_value is None:
+            continue
+        candidates = assignment_candidates.setdefault(variable_name, [])
+        previous_value = previous_values[variable_name]
+        if not candidates and previous_value is not None:
+            candidates.append(_EnvironmentValueCandidate(value=previous_value, resolve_akv_reference=False))
+        candidate = _EnvironmentValueCandidate(
+            value=loaded_value,
+            resolve_akv_reference=True,
+            expected_vault_url=expected_vault_url,
+        )
+        if override:
+            candidates.append(candidate)
+        elif candidates and not candidates[-1].resolve_akv_reference:
+            continue
+        elif candidates:
+            candidates.insert(0, candidate)
+        else:
+            candidates.append(candidate)
+    return loaded
 
 
 def _select_environment_files(
@@ -154,7 +228,7 @@ def _select_environment_files(
         local_file = path.CONFIGURATION_DIRECTORY_PATH / ".env.local"
 
         if include_default_base and base_file.exists():
-            _warn_about_legacy_env(env_file=base_file, ignored_for_akv=False, silent=silent)
+            _warn_about_dotenv_file(env_file=base_file, ignored_for_akv=False, silent=silent)
             default_files.append(base_file)
         if local_file.exists():
             default_files.append(local_file)
@@ -191,31 +265,14 @@ def _print_msg(message: str, quiet: bool, log: bool) -> None:
         logger.info(message)
 
 
-def _warn_about_akv_environment_files(
-    env_files: Sequence[pathlib.Path] | None,
-    *,
-    silent: bool = False,
-) -> None:
-    """Warn when an auto-discovered legacy environment file coexists with AKV."""
-    if env_files is not None:
-        return
-
-    base_file = path.CONFIGURATION_DIRECTORY_PATH / ".env"
-    if base_file.exists():
-        _warn_about_legacy_env(env_file=base_file, ignored_for_akv=True, silent=silent)
-
-
-def _warn_about_legacy_env(*, env_file: pathlib.Path, ignored_for_akv: bool, silent: bool) -> None:
-    """Emit the standard and visible warnings for auto-discovered legacy ``.env`` loading."""
-    print_deprecation_message(
-        old_item=f"Auto-discovered {env_file}",
-        new_item="env_akv_ref or ~/.pyrit/.env.local",
-        removed_in=_LEGACY_ENV_REMOVED_IN,
-    )
-    behavior = "will be ignored because env_akv_ref is configured" if ignored_for_akv else "will still be loaded"
+def _warn_about_dotenv_file(*, env_file: pathlib.Path, ignored_for_akv: bool, silent: bool) -> None:
+    """Warn that Azure Key Vault is safer than an auto-discovered plaintext ``.env`` file."""
+    behavior = "will be ignored because env_akv_ref is configured" if ignored_for_akv else "will be loaded"
     message = (
-        f"Auto-discovered {env_file} is deprecated and {behavior}. "
-        f"Support will be removed in {_LEGACY_ENV_REMOVED_IN}. Use env_akv_ref or ~/.pyrit/.env.local instead."
+        f"Auto-discovered plaintext environment file {env_file} {behavior}. Azure Key Vault through env_akv_ref "
+        "is more secure for shared or deployed secrets; use .env.local only for deliberate local overrides. "
+        "To inspect a resolved AKV-only configuration from a source checkout, run "
+        "`python -m build_scripts.export_akv_environment`; it writes ~/.pyrit/.env_akv."
     )
     if not silent:
         print(f"WARNING: {message}")
@@ -394,18 +451,14 @@ def _validate_dotenv_document(
     )
 
 
-async def _load_env_from_akv_async(
+async def _fetch_akv_document_async(
     *,
     secret_url: str,
     strict: bool = True,
     silent: bool = False,
-    resolve_references_for_output: bool = False,
-) -> str:
+) -> _AkvEnvironmentDocument:
     """
-    Load a bootstrap dotenv document and resolve its same-vault secret references.
-
-    References are resolved once. Referenced secret values are treated as terminal
-    strings and are not interpreted as additional references.
+    Fetch and validate one Key Vault bootstrap dotenv document.
 
     Authentication uses ``DefaultAzureCredential``, which silently tries managed
     identity, Azure CLI, VS Code credentials, etc., and falls back to interactive
@@ -417,18 +470,14 @@ async def _load_env_from_akv_async(
         strict (bool): If True, reject malformed or valueless dotenv entries.
             If False, warn and skip those entries. Defaults to True.
         silent (bool): If True, suppresses print statements. Defaults to False.
-        resolve_references_for_output (bool): If True, resolve child references even
-            when their runtime assignment loses to an existing process value, and
-            return a native dotenv document containing those resolved values.
 
     Returns:
-        str: The validated bootstrap dotenv document, with child-secret references
-            replaced when ``resolve_references_for_output`` is True.
+        _AkvEnvironmentDocument: Validated document text and source vault metadata.
 
     Raises:
         ImportError: If ``azure-keyvault-secrets`` is not installed.
-        KeyVaultInitializationException: If the root URL is malformed or the bootstrap environment
-            document cannot be fully resolved.
+        KeyVaultInitializationException: If the root URL is malformed or the bootstrap
+            document cannot be fetched and validated.
         ValueError: Compatibility base of ``KeyVaultInitializationException``.
     """
     from azure.identity.aio import DefaultAzureCredential
@@ -444,77 +493,10 @@ async def _load_env_from_akv_async(
                     raise ValueError(f"AKV environment secret has no value: {secret_url}")
 
                 validated_document = _validate_dotenv_document(secret.value, strict=strict, silent=silent)
-                parsed_environment = dotenv.dotenv_values(stream=StringIO(validated_document), interpolate=True)
+                parsed_environment = dotenv.dotenv_values(stream=StringIO(validated_document), interpolate=False)
                 if not parsed_environment:
                     raise ValueError(f"AKV environment secret contains no environment entries: {secret_url}")
-                existing_environment_names = set(os.environ)
-                loaded = dotenv.load_dotenv(
-                    stream=StringIO(validated_document),
-                    override=False,
-                    interpolate=True,
-                )
-                if not loaded:
-                    return validated_document
-
-                final_assignment_indexes = _get_final_assignment_indexes(document=validated_document)
-                resolved_reference_values: dict[int, str] = {}
-                skipped_reference_indexes: set[int] = set()
-                for variable_name, value in parsed_environment.items():
-                    if value is None:
-                        continue
-                    target = _parse_akv_reference(value)
-                    if target is None:
-                        continue
-                    assignment_wins = variable_name not in existing_environment_names
-                    if not assignment_wins and not resolve_references_for_output:
-                        continue
-                    try:
-                        _, referenced_name, referenced_version = _parse_akv_reference_url(
-                            target=target,
-                            variable_name=variable_name,
-                            expected_vault_url=vault_url,
-                        )
-                    except ValueError as error:
-                        if strict:
-                            wrapped_error = _key_vault_initialization_error(
-                                message=f"Invalid AKV reference for environment variable '{variable_name}'",
-                                error=error,
-                            )
-                            raise wrapped_error from error
-                        if assignment_wins:
-                            os.environ.pop(variable_name, None)
-                        _warn_about_invalid_akv_reference(
-                            variable_name=variable_name,
-                            error=error,
-                            silent=silent,
-                        )
-                        skipped_reference_indexes.add(final_assignment_indexes[variable_name])
-                        continue
-                    try:
-                        resolved_value = await _fetch_akv_secret_value_async(
-                            client=client,
-                            secret_name=referenced_name,
-                            secret_version=referenced_version,
-                            variable_name=variable_name,
-                        )
-                        resolved_reference_values[final_assignment_indexes[variable_name]] = resolved_value
-                        if assignment_wins:
-                            os.environ[variable_name] = resolved_value
-                    except KeyVaultInitializationException:
-                        raise
-                    except Exception as error:
-                        wrapped_error = _key_vault_initialization_error(
-                            message=f"Failed to resolve Key Vault reference for environment variable '{variable_name}'",
-                            error=error,
-                        )
-                        raise wrapped_error from error
-                if resolve_references_for_output:
-                    return _render_resolved_akv_document(
-                        document=validated_document,
-                        resolved_reference_values=resolved_reference_values,
-                        skipped_reference_indexes=skipped_reference_indexes,
-                    )
-                return validated_document
+                return _AkvEnvironmentDocument(content=validated_document, vault_url=vault_url)
     except KeyVaultInitializationException:
         raise
     except Exception as error:
@@ -530,7 +512,6 @@ async def load_environment_async(
     env_akv_ref: Sequence[str] | None,
     env_files: Sequence[pathlib.Path] | None,
     env_akv_strict: bool,
-    env_akv_write_env: bool = False,
     silent: bool,
 ) -> None:
     """
@@ -540,8 +521,6 @@ async def load_environment_async(
         env_akv_ref (Sequence[str] | None): Optional ordered Key Vault bootstrap secret URLs.
         env_files (Sequence[pathlib.Path] | None): Optional ordered local environment files.
         env_akv_strict (bool): Whether bootstrap dotenv validation is strict.
-        env_akv_write_env (bool): Whether to save fetched bootstrap documents to
-            ``~/.pyrit/.env``. Defaults to False.
         silent (bool): Whether initialization messages are suppressed.
 
     Raises:
@@ -549,210 +528,45 @@ async def load_environment_async(
     """
     if isinstance(env_akv_ref, str):
         raise ValueError("env_akv_ref must be a sequence of Azure Key Vault secret URLs.")
-    bootstrap_documents: list[str] = []
+    assignment_candidates: dict[str, list[_EnvironmentValueCandidate]] = {}
     if env_akv_ref:
         if any(not isinstance(secret_url, str) or not secret_url.strip() for secret_url in env_akv_ref):
             raise ValueError("env_akv_ref must contain only non-empty Azure Key Vault secret URLs.")
-        env_file = path.CONFIGURATION_DIRECTORY_PATH / _AKV_ENV_FILE_NAME
-        if env_akv_write_env and (env_file.exists() or env_file.is_symlink()):
-            raise ValueError(_get_akv_env_file_exists_message(env_file=env_file))
-        await asyncio.to_thread(
-            _warn_about_akv_environment_files,
-            env_files=env_files,
-            silent=silent,
-        )
-        bootstrap_documents.extend(
-            [
-                await _load_env_from_akv_async(
-                    secret_url=secret_url,
-                    strict=env_akv_strict,
+        if env_files is None:
+            dotenv_file = path.CONFIGURATION_DIRECTORY_PATH / ".env"
+            if dotenv_file.exists():
+                await asyncio.to_thread(
+                    _warn_about_dotenv_file,
+                    env_file=dotenv_file,
+                    ignored_for_akv=True,
                     silent=silent,
-                    resolve_references_for_output=env_akv_write_env,
                 )
-                for secret_url in env_akv_ref
-            ]
-        )
+        for secret_url in env_akv_ref:
+            document = await _fetch_akv_document_async(
+                secret_url=secret_url,
+                strict=env_akv_strict,
+                silent=silent,
+            )
+            await asyncio.to_thread(
+                _load_dotenv_source,
+                document=document.content,
+                override=False,
+                assignment_candidates=assignment_candidates,
+                expected_vault_url=document.vault_url,
+            )
 
-    written_env_file: pathlib.Path | None = None
-    if env_akv_write_env and bootstrap_documents:
-        written_env_file = await asyncio.to_thread(
-            _write_akv_env_file,
-            documents=bootstrap_documents,
-            silent=silent,
-        )
-
-    selected_env_files = env_files
-    if written_env_file is not None and env_files is not None:
-        written_path = written_env_file.resolve()
-        selected_env_files = [env_file for env_file in env_files if env_file.expanduser().resolve() != written_path]
-
-    assignment_candidates: dict[str, list[_EnvironmentValueCandidate]] = {}
     await asyncio.to_thread(
-        load_environment_files,
-        env_files=selected_env_files,
+        _load_environment_files,
+        env_files=env_files,
         silent=silent,
         include_default_base=not (env_akv_ref and env_files is None),
         assignment_candidates=assignment_candidates,
     )
-    await _resolve_local_akv_references_async(
+    await _resolve_environment_candidates_async(
         assignment_candidates=assignment_candidates,
         strict=env_akv_strict,
         silent=silent,
     )
-
-
-def _write_akv_env_file(*, documents: Sequence[str], silent: bool) -> pathlib.Path:
-    """
-    Write fetched bootstrap documents with resolved child-secret values.
-
-    Returns:
-        pathlib.Path: Path to the written dotenv file.
-
-    Raises:
-        ValueError: If the destination already exists or is a symbolic link.
-        OSError: If the filesystem cannot atomically publish the completed file.
-    """
-    env_file = path.CONFIGURATION_DIRECTORY_PATH / _AKV_ENV_FILE_NAME
-    env_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if env_file.is_symlink():
-        raise ValueError(f"Refusing to write the AKV environment through a symbolic link: {env_file}")
-    if env_file.exists():
-        raise ValueError(_get_akv_env_file_exists_message(env_file=env_file))
-
-    content = _merge_akv_documents_for_debug(documents=documents)
-    file_descriptor: int | None = None
-    temporary_file: pathlib.Path | None = None
-    try:
-        file_descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f"{env_file.name}.",
-            suffix=".tmp",
-            dir=env_file.parent,
-        )
-        temporary_file = pathlib.Path(temporary_name)
-        file_chmod = getattr(os, "fchmod", None)
-        if file_chmod is not None:
-            file_chmod(file_descriptor, 0o600)
-        else:
-            os.chmod(temporary_file, 0o600)
-        stream = os.fdopen(file_descriptor, "w", encoding="utf-8", newline="")
-        file_descriptor = None
-        with stream:
-            stream.write(content)
-        try:
-            os.link(temporary_file, env_file)
-        except FileExistsError as error:
-            raise ValueError(_get_akv_env_file_exists_message(env_file=env_file)) from error
-    finally:
-        if file_descriptor is not None:
-            os.close(file_descriptor)
-        if temporary_file is not None:
-            with contextlib.suppress(FileNotFoundError):
-                temporary_file.unlink()
-
-    _print_msg(f"Saved Key Vault bootstrap environment file: {env_file}", quiet=silent, log=True)
-    return env_file
-
-
-def _get_akv_env_file_exists_message(*, env_file: pathlib.Path) -> str:
-    """
-    Create the message used when debug output would clobber an existing path.
-
-    Returns:
-        str: Error message containing recovery guidance for the user.
-    """
-    return (
-        f"Cannot write the resolved Key Vault environment because {env_file} already exists; "
-        "rename or remove it before enabling env_akv_write_env."
-    )
-
-
-def _merge_akv_documents_for_debug(*, documents: Sequence[str]) -> str:
-    """
-    Merge resolved bootstrap documents using runtime first-document precedence.
-
-    Duplicate assignments within one document are retained because interpolation
-    depends on assignment order. Assignments established by an earlier document
-    are omitted from later documents.
-
-    Returns:
-        str: A native dotenv document with equivalent bootstrap precedence.
-    """
-    established_names: set[str] = set()
-    merged_bindings: list[str] = []
-    for document in documents:
-        document_names: set[str] = set()
-        for binding in parse_stream(StringIO(document)):
-            if binding.key is None or binding.key not in established_names:
-                merged_bindings.append(binding.original.string)
-            if binding.key is not None:
-                document_names.add(binding.key)
-        established_names.update(document_names)
-
-    return "".join(merged_bindings).rstrip("\r\n") + "\n"
-
-
-def _render_resolved_akv_document(
-    *,
-    document: str,
-    resolved_reference_values: Mapping[int, str],
-    skipped_reference_indexes: set[int] | None = None,
-) -> str:
-    """
-    Replace resolved Key Vault reference assignments with native dotenv values.
-
-    Returns:
-        str: Dotenv text that preserves non-reference bindings and comments.
-    """
-    skipped_reference_indexes = skipped_reference_indexes or set()
-    rendered_bindings: list[str] = []
-    for binding_index, binding in enumerate(parse_stream(StringIO(document))):
-        variable_name = binding.key
-        if binding_index in skipped_reference_indexes:
-            continue
-        if variable_name is not None and binding_index in resolved_reference_values:
-            original = binding.original.string
-            export_prefix = "export " if original.lstrip().startswith("export ") else ""
-            if original.endswith("\r\n"):
-                newline = "\r\n"
-            elif original.endswith("\n"):
-                newline = "\n"
-            else:
-                newline = ""
-            rendered_bindings.append(
-                f"{export_prefix}{variable_name}="
-                f"{_serialize_terminal_dotenv_value(resolved_reference_values[binding_index])}{newline}"
-            )
-        else:
-            rendered_bindings.append(binding.original.string)
-    return "".join(rendered_bindings)
-
-
-def _get_final_assignment_indexes(*, document: str) -> dict[str, int]:
-    """
-    Map each variable name to its final assignment occurrence in a dotenv document.
-
-    Returns:
-        dict[str, int]: Final parsed binding index for each assigned variable.
-    """
-    return {
-        binding.key: binding_index
-        for binding_index, binding in enumerate(parse_stream(StringIO(document)))
-        if binding.key is not None
-    }
-
-
-def _serialize_terminal_dotenv_value(value: str) -> str:
-    """
-    Quote a terminal secret value for a native python-dotenv round trip.
-
-    The empty-name default expression produces a literal dollar sign during
-    interpolation, preventing terminal ``${NAME}`` text from being reinterpreted.
-
-    Returns:
-        str: A single-quoted dotenv value.
-    """
-    escaped_value = value.replace("\\", "\\\\").replace("'", "\\'").replace("${", "${:-$}{")
-    return f"'{escaped_value}'"
 
 
 def _warn_about_invalid_akv_reference(*, variable_name: str, error: ValueError, silent: bool) -> None:
@@ -772,14 +586,6 @@ def _parse_akv_reference(value: str) -> str | None:
     """
     prefix, separator, target = value.partition(":")
     return target.strip() if separator and prefix in _AKV_REFERENCE_PREFIXES else None
-
-
-def _validate_akv_secret_name(*, secret_name: str, variable_name: str) -> None:
-    if not _is_valid_akv_identifier(secret_name):
-        raise ValueError(
-            f"Invalid same-vault secret name '{secret_name}' referenced by environment variable '{variable_name}'. "
-            "Secret names must contain only letters, numbers, and hyphens."
-        )
 
 
 def _parse_akv_reference_url(
@@ -810,18 +616,17 @@ def _parse_akv_reference_url(
             f"Expected vault '{expected_vault_url}', got '{referenced_vault_url}'."
         )
 
-    _validate_akv_secret_name(secret_name=secret_name, variable_name=variable_name)
     return referenced_vault_url, secret_name, secret_version
 
 
-async def _resolve_local_akv_references_async(
+async def _resolve_environment_candidates_async(
     *,
     assignment_candidates: Mapping[str, Sequence[_EnvironmentValueCandidate]],
     strict: bool,
     silent: bool,
 ) -> None:
     """
-    Resolve complete Key Vault references from winning local assignments.
+    Resolve complete Key Vault references from winning environment assignments.
 
     Raises:
         KeyVaultInitializationException: If strict validation or secret retrieval fails.
@@ -840,6 +645,7 @@ async def _resolve_local_akv_references_async(
                 vault_url, secret_name, secret_version = _parse_akv_reference_url(
                     target=target,
                     variable_name=variable_name,
+                    expected_vault_url=candidate.expected_vault_url,
                 )
             except ValueError as error:
                 if strict:
@@ -890,31 +696,3 @@ async def _resolve_local_akv_references_async(
                         error=error,
                     )
                     raise wrapped_error from error
-
-
-def _resolve_akv_secret_reference(
-    *,
-    target: str,
-    variable_name: str,
-    vault_url: str,
-) -> tuple[str, str | None]:
-    """
-    Resolve a full same-vault secret URI.
-
-    Args:
-        target (str): Full Key Vault secret URI.
-        variable_name (str): The environment variable receiving the secret.
-        vault_url (str): The bootstrap document's vault URL.
-
-    Returns:
-        tuple[str, str | None]: Secret name and optional version.
-
-    Raises:
-        ValueError: If the target is not a full URI, is invalid, or references another vault.
-    """
-    _, secret_name, secret_version = _parse_akv_reference_url(
-        target=target,
-        variable_name=variable_name,
-        expected_vault_url=vault_url,
-    )
-    return secret_name, secret_version

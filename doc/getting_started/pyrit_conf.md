@@ -26,7 +26,7 @@ PyRIT looks for this file automatically on startup (via the CLI, shell, or `Conf
 ## Environment Configuration
 
 ```{important}
-Azure Key Vault is PyRIT's canonical environment source for shared, CI/CD, and deployed configuration. Auto-discovered `~/.pyrit/.env` is supported only as a legacy source and will be rejected in PyRIT 1.3.0. Use `~/.pyrit/.env.local` for deliberate plaintext local iteration or when Azure is unavailable.
+Azure Key Vault is PyRIT's canonical environment source for shared, CI/CD, and deployed configuration. Auto-discovered `~/.pyrit/.env` remains supported, but PyRIT warns because plaintext files are less secure. Use `~/.pyrit/.env.local` for deliberate plaintext local iteration or when Azure is unavailable.
 ```
 
 See [Populating Secrets](./populating_secrets.md) for provider-specific variable examples.
@@ -36,10 +36,10 @@ See [Populating Secrets](./populating_secrets.md) for provider-specific variable
 PyRIT loads environment sources in this order:
 
 1. Existing process environment variables.
-2. Key Vault bootstrap documents, legacy auto-discovered `.env`, or explicit `env_files`. These sources fill only missing values.
+2. Key Vault bootstrap documents, auto-discovered `.env`, or explicit `env_files`. These sources fill only missing values.
 3. Files named `.env.local`. These are the only dotenv sources that override existing values.
 
-When `env_akv_ref` is configured, PyRIT ignores an auto-discovered `~/.pyrit/.env`, emits its deprecation warning, and still loads `~/.pyrit/.env.local`. Explicit `env_files` are never blocked or deprecated based on their filename or location.
+When `env_akv_ref` is configured, PyRIT ignores an auto-discovered `~/.pyrit/.env`, emits a security warning, and still loads `~/.pyrit/.env.local`. Explicit `env_files` are never blocked based on their filename or location.
 
 ### Using .env.local for Overrides
 
@@ -155,7 +155,7 @@ Optional local dotenv paths. Key Vault remains the canonical shared source; expl
 
 | Value             | Behavior                                                 |
 | ----------------- | -------------------------------------------------------- |
-| Omitted or `null` | Auto-discover legacy `~/.pyrit/.env` and supported `~/.pyrit/.env.local` |
+| Omitted or `null` | Auto-discover `~/.pyrit/.env` and `~/.pyrit/.env.local` |
 | `[]` (empty list) | Load **no** environment files                            |
 | List of paths     | Load **only** the specified files (defaults are skipped) |
 
@@ -205,7 +205,7 @@ References must occupy the entire value. `kv:` is the canonical Key Vault prefix
 
 A Key Vault reference must use a full HTTPS secret URL from the bootstrap document's vault. Supported vault DNS suffixes are `.vault.azure.net`, `.vault.azure.cn`, and `.vault.usgovcloudapi.net`. An unversioned URL reads the latest secret version at initialization. Include the version in the URL to pin it. Short names, malformed paths, arbitrary hosts, and cross-vault child references are rejected before a client is created.
 
-PyRIT does not cache referenced secrets. Each winning `kv:` occurrence performs a Key Vault read during initialization. References that lose to an existing process or earlier source are not fetched. Debug output is the exception: it resolves bootstrap references for the written file without changing runtime precedence.
+PyRIT does not cache referenced secrets. Each winning `kv:` occurrence performs a Key Vault read during initialization. References that lose to an existing process or earlier source are not fetched. The standalone exporter described below resolves bootstrap references independently and does not change runtime precedence.
 
 ```dotenv
 LATEST_KEY_URI="kv:https://my-vault.vault.azure.net/secrets/openai-chat-key"
@@ -228,17 +228,18 @@ Non-strict mode does not suppress operational failures. Missing secrets, authent
 
 Key Vault clients use an explicit Azure retry policy with up to three retries and exponential backoff. Bootstrap parsing, invalid or missing secrets, authentication, authorization, and Azure transport failures are raised as `KeyVaultInitializationException` with the original exception preserved as the cause. The exception remains `ValueError`-compatible for callers migrating from the previous contract.
 
-### `env_akv_write_env`
+### Exporting AKV Configuration for Debugging
 
-Defaults to `false`. Set it to `true` only while debugging to write a fully resolved bootstrap document to `~/.pyrit/.env`:
+Environment initialization never writes secrets to disk. To inspect an AKV-only configuration explicitly from a source checkout, run the standalone helper:
 
-```yaml
-env_akv_write_env: true
+```powershell
+python -m build_scripts.export_akv_environment `
+  --secret-url https://my-vault.vault.azure.net/secrets/my-pyrit-env
 ```
 
-The written file contains only bootstrap assignments, comments, and fully resolved child-secret values. It excludes unrelated process and `.env.local` values, safely round-trips terminal secret text, and is always named `.env`, never `.env.new`.
+Repeat `--secret-url` to preserve multiple bootstrap documents in load order. The helper writes `~/.pyrit/.env_akv` by default. This file is not auto-loaded by PyRIT and excludes process, `.env`, explicit file, and `.env.local` values.
 
-PyRIT refuses debug mode when `~/.pyrit/.env` already exists; rename or remove the existing file first. The file is created with owner-only permissions where supported and replaced atomically, but it contains plaintext secrets. Remove it when debugging is complete. `.env.local` still loads afterward and can override runtime values without changing the generated file.
+The helper resolves child-secret references and writes plaintext secrets with owner-only permissions where supported. It refuses to overwrite an existing path; remove the file when debugging is complete. Use `--output` to select a different path and `--non-strict` to skip malformed entries or references with warnings.
 
 ### `silent`
 
@@ -365,7 +366,6 @@ initializers:
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 # env_akv_strict: true
-# env_akv_write_env: false  # Debug only: writes fully resolved plaintext secrets
 
 # Optional plaintext local patch or non-Azure workflow
 # env_files:
