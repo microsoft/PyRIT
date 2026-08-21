@@ -594,13 +594,22 @@ class ServerLauncher:
                     break
                 await asyncio.sleep(min(_STARTUP_POLL_INTERVAL, remaining))
 
-            await asyncio.to_thread(self._print_log_tail)
+            log_tail = await asyncio.to_thread(self._read_log_tail)
+            await asyncio.to_thread(self._print_log_tail, tail=log_tail)
             process_stopped = await asyncio.to_thread(self.stop)
             cleanup_attempted = True
             cleanup_message = "" if process_stopped else " The spawned backend process could not be stopped."
+            preload_message = ""
+            if "loading datasets" in log_tail.casefold():
+                preload_message = (
+                    " Dataset preloading is still in progress. Remove load_default_datasets from the config "
+                    "to fetch only scenario-requested datasets on demand, or increase server.startup_timeout "
+                    "if the full preload is intentional."
+                )
             raise RuntimeError(
                 f"pyrit_backend did not become healthy within {startup_timeout}s. "
-                f"Check the server logs ({self._log_path}) or start it manually with: pyrit_backend.{cleanup_message}"
+                f"Check the server logs ({self._log_path}) or start it manually with: pyrit_backend."
+                f"{preload_message}{cleanup_message}"
             )
         finally:
             if not startup_succeeded and not cleanup_attempted and self._process is not None:
@@ -629,9 +638,9 @@ class ServerLauncher:
             return ""
         return "".join(lines[-max_lines:]).rstrip()
 
-    def _print_log_tail(self) -> None:
+    def _print_log_tail(self, *, tail: str | None = None) -> None:
         """Echo the tail of the backend log to stderr, if any is available."""
-        tail = self._read_log_tail()
+        tail = self._read_log_tail() if tail is None else tail
         if tail:
             print(f"\n--- pyrit_backend log ({self._log_path}) ---", file=sys.stderr)
             print(tail, file=sys.stderr)
