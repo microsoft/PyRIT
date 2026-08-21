@@ -675,6 +675,8 @@ class TestTargetInitializerAdversarialRoundRobin:
         member = registry.instances.get(member_name)
         assert isinstance(member, OpenAIChatTarget)
         assert registry.instances.get("adversarial_chat") is member
+        if slot_index == 0:
+            assert registry.instances.get("adversarial_chat_primary") is member
 
     @pytest.mark.parametrize("slot_count", [2, 3])
     async def test_multiple_slots_publish_ordered_round_robin(self, slot_count: int) -> None:
