@@ -17,7 +17,7 @@ import mimetypes
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
@@ -36,6 +36,9 @@ from pyrit.backend.models.converters import (
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
 from pyrit.registry.components import ConverterRegistry
+
+if TYPE_CHECKING:
+    from pyrit.converter import ConverterResult
 
 
 class ConverterService:
@@ -336,13 +339,13 @@ class ConverterService:
         Returns:
             Tuple of (steps, final_value, final_type).
         """
-        current_value = initial_value
-        current_type = initial_type
+        current_value: str = initial_value
+        current_type: PromptDataType = initial_type
         steps: list[PreviewStep] = []
 
         for conv_id, conv_type, conv_obj in converters:
             input_value, input_type = current_value, current_type
-            result = await conv_obj.convert_async(prompt=current_value, input_type=current_type)
+            result: ConverterResult = await conv_obj.convert_async(prompt=current_value, input_type=current_type)
             current_value, current_type = result.output_text, result.output_type
 
             steps.append(

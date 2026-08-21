@@ -42,7 +42,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
         try:
             dataset = SeedDataset.from_yaml_file(file_path)
             # Use the dataset_name from the YAML if available, otherwise use filename
-            self._dataset_name = (
+            self._dataset_name: str = (
                 getattr(dataset, "dataset_name", None) or getattr(dataset, "name", None) or file_path.stem
             )
         except Exception as e:
