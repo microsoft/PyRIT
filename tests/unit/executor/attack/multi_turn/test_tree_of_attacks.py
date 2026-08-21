@@ -2062,11 +2062,13 @@ class TestTreeOfAttacksErrorHandling:
         attack = attack_builder.with_default_mocks().build()
         context = helpers.create_basic_context()
         conversation_id = str(uuid.uuid4())
+        original_response_id = uuid.uuid4()
         scored_response = MessagePiece(
             role="assistant",
             original_value="scored response",
             converted_value="scored response",
             conversation_id=conversation_id,
+            original_prompt_id=original_response_id,
         )
         later_response = MessagePiece(
             role="assistant",
@@ -2079,7 +2081,7 @@ class TestTreeOfAttacksErrorHandling:
             score_value_description="best score",
             score_type="float_scale",
             score_rationale="best scored response",
-            message_piece_id=str(scored_response.id),
+            message_piece_id=str(original_response_id),
             scorer_class_identifier=attack._objective_scorer.get_identifier(),
             objective=context.objective,
         )
@@ -2089,15 +2091,13 @@ class TestTreeOfAttacksErrorHandling:
         with patch.object(
             attack._memory,
             "get_message_pieces",
-            side_effect=lambda **kwargs: (
-                [scored_response] if kwargs.get("prompt_ids") else [scored_response, later_response]
-            ),
+            return_value=[scored_response, later_response],
         ):
             result = attack._create_failure_result(context)
 
         assert result.last_response is scored_response
         assert result.last_score is best_score
-        assert str(result.last_score.message_piece_id) == str(result.last_response.id)
+        assert str(result.last_score.message_piece_id) == str(result.last_response.original_prompt_id)
 
     async def test_attack_handles_all_nodes_failing(self, attack_builder, helpers, node_factory):
         """Test attack behavior when all nodes fail."""

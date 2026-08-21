@@ -2363,12 +2363,19 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             if not message_piece_id:
                 return None
 
-            scored_responses = self._memory.get_message_pieces(
+            responses = self._memory.get_message_pieces(
                 conversation_id=conversation_id,
-                prompt_ids=[message_piece_id],
                 role="assistant",
             )
-            return scored_responses[0] if scored_responses else None
+            return next(
+                (
+                    response
+                    for response in responses
+                    if str(response.id) == str(message_piece_id)
+                    or str(response.original_prompt_id) == str(message_piece_id)
+                ),
+                None,
+            )
 
         return self._get_last_response_from_conversation(conversation_id)
 
