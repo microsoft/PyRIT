@@ -352,7 +352,6 @@ class TestScenarioInitialization2:
         assert scenario._max_concurrency == 4
         assert scenario._memory_labels == {}
 
-    @pytest.mark.asyncio
     async def test_initialize_async_validates_target_requirements(self, mock_objective_target):
         """Test that initialize_async validates objective_target against TARGET_REQUIREMENTS."""
         scenario = ConcreteScenario(name="Test Scenario", version=1)
@@ -363,7 +362,6 @@ class TestScenarioInitialization2:
 
         mock_validate.assert_called_once_with(target=mock_objective_target)
 
-    @pytest.mark.asyncio
     async def test_initialize_async_propagates_target_requirements_error(self, mock_objective_target):
         """Test that initialize_async surfaces errors from TARGET_REQUIREMENTS.validate."""
         scenario = ConcreteScenario(name="Test Scenario", version=1)
