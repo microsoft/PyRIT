@@ -15,7 +15,6 @@ import pytest
 
 import pyrit.backend.services.scenario_configuration_resolver as _resolver_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
-from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_run_service import (
     _DEFAULT_MAX_CONCURRENT_RUNS,
     ScenarioRunService,
@@ -1096,7 +1095,7 @@ class TestResolveTechniquesAndConverters:
 
     def test_plain_technique_no_converters(self, mock_memory) -> None:
         with _patch_converter_registry({}):
-            enums, converters = ScenarioConfigurationResolver.resolve_techniques_and_converters(
+            enums, converters = _resolver_mod.ScenarioConfigurationResolver.resolve_techniques_and_converters(
                 tokens=["role_play"], technique_class=_StubTechnique, scenario_name="x"
             )
         assert enums == [_StubTechnique.ROLE_PLAY]
@@ -1105,7 +1104,7 @@ class TestResolveTechniquesAndConverters:
     def test_single_converter_appended(self, mock_memory) -> None:
         conv = MagicMock(spec=Converter)
         with _patch_converter_registry({"translation_spanish": conv}):
-            enums, converters = ScenarioConfigurationResolver.resolve_techniques_and_converters(
+            enums, converters = _resolver_mod.ScenarioConfigurationResolver.resolve_techniques_and_converters(
                 tokens=["role_play:converter.translation_spanish"],
                 technique_class=_StubTechnique,
                 scenario_name="x",
@@ -1116,7 +1115,7 @@ class TestResolveTechniquesAndConverters:
     def test_aggregate_token_applies_converter_to_all_concrete(self, mock_memory) -> None:
         conv = MagicMock(spec=Converter)
         with _patch_converter_registry({"c1": conv}):
-            enums, converters = ScenarioConfigurationResolver.resolve_techniques_and_converters(
+            enums, converters = _resolver_mod.ScenarioConfigurationResolver.resolve_techniques_and_converters(
                 tokens=["easy:converter.c1"], technique_class=_StubTechnique, scenario_name="x"
             )
         assert enums == [_StubTechnique.EASY]
@@ -1126,7 +1125,7 @@ class TestResolveTechniquesAndConverters:
         c1 = MagicMock(spec=Converter)
         c2 = MagicMock(spec=Converter)
         with _patch_converter_registry({"c1": c1, "c2": c2}):
-            _, converters = ScenarioConfigurationResolver.resolve_techniques_and_converters(
+            _, converters = _resolver_mod.ScenarioConfigurationResolver.resolve_techniques_and_converters(
                 tokens=["role_play:converter.c1:converter.c2"],
                 technique_class=_StubTechnique,
                 scenario_name="x",
@@ -1137,7 +1136,7 @@ class TestResolveTechniquesAndConverters:
         c1 = MagicMock(spec=Converter)
         c2 = MagicMock(spec=Converter)
         with _patch_converter_registry({"c1": c1, "c2": c2}):
-            _, converters = ScenarioConfigurationResolver.resolve_techniques_and_converters(
+            _, converters = _resolver_mod.ScenarioConfigurationResolver.resolve_techniques_and_converters(
                 tokens=["easy:converter.c1", "role_play:converter.c2"],
                 technique_class=_StubTechnique,
                 scenario_name="x",
@@ -1149,7 +1148,7 @@ class TestResolveTechniquesAndConverters:
     def test_unknown_converter_raises(self, mock_memory) -> None:
         with _patch_converter_registry({"known": MagicMock(spec=Converter)}):
             with pytest.raises(ValueError, match="not a registered converter"):
-                ScenarioConfigurationResolver.resolve_techniques_and_converters(
+                _resolver_mod.ScenarioConfigurationResolver.resolve_techniques_and_converters(
                     tokens=["role_play:converter.missing"],
                     technique_class=_StubTechnique,
                     scenario_name="x",
@@ -1158,7 +1157,7 @@ class TestResolveTechniquesAndConverters:
     def test_unknown_modifier_prefix_raises(self, mock_memory) -> None:
         with _patch_converter_registry({}):
             with pytest.raises(ValueError, match="Unknown technique modifier"):
-                ScenarioConfigurationResolver.resolve_techniques_and_converters(
+                _resolver_mod.ScenarioConfigurationResolver.resolve_techniques_and_converters(
                     tokens=["role_play:scorer.something"],
                     technique_class=_StubTechnique,
                     scenario_name="x",
@@ -1167,7 +1166,7 @@ class TestResolveTechniquesAndConverters:
     def test_unknown_base_technique_raises(self, mock_memory) -> None:
         with _patch_converter_registry({}):
             with pytest.raises(ValueError, match="not found for scenario"):
-                ScenarioConfigurationResolver.resolve_techniques_and_converters(
+                _resolver_mod.ScenarioConfigurationResolver.resolve_techniques_and_converters(
                     tokens=["nope:converter.c1"],
                     technique_class=_StubTechnique,
                     scenario_name="x",
