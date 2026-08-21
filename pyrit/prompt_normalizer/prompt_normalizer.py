@@ -216,7 +216,7 @@ class PromptNormalizer:
             "conversation_id",
         ]
 
-        return await batch_task_async(
+        results: list[Message] = await batch_task_async(
             prompt_target=target,
             batch_size=batch_size,
             items_to_batch=batch_items,
@@ -224,6 +224,7 @@ class PromptNormalizer:
             task_arguments=batch_item_keys,
             target=target,
         )
+        return results
 
     async def convert_values_async(
         self,

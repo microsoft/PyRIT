@@ -69,27 +69,26 @@ from pyrit.models.messages import (
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
-from pyrit.models.messages.chat_message import (
-    ALLOWED_CHAT_MESSAGE_ROLES,
-    ChatMessage,
-    ChatMessagesDataset,
-    ToolCall,
-)
+from pyrit.models.messages.chat_message import ALLOWED_CHAT_MESSAGE_ROLES, ChatMessage, ChatMessagesDataset, ToolCall
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.conversation_retry import ConversationRetry, ConversationRetryReason
-from pyrit.models.parameter import (
-    ComponentType,
-    Parameter,
-    ParameterDestination,
-    RegistryReference,
-    display_choices,
-)
+from pyrit.models.parameter import ComponentType, Parameter, ParameterDestination, RegistryReference, display_choices
 from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
 from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunState
 from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
-from pyrit.models.score import Score, ScoreType, UnvalidatedScore
+from pyrit.models.score import (
+    Condition,
+    ContentScorable,
+    MatchesObjective,
+    MessageScorable,
+    Scorable,
+    Score,
+    ScoreType,
+    ScoringExpectation,
+    UnvalidatedScore,
+)
 
 # Seeds - import from new seeds submodule for forward compatibility
 # Also keep imports from old locations for backward compatibility
@@ -143,6 +142,7 @@ __all__ = [
     "ComponentIdentifier",
     "ComponentType",
     "compute_eval_hash",
+    "Condition",
     "config_hash",
     "ConverterIdentifier",
     "Conversation",
@@ -151,6 +151,7 @@ __all__ = [
     "ConversationRetryReason",
     "ConversationStats",
     "ConversationType",
+    "ContentScorable",
     "construct_response_from_request",
     "display_choices",
     "EmbeddingData",
@@ -178,9 +179,11 @@ __all__ = [
     "JSON_SCHEMA_METADATA_KEY",
     "SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY",
     "JsonSchemaDefinition",
+    "MatchesObjective",
     "MEDIA_PATH_DATA_TYPES",
     "Message",
     "MessagePiece",
+    "MessageScorable",
     "Modality",
     "NextMessageSystemPromptPaths",
     "ObjectiveTargetEvaluationIdentifier",
@@ -194,8 +197,10 @@ __all__ = [
     "QuestionChoice",
     "REGISTRY_NAME_PATTERN",
     "ScaleDescription",
+    "Scorable",
     "Score",
     "ScoreType",
+    "ScoringExpectation",
     "ScenarioEvaluationIdentifier",
     "ScorerEvaluationIdentifier",
     "ScorerIdentifier",

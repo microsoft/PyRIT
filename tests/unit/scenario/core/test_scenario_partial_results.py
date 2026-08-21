@@ -18,6 +18,7 @@ from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioRunState
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 
@@ -33,7 +34,7 @@ def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
 @pytest.fixture
 def mock_objective_target():
     """Create a mock objective target for testing."""
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = ComponentIdentifier(
         class_name="MockTarget",
         class_module="test",

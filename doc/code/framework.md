@@ -309,6 +309,8 @@ The below talks about responsibilities of most modules in the PyRIT library
 - Models includes `identifiers` which are descriptions of the core components. And along with the registry, can often recreate those components.
 - Models includes types passed around between components, and should be prefered in REST
 - models should never depend on anything except lightweight Python (the standard library and pydantic) and pyrit.common
+- Store metadata on the narrowest model that owns it (for example, request or response data belongs on `MessagePiece`, not `Message`). Use explicit typed fields for stable, core, or independently queried data.
+- For shared metadata, define a lightweight value object in `pyrit.models` that owns its keys and provides symmetric `to_metadata()` and `from_metadata()` methods. Use `JsonResponseConfig` as the pattern for data stored in `MessagePiece.prompt_metadata`.
 
 ## [Normalizers](./targets/11_message_normalizer)
 

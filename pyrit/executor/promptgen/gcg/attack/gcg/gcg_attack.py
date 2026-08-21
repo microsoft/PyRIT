@@ -170,7 +170,7 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         self._candidate_filter = candidate_filter
 
     def _resolve_sampling(self) -> SamplingStrategy:
-        sampling = getattr(self, "_sampling", None)
+        sampling: SamplingStrategy | None = getattr(self, "_sampling", None)
         if sampling is not None:
             return sampling
         return StandardGCGSampling()
