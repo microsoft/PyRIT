@@ -89,7 +89,10 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         Returns:
             frozenset[type[Condition]]: The condition types this composite routes.
         """
-        return frozenset().union(*(scorer.matched_conditions() for scorer in self._scorers))
+        conditions: set[type[Condition]] = set()
+        for scorer in self._scorers:
+            conditions.update(scorer.matched_conditions())
+        return frozenset(conditions)
 
     def required_conditions(self) -> frozenset[type[Condition]]:
         """
@@ -98,7 +101,10 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         Returns:
             frozenset[type[Condition]]: The required condition types.
         """
-        return frozenset().union(*(scorer.required_conditions() for scorer in self._scorers))
+        conditions: set[type[Condition]] = set()
+        for scorer in self._scorers:
+            conditions.update(scorer.required_conditions())
+        return frozenset(conditions)
 
     async def _score_prepared_message_async(
         self,

@@ -359,7 +359,7 @@ class CopilotAuthenticator(Authenticator):
         """
         from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]
 
-        bearer_token = None
+        bearer_token: str | None = None
         token_expires_in = None
 
         async with async_playwright() as playwright:
@@ -393,7 +393,10 @@ class CopilotAuthenticator(Authenticator):
                                     try:
                                         data = json.loads(text)
                                         if "access_token" in data:
-                                            bearer_token = data["access_token"]
+                                            token = data["access_token"]
+                                            if not isinstance(token, str):
+                                                raise TypeError("OAuth access_token must be a string")
+                                            bearer_token = token
                                             token_expires_in = data.get("expires_in")
                                             logger.info("Captured bearer token from JSON response.")
 
