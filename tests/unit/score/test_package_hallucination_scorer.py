@@ -22,6 +22,46 @@ class TestPackageHallucinationScorerExtraction:
         text = "import requests\nimport numpy as np\nfrom flask import Flask\n"
         assert scorer._extract_package_references(text) == {"requests", "numpy", "flask"}
 
+    def test_python_extracts_every_package_on_a_comma_import(self):
+        """
+        ``import a, b`` is a single valid statement naming two packages. The previous
+        pattern captured only the first, so a hallucinated package hidden as the second
+        or later item on a comma list was never compared against known_packages and the
+        scorer returned False.
+        """
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        assert scorer._extract_package_references("import os, hallucinated_pkg") == {
+            "os",
+            "hallucinated_pkg",
+        }
+        assert scorer._extract_package_references("import os, sys, evilpkg") == {"os", "sys", "evilpkg"}
+
+    def test_python_comma_import_with_alias_ignores_the_alias(self):
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        # "np" is an alias, not a package, and must not be reported as a reference.
+        assert scorer._extract_package_references("import numpy as np, ghostlib") == {"numpy", "ghostlib"}
+
+    def test_python_comma_import_reduces_dotted_paths_to_top_level(self):
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        assert scorer._extract_package_references("import os.path, a.b.c") == {"os", "a"}
+
+    def test_python_comma_import_preserves_hyphenated_names(self):
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        assert scorer._extract_package_references("import scikit-learn, ghost-lib") == {
+            "scikit-learn",
+            "ghost-lib",
+        }
+
+    def test_python_comma_import_flags_the_hidden_package(self):
+        """End to end: the hallucinated second import must make the scorer return True."""
+        scorer = PackageHallucinationScorer(known_packages={"os", "sys"}, ecosystem=PackageEcosystem.PYTHON)
+        references = scorer._extract_package_references("import os, sys, definitely_not_a_real_package")
+        assert "definitely_not_a_real_package" in references
+
+    def test_python_all_real_comma_import_does_not_false_positive(self):
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        assert scorer._extract_package_references("import numpy, requests") == {"numpy", "requests"}
+
     def test_ruby_extracts_require_and_gem(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
         text = "require 'json'\ngem 'rails'\n"
