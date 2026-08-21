@@ -211,7 +211,9 @@ class ScenarioService:
                         task.add_done_callback(clear_estimate_task)
 
             if task is not None:
-                return await asyncio.shield(task)
+                estimate = await asyncio.shield(task)
+                assert isinstance(estimate, ScenarioRunSizeEstimate)
+                return estimate
             if wait_for_capacity is not None:
                 await asyncio.shield(wait_for_capacity)
 
