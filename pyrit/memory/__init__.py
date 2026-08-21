@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         ScenarioHistoryKeysetCursor,
         ScenarioHistoryRunRecord,
         ScenarioHistoryUnitRecord,
-        ScenarioProgressKeysetCursor,
         ScenarioRunStateRecord,
     )
     from pyrit.memory.memory_models import AttackResultEntry, EmbeddingDataEntry, PromptMemoryEntry, SeedEntry
@@ -66,7 +65,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioHistoryKeysetCursor": "pyrit.memory.memory_interface",
     "ScenarioHistoryRunRecord": "pyrit.memory.memory_interface",
     "ScenarioHistoryUnitRecord": "pyrit.memory.memory_interface",
-    "ScenarioProgressKeysetCursor": "pyrit.memory.memory_interface",
     "ScenarioRunStateRecord": "pyrit.memory.memory_interface",
     "PromptMemoryEntry": "pyrit.memory.memory_models",
     "SeedEntry": "pyrit.memory.memory_models",

@@ -158,14 +158,9 @@ describe('ScenarioHistory', () => {
         completed_at: null,
         total_attacks: 0,
         completed_attacks: 0,
-        successful_attacks: undefined,
+        successful_attacks: 0,
         objective_achieved_rate: 0,
-        failed_attacks: [{
-          atomic_attack_name: 'legacy-attack',
-          objective: 'Legacy objective',
-          total_retries: 0,
-        }],
-        error_attacks: undefined,
+        error_attacks: 1,
         total_retries: 0,
         labels: {},
         target: {
