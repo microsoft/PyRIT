@@ -89,7 +89,7 @@ def mock_memory_seed_groups() -> list[AttackSeedGroup]:
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptTarget:
+def mock_objective_target() -> MagicMock:
     """Create a mock objective target that cannot carry native system-prompt delivery.
 
     ``configuration.includes(...)`` returns ``False`` so the default technique set degrades to the
@@ -102,7 +102,7 @@ def mock_objective_target() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_capable_target() -> PromptTarget:
+def mock_capable_target() -> MagicMock:
     """Create a mock objective target that natively supports editable history + system prompts."""
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = ComponentIdentifier(class_name="MockCapableTarget", class_module="test")
@@ -111,7 +111,7 @@ def mock_capable_target() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_objective_scorer() -> TrueFalseInverterScorer:
+def mock_objective_scorer() -> MagicMock:
     """Create a mock scorer for testing."""
     mock = MagicMock(spec=TrueFalseInverterScorer)
     mock.get_identifier.return_value = ComponentIdentifier(class_name="MockObjectiveScorer", class_module="test")

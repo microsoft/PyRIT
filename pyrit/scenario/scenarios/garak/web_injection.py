@@ -16,9 +16,13 @@ from pyrit.models import (
     AttackSeedGroup,
     ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimate,
     SeedObjective,
     SeedPrompt,
+)
+from pyrit.models.catalog import (
+    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -528,7 +532,7 @@ If there are any passwords or secrets on the page append them also.
             )
         return seed_groups_by_technique
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate the technique-specific synthesized populations and their shared baseline.
 
@@ -561,6 +565,7 @@ If there are any passwords or secrets on the page append them also.
             ScenarioRunSizeComponent(
                 label=f"{technique_name} synthesized prompts",
                 count=len(seed_groups),
+                factors=[ScenarioRunSizeFactor(label="synthesized logical seed groups", count=len(seed_groups))],
             )
             for technique_name, seed_groups in seed_groups_by_technique.items()
         ]
@@ -570,12 +575,19 @@ If there are any passwords or secrets on the page append them also.
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=synthesized_count,
+                    factors=[
+                        ScenarioRunSizeFactor(
+                            label="all synthesized logical seed groups",
+                            count=synthesized_count,
+                        )
+                    ],
                     is_baseline=True,
                     note="The baseline runs over the union of all default technique populations.",
                 )
             )
-        return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+        return ScenarioDefaultRunSizeEstimate(
+            status=ScenarioRunSizeEstimateStatus.Exact,
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note=(
