@@ -37,9 +37,7 @@ def test_serialize_round_trips_terminal_values(value: str) -> None:
 
 def test_render_resolves_akv_only_values() -> None:
     document = (
-        (
-            "# AKV config\nBASE=bootstrap\nDERIVED=${BASE}\nAPI_KEY=kv:https://vault.vault.azure.net/secrets/api-key\n"
-        ),
+        ("# AKV config\nBASE=bootstrap\nDERIVED=${BASE}\nAPI_KEY=kv:https://vault.vault.azure.net/secrets/api-key\n"),
         "https://vault.vault.azure.net",
     )
     client = mock.MagicMock()

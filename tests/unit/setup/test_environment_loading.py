@@ -170,7 +170,7 @@ class TestLoadEnvironmentFiles:
                     new_callable=mock.AsyncMock,
                     return_value=("VALUE=akv\n", "https://vault.vault.azure.net"),
                 ),
-                mock.patch("pyrit.setup.environment_loading._load_environment_files") as mock_load_files,
+                mock.patch("pyrit.setup.environment_loading.load_environment_files") as mock_load_files,
             ):
                 await load_environment_async(
                     env_akv_ref=["https://vault.vault.azure.net/secrets/bootstrap"],
@@ -259,9 +259,7 @@ class TestLoadEnvironmentFiles:
         ],
         ids=["defaults", "akv", "file"],
     )
-    async def test_load_environment_async_skips_sources_when_python_dotenv_disabled(
-        self, env_akv_ref, env_files
-    ):
+    async def test_load_environment_async_skips_sources_when_python_dotenv_disabled(self, env_akv_ref, env_files):
         with (
             mock.patch.dict(
                 os.environ,
@@ -271,7 +269,7 @@ class TestLoadEnvironmentFiles:
             mock.patch(
                 "pyrit.setup.environment_loading._fetch_akv_document_async", new_callable=mock.AsyncMock
             ) as mock_fetch_akv,
-            mock.patch("pyrit.setup.environment_loading._load_environment_files") as mock_load_files,
+            mock.patch("pyrit.setup.environment_loading.load_environment_files") as mock_load_files,
         ):
             await load_environment_async(
                 env_akv_ref=env_akv_ref,
@@ -298,7 +296,7 @@ class TestLoadEnvironmentFiles:
     async def test_load_environment_async_rejects_multiple_bootstrap_urls_before_loading(self):
         with (
             mock.patch("pyrit.setup.environment_loading._fetch_akv_document_async") as mock_fetch,
-            mock.patch("pyrit.setup.environment_loading._load_environment_files") as mock_load_files,
+            mock.patch("pyrit.setup.environment_loading.load_environment_files") as mock_load_files,
             pytest.raises(ValueError, match="at most one"),
         ):
             await load_environment_async(
@@ -740,6 +738,7 @@ class TestLoadEnvironmentFiles:
 
         with pytest.raises(ValueError, match="Environment file not found"):
             load_environment_files(env_files=[nonexistent])
+
 
 def _create_mock_akv_clients() -> tuple[mock.MagicMock, mock.MagicMock]:
     credential = mock.MagicMock()

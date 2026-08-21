@@ -55,29 +55,8 @@ def load_environment_files(
     *,
     silent: bool = False,
     include_default_base: bool = True,
-) -> bool:
-    """
-    Load local environment files using PyRIT's standard precedence.
-
-    Returns:
-        bool: Whether at least one environment file was selected.
-    """
-    return _load_environment_files(
-        env_files=env_files,
-        silent=silent,
-        include_default_base=include_default_base,
-        ordinary_candidates=None,
-        override_candidates=None,
-    )
-
-
-def _load_environment_files(
-    env_files: Sequence[pathlib.Path] | None,
-    *,
-    silent: bool,
-    include_default_base: bool,
-    ordinary_candidates: dict[str, list[tuple[str, str | None]]] | None = None,
-    override_candidates: dict[str, list[tuple[str, str | None]]] | None = None,
+    _ordinary_candidates: dict[str, list[tuple[str, str | None]]] | None = None,
+    _override_candidates: dict[str, list[tuple[str, str | None]]] | None = None,
 ) -> bool:
     """
     Load environment files in the order they are provided.
@@ -92,8 +71,8 @@ def _load_environment_files(
             Defaults to False.
         include_default_base: If False and env_files is None, skips the default
             .env file while still loading .env.local. Defaults to True.
-        ordinary_candidates: Optional output mapping for non-overriding assignments.
-        override_candidates: Optional output mapping for ``.env.local`` assignments.
+        _ordinary_candidates: Internal output mapping for non-overriding assignments.
+        _override_candidates: Internal output mapping for ``.env.local`` assignments.
 
     Returns:
         True if at least one environment file was loaded, otherwise False.
@@ -133,8 +112,8 @@ def _load_environment_files(
         loaded = _load_dotenv_source(
             dotenv_path=env_file,
             override=env_file.name == ".env.local",
-            ordinary_candidates=ordinary_candidates,
-            override_candidates=override_candidates,
+            ordinary_candidates=_ordinary_candidates,
+            override_candidates=_override_candidates,
         )
         if not silent:
             _print_msg(f"Loaded environment file: {env_file}", quiet=silent, log=True)
@@ -466,12 +445,12 @@ async def load_environment_async(
         )
 
     await asyncio.to_thread(
-        _load_environment_files,
+        load_environment_files,
         env_files=env_files,
         silent=silent,
         include_default_base=not (env_akv_ref and env_files is None),
-        ordinary_candidates=ordinary_candidates,
-        override_candidates=override_candidates,
+        _ordinary_candidates=ordinary_candidates,
+        _override_candidates=override_candidates,
     )
     await _resolve_environment_candidates_async(
         process_environment=process_environment,
@@ -530,19 +509,17 @@ async def _resolve_environment_candidates_async(
 
     Raises:
         KeyVaultInitializationException: If strict validation or secret retrieval fails.
+        ValueError: If a referenced secret has no value.
     """
     parsed_references: list[tuple[str, str, str, str | None]] = []
     variable_names = ordinary_candidates.keys() | override_candidates.keys()
     for variable_name in variable_names:
         candidates = [
-            (value, vault_url, True)
-            for value, vault_url in reversed(override_candidates.get(variable_name, ()))
+            (value, vault_url, True) for value, vault_url in reversed(override_candidates.get(variable_name, ()))
         ]
         if variable_name in process_environment:
             candidates.append((process_environment[variable_name], None, False))
-        candidates.extend(
-            (value, vault_url, True) for value, vault_url in ordinary_candidates.get(variable_name, ())
-        )
+        candidates.extend((value, vault_url, True) for value, vault_url in ordinary_candidates.get(variable_name, ()))
         for value, expected_vault_url, resolve_reference in candidates:
             if not resolve_reference:
                 os.environ[variable_name] = value
@@ -560,9 +537,7 @@ async def _resolve_environment_candidates_async(
                         error=error,
                     )
                     raise wrapped_error from error
-                message = (
-                    f"Invalid AKV reference for environment variable '{variable_name}' will be skipped: {error}"
-                )
+                message = f"Invalid AKV reference for environment variable '{variable_name}' will be skipped: {error}"
                 if not silent:
                     print(f"WARNING: {message}")
                 logger.warning(message)

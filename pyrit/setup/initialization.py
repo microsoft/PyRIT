@@ -9,7 +9,7 @@ from pyrit.common.apply_defaults import reset_default_values
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.setup.environment_loading import (
     load_environment_async,
-    load_environment_files as _load_environment_files,
+    load_environment_files,
     validate_env_akv_strict,
 )
 
@@ -22,6 +22,8 @@ IN_MEMORY = "InMemory"
 SQLITE = "SQLite"
 AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
+
+_load_environment_files = load_environment_files
 
 
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
