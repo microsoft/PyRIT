@@ -42,7 +42,13 @@ class TestConfigurationLoader:
         assert config.initialization_scripts is None  # None means "use defaults"
         assert config.env_files is None  # None means "use defaults"
         assert config.env_akv_ref is None
+        assert config.env_akv_strict is True
         assert config.silent is False
+
+    @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
+    def test_rejects_non_boolean_env_akv_strict(self, invalid_value):
+        with pytest.raises(TypeError, match=r"env_akv_strict must be a bool"):
+            ConfigurationLoader(env_akv_strict=invalid_value)  # type: ignore[arg-type]
 
     def test_valid_memory_db_types_snake_case(self):
         """Test all valid memory database types in snake_case."""
@@ -147,6 +153,7 @@ class TestConfigurationLoader:
             "initialization_scripts": ["/path/to/script.py"],
             "env_files": ["/path/to/.env"],
             "env_akv_ref": ["https://vault.vault.azure.net/secrets/one"],
+            "env_akv_strict": False,
             "silent": True,
         }
         config = ConfigurationLoader.from_dict(data)
@@ -155,6 +162,7 @@ class TestConfigurationLoader:
         assert config.initialization_scripts == ["/path/to/script.py"]
         assert config.env_files == ["/path/to/.env"]
         assert config.env_akv_ref == ["https://vault.vault.azure.net/secrets/one"]
+        assert config.env_akv_strict is False
         assert config.silent is True
 
     def test_from_dict_filters_none_values(self):
@@ -245,6 +253,21 @@ silent: true
         assert "dataset licenses" in example_text
         assert "server.startup_timeout" in example_text
 
+    def test_from_yaml_rejects_quoted_env_akv_strict(self, tmp_path):
+        yaml_path = tmp_path / "quoted-boolean.yaml"
+        yaml_path.write_text('env_akv_strict: "false"\n', encoding="utf-8")
+
+        with pytest.raises(TypeError, match=r"env_akv_strict must be a bool"):
+            ConfigurationLoader.from_yaml_file(yaml_path)
+
+    def test_from_yaml_accepts_native_env_akv_strict(self, tmp_path):
+        yaml_path = tmp_path / "native-booleans.yaml"
+        yaml_path.write_text("env_akv_strict: false\n", encoding="utf-8")
+
+        config = ConfigurationLoader.from_yaml_file(yaml_path)
+
+        assert config.env_akv_strict is False
+
     def test_from_empty_yaml_file_raises_value_error(self, tmp_path):
         """Test that an empty YAML file raises a clear ValueError."""
         yaml_path = tmp_path / "empty.yaml"
@@ -321,13 +344,27 @@ class TestConfigurationLoaderResolvers:
         assert config.resolve_env_akv_ref() is None
 
     def testresolve_env_akv_ref_returns_configured_values(self):
-        """Test that configured AKV references are returned unchanged."""
-        refs = [
-            "https://vault.vault.azure.net/secrets/first",
-            "https://vault.vault.azure.net/secrets/second/version",
-        ]
+        """Test that the configured AKV references are returned unchanged."""
+        refs = ["https://vault.vault.azure.net/secrets/bootstrap"]
         config = ConfigurationLoader(env_akv_ref=refs)
         assert config.resolve_env_akv_ref() == refs
+
+    def test_env_akv_ref_allows_empty_list(self):
+        assert ConfigurationLoader(env_akv_ref=[]).env_akv_ref == []
+
+    @pytest.mark.parametrize("env_akv_ref", ["", "https://vault.vault.azure.net/secrets/one", [""], [None]])
+    def test_env_akv_ref_rejects_scalar_or_invalid_entries(self, env_akv_ref):
+        with pytest.raises(ValueError, match="env_akv_ref must"):
+            ConfigurationLoader(env_akv_ref=env_akv_ref)  # type: ignore[arg-type]
+
+    def test_env_akv_ref_rejects_multiple_bootstrap_urls(self):
+        with pytest.raises(ValueError, match="at most one"):
+            ConfigurationLoader(
+                env_akv_ref=[
+                    "https://vault.vault.azure.net/secrets/first",
+                    "https://vault.vault.azure.net/secrets/second",
+                ]
+            )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -348,22 +385,25 @@ class TestConfigurationLoaderInitialization:
         assert call_kwargs["initializers"] is None
         assert call_kwargs["env_files"] is None
         assert call_kwargs["env_akv_ref"] is None
+        assert call_kwargs["env_akv_strict"] is True
         assert call_kwargs["silent"] is False
 
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     async def test_initialize_pyrit_async_with_env_akv_ref(self, mock_init):
         """Test initialization forwards env_akv_ref to initialize_pyrit_async."""
-        refs = [
-            "https://vault.vault.azure.net/secrets/first",
-            "https://vault.vault.azure.net/secrets/second/version",
-        ]
-        config = ConfigurationLoader(memory_db_type="in_memory", env_akv_ref=refs)
+        refs = ["https://vault.vault.azure.net/secrets/bootstrap"]
+        config = ConfigurationLoader(
+            memory_db_type="in_memory",
+            env_akv_ref=refs,
+            env_akv_strict=False,
+        )
 
         await config.initialize_pyrit_async()
 
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs["env_akv_ref"] == refs
+        assert call_kwargs["env_akv_strict"] is False
 
     @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
     @mock.patch("pyrit.registry.InitializerRegistry")
