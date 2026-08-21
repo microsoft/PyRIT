@@ -109,7 +109,7 @@ def load_environment_files(
                 raise ValueError(f"Environment file not found: {env_file}")
 
     for env_file in selected_files:
-        loaded = _load_dotenv_source(
+        _load_dotenv_source(
             dotenv_path=env_file,
             override=env_file.name == ".env.local",
             ordinary_candidates=_ordinary_candidates,
@@ -129,12 +129,9 @@ def _load_dotenv_source(
     dotenv_path: pathlib.Path | None = None,
     document: str | None = None,
     expected_vault_url: str | None = None,
-) -> bool:
+) -> None:
     """
     Load one dotenv source and record values that participate in precedence.
-
-    Returns:
-        bool: Whether python-dotenv loaded at least one assignment.
 
     Raises:
         ValueError: If both or neither source representations are provided.
@@ -142,7 +139,7 @@ def _load_dotenv_source(
     if (dotenv_path is None) == (document is None):
         raise ValueError("Exactly one dotenv_path or document must be provided.")
     if os.environ.get("PYTHON_DOTENV_DISABLED", "").casefold() in _DOTENV_DISABLED_VALUES:
-        return False
+        return
 
     source = DotEnv(
         dotenv_path=dotenv_path,
@@ -151,16 +148,15 @@ def _load_dotenv_source(
         interpolate=True,
     )
     assignment_values = source.dict()
-    loaded = source.set_as_environment_variables()
-    if ordinary_candidates is None or override_candidates is None or not loaded:
-        return loaded
+    source.set_as_environment_variables()
+    if ordinary_candidates is None or override_candidates is None:
+        return
 
     candidates = override_candidates if override else ordinary_candidates
     for variable_name, loaded_value in assignment_values.items():
         if loaded_value is None:
             continue
         candidates.setdefault(variable_name, []).append((loaded_value, expected_vault_url))
-    return loaded
 
 
 def _print_msg(message: str, quiet: bool, log: bool) -> None:
