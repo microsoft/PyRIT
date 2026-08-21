@@ -1055,7 +1055,6 @@ class TestBlockedScoringDefaults:
     short-circuits at all in `_score_response_async`.
     """
 
-    @pytest.mark.asyncio
     async def test_score_response_delegates_to_scorer_for_blocked(self, attack_builder):
         """A blocked response goes straight through Scorer.score_response_async — no TAP-side
         short-circuit. The scorer is responsible for producing 0.0 via its unified fallback."""
@@ -1124,7 +1123,6 @@ class TestBlockedScoringDefaults:
         assert node.objective_score is not None
         assert node.objective_score.get_value() == 0.0
 
-    @pytest.mark.asyncio
     async def test_score_response_delegates_to_scorer_for_unknown_error(self, attack_builder):
         """Non-blocked errors (e.g. 'unknown') also flow through the scorer; no special-casing."""
         builder = attack_builder.with_default_mocks()
@@ -1923,7 +1921,6 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores["AuxScorer1"].get_value() == 0.8
         assert node.auxiliary_scores["AuxScorer2"].get_value() == 0.6
 
-    @pytest.mark.asyncio
     async def test_node_single_turn_target_generates_new_conv_id(self, node_components):
         """Test that single-turn targets get a fresh conversation_id before each send."""
         node_components["objective_target"].capabilities.supports_multi_turn = False
@@ -1951,7 +1948,6 @@ class TestTreeOfAttacksNode:
         # Conversation ID should have changed for single-turn target
         assert node.objective_target_conversation_id != original_conv_id
 
-    @pytest.mark.asyncio
     async def test_node_multi_turn_target_keeps_conv_id(self, node_components):
         """Test that multi-turn targets keep the same conversation_id."""
         node_components["objective_target"].capabilities.supports_multi_turn = True
@@ -2187,7 +2183,6 @@ class TestTreeOfAttacksVisualization:
         assert context.tree_visualization.parent(node_0_child_1._vis_node_id).identifier == node_0._vis_node_id
         assert context.tree_visualization.parent(node_1_child_0._vis_node_id).identifier == node_1._vis_node_id
 
-    @pytest.mark.asyncio
     async def test_surviving_node_gets_child_vis_nodes_per_depth(self, attack_builder, node_factory, helpers):
         """Test that a surviving node gets a new child vis node at each depth (not appended scores)."""
         attack = (
@@ -2731,7 +2726,6 @@ class TestTAPScenarios:
     Each scenario is run twice: once with a multi-turn target and once with a single-turn target.
     """
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("supports_multi_turn", [True, False], ids=["multi_turn", "single_turn"])
     @pytest.mark.parametrize(
         "tree_width, tree_depth, branching_factor, threshold, "
