@@ -706,8 +706,9 @@ describe('ScenarioRunEstimate', () => {
         />
       </TestWrapper>,
     )
-    expect(screen.getByText('Exact total')).toBeInTheDocument()
-    expect(screen.getByText('unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Select targets')).toBeInTheDocument()
+    expect(screen.getByText('to calculate')).toBeInTheDocument()
+    expect(screen.queryByText('Exact total')).not.toBeInTheDocument()
   })
 
   it('does not render implementation terminology in the shared estimate surfaces', () => {

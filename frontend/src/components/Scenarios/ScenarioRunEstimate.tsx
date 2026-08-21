@@ -234,7 +234,9 @@ function resultOperand(estimate: ScenarioRunEstimate): CalculationOperand {
       result: true,
     }
   }
-  return { id: 'result', value: 'Exact total', label: 'unavailable', result: true }
+  return estimate.scope === 'default'
+    ? { id: 'result', value: 'Select targets', label: 'to calculate', result: true }
+    : { id: 'result', value: 'Confirmed', label: 'at launch', result: true }
 }
 
 function adaptivePlannedCalculation(estimate: ScenarioRunEstimate): RunCalculation {
