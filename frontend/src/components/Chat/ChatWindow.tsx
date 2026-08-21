@@ -561,9 +561,7 @@ export default function ChatWindow({
     if (message.content) {
       inputBox.setText(message.content)
     }
-    if (!message.attachments) { return }
-
-    for (const attachment of message.attachments) {
+    for (const attachment of message.attachments ?? []) {
       if (attachment.type !== 'file') {
         inputBox.addAttachment(attachment)
       }
