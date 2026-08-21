@@ -133,6 +133,83 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
         assert len(added_scores) == 1
 
 
+async def test_float_scale_threshold_scorer_attributes_result_to_aggregate_not_first_score():
+    """
+    The threshold decision is made on the aggregate, so the resulting score must be described
+    by the aggregate too. Previously the category, rationale and metadata were taken from
+    scores[0], so a scorer returning one score per harm category (AzureContentFilterScorer)
+    produced a True score labelled with whichever category happened to be first, even when
+    that category scored 0.0.
+    """
+
+    memory = MagicMock(MemoryInterface)
+    mock_identifier = ComponentIdentifier(class_name="MockScorer", class_module="test.mock")
+
+    prompt_id = uuid.uuid4()
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._score_nested_message_async = AsyncMock(
+        return_value=[
+            Score(
+                score_value="0.0",
+                score_type="float_scale",
+                score_category=["Hate"],
+                score_rationale="Hate rationale",
+                score_metadata={"azure_severity": 0},
+                message_piece_id=prompt_id,
+                score_value_description="",
+                scorer_class_identifier=mock_identifier,
+                id=uuid.uuid4(),
+            ),
+            Score(
+                score_value="0.857",
+                score_type="float_scale",
+                score_category=["Violence"],
+                score_rationale="Violence rationale",
+                score_metadata={"azure_severity": 6},
+                message_piece_id=prompt_id,
+                score_value_description="",
+                scorer_class_identifier=mock_identifier,
+                id=uuid.uuid4(),
+            ),
+        ]
+    )
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+        score = (await threshold_scorer.score_text_async(text="mock example"))[0]
+
+    # Violence (0.857) is what crossed the threshold; Hate scored 0.0.
+    assert score.get_value() is True
+
+    # The category that fired must not be dropped in favour of the first score's.
+    assert "Violence" in (score.score_category or [])
+
+    # The rationale must mention the score that actually crossed, not only the first one.
+    assert "Violence rationale" in score.score_rationale
+
+    # The original float value is the aggregate, so the metadata must not be the first
+    # score's severity of 0 sitting next to an original_float_value of 0.857.
+    assert score.score_metadata["original_float_value"] == pytest.approx(0.857)
+    assert score.score_metadata["azure_severity"] != 0
+
+
+async def test_float_scale_threshold_scorer_single_score_attribution_unchanged():
+    """A single wrapped score must keep its own category and rationale, as before."""
+
+    memory = MagicMock(MemoryInterface)
+    scorer = create_mock_float_scorer(0.9)
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+        score = (await threshold_scorer.score_text_async(text="mock example"))[0]
+
+    assert score.get_value() is True
+    assert score.score_category == ["mock category"]
+    assert "A mock rationale" in score.score_rationale
+    assert score.score_metadata["original_float_value"] == pytest.approx(0.9)
+
+
 async def test_float_scale_threshold_scorer_handles_empty_scores():
     """
     Test that FloatScaleThresholdScorer gracefully handles when the underlying scorer
