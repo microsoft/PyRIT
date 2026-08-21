@@ -280,6 +280,57 @@ class TestLoadEnvironmentFiles:
                 assert loaded is True
                 assert "DISABLED_VALUE" not in os.environ
 
+    async def test_load_environment_async_skips_sources_when_python_dotenv_disabled(self):
+        with (
+            mock.patch.dict(os.environ, {"PYTHON_DOTENV_DISABLED": "true"}, clear=True),
+            mock.patch(
+                "pyrit.setup.environment_loading._fetch_akv_document_async", new_callable=mock.AsyncMock
+            ) as mock_fetch_akv,
+            mock.patch("pyrit.setup.environment_loading._load_environment_files") as mock_load_files,
+        ):
+            await load_environment_async(
+                env_akv_ref=None,
+                env_files=None,
+                env_akv_strict=True,
+                silent=True,
+            )
+
+        mock_fetch_akv.assert_not_awaited()
+        mock_load_files.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("env_akv_ref", "env_files"),
+        [
+            (["https://vault.vault.azure.net/secrets/bootstrap"], None),
+            (None, [pathlib.Path("configured.env")]),
+        ],
+    )
+    async def test_load_environment_async_skips_configured_sources_when_python_dotenv_disabled(
+        self, env_akv_ref, env_files
+    ):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"PYTHON_DOTENV_DISABLED": "true", "AMBIENT_VALUE": "preserved"},
+                clear=True,
+            ),
+            mock.patch(
+                "pyrit.setup.environment_loading._fetch_akv_document_async", new_callable=mock.AsyncMock
+            ) as mock_fetch_akv,
+            mock.patch("pyrit.setup.environment_loading._load_environment_files") as mock_load_files,
+        ):
+            await load_environment_async(
+                env_akv_ref=env_akv_ref,
+                env_files=env_files,
+                env_akv_strict=True,
+                silent=True,
+            )
+
+            assert os.environ["AMBIENT_VALUE"] == "preserved"
+
+        mock_fetch_akv.assert_not_awaited()
+        mock_load_files.assert_not_called()
+
     async def test_runtime_does_not_fetch_akv_reference_overridden_by_env_local(self):
         credential, client = _create_mock_akv_clients()
         bootstrap_document = "API_KEY=kv:https://vault.vault.azure.net/secrets/api-key\nAKV_ONLY=akv\n"

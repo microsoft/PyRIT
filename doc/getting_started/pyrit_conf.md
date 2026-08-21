@@ -175,6 +175,8 @@ Environment loading preserves the historical non-transactional dotenv behavior. 
 
 When `env_akv_ref` is not configured, an empty `env_files` list or missing default files leaves existing process environment variables unchanged and initialization continues.
 
+`PYTHON_DOTENV_DISABLED` disables the complete PyRIT environment-loading step using python-dotenv's accepted true values (`1`, `true`, `t`, `yes`, and `y`, case-insensitive). When enabled, default discovery and configured `env_akv_ref` or `env_files` sources are skipped. Existing process environment variables remain unchanged.
+
 ### `env_akv_ref`
 
 Ordered Azure Key Vault secret URLs used to obtain bootstrap environment documents. This is the canonical configuration path. Each secret value contains dotenv-formatted entries. Authentication uses `DefaultAzureCredential`.

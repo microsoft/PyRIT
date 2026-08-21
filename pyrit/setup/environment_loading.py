@@ -394,6 +394,9 @@ def _key_vault_initialization_error(*, message: str, error: Exception) -> KeyVau
     """
     Create a contextual Key Vault exception without losing the original cause.
 
+    An upstream HTTP status is preserved when available. Failures without an
+    HTTP response use PyRIT's generic 500 status for opaque internal failures.
+
     Returns:
         KeyVaultInitializationException: Wrapped contextual exception.
     """
@@ -526,6 +529,9 @@ async def load_environment_async(
     Raises:
         ValueError: If a configured source or reference is invalid.
     """
+    if os.environ.get("PYTHON_DOTENV_DISABLED", "").casefold() in {"1", "true", "t", "yes", "y"}:
+        return
+
     if isinstance(env_akv_ref, str):
         raise ValueError("env_akv_ref must be a sequence of Azure Key Vault secret URLs.")
     assignment_candidates: dict[str, list[_EnvironmentValueCandidate]] = {}
