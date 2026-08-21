@@ -94,6 +94,5 @@ export const useAdditionalInitializersStyles = makeStyles({
     overflow: 'hidden',
     clip: 'rect(0,0,0,0)',
     whiteSpace: 'nowrap',
-    borderWidth: '0',
   },
 })
