@@ -3,7 +3,7 @@
 
 """Tests for the PackageHallucinationScorer."""
 
-import pytest
+import pytest # type: ignore
 
 from pyrit.models import MessagePiece
 from pyrit.score import PackageEcosystem, PackageHallucinationScorer
@@ -52,13 +52,13 @@ class TestPackageHallucinationScorerScoring:
         scorer = PackageHallucinationScorer(known_packages={"requests"}, ecosystem=PackageEcosystem.PYTHON)
         score = (await scorer._score_piece_async(_assistant_piece("import requests\nimport totallyfakepkg\n")))[0]
         assert score.get_value() is True
-        assert "totallyfakepkg" in score.score_metadata["hallucinated_packages"]
+        assert "totallyfakepkg" in score.score_metadata["hallucinated_packages"] # type: ignore
 
     async def test_all_known_packages_scores_false(self):
         scorer = PackageHallucinationScorer(known_packages={"requests", "flask"}, ecosystem=PackageEcosystem.PYTHON)
         score = (await scorer._score_piece_async(_assistant_piece("import requests\nfrom flask import Flask\n")))[0]
         assert score.get_value() is False
-        assert score.score_metadata["hallucinated_packages"] == ""
+        assert score.score_metadata["hallucinated_packages"] == "" # type: ignore
 
     async def test_python_stdlib_treated_as_known(self):
         # os/sys/json are stdlib and must not be flagged even though not in known_packages.
@@ -79,7 +79,7 @@ class TestPackageHallucinationScorerScoring:
     async def test_metadata_records_ecosystem(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
         score = (await scorer._score_piece_async(_assistant_piece("require 'fakegem'\n")))[0]
-        assert score.score_metadata["ecosystem"] == "ruby"
+        assert score.score_metadata["ecosystem"] == "ruby" # type: ignore
 
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
@@ -122,3 +122,87 @@ class TestPackageHallucinationScorerInit:
         scorer = PackageHallucinationScorer(known_packages={"a", "b"}, ecosystem=PackageEcosystem.RUST)
         identifier = scorer.get_identifier()
         assert identifier.params["ecosystem"] == "rust"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAdditionalPackageEcosystems:
+    """Verify package hallucination detection for Dart, Perl, and Raku."""
+
+    def test_dart_extracts_package_imports(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.DART,
+        )
+        text = (
+            "import 'package:http/http.dart';\n"
+            "import 'package:provider/provider.dart';\n"
+        )
+        assert scorer._extract_package_references(text) == {"http", "provider"}
+
+    def test_dart_normalizes_package_names(self):
+        scorer = PackageHallucinationScorer(
+            known_packages={"HTTP"},
+            ecosystem=PackageEcosystem.DART,
+        )
+        references = scorer._extract_package_references("import 'package:Http/http.dart';")
+        assert references == {"http"}
+        assert "http" in scorer._known_packages
+
+    def test_perl_extracts_module_imports(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.PERL,
+        )
+        text = "use JSON::MaybeXS;\nuse Fake::Module;\n"
+        assert scorer._extract_package_references(text) == {"JSON::MaybeXS", "Fake::Module"}
+
+    def test_raku_extracts_module_references(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        text = "use JSON::Fast;\nneed Fake::Module;\n"
+        assert scorer._extract_package_references(text) == {"JSON::Fast", "Fake::Module"}
+
+    def test_raku_ignores_version_declarations(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.RAKU,
+        )
+        text = "use v6.d;\nuse JSON::Fast;\n"
+        assert scorer._extract_package_references(text) == {"JSON::Fast"}
+
+    @pytest.mark.parametrize(
+        ("ecosystem", "code", "hallucinated_package"),
+        [
+            (
+                PackageEcosystem.DART,
+                "import 'package:fake_dart_package/main.dart';",
+                "fake_dart_package",
+            ),
+            (
+                PackageEcosystem.PERL,
+                "use Fake::PerlModule;",
+                "Fake::PerlModule",
+            ),
+            (
+                PackageEcosystem.RAKU,
+                "use Fake::RakuModule;",
+                "Fake::RakuModule",
+            ),
+        ],
+    )
+    async def test_hallucinated_packages_are_detected(
+        self,
+        ecosystem,
+        code,
+        hallucinated_package,
+    ):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=ecosystem,
+        )
+        score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
+        assert score.get_value() is True
+        assert hallucinated_package in score.score_metadata["hallucinated_packages"] # type: ignore
+        assert score.score_metadata["ecosystem"] == ecosystem.value # type: ignore
