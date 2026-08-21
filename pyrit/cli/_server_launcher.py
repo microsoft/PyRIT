@@ -602,9 +602,9 @@ class ServerLauncher:
             preload_message = ""
             if "loading datasets" in log_tail.casefold():
                 preload_message = (
-                    " Dataset preloading is still in progress. Remove load_default_datasets from the config "
-                    "to fetch only scenario-requested datasets on demand, or increase server.startup_timeout "
-                    "if the full preload is intentional."
+                    " Recent logs include dataset preload activity, which can extend startup. Check the complete log "
+                    "to see what the backend was doing when the timeout occurred. For normal on-demand fetching, "
+                    "remove load_default_datasets. For intentional preload, retry with a larger server.startup_timeout."
                 )
             raise RuntimeError(
                 f"pyrit_backend did not become healthy within {startup_timeout}s. "

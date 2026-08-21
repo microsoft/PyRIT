@@ -8,5 +8,5 @@ initializers:
         - scorer
   - name: scorer
   - name: technique
-  # Optional full preload/cache warming; scenarios fetch requested datasets on demand.
+  # Optional full preload/cache warming; scenarios fetch requested datasets on demand and add them to memory.
   # - name: load_default_datasets

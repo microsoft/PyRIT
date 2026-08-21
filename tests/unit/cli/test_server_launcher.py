@@ -464,9 +464,11 @@ async def test_start_async_timeout_suggests_on_demand_fetching_during_dataset_pr
             await launcher.start_async(host="localhost", port=8000, startup_timeout=0.01)
 
     message = str(exc_info.value)
-    assert "Remove load_default_datasets" in message
-    assert "on demand" in message
-    assert "increase server.startup_timeout" in message
+    assert "Recent logs include dataset preload activity" in message
+    assert "remove load_default_datasets" in message
+    assert "on-demand fetching" in message
+    assert "intentional preload" in message
+    assert "larger server.startup_timeout" in message
 
 
 # ---------------------------------------------------------------------------
