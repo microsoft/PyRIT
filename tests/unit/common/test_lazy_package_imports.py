@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import ast
+import importlib
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,16 @@ import pytest
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _PACKAGE_ROOT = _REPOSITORY_ROOT / "pyrit"
+_MODEL_PACKAGE_NAMES = (
+    "pyrit.models",
+    "pyrit.models.catalog",
+    "pyrit.models.identifiers",
+    "pyrit.models.messages",
+    "pyrit.models.results",
+    "pyrit.models.score",
+    "pyrit.models.seeds",
+    "pyrit.models.target",
+)
 
 # Remove an entry when its package adopts the standard lazy export contract.
 # The inventory test rejects both unlisted eager packages and stale exceptions.
@@ -348,6 +359,33 @@ def test_lazy_packages_do_not_load_child_modules() -> None:
             assert set(package._LAZY_EXPORTS) <= set(dir(package))
         """
     )
+
+
+@pytest.mark.parametrize("package_name", _MODEL_PACKAGE_NAMES)
+def test_model_package_dir_includes_lazy_exports_in_process(package_name: str) -> None:
+    package = importlib.import_module(package_name)
+
+    assert set(package.__all__) <= set(dir(package))
+
+
+@pytest.mark.parametrize(
+    ("package_name", "export_name", "declaring_module"),
+    [(package, export, declaring) for package, export, declaring, _ in _LAZY_IMPORT_SPOT_CHECKS],
+    ids=[case[0] for case in _LAZY_IMPORT_SPOT_CHECKS],
+)
+def test_lazy_import_resolves_and_caches_export_in_process(
+    package_name: str,
+    export_name: str,
+    declaring_module: str,
+) -> None:
+    package = importlib.import_module(package_name)
+    package.__dict__.pop(export_name, None)
+
+    exported_value = package.__getattr__(export_name)
+    direct_value = getattr(importlib.import_module(declaring_module), export_name)
+
+    assert exported_value is direct_value
+    assert getattr(package, export_name) is direct_value
 
 
 @pytest.mark.parametrize(
