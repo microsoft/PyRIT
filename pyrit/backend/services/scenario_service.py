@@ -19,6 +19,7 @@ from pyrit.models.catalog import (
     ScenarioDefaultRunSizeEstimate,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
+    ScenarioRunSizeEstimateStatus,
 )
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 from pyrit.scenario.core.dataset_configuration import read_only_dataset_resolution
@@ -263,7 +264,11 @@ class ScenarioService:
                 note=f"The scenario could not resolve its default inputs for estimation ({type(exc).__name__})."
             )
 
-        expires_at = monotonic() + _UNAVAILABLE_CACHE_TTL_SECONDS if estimate.estimated_attack_count is None else None
+        expires_at = (
+            monotonic() + _UNAVAILABLE_CACHE_TTL_SECONDS
+            if estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+            else None
+        )
         cache = self._estimate_cache
         cache[cache_key] = (estimate, expires_at)
         cache.move_to_end(cache_key)

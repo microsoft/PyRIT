@@ -615,6 +615,31 @@ class TestScenarioServiceListScenarios:
         assert second.default_run_size == estimate
         assert service._registry.create_instance.call_count == 2
 
+    async def test_conditional_estimate_cache_does_not_expire(self) -> None:
+        """A successful conditional estimate remains cached despite having no exact total."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioDefaultRunSizeEstimate(status=ScenarioRunSizeEstimateStatus.Conditional)
+        scenario = MagicMock()
+        scenario.get_default_run_size_estimate_async = AsyncMock(return_value=estimate)
+
+        with (
+            patch.object(ScenarioService, "__init__", _initialize_test_service),
+            patch("pyrit.backend.services.scenario_service._UNAVAILABLE_CACHE_TTL_SECONDS", 0),
+        ):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.get_registered_class_metadata.return_value = metadata
+            service._registry.create_instance.return_value = scenario
+
+            first = await service.get_scenario_async(scenario_name="test.scenario")
+            second = await service.get_scenario_async(scenario_name="test.scenario")
+
+        assert first is not None
+        assert second is not None
+        assert first.default_run_size == estimate
+        assert second.default_run_size == estimate
+        assert service._registry.create_instance.call_count == 1
+
     async def test_estimate_cache_is_version_aware_and_bounded(self) -> None:
         """Scenario version changes invalidate estimates and the LRU stays bounded."""
         estimate = ScenarioRunSizeEstimate(
