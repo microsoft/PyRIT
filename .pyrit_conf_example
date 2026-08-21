@@ -33,7 +33,7 @@ memory_db_type: sqlite
 # - A dictionary with 'name' and optional 'args' for parameters
 #
 # Parameters are lists of strings. Use the CLI command
-# `pyrit_scan --list-initializers` to see available parameters.
+# `pyrit_scan list-initializers` to see available parameters.
 #
 # Example:
 # initializers:

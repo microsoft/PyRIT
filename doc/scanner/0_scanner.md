@@ -23,7 +23,7 @@ PyRIT provides two command-line interfaces:
 
 ```bash
 # Run the Foundry RedTeamAgent scenario against your configured target
-pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques base64
+pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 ```
 
 ## Built-in Scenarios
@@ -35,7 +35,7 @@ PyRIT ships with scenarios organized into the following families:
 | **AIRT** | RapidResponse, Psychosocial, Cyber, Jailbreak, Leakage, Scam | [AIRT Scenarios](airt.ipynb) |
 | **Benchmark** | AdversarialBenchmark | [Benchmark Scenarios](benchmark.ipynb) |
 | **Foundry** | RedTeamAgent | [Foundry Scenarios](foundry.ipynb) |
-| **Garak** | Encoding | [Garak Scenarios](garak.ipynb) |
+| **Garak** | Encoding, FigStep | [Garak Scenarios](garak.ipynb) |
 
 Each scenario page shows how to run it with minimal configuration.
 

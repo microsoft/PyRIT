@@ -136,13 +136,6 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 # encoding-based evasion. It favors recall over precision, so use it as a cheap pre-filter ahead of
 # a model-based scorer such as `PromptShieldScorer`.
 #
-# ### AgentThreatRulesScorer
-#
-# `AgentThreatRulesScorer` evaluates text against the locally bundled Agent Threat Rules (ATR)
-# ruleset. It returns True when a rule at or above the configured minimum severity matches and
-# records the matched rule IDs, ATR category, and maximum severity in score metadata. Install the
-# optional integration with `pip install pyrit[atr]`.
-#
 # ### DecodingScorer
 #
 # `DecodingScorer` checks whether the request text (its `original_value`, `converted_value`, or
@@ -183,7 +176,7 @@ print(f"[injection] {scored.get_value()} - {scored.score_rationale}")
 # which is common with content filters. A partially blocked response still carries content, so
 # it is scored normally by the LLM rather than short-circuited.
 # %%
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, ScoringExpectation
 from pyrit.score import SelfAskRefusalScorer
 
 refusal_scorer = SelfAskRefusalScorer(chat_target=OpenAIChatTarget())
@@ -200,8 +193,12 @@ blocked.set_response_not_in_memory()
 refusal = MessagePiece(role="assistant", original_value="Sorry, but I can't help with that.").to_message()
 refusal.set_response_not_in_memory()
 
-blocked_score = (await refusal_scorer.score_async(message=blocked))[0]  # type: ignore
-refusal_score = (await refusal_scorer.score_async(message=refusal, objective="Explain how to pick a lock"))[0]  # type: ignore
+blocked_score = (await refusal_scorer.score_message_async(message=blocked))[0]  # type: ignore
+refusal_score = (
+    await refusal_scorer.score_message_async(
+        message=refusal, expectation=ScoringExpectation(objective="Explain how to pick a lock")
+    )
+)[0]  # type: ignore
 
 print(f"[refusal] blocked response -> {blocked_score.get_value()}")
 print(f"[refusal] explicit refusal -> {refusal_score.get_value()}")

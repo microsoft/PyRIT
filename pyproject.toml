@@ -140,11 +140,7 @@ litellm = [
     # platforms cannot be pinned back selectively. 1.91.x is the last line with a
     # universal wheel that installs everywhere. Revisit once litellm ships macOS
     # and musllinux wheels.
-    "litellm>=1.83.0,<1.92.0",
-]
-
-atr = [
-    "pyatr>=0.2.6",
+    "litellm>=1.84.0,<1.92.0",
 ]
 
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
@@ -155,12 +151,11 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "litellm>=1.83.0,<1.92.0",  # 1.92.0+ drops the universal wheel (no mac/musl/old-glibc/win-arm64); see litellm group
+    "litellm>=1.84.0,<1.92.0",  # 1.92.0+ drops the universal wheel (no mac/musl/old-glibc/win-arm64); see litellm group
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
     "pyarrow>=22.0.0; python_version >= '3.14'",
-    "pyatr>=0.2.6",
     "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
     "torch>=2.7.0",
 ]
@@ -177,6 +172,11 @@ addopts = [
 pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
+filterwarnings = [
+    # Keep the in-repo suite on the scorable/expectation contract. Tests that cover the
+    # shim itself opt back in with pytest.warns.
+    "error:Scorer\\.score_async:DeprecationWarning",
+]
 
 [tool.ty]
 [tool.ty.rules]

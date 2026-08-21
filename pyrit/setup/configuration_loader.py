@@ -509,11 +509,11 @@ class ConfigurationLoader(YamlLoadable):
         from pyrit.registry import InitializerRegistry
 
         configs = self._initializer_configs
+        resolved: list[PyRITInitializer] = []
         if not configs:
-            return []
+            return resolved
 
         registry = InitializerRegistry()
-        resolved: list[PyRITInitializer] = []
 
         logging.getLogger(__name__).info("Running %d initializer(s)...", len(configs))
 
@@ -544,7 +544,7 @@ class ConfigurationLoader(YamlLoadable):
 
         # Empty list means "load nothing" - return empty list
         if len(self.initialization_scripts) == 0:
-            return []
+            return list[pathlib.Path]()
 
         resolved: list[pathlib.Path] = []
         for script_str in self.initialization_scripts:
@@ -569,7 +569,7 @@ class ConfigurationLoader(YamlLoadable):
 
         # Empty list means "load nothing" - return empty list
         if len(self.env_files) == 0:
-            return []
+            return list[pathlib.Path]()
 
         resolved: list[pathlib.Path] = []
         for env_str in self.env_files:

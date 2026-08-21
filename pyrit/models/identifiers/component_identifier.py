@@ -323,7 +323,8 @@ class ComponentIdentifier(BaseModel):
             ``ComponentIdentifier``, in field-definition order.
         """
         base_fields = set(ComponentIdentifier.model_fields)
-        return tuple(name for name in cls.model_fields if name not in base_fields)
+        promoted_fields: tuple[str, ...] = tuple(name for name in cls.model_fields if name not in base_fields)
+        return promoted_fields
 
     @classmethod
     def _promoted_param_fields(cls) -> tuple[str, ...]:

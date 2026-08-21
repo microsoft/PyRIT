@@ -10,21 +10,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.exceptions import (
-    ComponentRole,
-    execution_context,
-)
-from pyrit.executor.attack.component import (
-    ConversationManager,
-    PrependedConversationConfig,
-)
+from pyrit.exceptions import ComponentRole, execution_context
+from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
-from pyrit.executor.attack.core import (
-    AttackAdversarialConfig,
-    AttackConverterConfig,
-    AttackScoringConfig,
-)
+from pyrit.executor.attack.core import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -42,12 +32,15 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoringExpectation,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
+    MessageScorable,
+    MessageScoringOptions,
     NumericRubric,
     Scorer,
     SelfAskRefusalScorer,
@@ -565,20 +558,21 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                     f"{refused_text}\n",
                 ]
             )
-        elif context.last_score and context.last_response:
+        elif context.last_response:
             # Get the last assistant response directly from the response object
             last_message_value = context.last_response.get_value()
 
             if last_message_value:
-                score_value = normalize_score_to_float(context.last_score)
-                prompt_parts.extend(
-                    [
-                        f"\nThe target responded to the last question with: {last_message_value}",
-                        "\n--------------------------------",
-                        f"\nThis response received a score of: {score_value:.2f} on a scale of 0.0 to 1.0",
-                        f"Rationale: {context.last_score.score_rationale}\n",
-                    ]
-                )
+                prompt_parts.append(f"\nThe target responded to the last question with: {last_message_value}")
+                if self._use_score_as_feedback and context.last_score:
+                    score_value = normalize_score_to_float(context.last_score)
+                    prompt_parts.extend(
+                        [
+                            "\n--------------------------------",
+                            f"\nThis response received a score of: {score_value:.2f} on a scale of 0.0 to 1.0",
+                            f"Rationale: {context.last_score.score_rationale}\n",
+                        ]
+                    )
 
         return " ".join(prompt_parts)
 
@@ -680,9 +674,9 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective=context.objective,
         ):
             scores = await self._refusal_scorer.score_async(
-                message=context.last_response,
-                objective=objective,
-                skip_on_error_result=False,
+                scorable=MessageScorable.from_message(context.last_response),
+                expectation=ScoringExpectation(objective=objective),
+                message_options=MessageScoringOptions(skip_on_error_result=False),
             )
         return scores[0]
 
