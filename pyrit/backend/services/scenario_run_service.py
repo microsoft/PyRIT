@@ -17,16 +17,17 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.common.utils import to_sha256
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import ScenarioProgressKeysetCursor
+from pyrit.memory import AttackResultKeysetCursor, CentralMemory
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
+    AttackResult,
     ComponentIdentifier,
     ScenarioAttackResultDelta,
     ScenarioProgressHeader,
@@ -43,25 +44,15 @@ from pyrit.models.catalog.scenario import (
     AttackErrorSummary,
     AttackRetrySummary,
     RunScenarioRequest,
+    ScenarioRunListItem,
     ScenarioRunSummary,
 )
-from pyrit.registry import (
-    ConverterRegistry,
-    InitializerRegistry,
-    ScenarioRegistry,
-    TargetRegistry,
-)
+from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.scenario import Scenario
-
-if TYPE_CHECKING:
-    from pyrit.converter import Converter
-    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CONCURRENT_RUNS = 3
-
-_CONVERTER_MODIFIER_PREFIX = "converter."
 
 
 @dataclass
@@ -82,6 +73,87 @@ class _ActiveRunSnapshot:
     active_group_ids: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class _ResultUnitIdentity:
+    """Stable identity of one planned scenario execution unit."""
+
+    atomic_group_id: str
+    seed_group_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ScenarioPlanLookup:
+    """Pre-indexed run-plan data used while mapping many attack results."""
+
+    groups_by_identity: dict[tuple[str, str], ScenarioRunPlanAtomicGroup]
+    groups_by_name: dict[str, tuple[ScenarioRunPlanAtomicGroup, ...]]
+    seed_ids_by_group_and_objective: dict[tuple[str, str], tuple[str, ...]]
+    planned_units: frozenset[_ResultUnitIdentity]
+
+    @classmethod
+    def from_plan(cls, *, plan: ScenarioRunPlan | None) -> "_ScenarioPlanLookup":
+        """
+        Build constant-time lookup tables for one run plan.
+
+        Returns:
+            _ScenarioPlanLookup: Indexed plan data.
+        """
+        if plan is None:
+            return cls(
+                groups_by_identity={},
+                groups_by_name={},
+                seed_ids_by_group_and_objective={},
+                planned_units=frozenset(),
+            )
+
+        groups_by_identity: dict[tuple[str, str], ScenarioRunPlanAtomicGroup] = {}
+        grouped_by_name: dict[str, list[ScenarioRunPlanAtomicGroup]] = {}
+        seeds_by_id = {seed.id: seed for seed in plan.seed_groups}
+        seed_ids_by_group_and_objective: dict[tuple[str, str], tuple[str, ...]] = {}
+        planned_units: set[_ResultUnitIdentity] = set()
+        for group in plan.atomic_groups:
+            groups_by_identity[(group.atomic_attack_name, group.technique_eval_hash)] = group
+            grouped_by_name.setdefault(group.atomic_attack_name, []).append(group)
+            seed_ids_by_objective: dict[str, list[str]] = {}
+            for seed_id in group.seed_group_ids:
+                seed = seeds_by_id[seed_id]
+                seed_ids_by_objective.setdefault(seed.objective_sha256, []).append(seed_id)
+            seed_ids_by_group_and_objective.update(
+                {
+                    (group.id, objective_sha256): tuple(seed_ids)
+                    for objective_sha256, seed_ids in seed_ids_by_objective.items()
+                }
+            )
+            planned_units.update(
+                _ResultUnitIdentity(atomic_group_id=group.id, seed_group_id=seed_group_id)
+                for seed_group_id in group.seed_group_ids
+            )
+
+        return cls(
+            groups_by_identity=groups_by_identity,
+            groups_by_name={name: tuple(groups) for name, groups in grouped_by_name.items()},
+            seed_ids_by_group_and_objective=seed_ids_by_group_and_objective,
+            planned_units=frozenset(planned_units),
+        )
+
+    def resolve_group(
+        self,
+        *,
+        atomic_attack_name: str,
+        technique_eval_hash: str | None,
+    ) -> ScenarioRunPlanAtomicGroup | None:
+        """
+        Resolve one planned group from persisted attribution.
+
+        Returns:
+            ScenarioRunPlanAtomicGroup | None: The uniquely matching group.
+        """
+        if technique_eval_hash is not None:
+            return self.groups_by_identity.get((atomic_attack_name, technique_eval_hash))
+        matching_groups = self.groups_by_name.get(atomic_attack_name, ())
+        return matching_groups[0] if len(matching_groups) == 1 else None
+
+
 class ScenarioRunService:
     """
     Service for managing scenario run lifecycle.
@@ -96,6 +168,7 @@ class ScenarioRunService:
         self._memory = CentralMemory.get_memory_instance()
         self._active_tasks: dict[str, _ActiveTask] = {}
         self._run_semaphore = asyncio.Semaphore(max_concurrent_runs)
+        self._configuration_resolver = ScenarioConfigurationResolver()
 
     async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
@@ -126,11 +199,21 @@ class ScenarioRunService:
 
         # Perform all initialization eagerly — errors propagate to caller
         try:
-            scenario_class = self._resolve_scenario_class(request=request)
+            scenario_class = self._configuration_resolver.resolve_scenario_class(scenario_name=request.scenario_name)
             await self._run_initializers_async(request=request)
-            objective_target = self._resolve_target(request=request)
-            init_kwargs = self._build_init_kwargs(
-                request=request, scenario_class=scenario_class, objective_target=objective_target
+            objective_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
+            init_kwargs = self._configuration_resolver.resolve_configuration(
+                scenario_name=request.scenario_name,
+                scenario_class=scenario_class,
+                objective_target=objective_target,
+                techniques=request.techniques,
+                dataset_names=request.dataset_names,
+                max_dataset_size=request.max_dataset_size,
+                dataset_filters=request.dataset_filters,
+                include_baseline=request.include_baseline,
+                max_concurrency=request.max_concurrency,
+                max_retries=request.max_retries,
+                memory_labels=request.labels,
             )
             scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
         except Exception:
@@ -196,17 +279,48 @@ class ScenarioRunService:
         Returns:
             ScenarioRunListResponse with runs.
         """
-        # This is expensive, and we don't need all the data. At some point
-        # we may want to add a lightweight "list" query to the DB layer that only
-        results = self._memory.get_scenario_results(limit=limit)
-        items = [
-            self._build_response_from_db(
-                scenario_result=sr,
-                active_error=self.snapshot_active_run(scenario_result_id=str(sr.id)).error,
-            )
-            for sr in results
-        ]
+        results = self._memory.get_scenario_result_headers(limit=limit)
+        items = [self._build_list_response_from_header(scenario_result=result) for result in results]
         return ScenarioRunListResponse(items=items)
+
+    def _build_list_response_from_header(self, *, scenario_result: ScenarioResult) -> ScenarioRunListItem:
+        """
+        Build a bounded run-history item without hydrating attack results.
+
+        Returns:
+            ScenarioRunListItem: Lightweight run metadata.
+        """
+        status = scenario_result.scenario_run_state
+        terminal = status in (
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.CANCELLED,
+        )
+        plan = self._load_run_plan(scenario_result=scenario_result)
+        total_attacks = sum(len(group.seed_group_ids) for group in plan.atomic_groups) if plan is not None else 0
+        techniques_used = (
+            list(dict.fromkeys(group.display_group for group in plan.atomic_groups)) if plan is not None else []
+        )
+        updated_at = (
+            scenario_result.completion_time
+            if terminal and scenario_result.completion_time is not None
+            else scenario_result.creation_time
+        )
+        return ScenarioRunListItem(
+            scenario_result_id=str(scenario_result.id),
+            scenario_name=scenario_result.scenario_name,
+            scenario_registry_name=plan.scenario_registry_name if plan else None,
+            scenario_version=scenario_result.scenario_version,
+            status=status,
+            created_at=scenario_result.creation_time,
+            updated_at=updated_at,
+            error=scenario_result.error_message,
+            error_type=scenario_result.error_type,
+            techniques_used=techniques_used,
+            total_attacks=total_attacks,
+            labels=scenario_result.labels,
+            completed_at=scenario_result.completion_time if terminal else None,
+        )
 
     async def cancel_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
@@ -249,25 +363,6 @@ class ScenarioRunService:
 
         return self.get_run(scenario_result_id=scenario_result_id)
 
-    def _resolve_scenario_class(self, *, request: RunScenarioRequest) -> type[Scenario]:
-        """
-        Validate and resolve the scenario class from the registry.
-
-        Args:
-            request: The run request containing the scenario name.
-
-        Returns:
-            The scenario class.
-
-        Raises:
-            ValueError: If the scenario name is not found in the registry.
-        """
-        scenario_registry = ScenarioRegistry.get_registry_singleton()
-        try:
-            return scenario_registry.get_class(request.scenario_name)
-        except KeyError as e:
-            raise ValueError(str(e)) from None
-
     async def _run_initializers_async(self, *, request: RunScenarioRequest) -> None:
         """
         Validate and execute initializers specified in the request.
@@ -292,294 +387,6 @@ class ScenarioRunService:
                 raise ValueError(f"Initializer not found: {e}") from None
             await instance.initialize_async()
 
-    def _resolve_target(self, *, request: RunScenarioRequest) -> "PromptTarget":
-        """
-        Resolve the objective target from the target registry.
-
-        Args:
-            request: The run request containing the target name.
-
-        Returns:
-            The resolved PromptTarget instance.
-
-        Raises:
-            ValueError: If the target is not found in the registry.
-        """
-        return self.resolve_target_name(target_name=request.target_name)
-
-    @staticmethod
-    def resolve_target_name(*, target_name: str) -> "PromptTarget":
-        """
-        Resolve one registered target name for launch or configured estimation.
-
-        Args:
-            target_name: Registered target instance name.
-
-        Returns:
-            PromptTarget: The resolved target.
-
-        Raises:
-            ValueError: If the target is not registered.
-        """
-        target_registry = TargetRegistry.get_registry_singleton()
-        objective_target = target_registry.instances.get(target_name)
-        if objective_target is None:
-            available_names = target_registry.instances.get_names()
-            if not available_names:
-                raise ValueError(
-                    f"Target '{target_name}' not found. The target registry is empty. "
-                    "Make sure to include an initializer that registers targets "
-                    "(e.g., initializers: ['target'])."
-                )
-            raise ValueError(
-                f"Target '{target_name}' not found in registry. Available targets: {', '.join(available_names)}"
-            )
-        return objective_target
-
-    def _build_init_kwargs(
-        self, *, request: RunScenarioRequest, scenario_class: type[Scenario], objective_target: Any
-    ) -> dict[str, Any]:
-        """
-        Build the kwargs dict for scenario.initialize_async.
-
-        Resolves techniques and dataset configuration from the request.
-
-        Dataset configuration is built so that the scenario's default
-        ``DatasetAttackConfiguration`` *subclass* (e.g. ``EncodingDatasetConfiguration``)
-        is preserved when the caller overrides ``dataset_names`` or
-        ``max_dataset_size``. Subclasses commonly override
-        ``_build_attack_groups()`` to shape seeds into scenario-appropriate
-        ``AttackSeedGroup`` objects.
-
-        Args:
-            request: The run request.
-            scenario_class: The resolved scenario class.
-            objective_target: The resolved target instance.
-
-        Returns:
-            Dict of kwargs to pass to scenario.initialize_async.
-
-        Raises:
-            ValueError: If a technique name is invalid for the scenario, or the
-                scenario class cannot be instantiated with no arguments when
-                introspection is required to resolve techniques or dataset
-                configuration.
-        """
-        return self.resolve_scenario_configuration(
-            scenario_name=request.scenario_name,
-            scenario_class=scenario_class,
-            objective_target=objective_target,
-            techniques=request.techniques,
-            dataset_names=request.dataset_names,
-            max_dataset_size=request.max_dataset_size,
-            dataset_filters=request.dataset_filters,
-            include_baseline=request.include_baseline,
-            max_concurrency=request.max_concurrency,
-            max_retries=request.max_retries,
-            memory_labels=request.labels,
-        )
-
-    @classmethod
-    def resolve_scenario_configuration(
-        cls,
-        *,
-        scenario_name: str,
-        scenario_class: type[Scenario],
-        objective_target: Any | None = None,
-        techniques: list[str] | None = None,
-        dataset_names: list[str] | None = None,
-        max_dataset_size: int | None = None,
-        dataset_filters: dict[str, list[str]] | None = None,
-        include_baseline: bool | None = None,
-        max_concurrency: int | None = None,
-        max_retries: int | None = None,
-        memory_labels: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Resolve shared launch/estimate request fields into scenario parameters.
-
-        Args:
-            scenario_name: Registered scenario name used in validation errors.
-            scenario_class: Scenario class used for technique and dataset introspection.
-            objective_target: Optional resolved objective target.
-            techniques: Requested technique tokens.
-            dataset_names: Requested dataset names.
-            max_dataset_size: Requested logical-group selection cap.
-            dataset_filters: Validated dataset seed filters.
-            include_baseline: Optional baseline policy override.
-            max_concurrency: Optional launch concurrency.
-            max_retries: Optional launch retry count.
-            memory_labels: Optional launch memory labels.
-
-        Returns:
-            dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
-
-        Raises:
-            ValueError: If techniques or dataset overrides are invalid.
-        """
-        resolved: dict[str, Any] = {}
-        if objective_target is not None:
-            resolved["objective_target"] = objective_target
-        if max_concurrency is not None:
-            resolved["max_concurrency"] = max_concurrency
-        if max_retries is not None:
-            resolved["max_retries"] = max_retries
-        if include_baseline is not None:
-            resolved["include_baseline"] = include_baseline
-        if memory_labels:
-            resolved["memory_labels"] = memory_labels
-
-        filters = dataset_filters or {}
-        needs_introspection = bool(techniques) or bool(dataset_names) or max_dataset_size is not None or bool(filters)
-        if not needs_introspection:
-            return resolved
-
-        try:
-            introspection_instance = scenario_class()  # type: ignore[ty:missing-argument]
-        except Exception as exc:
-            raise ValueError(
-                f"Cannot resolve runtime configuration for scenario '{scenario_name}': "
-                f"scenario class is not instantiable without arguments ({exc})."
-            ) from exc
-
-        if techniques:
-            technique_class = introspection_instance._technique_class
-            technique_enums, technique_converters = cls._resolve_techniques_and_converters(
-                tokens=techniques,
-                technique_class=technique_class,
-                scenario_name=scenario_name,
-            )
-            resolved["scenario_techniques"] = technique_enums
-            if technique_converters:
-                resolved["technique_converters"] = technique_converters
-
-        if dataset_names or max_dataset_size is not None or filters:
-            default_config = introspection_instance._default_dataset_config
-
-            if dataset_names:
-                # Construct a fresh instance of the scenario's own dataset-config
-                # class so subclass-specific behavior is preserved.
-                default_config_class = type(default_config)
-                try:
-                    resolved["dataset_config"] = default_config_class(
-                        dataset_names=dataset_names,
-                        max_dataset_size=max_dataset_size,
-                        filters=filters or None,
-                    )
-                except TypeError as exc:
-                    raise ValueError(
-                        f"Scenario '{scenario_name}' does not support overriding dataset names through "
-                        f"its {default_config_class.__name__} configuration: {exc}"
-                    ) from exc
-            else:
-                # Reuse the scenario's default dataset config (preserves subtype +
-                # the scenario's own default dataset names) and override only the
-                # sample cap and/or filters. Safe because the introspection instance
-                # is throwaway.
-                if max_dataset_size is not None:
-                    default_config.max_dataset_size = max_dataset_size
-                if filters:
-                    default_config.update_filters(filters=filters)
-                resolved["dataset_config"] = default_config
-
-        return resolved
-
-    @classmethod
-    def _resolve_techniques_and_converters(
-        cls,
-        *,
-        tokens: list[str],
-        technique_class: type[Any],
-        scenario_name: str,
-    ) -> tuple[list[Any], dict[str, list["Converter"]]]:
-        """
-        Resolve ``--techniques`` tokens into technique enums and per-technique converters.
-
-        Each token has the form ``<technique>[:converter.<name>[:converter.<name>...]]``.
-        The base ``<technique>`` is resolved to a ``ScenarioTechnique`` enum member (which may
-        be an aggregate). Each ``converter.<name>`` modifier is resolved to a registered
-        converter instance and appended (in token order) to every concrete technique that the
-        base technique expands to.
-
-        Args:
-            tokens: The raw technique tokens from the request.
-            technique_class: The scenario's ``ScenarioTechnique`` subclass.
-            scenario_name: The scenario name, used for error messages.
-
-        Returns:
-            A tuple of (technique enums to pass as ``scenario_techniques``, mapping from concrete
-            technique name to the list of converters to append for that technique).
-
-        Raises:
-            ValueError: If a base technique name is unknown, a modifier is malformed, or a
-                converter name is not registered.
-        """
-        technique_enums: list[Any] = []
-        technique_converters: dict[str, list[Converter]] = {}
-
-        for token in tokens:
-            base_name, _, remainder = token.partition(":")
-            modifiers = [m for m in remainder.split(":") if m] if remainder else []
-
-            try:
-                technique_enum = technique_class(base_name)
-            except ValueError:
-                available_techniques = [s.value for s in technique_class]
-                raise ValueError(
-                    f"Technique '{base_name}' not found for scenario '{scenario_name}'. "
-                    f"Available: {', '.join(available_techniques)}"
-                ) from None
-            technique_enums.append(technique_enum)
-
-            converters = cls._resolve_converter_modifiers(modifiers=modifiers, token=token)
-            if not converters:
-                continue
-
-            for concrete in technique_class.expand({technique_enum}):
-                technique_converters.setdefault(concrete.value, []).extend(converters)
-
-        return technique_enums, technique_converters
-
-    @staticmethod
-    def _resolve_converter_modifiers(*, modifiers: list[str], token: str) -> list["Converter"]:
-        """
-        Resolve the converter modifiers of a single technique token to converter instances.
-
-        Args:
-            modifiers: The modifier segments of the token (everything after the base technique).
-            token: The full original token, used for error messages.
-
-        Returns:
-            The resolved converter instances in token order.
-
-        Raises:
-            ValueError: If a modifier does not use the ``converter.`` prefix or names a
-                converter that is not registered.
-        """
-        if not modifiers:
-            return []
-
-        instances = ConverterRegistry.get_registry_singleton().instances
-        converters: list[Converter] = []
-        for modifier in modifiers:
-            if not modifier.startswith(_CONVERTER_MODIFIER_PREFIX):
-                raise ValueError(
-                    f"Unknown technique modifier '{modifier}' in '{token}'. "
-                    f"Supported modifiers must use the '{_CONVERTER_MODIFIER_PREFIX}' prefix "
-                    f"(e.g. '{_CONVERTER_MODIFIER_PREFIX}translation_spanish')."
-                )
-            converter_name = modifier[len(_CONVERTER_MODIFIER_PREFIX) :]
-            converter = instances.get(converter_name)
-            if converter is None:
-                available = instances.get_names()
-                available_text = ", ".join(available) if available else "(none registered)"
-                raise ValueError(
-                    f"Converter '{converter_name}' in '{token}' is not a registered converter "
-                    f"instance. Available converters: {available_text}"
-                )
-            converters.append(converter)
-        return converters
-
     async def _initialize_scenario_async(self, *, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
         """
         Build and initialize the scenario via the registry.
@@ -587,8 +394,7 @@ class ScenarioRunService:
         Delegates the full create + set-parameters + initialize lifecycle to
         ``ScenarioRegistry.create_and_initialize_async`` so the registry owns
         scenario creation and initialization. The run-specific common parameters
-        (target, techniques, dataset config, concurrency) are resolved by
-        ``_build_init_kwargs`` and forwarded as ``init_kwargs``.
+        are resolved before this method and forwarded as ``init_kwargs``.
 
         Args:
             request: The run request (for scenario_name, scenario_params, and
@@ -703,11 +509,13 @@ class ScenarioRunService:
             ScenarioRunState.CANCELLED,
         )
         plan = self._load_run_plan(scenario_result=scenario_result)
+        plan_lookup = _ScenarioPlanLookup.from_plan(plan=plan)
 
         # Build result fields from DB (always computed so in-progress runs show progress)
         total_attacks, completed_attacks, objective_achieved_rate = self._calculate_progress_counts(
             scenario_result=scenario_result,
             plan=plan,
+            plan_lookup=plan_lookup,
         )
         techniques_used = (
             list(dict.fromkeys(group.display_group for group in plan.atomic_groups))
@@ -720,15 +528,15 @@ class ScenarioRunService:
         failed_attacks: list[AttackErrorSummary] = []
         attack_retries: list[AttackRetrySummary] = []
         total_retries = 0
-        attempts_by_unit: dict[tuple[str, str], int] = {}
+        attempts_by_unit: dict[_ResultUnitIdentity, int] = {}
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
-                unit_key = self._result_unit_key(
+                unit_identity = self._resolve_result_unit_identity(
                     atomic_attack_name=atomic_attack_name,
                     attack_result=attack_result,
-                    plan=plan,
+                    plan_lookup=plan_lookup,
                 )
-                attempts_by_unit[unit_key] = attempts_by_unit.get(unit_key, 0) + 1
+                attempts_by_unit[unit_identity] = attempts_by_unit.get(unit_identity, 0) + 1
                 retries = getattr(attack_result, "total_retries", 0)
                 if isinstance(retries, int):
                     total_retries += retries
@@ -813,59 +621,57 @@ class ScenarioRunService:
         return ScenarioRunPlan.model_validate(raw_plan) if raw_plan is not None else None
 
     @staticmethod
-    def _result_unit_key(
+    def _resolve_result_unit_identity(
         *,
         atomic_attack_name: str,
-        attack_result: Any,
-        plan: ScenarioRunPlan | None,
-    ) -> tuple[str, str]:
+        attack_result: AttackResult,
+        plan_lookup: _ScenarioPlanLookup,
+    ) -> _ResultUnitIdentity:
         """
-        Resolve one attack attempt to its stable planned-unit key.
+        Resolve one attack attempt to its stable planned-unit identity.
 
         Returns:
-            tuple[str, str]: The atomic-group and seed-group IDs.
+            _ResultUnitIdentity: The atomic-group and seed-group IDs.
         """
-        atomic_identifier = getattr(attack_result, "atomic_attack_identifier", None)
+        atomic_identifier = attack_result.atomic_attack_identifier
         typed_identifier = (
             AtomicAttackIdentifier.from_component_identifier(atomic_identifier)
             if isinstance(atomic_identifier, ComponentIdentifier)
             else None
         )
-        objective = str(getattr(attack_result, "objective", ""))
-        attribution_data = getattr(attack_result, "attribution_data", None)
+        objective = str(attack_result.objective)
+        attribution_data = attack_result.attribution_data
         attributed_seed_group_id = attribution_data.get("seed_group_id") if isinstance(attribution_data, dict) else None
         seed_group_id = str(attributed_seed_group_id) if attributed_seed_group_id else ""
         if not seed_group_id and typed_identifier is not None and typed_identifier.seed_identifiers:
             seed_group_id = typed_identifier.logical_seed_group_id
+
         atomic_group_id = atomic_attack_name
-        planned_group: ScenarioRunPlanAtomicGroup | None = None
-        if plan is not None:
-            eval_hash = attribution_data.get("parent_eval_hash") if isinstance(attribution_data, dict) else None
-            for group in plan.atomic_groups:
-                if group.atomic_attack_name == atomic_attack_name and (
-                    eval_hash is None or group.technique_eval_hash == eval_hash
-                ):
-                    atomic_group_id = group.id
-                    planned_group = group
-                    break
-        if not seed_group_id and plan is not None and planned_group is not None:
-            objective_sha256 = str(getattr(attack_result, "objective_sha256", "") or to_sha256(objective))
-            matching_seed_ids = [
-                seed.id
-                for seed in plan.seed_groups
-                if seed.id in planned_group.seed_group_ids and seed.objective_sha256 == objective_sha256
-            ]
-            if len(matching_seed_ids) == 1:
-                seed_group_id = matching_seed_ids[0]
+        eval_hash = attribution_data.get("parent_eval_hash") if isinstance(attribution_data, dict) else None
+        planned_group = plan_lookup.resolve_group(
+            atomic_attack_name=atomic_attack_name,
+            technique_eval_hash=str(eval_hash) if eval_hash is not None else None,
+        )
+        if planned_group is not None:
+            atomic_group_id = planned_group.id
+            if not seed_group_id:
+                objective_sha256 = to_sha256(objective)
+                matching_seed_ids = plan_lookup.seed_ids_by_group_and_objective.get(
+                    (planned_group.id, objective_sha256),
+                    (),
+                )
+                if len(matching_seed_ids) == 1:
+                    seed_group_id = matching_seed_ids[0]
         if not seed_group_id:
             seed_group_id = config_hash({"objective": objective})
-        return atomic_group_id, seed_group_id
+        return _ResultUnitIdentity(atomic_group_id=atomic_group_id, seed_group_id=seed_group_id)
 
     def _calculate_progress_counts(
         self,
         *,
         scenario_result: ScenarioResult,
         plan: ScenarioRunPlan | None,
+        plan_lookup: _ScenarioPlanLookup,
     ) -> tuple[int, int, int]:
         """
         Calculate planned-unit totals without inflating retries or error attempts.
@@ -873,43 +679,33 @@ class ScenarioRunService:
         Returns:
             tuple[int, int, int]: Total, completed, and success-rate percentage.
         """
-        attempted_units: set[tuple[str, str]] = set()
-        latest_non_error_by_unit: dict[tuple[str, str], Any] = {}
+        latest_result_by_unit: dict[_ResultUnitIdentity, AttackResult] = {}
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
-                unit_key = self._result_unit_key(
+                unit_identity = self._resolve_result_unit_identity(
                     atomic_attack_name=atomic_attack_name,
                     attack_result=attack_result,
-                    plan=plan,
+                    plan_lookup=plan_lookup,
                 )
-                attempted_units.add(unit_key)
-                if attack_result.outcome == AttackOutcome.ERROR:
-                    continue
-                previous = latest_non_error_by_unit.get(unit_key)
+                previous = latest_result_by_unit.get(unit_identity)
                 if previous is None or self._result_order_key(attack_result) > self._result_order_key(previous):
-                    latest_non_error_by_unit[unit_key] = attack_result
+                    latest_result_by_unit[unit_identity] = attack_result
 
-        planned_units = (
-            {(group.id, seed_group_id) for group in plan.atomic_groups for seed_group_id in group.seed_group_ids}
-            if plan is not None
-            else attempted_units
-        )
+        planned_units = plan_lookup.planned_units if plan is not None else frozenset(latest_result_by_unit)
         total = len(planned_units)
-        completed_results = [
-            result for unit_key, result in latest_non_error_by_unit.items() if unit_key in planned_units
-        ]
+        completed_results = [result for unit, result in latest_result_by_unit.items() if unit in planned_units]
         completed = len(completed_results)
         succeeded = sum(result.outcome == AttackOutcome.SUCCESS for result in completed_results)
         rate = int((succeeded / completed) * 100) if completed else 0
         return total, completed, rate
 
     @staticmethod
-    def _result_order_key(attack_result: Any) -> tuple[datetime, str]:
+    def _result_order_key(attack_result: AttackResult) -> tuple[datetime, str]:
         """Return a deterministic chronological key for one hydrated result attempt."""
-        timestamp = getattr(attack_result, "timestamp", None)
+        timestamp = attack_result.timestamp
         if not isinstance(timestamp, datetime):
             timestamp = datetime.min.replace(tzinfo=timezone.utc)
-        return timestamp, str(getattr(attack_result, "attack_result_id", ""))
+        return timestamp, str(attack_result.attack_result_id)
 
     def get_run_progress(
         self,
@@ -952,12 +748,14 @@ class ScenarioRunService:
             limit=limit,
         )
         plan = self._load_run_plan(scenario_result=header_result)
+        plan_lookup = _ScenarioPlanLookup.from_plan(plan=plan)
         plan_complete = plan is not None
         response_plan = plan if since is None else None
         if plan is None and since is None:
             response_plan = self._synthesize_legacy_plan(deltas=deltas)
 
-        results = [self._map_progress_delta(delta=delta, plan=plan or response_plan) for delta in deltas]
+        response_plan_lookup = plan_lookup if plan is not None else _ScenarioPlanLookup.from_plan(plan=response_plan)
+        results = [self._map_progress_delta(delta=delta, plan_lookup=response_plan_lookup) for delta in deltas]
         next_cursor = (
             self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since
         )
@@ -989,7 +787,7 @@ class ScenarioRunService:
     def _map_progress_delta(
         *,
         delta: ScenarioAttackResultDelta,
-        plan: ScenarioRunPlan | None,
+        plan_lookup: _ScenarioPlanLookup,
     ) -> ScenarioProgressResult:
         """
         Map a lightweight memory row to its REST progress representation.
@@ -1002,13 +800,12 @@ class ScenarioRunService:
         atomic_group_id = config_hash(
             {"atomic_attack_name": atomic_attack_name, "technique_eval_hash": eval_hash or ""}
         )
-        if plan is not None:
-            for group in plan.atomic_groups:
-                if group.atomic_attack_name == atomic_attack_name and (
-                    eval_hash is None or group.technique_eval_hash == eval_hash
-                ):
-                    atomic_group_id = group.id
-                    break
+        planned_group = plan_lookup.resolve_group(
+            atomic_attack_name=atomic_attack_name,
+            technique_eval_hash=str(eval_hash) if eval_hash is not None else None,
+        )
+        if planned_group is not None:
+            atomic_group_id = planned_group.id
         attributed_seed_group_id = delta.attribution_data.get("seed_group_id")
         seed_group_id = str(attributed_seed_group_id) if attributed_seed_group_id else ""
         if (
@@ -1017,13 +814,11 @@ class ScenarioRunService:
             and delta.atomic_attack_identifier.seed_identifiers
         ):
             seed_group_id = delta.atomic_attack_identifier.logical_seed_group_id
-        if not seed_group_id and plan is not None and delta.objective_sha256:
-            matching_seed_ids = [
-                seed.id
-                for seed in plan.seed_groups
-                if seed.objective_sha256 == delta.objective_sha256
-                and any(seed.id in group.seed_group_ids for group in plan.atomic_groups if group.id == atomic_group_id)
-            ]
+        if not seed_group_id and delta.objective_sha256:
+            matching_seed_ids = plan_lookup.seed_ids_by_group_and_objective.get(
+                (atomic_group_id, delta.objective_sha256),
+                (),
+            )
             if len(matching_seed_ids) == 1:
                 seed_group_id = matching_seed_ids[0]
         if not seed_group_id:
@@ -1052,8 +847,12 @@ class ScenarioRunService:
         """
         seeds: dict[str, ScenarioRunPlanSeedGroup] = {}
         groups: dict[str, ScenarioRunPlanAtomicGroup] = {}
+        empty_plan_lookup = _ScenarioPlanLookup.from_plan(plan=None)
         for delta in deltas:
-            mapped = ScenarioRunService._map_progress_delta(delta=delta, plan=None)
+            mapped = ScenarioRunService._map_progress_delta(
+                delta=delta,
+                plan_lookup=empty_plan_lookup,
+            )
             seeds.setdefault(
                 mapped.seed_group_id,
                 ScenarioRunPlanSeedGroup(
@@ -1091,7 +890,7 @@ class ScenarioRunService:
         *,
         since: str | None,
         scenario_result_id: str,
-    ) -> ScenarioProgressKeysetCursor | None:
+    ) -> AttackResultKeysetCursor | None:
         if since is None:
             return None
         try:
@@ -1110,7 +909,7 @@ class ScenarioRunService:
             raise ValueError("Malformed scenario progress cursor.") from exc
         if timestamp.tzinfo is None:
             raise ValueError("Cursor timestamp must include a timezone.")
-        return ScenarioProgressKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
+        return AttackResultKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
 
     def get_run_results(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """

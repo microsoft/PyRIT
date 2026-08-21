@@ -96,7 +96,7 @@ Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
-class AttackResultsKeysetCursor(NamedTuple):
+class AttackResultKeysetCursor(NamedTuple):
     """
     Keyset (seek) anchor identifying the last attack result on a page.
 
@@ -112,24 +112,17 @@ class AttackResultsKeysetCursor(NamedTuple):
     attack_result_id: str
 
     @classmethod
-    def from_attack_result(cls, result: AttackResult) -> "AttackResultsKeysetCursor":
+    def from_attack_result(cls, result: AttackResult) -> "AttackResultKeysetCursor":
         """
         Build the keyset anchor for ``result`` (typically the last row of a page).
 
         Returns:
-            AttackResultsKeysetCursor: Anchor capturing the result's recency sort key.
+            AttackResultKeysetCursor: Anchor capturing the result's recency sort key.
         """
         return cls(
             timestamp=result.timestamp,
             attack_result_id=result.attack_result_id,
         )
-
-
-class ScenarioProgressKeysetCursor(NamedTuple):
-    """Ascending keyset anchor for scenario-linked attack-result deltas."""
-
-    timestamp: datetime
-    attack_result_id: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -168,7 +161,7 @@ class _AttackResultQuery:
     min_turns: int | None = None
     max_turns: int | None = None
     limit: int | None = None
-    after: AttackResultsKeysetCursor | None = None
+    after: AttackResultKeysetCursor | None = None
 
     def __post_init__(self) -> None:
         """Snapshot mutable sequence and mapping inputs."""
@@ -424,7 +417,7 @@ class MemoryInterface(abc.ABC):
         """
         return [AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
 
-    def _attack_results_keyset_seek_condition(self, *, after: AttackResultsKeysetCursor) -> Any:
+    def _attack_results_keyset_seek_condition(self, *, after: AttackResultKeysetCursor) -> Any:
         """
         Build the keyset seek predicate selecting rows strictly after ``after``.
 
@@ -3114,7 +3107,7 @@ class MemoryInterface(abc.ABC):
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int | None = None,
-        after: AttackResultsKeysetCursor | None = None,
+        after: AttackResultKeysetCursor | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -3180,7 +3173,7 @@ class MemoryInterface(abc.ABC):
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
                 deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
                 instead of loading every row into memory. Defaults to None (return all).
-            after (AttackResultsKeysetCursor | None, optional): Keyset (seek) anchor from a
+            after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
                 under the recency sort are returned, giving insert/delete-stable pagination
                 without a drifting numeric offset. Defaults to None (start at the first page).
@@ -3465,7 +3458,7 @@ class MemoryInterface(abc.ABC):
         min_turns: int | None,
         max_turns: int | None,
         limit: int | None,
-        after: AttackResultsKeysetCursor | None,
+        after: AttackResultKeysetCursor | None,
     ) -> list[AttackResult]:
         """
         Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
@@ -3486,7 +3479,7 @@ class MemoryInterface(abc.ABC):
             min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
             max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
             limit (int | None): Maximum number of results to return.
-            after (AttackResultsKeysetCursor | None): Keyset anchor; only rows ordered strictly
+            after (AttackResultKeysetCursor | None): Keyset anchor; only rows ordered strictly
                 after it are returned. ``None`` starts at the first page.
 
         Returns:
@@ -3700,11 +3693,30 @@ class MemoryInterface(abc.ABC):
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
             return entry.get_scenario_result() if entry is not None else None
 
+    def get_scenario_result_headers(self, *, limit: int = 100) -> Sequence[ScenarioResult]:
+        """
+        Return recent ScenarioResult headers without hydrating linked attack results.
+
+        Returns:
+            Sequence[ScenarioResult]: Recent scenario metadata ordered newest first.
+
+        Raises:
+            ValueError: If limit is outside the bounded run-history range.
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("Scenario run history limit must be between 1 and 100.")
+        entries = self._query_scenario_result_entries(
+            scenario_result_ids=None,
+            conditions=[],
+            limit=limit,
+        )
+        return [entry.get_scenario_result() for entry in entries]
+
     def get_scenario_attack_result_deltas(
         self,
         *,
         scenario_result_id: str,
-        cursor: ScenarioProgressKeysetCursor | None = None,
+        cursor: AttackResultKeysetCursor | None = None,
         limit: int = 100,
     ) -> tuple[list[ScenarioAttackResultDelta], bool]:
         """

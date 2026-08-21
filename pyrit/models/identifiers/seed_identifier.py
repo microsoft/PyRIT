@@ -62,8 +62,8 @@ class SeedIdentifier(ComponentIdentifier):
         )
 
 
-def logical_seed_group_fingerprint(seed_identifiers: Sequence[SeedIdentifier]) -> str:
-    """Return the deterministic fingerprint of ordered canonical seed identifiers."""
+def compute_seed_group_hash(seed_identifiers: Sequence[SeedIdentifier]) -> str:
+    """Return the deterministic hash of ordered canonical seed identifiers."""
     return config_hash(
         {
             "seed_identifiers": [

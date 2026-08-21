@@ -14,7 +14,6 @@ from pyrit.models import (
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
     ScenarioDatasetSummary,
-    ScenarioRunSizeEstimateStatus,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -131,9 +130,7 @@ def _resolved_groups(
 async def test_ordinary_matrix_estimate_uses_planned_seed_units_and_baseline() -> None:
     """The base estimate is selected seed groups times concrete defaults plus baseline."""
     estimate = await _MatrixEstimateScenario(objective_scorer=_scorer()).get_default_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 6
+    assert estimate.estimated_attack_count == 6
     assert [component.count for component in estimate.components] == [4, 2]
     assert estimate.datasets[0].logical_seed_group_count == 3
     assert estimate.datasets[0].selected_seed_group_count == 2
@@ -153,11 +150,8 @@ async def test_configured_estimate_reuses_technique_and_baseline_resolution_with
     )
 
     estimate = await scenario.get_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 2
+    assert estimate.estimated_attack_count == 2
     assert [component.count for component in estimate.components] == [2]
-    assert [factor.count for factor in estimate.components[0].factors] == [2, 1]
     assert patch_central_database.return_value.get_scenario_results() == []
 
 
@@ -173,10 +167,7 @@ async def test_configured_estimate_expands_requested_aggregate() -> None:
     )
 
     estimate = await scenario.get_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 4
-    assert [factor.count for factor in estimate.components[0].factors] == [2, 2]
+    assert estimate.estimated_attack_count == 4
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -196,7 +187,7 @@ async def test_configured_estimate_applies_dataset_selection_and_cap() -> None:
 
     estimate = await scenario.get_run_size_estimate_async()
 
-    assert estimate.total_attack_count == 2
+    assert estimate.estimated_attack_count == 2
     assert len(estimate.datasets) == 1
     assert estimate.datasets[0].logical_seed_group_count == 3
     assert estimate.datasets[0].selected_seed_group_count == 2
@@ -270,7 +261,7 @@ async def test_matrix_estimate_filters_each_technique_seed_population_like_execu
     ):
         estimate = await scenario.get_run_size_estimate_async()
 
-    assert estimate.total_attack_count == 3
+    assert estimate.estimated_attack_count == 3
     assert [(component.label, component.count) for component in estimate.components] == [("one", 2), ("two", 1)]
 
 
@@ -293,9 +284,7 @@ async def test_matrix_estimate_with_binding_cap_and_compatibility_is_conditional
         return_value={"one": factory, "two": factory},
     ):
         estimate = await scenario.get_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-    assert estimate.total_attack_count is None
+    assert estimate.estimated_attack_count is None
     assert "binding randomized dataset cap" in estimate.note
 
 
@@ -307,9 +296,7 @@ async def test_adaptive_estimate_is_target_conditional_and_does_not_multiply_tec
     scenario._resolve_dataset_groups_for_estimate_async = AsyncMock(return_value=_resolved_groups({"adaptive": 3}))
 
     estimate = await scenario.get_default_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-    assert estimate.total_attack_count is None
+    assert estimate.estimated_attack_count is None
     assert [component.count for component in estimate.components] == [3, 3]
 
 
@@ -338,17 +325,13 @@ async def test_adaptive_estimate_counts_exact_compatible_outer_envelopes_with_ta
         ),
     ):
         estimate = await scenario.get_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 2
+    assert estimate.estimated_attack_count == 2
     assert [component.count for component in estimate.components] == [2]
     assert "7 selected technique attempts" in estimate.note
 
     scenario.set_params_from_args(args={"include_baseline": False})
     estimate_without_target = await scenario.get_run_size_estimate_async()
-
-    assert estimate_without_target.status is ScenarioRunSizeEstimateStatus.Conditional
-    assert estimate_without_target.total_attack_count is None
+    assert estimate_without_target.estimated_attack_count is None
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -359,11 +342,8 @@ async def test_jailbreak_estimate_exposes_template_attempt_and_target_capability
     scenario._resolve_dataset_groups_for_estimate_async = AsyncMock(return_value=_resolved_groups({"harmbench": 4}))
 
     estimate = await scenario.get_default_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-    assert estimate.total_attack_count is None
+    assert estimate.estimated_attack_count is None
     assert [component.count for component in estimate.components] == [4, 8, 8]
-    assert [factor.count for factor in estimate.components[1].factors] == [4, 2, 1, 1]
     assert "2 template(s) x 4 selected logical seed group(s) x 1 selected" in estimate.note
     assert "Baseline adds one unit per selected seed group (4 units)" in estimate.note
     assert "num_jailbreaks selects templates" in estimate.components[1].note
@@ -386,11 +366,8 @@ async def test_jailbreak_configured_estimate_counts_prompt_sending_without_basel
     )
 
     estimate = await scenario.get_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 8
+    assert estimate.estimated_attack_count == 8
     assert [component.count for component in estimate.components] == [8]
-    assert [factor.count for factor in estimate.components[0].factors] == [4, 2, 1, 1]
     assert "2 template(s) x 4 selected logical seed group(s) x 1 selected" in estimate.note
     assert "Baseline is disabled" in estimate.note
 
@@ -411,12 +388,9 @@ async def test_jailbreak_configured_estimate_counts_prompt_sending_with_baseline
     )
 
     estimate = await scenario.get_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 12
+    assert estimate.estimated_attack_count == 12
     assert [component.count for component in estimate.components] == [4, 8]
     assert estimate.components[0].is_baseline is True
-    assert [factor.count for factor in estimate.components[1].factors] == [4, 2, 1, 1]
     assert "Baseline adds one unit per selected seed group (4 units)" in estimate.note
 
 
@@ -440,9 +414,7 @@ async def test_jailbreak_configured_estimate_uses_target_capability() -> None:
     )
 
     estimate = await scenario.get_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 8
+    assert estimate.estimated_attack_count == 8
     assert [component.count for component in estimate.components] == [0, 8]
     objective_target.send_prompt_async.assert_not_called()
 
@@ -481,10 +453,7 @@ async def test_encoding_estimate_counts_concrete_converter_and_decode_variants()
     scenario._resolve_dataset_groups_for_estimate_async = AsyncMock(return_value=_resolved_groups({"encoding": 2}))
 
     estimate = await scenario.get_default_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 152
-    assert [factor.count for factor in estimate.components[0].factors] == [2, 15, 5]
+    assert estimate.estimated_attack_count == 152
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -502,9 +471,8 @@ async def test_web_injection_estimate_uses_synthesized_technique_populations() -
 
     synthesized = [dataset for dataset in estimate.datasets if dataset.kind == "synthesized"]
     synthesized_count = sum(dataset.selected_seed_group_count for dataset in synthesized)
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
     assert len(synthesized) == len(scenario._scenario_techniques)
-    assert estimate.total_attack_count == synthesized_count * 2
+    assert estimate.estimated_attack_count == synthesized_count * 2
     assert estimate.components[-1].label == "Baseline"
 
 
@@ -520,9 +488,7 @@ async def test_psychosocial_estimate_keeps_sub_harm_baselines_separate() -> None
     )
 
     estimate = await scenario.get_default_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-    assert estimate.total_attack_count == 12
+    assert estimate.estimated_attack_count == 12
     assert [component.count for component in estimate.components] == [6, 2, 3, 1]
 
 
@@ -537,25 +503,22 @@ async def test_adversarial_benchmark_estimate_exposes_per_required_target_formul
     scenario._resolve_dataset_groups_for_estimate_async = AsyncMock(return_value=_resolved_groups({"harmbench": 3}))
 
     estimate = await scenario.get_default_run_size_estimate_async()
-
-    assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-    assert estimate.total_attack_count is None
+    assert estimate.estimated_attack_count is None
     assert estimate.components == []
     assert "adversarial_targets" in estimate.note
 
 
 @pytest.mark.parametrize(
-    ("use_cached", "expected_status", "expected_total"),
+    ("use_cached", "expected_total"),
     [
-        (False, ScenarioRunSizeEstimateStatus.Exact, 6),
-        (True, ScenarioRunSizeEstimateStatus.Conditional, None),
+        (False, 6),
+        (True, None),
     ],
 )
 @pytest.mark.usefixtures("patch_central_database")
 async def test_adversarial_benchmark_resolves_targets_and_filters_each_technique(
     *,
     use_cached: bool,
-    expected_status: ScenarioRunSizeEstimateStatus,
     expected_total: int | None,
 ) -> None:
     """Benchmark sizing resolves target names and reports uncached compatible candidates."""
@@ -607,8 +570,7 @@ async def test_adversarial_benchmark_resolves_targets_and_filters_each_technique
         estimate = await scenario.get_run_size_estimate_async()
 
     resolve_targets.assert_called_once_with(target_names=["target-a", "target-b"])
-    assert estimate.status is expected_status
-    assert estimate.total_attack_count == expected_total
+    assert estimate.estimated_attack_count == expected_total
     assert [(component.label, component.count) for component in estimate.components] == [("one", 4), ("two", 2)]
 
 
@@ -635,7 +597,6 @@ async def test_foundry_estimate_counts_composites_instead_of_flattened_technique
 
     estimate = await scenario.get_run_size_estimate_async()
 
-    assert estimate.total_attack_count == 6
+    assert estimate.estimated_attack_count == 6
     assert len(estimate.components) == 2
     assert [component.count for component in estimate.components] == [3, 3]
-    assert [factor.count for factor in estimate.components[0].factors] == [1, 3]

@@ -23,10 +23,8 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
-    ScenarioDefaultRunSizeEstimate,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimateStatus,
-    ScenarioRunSizeFactor,
+    ScenarioRunSizeEstimate,
 )
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -203,12 +201,12 @@ class AdaptiveScenario(Scenario):
 
         return atomic_attacks
 
-    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
         """
         Estimate compatible persisted envelopes, excluding adaptive inner attempts.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: The adaptive outer-envelope estimate.
+            ScenarioRunSizeEstimate: The adaptive outer-envelope estimate.
         """
         selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
         selected_count = sum(len(groups) for groups in selected_groups.values())
@@ -218,7 +216,6 @@ class AdaptiveScenario(Scenario):
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=selected_count,
-                    factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=selected_count)],
                     is_baseline=True,
                 )
             ]
@@ -231,11 +228,9 @@ class AdaptiveScenario(Scenario):
                 ScenarioRunSizeComponent(
                     label="Adaptive attack-envelope candidates",
                     count=selected_count,
-                    factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=selected_count)],
                 ),
             ]
-            return ScenarioDefaultRunSizeEstimate(
-                status=ScenarioRunSizeEstimateStatus.Conditional,
+            return ScenarioRunSizeEstimate(
                 components=components,
                 datasets=datasets,
                 note=(
@@ -266,28 +261,19 @@ class AdaptiveScenario(Scenario):
             ScenarioRunSizeComponent(
                 label="Adaptive attack envelopes",
                 count=compatible_group_count,
-                factors=[ScenarioRunSizeFactor(label="compatible logical seed groups", count=compatible_group_count)],
             ),
         ]
-        status = (
-            ScenarioRunSizeEstimateStatus.Conditional
-            if self._estimate_has_binding_size_cap
-            else ScenarioRunSizeEstimateStatus.Exact
-        )
-        total_attack_count = (
-            None
-            if status is ScenarioRunSizeEstimateStatus.Conditional
-            else sum(component.count for component in components)
+        estimated_attack_count = (
+            None if self._estimate_has_binding_size_cap else sum(component.count for component in components)
         )
         note = (
             f"Each planned unit is one persisted adaptive envelope. Up to {max_attempts} selected technique "
             "attempts may run inside that unit; inner attempts and retries are excluded."
         )
-        if status is ScenarioRunSizeEstimateStatus.Conditional:
+        if estimated_attack_count is None:
             note += " A binding randomized dataset cap may select a different compatibility mix at launch."
-        return ScenarioDefaultRunSizeEstimate(
-            status=status,
-            total_attack_count=total_attack_count,
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=estimated_attack_count,
             components=components,
             datasets=datasets,
             note=note,

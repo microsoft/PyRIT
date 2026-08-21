@@ -216,7 +216,7 @@ class TestFactoryInit:
             AttackTechniqueFactory(
                 name="test",
                 attack_class=_NoConverterAttack,
-                supports_request_converter_composition=True,
+                supports_additional_request_converters=True,
             )
 
     def test_request_converter_composition_is_explicit_opt_in(self):
@@ -224,11 +224,11 @@ class TestFactoryInit:
         composable_factory = AttackTechniqueFactory(
             name="composable",
             attack_class=_StubAttack,
-            supports_request_converter_composition=True,
+            supports_additional_request_converters=True,
         )
 
-        assert not default_factory.supports_request_converter_composition
-        assert composable_factory.supports_request_converter_composition
+        assert not default_factory.supports_additional_request_converters
+        assert composable_factory.supports_additional_request_converters
 
 
 class TestFactoryCreate:

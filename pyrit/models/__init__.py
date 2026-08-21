@@ -26,12 +26,10 @@ if TYPE_CHECKING:
     from pyrit.models.catalog import (
         ScenarioDatasetSizeCap,
         ScenarioDatasetSummary,
-        ScenarioDefaultRunSizeEstimate,
+        ScenarioRunListItem,
         ScenarioRunSizeComponent,
         ScenarioRunSizeEstimate,
         ScenarioRunSizeEstimateRequest,
-        ScenarioRunSizeEstimateStatus,
-        ScenarioRunSizeFactor,
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
@@ -62,8 +60,8 @@ if TYPE_CHECKING:
         TargetIdentifier,
         class_name_to_snake_case,
         compute_eval_hash,
+        compute_seed_group_hash,
         config_hash,
-        logical_seed_group_fingerprint,
         snake_case_to_class_name,
         validate_registry_name,
     )
@@ -207,7 +205,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "IdentifierFilter": "pyrit.models.identifiers",
     "IdentifierType": "pyrit.models.identifiers",
     "JSONValue": "pyrit.models.identifiers",
-    "logical_seed_group_fingerprint": "pyrit.models.identifiers",
+    "compute_seed_group_hash": "pyrit.models.identifiers",
     "COMMON_JSON_SCHEMAS": "pyrit.models.target",
     "JsonResponseConfig": "pyrit.models.target",
     "get_common_json_schema": "pyrit.models.target",
@@ -244,12 +242,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioIdentifier": "pyrit.models.identifiers",
     "ScenarioDatasetSizeCap": "pyrit.models.catalog",
     "ScenarioDatasetSummary": "pyrit.models.catalog",
-    "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog",
+    "ScenarioRunListItem": "pyrit.models.catalog",
     "ScenarioRunSizeComponent": "pyrit.models.catalog",
     "ScenarioRunSizeEstimate": "pyrit.models.catalog",
     "ScenarioRunSizeEstimateRequest": "pyrit.models.catalog",
-    "ScenarioRunSizeEstimateStatus": "pyrit.models.catalog",
-    "ScenarioRunSizeFactor": "pyrit.models.catalog",
     "ScenarioResult": "pyrit.models.results.scenario_result",
     "ScenarioRunState": "pyrit.models.results.scenario_result",
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",

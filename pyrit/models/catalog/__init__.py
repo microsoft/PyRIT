@@ -27,12 +27,10 @@ if TYPE_CHECKING:
         RunScenarioRequest,
         ScenarioDatasetSizeCap,
         ScenarioDatasetSummary,
-        ScenarioDefaultRunSizeEstimate,
+        ScenarioRunListItem,
         ScenarioRunSizeComponent,
         ScenarioRunSizeEstimate,
         ScenarioRunSizeEstimateRequest,
-        ScenarioRunSizeEstimateStatus,
-        ScenarioRunSizeFactor,
         ScenarioRunSummary,
     )
     from pyrit.models.catalog.target import TargetInstance
@@ -45,12 +43,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "RunScenarioRequest": "pyrit.models.catalog.scenario",
     "ScenarioDatasetSizeCap": "pyrit.models.catalog.scenario",
     "ScenarioDatasetSummary": "pyrit.models.catalog.scenario",
-    "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog.scenario",
+    "ScenarioRunListItem": "pyrit.models.catalog.scenario",
     "ScenarioRunSizeComponent": "pyrit.models.catalog.scenario",
     "ScenarioRunSizeEstimate": "pyrit.models.catalog.scenario",
     "ScenarioRunSizeEstimateRequest": "pyrit.models.catalog.scenario",
-    "ScenarioRunSizeEstimateStatus": "pyrit.models.catalog.scenario",
-    "ScenarioRunSizeFactor": "pyrit.models.catalog.scenario",
     "ScenarioRunSummary": "pyrit.models.catalog.scenario",
     "TargetInstance": "pyrit.models.catalog.target",
 }

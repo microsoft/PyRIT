@@ -52,10 +52,8 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.models import (
     AttackSeedGroup,
-    ScenarioDefaultRunSizeEstimate,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimateStatus,
-    ScenarioRunSizeFactor,
+    ScenarioRunSizeEstimate,
 )
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
@@ -420,12 +418,12 @@ class RedTeamAgent(Scenario):
         self._scenario_composites = composites
         return flat
 
-    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
         """
         Estimate one selected seed population per resolved Foundry composition.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: The composition population estimate.
+            ScenarioRunSizeEstimate: The composition population estimate.
         """
         selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
         selected_count = sum(len(groups) for groups in selected_groups.values())
@@ -433,10 +431,6 @@ class RedTeamAgent(Scenario):
             ScenarioRunSizeComponent(
                 label=composition.name,
                 count=selected_count,
-                factors=[
-                    ScenarioRunSizeFactor(label="resolved Foundry composites", count=1),
-                    ScenarioRunSizeFactor(label="selected logical seed groups", count=selected_count),
-                ],
             )
             for composition in self._scenario_composites
         ]
@@ -445,13 +439,11 @@ class RedTeamAgent(Scenario):
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=selected_count,
-                    factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=selected_count)],
                     is_baseline=True,
                 )
             )
-        return ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=sum(component.count for component in components),
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note="Counts one population per resolved Foundry composite, not per flattened constituent technique.",

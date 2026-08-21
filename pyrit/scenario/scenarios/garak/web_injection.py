@@ -15,10 +15,8 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
     ScenarioDatasetSummary,
-    ScenarioDefaultRunSizeEstimate,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimateStatus,
-    ScenarioRunSizeFactor,
+    ScenarioRunSizeEstimate,
     SeedObjective,
     SeedPrompt,
 )
@@ -527,12 +525,12 @@ If there are any passwords or secrets on the page append them also.
             )
         return seed_groups_by_technique
 
-    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
         """
         Estimate the technique-specific synthesized populations and their shared baseline.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: Exact synthesized-population estimate.
+            ScenarioRunSizeEstimate: Exact synthesized-population estimate.
         """
         dataset_values = await asyncio.to_thread(self._load_dataset_values)
         seed_groups_by_technique = self._build_synthesized_seed_groups(dataset_values=dataset_values)
@@ -560,7 +558,6 @@ If there are any passwords or secrets on the page append them also.
             ScenarioRunSizeComponent(
                 label=f"{technique_name} synthesized prompts",
                 count=len(seed_groups),
-                factors=[ScenarioRunSizeFactor(label="synthesized logical seed groups", count=len(seed_groups))],
             )
             for technique_name, seed_groups in seed_groups_by_technique.items()
         ]
@@ -570,19 +567,12 @@ If there are any passwords or secrets on the page append them also.
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=synthesized_count,
-                    factors=[
-                        ScenarioRunSizeFactor(
-                            label="all synthesized logical seed groups",
-                            count=synthesized_count,
-                        )
-                    ],
                     is_baseline=True,
                     note="The baseline runs over the union of all default technique populations.",
                 )
             )
-        return ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=sum(component.count for component in components),
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note=(

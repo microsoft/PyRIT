@@ -13,12 +13,11 @@ from time import monotonic
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.models.catalog.scenario import (
     RegisteredScenario,
-    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
-    ScenarioRunSizeEstimateStatus,
 )
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 
@@ -28,14 +27,14 @@ _ESTIMATE_CONCURRENCY = 1
 _ESTIMATE_INFLIGHT_SIZE = 256
 _UNAVAILABLE_CACHE_TTL_SECONDS = 30.0
 _EstimateCacheKey = tuple[str, int]
-_EstimateCacheValue = tuple[ScenarioDefaultRunSizeEstimate, float | None]
-_EstimateTask = asyncio.Task[ScenarioDefaultRunSizeEstimate]
+_EstimateCacheValue = tuple[ScenarioRunSizeEstimate, float | None]
+_EstimateTask = asyncio.Task[ScenarioRunSizeEstimate]
 
 
 def _metadata_to_registered_scenario(
     *,
     metadata: ScenarioMetadata,
-    default_run_size: ScenarioDefaultRunSizeEstimate | None = None,
+    default_run_size: ScenarioRunSizeEstimate | None = None,
 ) -> RegisteredScenario:
     """
     Convert a ScenarioMetadata dataclass to a ScenarioSummary Pydantic model.
@@ -47,7 +46,7 @@ def _metadata_to_registered_scenario(
     Returns:
         RegisteredScenario: Public catalog projection.
     """
-    estimate = default_run_size or ScenarioDefaultRunSizeEstimate.unavailable()
+    estimate = default_run_size or ScenarioRunSizeEstimate.unavailable()
     return RegisteredScenario(
         scenario_name=metadata.registry_name,
         scenario_type=metadata.class_name,
@@ -139,7 +138,7 @@ class ScenarioService:
         *,
         scenario_name: str,
         request: ScenarioRunSizeEstimateRequest,
-    ) -> ScenarioDefaultRunSizeEstimate | None:
+    ) -> ScenarioRunSizeEstimate | None:
         """
         Estimate one configured scenario without creating a run.
 
@@ -148,7 +147,7 @@ class ScenarioService:
             request: Request-specific techniques, datasets, baseline, and parameters.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate | None: Estimate, or ``None`` when the scenario is unknown.
+            ScenarioRunSizeEstimate | None: Estimate, or ``None`` when the scenario is unknown.
         """
         metadata = self._registry.get_registered_class_metadata(scenario_name)
         if metadata is None:
@@ -164,9 +163,7 @@ class ScenarioService:
                 request=request,
             )
 
-    async def _get_default_run_size_estimate_async(
-        self, *, metadata: ScenarioMetadata
-    ) -> ScenarioDefaultRunSizeEstimate:
+    async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
         """Return a cached, cancellation-safe scenario-owned estimate."""
         cache_key = (metadata.registry_name, metadata.scenario_version)
         cache = getattr(self, "_estimate_cache", None)
@@ -218,7 +215,7 @@ class ScenarioService:
             if wait_for_capacity is not None:
                 await asyncio.shield(wait_for_capacity)
 
-    def _read_estimate_cache(self, *, cache_key: _EstimateCacheKey) -> ScenarioDefaultRunSizeEstimate | None:
+    def _read_estimate_cache(self, *, cache_key: _EstimateCacheKey) -> ScenarioRunSizeEstimate | None:
         """Return a live cached estimate and discard expired unavailable entries."""
         cache = self._estimate_cache
         cached = cache.get(cache_key)
@@ -236,12 +233,12 @@ class ScenarioService:
         *,
         scenario_name: str,
         cache_key: _EstimateCacheKey,
-    ) -> ScenarioDefaultRunSizeEstimate:
+    ) -> ScenarioRunSizeEstimate:
         """
         Construct and estimate one scenario on the owning event loop.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: Scenario-owned estimate.
+            ScenarioRunSizeEstimate: Scenario-owned estimate.
         """
         semaphore = getattr(self, "_estimate_semaphore", None)
         if semaphore is None:
@@ -253,15 +250,11 @@ class ScenarioService:
                 estimate = await scenario.get_default_run_size_estimate_async()
             except Exception as exc:
                 logger.warning("Default-run estimate failed for scenario '%s': %s", scenario_name, exc)
-                estimate = ScenarioDefaultRunSizeEstimate.unavailable(
+                estimate = ScenarioRunSizeEstimate.unavailable(
                     note=f"The scenario could not resolve its default inputs for estimation ({type(exc).__name__})."
                 )
 
-        expires_at = (
-            monotonic() + _UNAVAILABLE_CACHE_TTL_SECONDS
-            if estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
-            else None
-        )
+        expires_at = monotonic() + _UNAVAILABLE_CACHE_TTL_SECONDS if estimate.estimated_attack_count is None else None
         cache = self._estimate_cache
         cache[cache_key] = (estimate, expires_at)
         cache.move_to_end(cache_key)
@@ -280,18 +273,17 @@ class ScenarioService:
         *,
         scenario_name: str,
         request: ScenarioRunSizeEstimateRequest,
-    ) -> ScenarioDefaultRunSizeEstimate:
+    ) -> ScenarioRunSizeEstimate:
         """
         Resolve and estimate one request on the owning event loop.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: Request-specific scenario estimate.
+            ScenarioRunSizeEstimate: Request-specific scenario estimate.
         """
         scenario_class = self._registry.get_class(scenario_name)
-        objective_target = (
-            ScenarioRunService.resolve_target_name(target_name=request.target_name) if request.target_name else None
-        )
-        estimate_kwargs = ScenarioRunService.resolve_scenario_configuration(
+        resolver = ScenarioConfigurationResolver()
+        objective_target = resolver.resolve_target(target_name=request.target_name) if request.target_name else None
+        estimate_kwargs = resolver.resolve_configuration(
             scenario_name=scenario_name,
             scenario_class=scenario_class,
             objective_target=objective_target,

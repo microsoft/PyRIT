@@ -15,7 +15,6 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
-    ScenarioRunSizeEstimateStatus,
     SeedObjective,
     SeedPrompt,
 )
@@ -222,16 +221,8 @@ class TestJailbreakInitialization:
             )
 
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
-
-        assert estimate.status is ScenarioRunSizeEstimateStatus.Exact
-        assert estimate.total_attack_count == 8
+        assert estimate.estimated_attack_count == 8
         assert [component.label for component in estimate.components] == ["Inline jailbreak delivery"]
-        assert [(factor.label, factor.count) for factor in estimate.components[0].factors] == [
-            ("selected logical seed groups", 4),
-            ("jailbreak templates", 2),
-            ("attempts", 1),
-            ("inline delivery techniques", 1),
-        ]
         assert estimate.datasets[0].logical_seed_group_count == 4
         assert estimate.datasets[0].selected_seed_group_count == 4
         assert [(cap.label, cap.count) for cap in estimate.datasets[0].configured_caps] == [("per-dataset cap", 4)]
@@ -253,9 +244,7 @@ class TestJailbreakInitialization:
             )
 
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
-
-        assert estimate.status is ScenarioRunSizeEstimateStatus.Conditional
-        assert estimate.total_attack_count is None
+        assert estimate.estimated_attack_count is None
         assert [component.label for component in estimate.components] == [
             "Inline jailbreak delivery",
             "Native system-prompt jailbreak delivery",

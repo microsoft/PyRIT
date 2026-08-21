@@ -26,10 +26,8 @@ from pyrit.executor.attack.core.attack_config import AttackConverterConfig, Atta
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
-    ScenarioDefaultRunSizeEstimate,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimateStatus,
-    ScenarioRunSizeFactor,
+    ScenarioRunSizeEstimate,
     Seed,
     SeedObjective,
     SeedPrompt,
@@ -232,12 +230,12 @@ class Encoding(Scenario):
         atomic_attacks.extend(self._get_converter_attacks(context=context))
         return atomic_attacks
 
-    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
         """
         Estimate converter variants crossed with raw and decode-template prompt configurations.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: Exact converter-variant estimate.
+            ScenarioRunSizeEstimate: Exact converter-variant estimate.
         """
         selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
         seed_group_count = sum(len(groups) for groups in selected_groups.values())
@@ -248,14 +246,6 @@ class Encoding(Scenario):
             ScenarioRunSizeComponent(
                 label="Encoding converter variants",
                 count=seed_group_count * variant_count * prompt_configuration_count,
-                factors=[
-                    ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count),
-                    ScenarioRunSizeFactor(label="concrete converter variants", count=variant_count),
-                    ScenarioRunSizeFactor(
-                        label="raw plus decode prompt configurations",
-                        count=prompt_configuration_count,
-                    ),
-                ],
                 note=(
                     "Concrete variants are counted separately when one catalog technique maps to "
                     "multiple encoders, including base64 and ascii85."
@@ -267,13 +257,11 @@ class Encoding(Scenario):
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=seed_group_count,
-                    factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count)],
                     is_baseline=True,
                 )
             )
-        return ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=sum(component.count for component in components),
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note="Retries are excluded; each converter and decode-template configuration is a planned outer unit.",

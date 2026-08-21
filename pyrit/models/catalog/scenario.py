@@ -14,8 +14,6 @@ canonical models.
 """
 
 from datetime import datetime
-from enum import Enum
-from math import prod
 from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
@@ -59,48 +57,13 @@ def _validate_dataset_filter_mapping(
     return value
 
 
-class ScenarioRunSizeEstimateStatus(str, Enum):
-    """Confidence level for a catalog default-run size estimate."""
-
-    Exact = "exact"
-    Conditional = "conditional"
-    Unavailable = "unavailable"
-
-
-class ScenarioRunSizeFactor(BaseModel):
-    """One labeled multiplicative factor in a run-size component."""
-
-    label: str = Field(..., min_length=1)
-    count: int = Field(..., ge=0)
-
-
 class ScenarioRunSizeComponent(BaseModel):
     """One additive component of a default-run size estimate."""
 
     label: str = Field(..., min_length=1)
     count: int = Field(..., ge=0)
-    factors: list[ScenarioRunSizeFactor] = Field(default_factory=list)
     is_baseline: bool = False
     note: str | None = None
-
-    @model_validator(mode="after")
-    def validate_factor_product(self) -> "ScenarioRunSizeComponent":
-        """
-        Require known component totals to equal their ordered factor product.
-
-        Returns:
-            ScenarioRunSizeComponent: The validated component.
-
-        Raises:
-            ValueError: If a component with factors has an inconsistent count.
-        """
-        if self.factors:
-            factor_product = prod(factor.count for factor in self.factors)
-            if self.count != factor_product:
-                raise ValueError(
-                    f"Component '{self.label}' count ({self.count}) must equal its factor product ({factor_product})"
-                )
-        return self
 
 
 class ScenarioDatasetSizeCap(BaseModel):
@@ -127,7 +90,7 @@ class ScenarioDatasetSummary(BaseModel):
     selection_note: str | None = None
 
 
-class ScenarioDefaultRunSizeEstimate(BaseModel):
+class ScenarioRunSizeEstimate(BaseModel):
     """
     Structured estimate of default planned scenario execution units.
 
@@ -135,87 +98,39 @@ class ScenarioDefaultRunSizeEstimate(BaseModel):
     logical-seed-group pair. Retries and internal attack turns are excluded.
     """
 
-    version: Literal[1] = 1
-    status: ScenarioRunSizeEstimateStatus
-    total_attack_count: int | None = Field(
-        default=None,
-        ge=0,
-        validation_alias=AliasChoices("total_attack_count", "total"),
-    )
+    estimated_attack_count: int | None = Field(default=None, ge=0)
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
-    note: str | None = Field(default=None, validation_alias=AliasChoices("note", "caveat"))
-    retries_included: Literal[False] = False
-
-    @property
-    def total(self) -> int | None:
-        """The legacy Python attribute for total_attack_count."""
-        return self.total_attack_count
-
-    @property
-    def caveat(self) -> str | None:
-        """The legacy Python attribute for note."""
-        return self.note
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_total(cls, data: Any) -> Any:
-        """
-        Explain component-less legacy exact totals in the canonical shape.
-
-        Returns:
-            Any: The normalized input when it is a legacy exact estimate; otherwise the original input.
-        """
-        if not isinstance(data, dict) or "total" not in data or "components" in data:
-            return data
-        if data.get("status") != ScenarioRunSizeEstimateStatus.Exact and data.get("status") != "exact":
-            return data
-        normalized = dict(data)
-        normalized["components"] = [
-            {
-                "label": "Legacy total",
-                "count": data["total"],
-                "note": "Normalized from a legacy component-less estimate.",
-            }
-        ]
-        return normalized
+    note: str | None = None
 
     @model_validator(mode="after")
-    def validate_total(self) -> "ScenarioDefaultRunSizeEstimate":
+    def validate_estimated_attack_count(self) -> "ScenarioRunSizeEstimate":
         """
-        Ensure exact estimates expose and explain their complete total.
+        Ensure available estimates expose a complete additive total.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: The validated estimate.
+            ScenarioRunSizeEstimate: The validated estimate.
 
         Raises:
-            ValueError: If an exact estimate omits or misstates its total.
+            ValueError: If an available estimate misstates its total.
         """
-        if self.status is ScenarioRunSizeEstimateStatus.Exact:
-            if self.total_attack_count is None:
-                raise ValueError("Exact default-run estimates require total_attack_count")
+        if self.estimated_attack_count is not None:
             component_total = sum(component.count for component in self.components)
-            if component_total != self.total_attack_count:
+            if component_total != self.estimated_attack_count:
                 raise ValueError(
-                    f"Exact default-run estimate components total {component_total}, not {self.total_attack_count}"
+                    f"Default-run estimate components total {component_total}, not {self.estimated_attack_count}"
                 )
         return self
 
     @classmethod
-    def unavailable(
-        cls, *, note: str = "Default-run size estimate is unavailable."
-    ) -> "ScenarioDefaultRunSizeEstimate":
+    def unavailable(cls, *, note: str = "Default-run size estimate is unavailable.") -> "ScenarioRunSizeEstimate":
         """
         Build an unavailable estimate without presenting a guessed total.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: An unavailable estimate.
+            ScenarioRunSizeEstimate: An unavailable estimate.
         """
-        return cls(status=ScenarioRunSizeEstimateStatus.Unavailable, note=note)
-
-
-# Backward-compatible catalog name from the initial run-size DTO.
-ScenarioRunSizeEstimate = ScenarioDefaultRunSizeEstimate
+        return cls(note=note)
 
 
 class RegisteredScenario(BaseModel):
@@ -257,8 +172,8 @@ class RegisteredScenario(BaseModel):
     supported_parameters: list[Parameter] = Field(
         default_factory=list, description="Scenario-declared custom parameters"
     )
-    default_run_size: ScenarioDefaultRunSizeEstimate = Field(
-        default_factory=ScenarioDefaultRunSizeEstimate.unavailable,
+    default_run_size: ScenarioRunSizeEstimate = Field(
+        default_factory=ScenarioRunSizeEstimate.unavailable,
         description="Scenario-owned structured estimate of the default planned execution units",
     )
 
@@ -401,5 +316,23 @@ class ScenarioRunSummary(BaseModel):
     total_retries: int = Field(
         0, ge=0, description="Total retry attempts recorded across all attack results (endpoint-stress signal)"
     )
+    labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
+    completed_at: datetime | None = Field(None, description="When the scenario finished")
+
+
+class ScenarioRunListItem(BaseModel):
+    """Lightweight scenario run metadata returned by the history endpoint."""
+
+    scenario_result_id: str = Field(..., description="UUID of the ScenarioResult in memory")
+    scenario_name: str = Field(..., description="Registry key of the scenario being run")
+    scenario_registry_name: str | None = Field(None, description="Requested scenario registry key when available")
+    scenario_version: int = Field(0, ge=0, description="Version of the scenario")
+    status: ScenarioRunState = Field(..., description="Current run status")
+    created_at: datetime = Field(..., description="When the run was created")
+    updated_at: datetime = Field(..., description="When the run status last changed")
+    error: str | None = Field(None, description="Persisted run-level error message")
+    error_type: str | None = Field(None, description="Persisted run-level exception class")
+    techniques_used: list[str] = Field(default_factory=list, description="Planned technique display groups")
+    total_attacks: int = Field(0, ge=0, description="Number of planned execution units")
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     completed_at: datetime | None = Field(None, description="When the scenario finished")

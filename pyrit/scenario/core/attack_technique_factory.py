@@ -84,7 +84,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_seed_prompt: SeedPrompt | str | None = None,
         seed_technique: AttackTechniqueSeedGroup | None = None,
         uses_adversarial: bool | None = None,
-        supports_request_converter_composition: bool = False,
+        supports_additional_request_converters: bool = False,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> None:
         """
@@ -122,7 +122,7 @@ class AttackTechniqueFactory(Identifiable):
                 chat during execution. ``None`` auto-derives from the attack
                 class constructor signature and seed-technique shape.
                 Authors can override the derivation explicitly.
-            supports_request_converter_composition: Whether callers may safely
+            supports_additional_request_converters: Whether callers may safely
                 append request converters to this technique. This is an explicit
                 semantic opt-in, not merely constructor-signature detection.
             scorer_override_policy: What to do when a scenario's scorer is
@@ -149,7 +149,7 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_system_prompt is not None or adversarial_seed_prompt is not None
         )
         self._seed_technique = seed_technique
-        self._supports_request_converter_composition = supports_request_converter_composition
+        self._supports_additional_request_converters = supports_additional_request_converters
         self._scorer_override_policy = scorer_override_policy
 
         self._uses_adversarial = uses_adversarial if uses_adversarial is not None else self._derive_uses_adversarial()
@@ -174,7 +174,7 @@ class AttackTechniqueFactory(Identifiable):
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
         uses_adversarial: bool | None = None,
-        supports_request_converter_composition: bool = False,
+        supports_additional_request_converters: bool = False,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> AttackTechniqueFactory:
         """
@@ -226,7 +226,7 @@ class AttackTechniqueFactory(Identifiable):
                 during execution. ``None`` auto-derives from the attack class
                 constructor signature and seed-technique shape. Forwarded to
                 the factory constructor.
-            supports_request_converter_composition: Whether callers may safely
+            supports_additional_request_converters: Whether callers may safely
                 append request converters to this technique. Forwarded to the
                 factory constructor.
             scorer_override_policy: Policy applied when a scenario's scorer is
@@ -289,7 +289,7 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_chat=adversarial_chat,
             seed_technique=seed_technique,
             uses_adversarial=uses_adversarial,
-            supports_request_converter_composition=supports_request_converter_composition,
+            supports_additional_request_converters=supports_additional_request_converters,
             scorer_override_policy=scorer_override_policy,
         )
 
@@ -334,11 +334,11 @@ class AttackTechniqueFactory(Identifiable):
                 not accept ``attack_converter_config``.
         """
         if (
-            self._supports_request_converter_composition
+            self._supports_additional_request_converters
             and "attack_converter_config" not in self._get_accepted_params()
         ):
             raise ValueError(
-                f"Factory '{self._name}' declares supports_request_converter_composition=True, "
+                f"Factory '{self._name}' declares supports_additional_request_converters=True, "
                 f"but {self._attack_class.__name__} does not accept 'attack_converter_config'."
             )
 
@@ -513,9 +513,9 @@ class AttackTechniqueFactory(Identifiable):
         return self._uses_adversarial
 
     @property
-    def supports_request_converter_composition(self) -> bool:
+    def supports_additional_request_converters(self) -> bool:
         """Whether callers may safely append request converters to this technique."""
-        return self._supports_request_converter_composition
+        return self._supports_additional_request_converters
 
     @property
     def scoring_config_type(self) -> type | None:
@@ -861,7 +861,7 @@ class AttackTechniqueFactory(Identifiable):
             "attack_class": self._attack_class.__name__,
             "kwargs": kwargs_for_id,
             "uses_adversarial": self._uses_adversarial,
-            "supports_request_converter_composition": self._supports_request_converter_composition,
+            "supports_additional_request_converters": self._supports_additional_request_converters,
         }
         if self._technique_tags:
             params["technique_tags"] = list(self._technique_tags)

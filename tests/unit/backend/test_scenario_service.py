@@ -18,7 +18,7 @@ from pyrit.backend.main import app
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_service import (
     ScenarioService,
     get_scenario_service,
@@ -27,10 +27,9 @@ from pyrit.models import (
     Parameter,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSummary,
-    ScenarioDefaultRunSizeEstimate,
     ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
-    ScenarioRunSizeEstimateStatus,
 )
 from pyrit.models.catalog.scenario import RegisteredScenario
 from pyrit.registry import ScenarioMetadata
@@ -152,9 +151,8 @@ class TestScenarioServiceListScenarios:
     async def test_estimate_is_offloaded_and_cached(self) -> None:
         """Scenario-owned estimates run in a worker once and are reused by subsequent reads."""
         metadata = _make_scenario_metadata()
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=4,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=4,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=4)],
             datasets=[
                 ScenarioDatasetSummary(
@@ -195,15 +193,14 @@ class TestScenarioServiceListScenarios:
     async def test_concurrent_estimate_reads_share_one_task(self) -> None:
         """Concurrent catalog readers share one atomic single-flight estimate."""
         metadata = _make_scenario_metadata()
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=1,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
         )
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def estimate_async() -> ScenarioDefaultRunSizeEstimate:
+        async def estimate_async() -> ScenarioRunSizeEstimate:
             started.set()
             await release.wait()
             return estimate
@@ -246,15 +243,14 @@ class TestScenarioServiceListScenarios:
     async def test_cancelled_estimate_waiter_does_not_cancel_shared_task(self) -> None:
         """Cancelling one waiter leaves the shared estimate available to other readers."""
         metadata = _make_scenario_metadata()
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=1,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
         )
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def estimate_async() -> ScenarioDefaultRunSizeEstimate:
+        async def estimate_async() -> ScenarioRunSizeEstimate:
             started.set()
             await release.wait()
             return estimate
@@ -284,9 +280,8 @@ class TestScenarioServiceListScenarios:
     async def test_completed_stale_task_cannot_block_inflight_capacity(self) -> None:
         """A done task is pruned before the bounded inflight capacity check."""
         metadata = _make_scenario_metadata()
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=1,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
         )
         scenario = MagicMock()
@@ -316,9 +311,8 @@ class TestScenarioServiceListScenarios:
             _make_scenario_metadata(registry_name="test.good"),
             _make_scenario_metadata(registry_name="test.bad"),
         ]
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=2,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=2,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=2)],
         )
         good_scenario = MagicMock()
@@ -336,17 +330,13 @@ class TestScenarioServiceListScenarios:
             }[name]
 
             result = await service.list_scenarios_async()
-
-        assert result.items[0].default_run_size.status is ScenarioRunSizeEstimateStatus.Exact
-        assert result.items[1].default_run_size.status is ScenarioRunSizeEstimateStatus.Unavailable
         assert "RuntimeError" in result.items[1].default_run_size.note
 
     async def test_unavailable_estimate_cache_expires(self) -> None:
         """A transient estimate failure is retried after the unavailable-result TTL."""
         metadata = _make_scenario_metadata()
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=1,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
         )
         scenario = MagicMock()
@@ -368,15 +358,13 @@ class TestScenarioServiceListScenarios:
 
         assert first is not None
         assert second is not None
-        assert first.default_run_size.status is ScenarioRunSizeEstimateStatus.Unavailable
         assert second.default_run_size == estimate
         assert service._registry.create_instance.call_count == 2
 
     async def test_estimate_cache_is_version_aware_and_bounded(self) -> None:
         """Scenario version changes invalidate estimates and the LRU stays bounded."""
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=1,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
         )
         scenario = MagicMock()
@@ -476,9 +464,8 @@ class TestScenarioServiceGetScenario:
     async def test_configured_estimate_uses_shared_launch_resolution(self) -> None:
         """Configured estimates pass typed selections and parameters into the registry lifecycle."""
         metadata = _make_scenario_metadata(registry_name="airt.jailbreak")
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=12,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=12,
             components=[ScenarioRunSizeComponent(label="Configured Jailbreak", count=12)],
         )
         introspection_instance = MagicMock()
@@ -489,7 +476,9 @@ class TestScenarioServiceGetScenario:
 
         with (
             patch.object(ScenarioService, "__init__", lambda self: None),
-            patch.object(ScenarioRunService, "resolve_target_name", return_value=objective_target) as resolve_target,
+            patch.object(
+                ScenarioConfigurationResolver, "resolve_target", return_value=objective_target
+            ) as resolve_target,
         ):
             service = ScenarioService()
             service._registry = MagicMock()
@@ -557,8 +546,7 @@ class TestScenarioServiceGetScenario:
     async def test_configured_estimate_without_target_does_not_resolve_or_send_to_target(self) -> None:
         """Target-conditional previews stay side-effect free when no target is configured."""
         metadata = _make_scenario_metadata(registry_name="adaptive.text")
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Conditional,
+        estimate = ScenarioRunSizeEstimate(
             note="Target compatibility is unknown.",
         )
         introspection_instance = MagicMock()
@@ -568,7 +556,7 @@ class TestScenarioServiceGetScenario:
 
         with (
             patch.object(ScenarioService, "__init__", lambda self: None),
-            patch.object(ScenarioRunService, "resolve_target_name") as resolve_target,
+            patch.object(ScenarioConfigurationResolver, "resolve_target") as resolve_target,
         ):
             service = ScenarioService()
             service._registry = MagicMock()
@@ -726,9 +714,8 @@ class TestScenarioRoutes:
             aggregate_techniques=["all"],
             all_techniques=["role_play"],
             default_datasets=["airt_hate"],
-            default_run_size=ScenarioDefaultRunSizeEstimate(
-                status=ScenarioRunSizeEstimateStatus.Exact,
-                total_attack_count=8,
+            default_run_size=ScenarioRunSizeEstimate(
+                estimated_attack_count=8,
                 components=[
                     ScenarioRunSizeComponent(
                         label="Default technique sweep",
@@ -749,9 +736,7 @@ class TestScenarioRoutes:
             data = response.json()
             assert data["scenario_name"] == "foundry.red_team_agent"
             assert data["default_techniques"] == ["role_play"]
-            assert data["default_run_size"]["version"] == 1
-            assert data["default_run_size"]["status"] == "exact"
-            assert data["default_run_size"]["total_attack_count"] == 8
+            assert data["default_run_size"]["estimated_attack_count"] == 8
 
     def test_get_scenario_returns_404_when_not_found(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog/{name} returns 404 when not found."""
@@ -766,9 +751,8 @@ class TestScenarioRoutes:
 
     def test_estimate_scenario_returns_configured_projection(self, client: TestClient) -> None:
         """POST catalog estimate forwards request fields and returns the structured estimate."""
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=12,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=12,
             components=[ScenarioRunSizeComponent(label="Configured Jailbreak", count=12)],
         )
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
@@ -789,7 +773,7 @@ class TestScenarioRoutes:
             )
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["total_attack_count"] == 12
+        assert response.json()["estimated_attack_count"] == 12
         request = mock_service.estimate_scenario_run_size_async.await_args.kwargs["request"]
         assert request.techniques == ["prompt_sending"]
         assert request.include_baseline is True
@@ -800,9 +784,8 @@ class TestScenarioRoutes:
 
     async def test_estimate_scenario_supports_direct_keyword_call(self) -> None:
         """The FastAPI handler remains directly callable through its keyword-only API."""
-        estimate = ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=1,
+        estimate = ScenarioRunSizeEstimate(
+            estimated_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Configured estimate", count=1)],
         )
         request = ScenarioRunSizeEstimateRequest()

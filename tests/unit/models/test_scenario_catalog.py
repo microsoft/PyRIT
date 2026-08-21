@@ -9,138 +9,65 @@ from pydantic import ValidationError
 from pyrit.models import (
     ScenarioDatasetSizeCap,
     ScenarioDatasetSummary,
-    ScenarioDefaultRunSizeEstimate,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
-    ScenarioRunSizeEstimateStatus,
-    ScenarioRunSizeFactor,
 )
 
 
-def test_run_size_estimate_compatibility_alias_is_canonical_model() -> None:
-    """The initial DTO name remains an unambiguous alias of the versioned model."""
-    assert ScenarioRunSizeEstimate is ScenarioDefaultRunSizeEstimate
+def test_run_size_estimate_requires_available_total_to_match_components() -> None:
+    """Available estimates require an additive component total."""
+    with pytest.raises(ValidationError, match="components total 6, not 7"):
+        ScenarioRunSizeEstimate(
+            estimated_attack_count=7,
+            components=[ScenarioRunSizeComponent(label="Techniques", count=6)],
+        )
 
 
-def test_run_size_estimate_accepts_legacy_fields_and_serializes_canonically() -> None:
-    """Legacy constructors parse while the wire shape remains singular and versioned."""
-    estimate = ScenarioRunSizeEstimate.model_validate(
-        {
-            "status": "exact",
-            "total": 2,
-            "components": [{"label": "Sweep", "count": 2}],
-            "datasets": [
-                {
-                    "name": "harmbench",
-                    "seed_group_count": 100,
-                    "selected_seed_group_count": 2,
-                }
-            ],
-            "caveat": "Legacy explanation.",
-        }
+def test_run_size_estimate_allows_unavailable_count_with_components() -> None:
+    """Unavailable estimates retain useful candidate components and an explanatory note."""
+    estimate = ScenarioRunSizeEstimate(
+        components=[ScenarioRunSizeComponent(label="Candidate techniques", count=6)],
+        note="The final count depends on target capabilities.",
     )
 
-    assert estimate.total == 2
-    assert estimate.caveat == "Legacy explanation."
-    payload = estimate.model_dump(mode="json")
-    assert payload["version"] == 1
-    assert payload["total_attack_count"] == 2
-    assert payload["note"] == "Legacy explanation."
-    assert payload["datasets"][0]["logical_seed_group_count"] == 100
-    assert "total" not in payload
-    assert "caveat" not in payload
-    assert "seed_group_count" not in payload["datasets"][0]
+    assert estimate.estimated_attack_count is None
+    assert estimate.components[0].count == 6
 
 
-def test_run_size_estimate_normalizes_legacy_componentless_exact_total() -> None:
-    estimate = ScenarioRunSizeEstimate.model_validate({"status": "exact", "total": 2})
-
-    assert estimate.total_attack_count == 2
-    assert estimate.components == [
-        ScenarioRunSizeComponent(
-            label="Legacy total",
-            count=2,
-            note="Normalized from a legacy component-less estimate.",
-        )
-    ]
-
-
-def test_exact_default_run_size_requires_component_total() -> None:
-    """Exact estimates reject totals that do not match their additive components."""
-    with pytest.raises(ValidationError, match="components total 6, not 7"):
-        ScenarioDefaultRunSizeEstimate(
-            status=ScenarioRunSizeEstimateStatus.Exact,
-            total_attack_count=7,
-            components=[
-                ScenarioRunSizeComponent(
-                    label="Techniques",
-                    count=6,
-                    factors=[
-                        ScenarioRunSizeFactor(label="seed groups", count=3),
-                        ScenarioRunSizeFactor(label="techniques", count=2),
-                    ],
-                )
-            ],
-        )
-
-
-def test_run_size_component_requires_factor_product() -> None:
-    """Components reject counts that disagree with their ordered formula factors."""
-    with pytest.raises(ValidationError, match="factor product \\(6\\)"):
-        ScenarioRunSizeComponent(
-            label="Techniques",
-            count=7,
-            factors=[
-                ScenarioRunSizeFactor(label="seed groups", count=3),
-                ScenarioRunSizeFactor(label="techniques", count=2),
-            ],
-        )
-
-
-def test_default_run_size_serializes_versioned_api_shape() -> None:
-    """The estimate exposes stable status, total, component, and factor fields."""
-    estimate = ScenarioDefaultRunSizeEstimate(
-        status=ScenarioRunSizeEstimateStatus.Exact,
-        total_attack_count=6,
-        components=[
-            ScenarioRunSizeComponent(
-                label="Techniques",
-                count=6,
-                factors=[
-                    ScenarioRunSizeFactor(label="seed groups", count=3),
-                    ScenarioRunSizeFactor(label="techniques", count=2),
-                ],
-            )
-        ],
+def test_run_size_estimate_serializes_canonical_api_shape() -> None:
+    """The estimate exposes only the available count and additive components."""
+    estimate = ScenarioRunSizeEstimate(
+        estimated_attack_count=6,
+        components=[ScenarioRunSizeComponent(label="Techniques", count=6)],
     )
 
     assert estimate.model_dump(mode="json") == {
-        "version": 1,
-        "status": "exact",
-        "total_attack_count": 6,
+        "estimated_attack_count": 6,
         "components": [
             {
                 "label": "Techniques",
                 "count": 6,
-                "factors": [
-                    {"label": "seed groups", "count": 3},
-                    {"label": "techniques", "count": 2},
-                ],
                 "note": None,
                 "is_baseline": False,
             }
         ],
         "datasets": [],
         "note": None,
-        "retries_included": False,
     }
 
 
-def test_conditional_estimate_exposes_dataset_counts_structurally() -> None:
-    """Conditionality and effective dataset selection are machine-readable."""
-    estimate = ScenarioDefaultRunSizeEstimate(
-        status=ScenarioRunSizeEstimateStatus.Conditional,
+def test_unavailable_run_size_estimate_has_no_count() -> None:
+    """The unavailable factory communicates that a count cannot be calculated."""
+    estimate = ScenarioRunSizeEstimate.unavailable()
+
+    assert estimate.estimated_attack_count is None
+    assert estimate.note == "Default-run size estimate is unavailable."
+
+
+def test_estimate_exposes_dataset_counts_structurally() -> None:
+    """Effective dataset selection remains machine-readable."""
+    estimate = ScenarioRunSizeEstimate(
         datasets=[
             ScenarioDatasetSummary(
                 name="harmbench",
@@ -157,13 +84,11 @@ def test_conditional_estimate_exposes_dataset_counts_structurally() -> None:
                 ],
             )
         ],
-        note="The final total depends on target capabilities.",
+        note="The final count depends on target capabilities.",
     )
 
-    payload = estimate.model_dump(mode="json")
-    assert payload["status"] == "conditional"
-    assert payload["total_attack_count"] is None
-    assert payload["datasets"] == [
+    assert estimate.estimated_attack_count is None
+    assert estimate.model_dump(mode="json")["datasets"] == [
         {
             "name": "harmbench",
             "kind": "dataset",
@@ -180,7 +105,6 @@ def test_conditional_estimate_exposes_dataset_counts_structurally() -> None:
             ],
         }
     ]
-    assert payload["retries_included"] is False
 
 
 def test_estimate_request_reuses_dataset_filter_validation() -> None:

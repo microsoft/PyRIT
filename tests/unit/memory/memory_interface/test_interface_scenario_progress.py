@@ -6,10 +6,10 @@
 import uuid
 from datetime import datetime, timezone
 
+import pytest
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_interface import ScenarioProgressKeysetCursor
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -88,7 +88,7 @@ def test_scenario_progress_deltas_page_equal_timestamps_by_id(
     )
     second_page, second_has_more = sqlite_instance.get_scenario_attack_result_deltas(
         scenario_result_id=str(scenario.id),
-        cursor=ScenarioProgressKeysetCursor(
+        cursor=AttackResultKeysetCursor(
             timestamp=first_page[0].timestamp,
             attack_result_id=first_page[0].attack_result_id,
         ),
@@ -127,3 +127,24 @@ def test_scenario_result_header_does_not_hydrate_attack_results(
 
     assert header is not None
     assert header.attack_results == {}
+
+
+def test_scenario_result_headers_are_bounded_without_attack_results(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    scenarios = [
+        make_scenario_result(
+            scenario_name=f"scenario-{index}",
+            attack_results={},
+            objective_target_identifier=get_mock_target_identifier(),
+        )
+        for index in range(2)
+    ]
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=scenarios)
+
+    headers = sqlite_instance.get_scenario_result_headers(limit=1)
+
+    assert len(headers) == 1
+    assert headers[0].attack_results == {}
+    with pytest.raises(ValueError, match="between 1 and 100"):
+        sqlite_instance.get_scenario_result_headers(limit=101)
