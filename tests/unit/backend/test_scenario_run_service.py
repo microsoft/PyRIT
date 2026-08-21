@@ -548,8 +548,8 @@ class TestScenarioRunServiceStartRun:
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         assert init_call.kwargs["include_baseline"] is False
 
-    async def test_start_run_max_dataset_size_copies_default_config(self, mock_all_registries) -> None:
-        """``max_dataset_size`` overrides an independent copy of the scenario default."""
+    async def test_start_run_max_dataset_size_updates_introspection_config(self, mock_all_registries) -> None:
+        """``max_dataset_size`` updates the throwaway introspection config."""
         default_config = DatasetAttackConfiguration(dataset_names=["original"], max_dataset_size=100)
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
@@ -559,10 +559,10 @@ class TestScenarioRunServiceStartRun:
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
-        assert built_config is not default_config
+        assert built_config is default_config
         assert type(built_config) is DatasetAttackConfiguration
         assert built_config.max_dataset_size == 5
-        assert default_config.max_dataset_size == 100
+        assert default_config.max_dataset_size == 5
 
     async def test_start_run_dataset_names_preserves_subclass_config_type(self, mock_all_registries) -> None:
         """``dataset_names`` rebuilds the config using the scenario's own DatasetConfiguration subclass.
@@ -650,10 +650,10 @@ class TestScenarioRunServiceStartRun:
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
         assert isinstance(built_config, CompoundDatasetAttackConfiguration)
-        assert built_config is not default_config
+        assert built_config is default_config
         assert built_config.dataset_names == ["airt_hate", "airt_fairness"]
         assert [child.max_dataset_size for child in built_config._configurations] == [2, 2]
-        assert [child.max_dataset_size for child in default_config._configurations] == [4, 4]
+        assert [child.max_dataset_size for child in default_config._configurations] == [2, 2]
 
     async def test_start_run_non_name_overrides_preserve_shaped_compound_children(self, mock_all_registries) -> None:
         """Size and filter overrides do not rebuild scenario-specific child configurations."""
@@ -681,7 +681,7 @@ class TestScenarioRunServiceStartRun:
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
-        assert built_config is not default_config
+        assert built_config is default_config
         assert [type(child) for child in built_config._configurations] == [
             _ShapedDatasetConfiguration,
             _ShapedDatasetConfiguration,
@@ -691,8 +691,11 @@ class TestScenarioRunServiceStartRun:
             {"harm_categories": ["cyber"]},
             {"harm_categories": ["cyber"]},
         ]
-        assert [child.max_dataset_size for child in default_config._configurations] == [4, 4]
-        assert [child.filters for child in default_config._configurations] == [{}, {}]
+        assert [child.max_dataset_size for child in default_config._configurations] == [2, 2]
+        assert [child.filters for child in default_config._configurations] == [
+            {"harm_categories": ["cyber"]},
+            {"harm_categories": ["cyber"]},
+        ]
 
     async def test_start_run_dataset_names_rejects_incompatible_subclass_constructor(self, mock_all_registries) -> None:
         """Reject overrides that cannot preserve scenario-specific dataset configuration."""
@@ -741,8 +744,8 @@ class TestScenarioRunServiceStartRun:
         assert built_config.max_dataset_size == 7
         assert built_config.filters == {"harm_categories": ["cyber"]}
 
-    async def test_start_run_dataset_filters_copy_default_config(self, mock_all_registries) -> None:
-        """``dataset_filters`` with no names merges filters into an independent copy."""
+    async def test_start_run_dataset_filters_update_introspection_config(self, mock_all_registries) -> None:
+        """``dataset_filters`` with no names update the throwaway introspection config."""
         default_config = DatasetAttackConfiguration(dataset_names=["original"])
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
@@ -752,9 +755,9 @@ class TestScenarioRunServiceStartRun:
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
-        assert built_config is not default_config
+        assert built_config is default_config
         assert built_config.filters == {"harm_categories": ["cyber"]}
-        assert default_config.filters == {}
+        assert default_config.filters == {"harm_categories": ["cyber"]}
 
     async def test_start_run_dataset_names_introspection_failure_raises(self, mock_memory) -> None:
         """Passing ``dataset_names`` against a non-no-arg-instantiable scenario fails fast."""

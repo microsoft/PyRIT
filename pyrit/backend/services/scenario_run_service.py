@@ -90,8 +90,8 @@ from pyrit.models.catalog import (
     AttackRetrySummary,
     RunScenarioRequest,
     ScenarioOverloadSummary,
-    ScenarioRunListItem,
     ScenarioRunHeader,
+    ScenarioRunListItem,
     ScenarioRunSummary,
     ScenarioTargetSummary,
     ScenarioTechniqueSummary,
@@ -1541,7 +1541,11 @@ class ScenarioRunService:
         Returns:
             list[str]: De-duplicated technique display names.
         """
-        configured = list(dict.fromkeys(scenario_identifier.techniques or [])) if scenario_identifier else []
+        configured = (
+            list(dict.fromkeys(str(technique) for technique in scenario_identifier.techniques or []))
+            if scenario_identifier
+            else []
+        )
         if configured:
             return configured
         if atomic_groups is not None:
@@ -2851,7 +2855,8 @@ class ScenarioRunService:
     def _map_progress_delta(
         *,
         delta: ScenarioAttackResultDelta,
-        plan_lookup: _ScenarioPlanLookup,
+        plan: ScenarioRunPlan | None = None,
+        plan_lookup: _ScenarioPlanLookup | None = None,
     ) -> ScenarioProgressResult:
         """
         Map a lightweight memory row to its REST progress representation.
@@ -2859,6 +2864,9 @@ class ScenarioRunService:
         Returns:
             ScenarioProgressResult: The mapped progress delta.
         """
+        if plan_lookup is None:
+            plan_lookup = _ScenarioPlanLookup.from_plan(plan=plan)
+
         atomic_attack_name = str(delta.attribution_data.get("parent_collection") or "")
         eval_hash = delta.attribution_data.get("parent_eval_hash")
         atomic_group_id = config_hash(

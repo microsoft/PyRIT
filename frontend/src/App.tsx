@@ -31,7 +31,7 @@ import {
 } from './components/History/scenarioHistoryFilters'
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { AttackSummary, TargetInstance, TargetInfo } from './types'
+import type { AttackSummary, TargetInfo } from './types'
 import {
   targetEndpoint,
   targetIdentifierHash,
