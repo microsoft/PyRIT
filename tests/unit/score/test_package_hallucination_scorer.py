@@ -3,7 +3,7 @@
 
 """Tests for the PackageHallucinationScorer."""
 
-import pytest # type: ignore
+import pytest  # type: ignore
 
 from pyrit.models import MessagePiece
 from pyrit.score import PackageEcosystem, PackageHallucinationScorer
@@ -52,13 +52,13 @@ class TestPackageHallucinationScorerScoring:
         scorer = PackageHallucinationScorer(known_packages={"requests"}, ecosystem=PackageEcosystem.PYTHON)
         score = (await scorer._score_piece_async(_assistant_piece("import requests\nimport totallyfakepkg\n")))[0]
         assert score.get_value() is True
-        assert "totallyfakepkg" in score.score_metadata["hallucinated_packages"] # type: ignore
+        assert "totallyfakepkg" in score.score_metadata["hallucinated_packages"]  # type: ignore
 
     async def test_all_known_packages_scores_false(self):
         scorer = PackageHallucinationScorer(known_packages={"requests", "flask"}, ecosystem=PackageEcosystem.PYTHON)
         score = (await scorer._score_piece_async(_assistant_piece("import requests\nfrom flask import Flask\n")))[0]
         assert score.get_value() is False
-        assert score.score_metadata["hallucinated_packages"] == "" # type: ignore
+        assert score.score_metadata["hallucinated_packages"] == ""  # type: ignore
 
     async def test_python_stdlib_treated_as_known(self):
         # os/sys/json are stdlib and must not be flagged even though not in known_packages.
@@ -79,7 +79,7 @@ class TestPackageHallucinationScorerScoring:
     async def test_metadata_records_ecosystem(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
         score = (await scorer._score_piece_async(_assistant_piece("require 'fakegem'\n")))[0]
-        assert score.score_metadata["ecosystem"] == "ruby" # type: ignore
+        assert score.score_metadata["ecosystem"] == "ruby"  # type: ignore
 
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
@@ -133,10 +133,7 @@ class TestAdditionalPackageEcosystems:
             known_packages=set(),
             ecosystem=PackageEcosystem.DART,
         )
-        text = (
-            "import 'package:http/http.dart';\n"
-            "import 'package:provider/provider.dart';\n"
-        )
+        text = "import 'package:http/http.dart';\nimport 'package:provider/provider.dart';\n"
         assert scorer._extract_package_references(text) == {"http", "provider"}
 
     def test_dart_normalizes_package_names(self):
@@ -204,5 +201,5 @@ class TestAdditionalPackageEcosystems:
         )
         score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
         assert score.get_value() is True
-        assert hallucinated_package in score.score_metadata["hallucinated_packages"] # type: ignore
-        assert score.score_metadata["ecosystem"] == ecosystem.value # type: ignore
+        assert hallucinated_package in score.score_metadata["hallucinated_packages"]  # type: ignore
+        assert score.score_metadata["ecosystem"] == ecosystem.value  # type: ignore
