@@ -178,6 +178,7 @@ class BicepTopologyTests(unittest.TestCase):
 
         profile = _resources(template, "Microsoft.Cdn/profiles")[0]
         assert profile["sku"]["name"] == "Premium_AzureFrontDoor"
+        assert profile["properties"]["originResponseTimeoutSeconds"] == 240
 
         origin_group = _resources(template, "Microsoft.Cdn/profiles/originGroups")[0]
         probe = origin_group["properties"]["healthProbeSettings"]

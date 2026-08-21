@@ -33,7 +33,7 @@ resource profile 'Microsoft.Cdn/profiles@2024-09-01' = {
     name: 'Premium_AzureFrontDoor'
   }
   properties: {
-    originResponseTimeoutSeconds: 60
+    originResponseTimeoutSeconds: 240
   }
 }
 
