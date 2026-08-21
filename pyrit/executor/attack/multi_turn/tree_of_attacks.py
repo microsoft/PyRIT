@@ -515,6 +515,14 @@ class _TreeOfAttacksNode:
             - `off_topic`: `True` if the prompt was deemed off-topic after all retries
             - `error_message`: Set if an error occurred during execution
         """
+        # Clear the previous turn's outcome before reusing this branch.
+        self.completed = False
+        self.off_topic = False
+        self.objective_score = None
+        self.auxiliary_scores = {}
+        self.last_prompt_sent = None
+        self.error_message = None
+
         # Store objective for use in execution context
         self._objective = objective
 
@@ -742,6 +750,9 @@ class _TreeOfAttacksNode:
             objective (str): The attack objective describing what the attacker wants to achieve.
                 This is passed to scorers as context for evaluation.
 
+        Raises:
+            RuntimeError: If the scoring process returns no objective score.
+
         Side Effects:
             - Sets self.objective_score to the primary scorer's result (if available)
             - Updates self.auxiliary_scores dictionary with results from auxiliary scorers
@@ -770,9 +781,11 @@ class _TreeOfAttacksNode:
 
         # Extract objective score
         objective_scores = scoring_results["objective_scores"]
-        if objective_scores:
-            self.objective_score = objective_scores[0]
-            logger.debug(f"Node {self.node_id}: Objective score: {normalize_score_to_float(self.objective_score)}")
+        if not objective_scores:
+            raise RuntimeError("No objective scores returned from scoring process.")
+
+        self.objective_score = objective_scores[0]
+        logger.debug(f"Node {self.node_id}: Objective score: {normalize_score_to_float(self.objective_score)}")
 
         # Extract auxiliary scores
         auxiliary_scores = scoring_results["auxiliary_scores"]
@@ -2300,8 +2313,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 about the attack execution, including conversation ID, objective, outcome,
                 outcome reason, executed turns, last response, last score, and additional metadata.
         """
-        # Get the last response from the best conversation if available
-        last_response = self._get_last_response_from_conversation(context.best_conversation_id)
+        last_response = self._get_result_response(
+            conversation_id=context.best_conversation_id,
+            score=context.best_objective_score,
+        )
 
         # Get auxiliary scores from the best node if available
         auxiliary_scores_summary = self._get_auxiliary_scores_summary(context.nodes)
@@ -2332,6 +2347,30 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         result.best_adversarial_conversation_id = context.best_adversarial_conversation_id
 
         return result
+
+    def _get_result_response(
+        self,
+        *,
+        conversation_id: str | None,
+        score: Score | None,
+    ) -> MessagePiece | None:
+        """Return the response associated with the best score, if available."""
+        if not conversation_id:
+            return None
+
+        if score:
+            message_piece_id = getattr(score, "message_piece_id", None)
+            if not message_piece_id:
+                return None
+
+            scored_responses = self._memory.get_message_pieces(
+                conversation_id=conversation_id,
+                prompt_ids=[message_piece_id],
+                role="assistant",
+            )
+            return scored_responses[0] if scored_responses else None
+
+        return self._get_last_response_from_conversation(conversation_id)
 
     def _get_last_response_from_conversation(self, conversation_id: str | None) -> MessagePiece | None:
         """
