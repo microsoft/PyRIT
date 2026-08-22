@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import sys
 from collections.abc import Callable
 from unittest.mock import AsyncMock, patch
 
@@ -637,9 +638,12 @@ async def test_cleanup_conversation_async_cancellation_preserved_when_close_fail
     cleanup_task.cancel()
     finish_close.set()
 
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as exc_info:
         await cleanup_task
 
+    # Python 3.10 replaces the task's CancelledError and drops its chained cause.
+    if sys.version_info >= (3, 11):
+        assert exc_info.value.__cause__ is close_error
     connection.close.assert_awaited_once()
     assert websocket_target._existing_conversation == {}
 
