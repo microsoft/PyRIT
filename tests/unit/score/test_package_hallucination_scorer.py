@@ -3,7 +3,7 @@
 
 """Tests for the PackageHallucinationScorer."""
 
-import pytest  # type: ignore
+import pytest
 
 from pyrit.models import MessagePiece
 from pyrit.score import PackageEcosystem, PackageHallucinationScorer
@@ -52,13 +52,19 @@ class TestPackageHallucinationScorerScoring:
         scorer = PackageHallucinationScorer(known_packages={"requests"}, ecosystem=PackageEcosystem.PYTHON)
         score = (await scorer._score_piece_async(_assistant_piece("import requests\nimport totallyfakepkg\n")))[0]
         assert score.get_value() is True
-        assert "totallyfakepkg" in score.score_metadata["hallucinated_packages"]  # type: ignore
+        assert score.score_metadata == {
+            "ecosystem": "python",
+            "hallucinated_packages": "totallyfakepkg",
+        }
 
     async def test_all_known_packages_scores_false(self):
         scorer = PackageHallucinationScorer(known_packages={"requests", "flask"}, ecosystem=PackageEcosystem.PYTHON)
         score = (await scorer._score_piece_async(_assistant_piece("import requests\nfrom flask import Flask\n")))[0]
         assert score.get_value() is False
-        assert score.score_metadata["hallucinated_packages"] == ""  # type: ignore
+        assert score.score_metadata == {
+            "ecosystem": "python",
+            "hallucinated_packages": "",
+        }
 
     async def test_python_stdlib_treated_as_known(self):
         # os/sys/json are stdlib and must not be flagged even though not in known_packages.
@@ -79,7 +85,10 @@ class TestPackageHallucinationScorerScoring:
     async def test_metadata_records_ecosystem(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.RUBY)
         score = (await scorer._score_piece_async(_assistant_piece("require 'fakegem'\n")))[0]
-        assert score.score_metadata["ecosystem"] == "ruby"  # type: ignore
+        assert score.score_metadata == {
+            "ecosystem": "ruby",
+            "hallucinated_packages": "fakegem",
+        }
 
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
@@ -166,7 +175,7 @@ class TestAdditionalPackageEcosystems:
             known_packages=set(),
             ecosystem=PackageEcosystem.RAKU,
         )
-        text = "use v6.d;\nuse JSON::Fast;\n"
+        text = "use v6.d;\nuse v6.e.PREVIEW;\nuse JSON::Fast;\n"
         assert scorer._extract_package_references(text) == {"JSON::Fast"}
 
     @pytest.mark.parametrize(
@@ -201,5 +210,7 @@ class TestAdditionalPackageEcosystems:
         )
         score = (await scorer._score_piece_async(_assistant_piece(code)))[0]
         assert score.get_value() is True
-        assert hallucinated_package in score.score_metadata["hallucinated_packages"]  # type: ignore
-        assert score.score_metadata["ecosystem"] == ecosystem.value  # type: ignore
+        assert score.score_metadata == {
+            "ecosystem": ecosystem.value,
+            "hallucinated_packages": hallucinated_package,
+        }

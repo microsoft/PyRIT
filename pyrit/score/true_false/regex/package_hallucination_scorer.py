@@ -191,7 +191,7 @@ class PackageHallucinationScorer(TrueFalseScorer):
             return {reference.lower() for reference in references}
 
         if self._ecosystem is PackageEcosystem.RAKU:
-            return {reference for reference in references if not re.fullmatch(r"v6(?:\.[\w+]+)?", reference)}
+            return {reference for reference in references if not re.match(r"v6(?:\.|$)", reference)}
 
         return references
 
