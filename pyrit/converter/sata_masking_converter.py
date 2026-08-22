@@ -50,9 +50,13 @@ class SATAMaskingConverter(Converter):
     Selection is dependency-free (no POS tagger or NLTK download). Use
     ``ContentWordSelectionStrategy`` by default, or pass any
     ``WordSelectionStrategy`` (including those used with ``SelectiveTextConverter``).
+    Strategies receive every whitespace-delimited token, including
+    punctuation-only tokens, so index-based selection matches
+    ``SelectiveTextConverter`` on space-separated text.
 
     Whitespace (spaces, tabs, newlines) and punctuation attached to a selected
-    word are preserved; only the word core is replaced.
+    word are preserved; only the word core is replaced. A punctuation-only
+    token occupies an index and is replaced in full if selected.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -176,13 +180,13 @@ class SATAMaskingConverter(Converter):
             token (str): A whitespace-delimited token.
 
         Returns:
-            tuple[str, str, str]: Prefix, core, and suffix. The core is empty
-                when the token is only punctuation.
+            tuple[str, str, str]: Prefix, core, and suffix. Punctuation-only
+                tokens are treated as a core so they occupy a selection index.
         """
         leading = _LEADING_NONWORD_RE.match(token)
         prefix_end = leading.end() if leading else 0
         if prefix_end == len(token):
-            return token, "", ""
+            return "", token, ""
         body = token[prefix_end:]
         trailing = _TRAILING_NONWORD_RE.search(body)
         if trailing:
@@ -192,15 +196,16 @@ class SATAMaskingConverter(Converter):
     @staticmethod
     def _tokenize(prompt: str) -> tuple[list[str | tuple[str, str, str]], list[tuple[str, str, str]]]:
         """
-        Split ``prompt`` into whitespace separators and word cores.
+        Split ``prompt`` into whitespace separators and word tokens.
 
         Args:
             prompt (str): The raw prompt.
 
         Returns:
             tuple[list[str | tuple[str, str, str]], list[tuple[str, str, str]]]:
-                Pieces to reassemble (whitespace kept as-is; words stored as
-                prefix/core/suffix) and the word triples in order.
+                Pieces to reassemble (whitespace kept as-is; every
+                non-whitespace token stored as prefix/core/suffix, including
+                punctuation-only tokens) and the word triples in order.
         """
         pieces: list[str | tuple[str, str, str]] = []
         words: list[tuple[str, str, str]] = []
@@ -208,11 +213,7 @@ class SATAMaskingConverter(Converter):
             if piece == "" or _WHITESPACE_RE.fullmatch(piece):
                 pieces.append(piece)
                 continue
-            prefix, core, suffix = SATAMaskingConverter._split_word_affixes(piece)
-            if not core:
-                pieces.append(piece)
-                continue
-            word = (prefix, core, suffix)
+            word = SATAMaskingConverter._split_word_affixes(piece)
             pieces.append(word)
             words.append(word)
         return pieces, words
@@ -257,8 +258,8 @@ class SATAMaskingConverter(Converter):
             raise ValueError(f"Input type {input_type} not supported")
 
         pieces, words = self._tokenize(prompt)
-        cores = [core for _, core, _ in words]
-        selected_indices = set(self._selection_strategy.select_words(words=cores))
+        raw_tokens = [f"{prefix}{core}{suffix}" for prefix, core, suffix in words]
+        selected_indices = set(self._selection_strategy.select_words(words=raw_tokens))
 
         word_index = 0
         masked_pieces: list[str | tuple[str, str, str]] = []
