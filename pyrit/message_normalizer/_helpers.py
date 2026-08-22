@@ -10,9 +10,58 @@ several input messages into one fresh user-role ``Message`` built via
 empty ``prompt_metadata``, callers must explicitly carry request-level metadata
 forward so downstream normalizers still see it.
 ``build_squashed_user_message`` centralizes that propagation rule.
+
+This module also owns the shared rule for whether converter output can be
+flattened into text without losing media semantics.
 """
 
-from pyrit.models import Message, MessagePiece
+from collections.abc import Sequence
+
+from pyrit.models import Message, MessagePiece, PromptDataType
+
+
+def get_unflattenable_converter_output_types(
+    *,
+    converted_messages: Sequence[Message],
+    source_messages: Sequence[Message] | None = None,
+) -> set[PromptDataType]:
+    """
+    Return converter output types that cannot be represented by text flattening.
+
+    Stored history is treated as converted when its original and converted
+    representations differ. When source messages are provided, only converters
+    added by the current conversion pass count, and ephemeral pieces are ignored.
+
+    Args:
+        converted_messages (Sequence[Message]): Messages containing converter output.
+        source_messages (Sequence[Message] | None): Optional messages from before
+            the current conversion pass.
+
+    Returns:
+        set[PromptDataType]: Non-text converter output types.
+    """
+    if source_messages is None:
+        converted_pieces = (
+            piece
+            for message in converted_messages
+            for piece in message.message_pieces
+            if piece.original_value != piece.converted_value
+            or piece.original_value_data_type != piece.converted_value_data_type
+        )
+    else:
+        converted_pieces = (
+            converted_piece
+            for source_message, converted_message in zip(source_messages, converted_messages, strict=True)
+            for source_piece, converted_piece in zip(
+                source_message.message_pieces,
+                converted_message.message_pieces,
+                strict=True,
+            )
+            if len(converted_piece.converter_identifiers) > len(source_piece.converter_identifiers)
+            and not converted_piece.not_in_memory
+        )
+
+    return {piece.converted_value_data_type for piece in converted_pieces if piece.converted_value_data_type != "text"}
 
 
 def format_message_piece_for_context(*, piece: MessagePiece) -> str:

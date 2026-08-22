@@ -5,7 +5,10 @@ import copy
 import logging
 import uuid
 
-from pyrit.message_normalizer._helpers import format_message_piece_for_context
+from pyrit.message_normalizer._helpers import (
+    format_message_piece_for_context,
+    get_unflattenable_converter_output_types,
+)
 from pyrit.message_normalizer.conversation_context_normalizer import ConversationContextNormalizer
 from pyrit.message_normalizer.generic_system_squash import GenericSystemSquashNormalizer
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer, MessageStringNormalizer
@@ -87,10 +90,14 @@ class HistorySquashNormalizer(MessageListNormalizer[Message]):
         self._warn_on_non_text_history(messages=history)
 
         original_view = self._build_original_view(messages=messages)
-        converted_view = self._build_converted_view(messages=messages)
+        converted_view = (
+            self._build_converted_view(messages=messages)
+            if self._contains_converted_values(messages=messages)
+            else None
+        )
         original_text = await self._normalize_context_async(messages=original_view)
         converted_text = original_text
-        if self._contains_converted_values(messages=messages):
+        if converted_view is not None:
             converted_text = await self._normalize_context_async(messages=converted_view)
 
         return [
@@ -168,13 +175,13 @@ class HistorySquashNormalizer(MessageListNormalizer[Message]):
 
     @staticmethod
     def _filter_live_non_text_pieces(*, messages: list[Message]) -> list[Message]:
-        filtered = copy.deepcopy(messages)
+        filtered = list(messages)
         live_message = filtered[-1]
         text_pieces = [piece for piece in live_message.message_pieces if piece.converted_value_data_type == "text"]
         if not text_pieces:
             filtered.pop()
         else:
-            live_message.message_pieces = text_pieces
+            filtered[-1] = live_message.model_copy(update={"message_pieces": text_pieces})
         return filtered
 
     @staticmethod
@@ -207,16 +214,7 @@ class HistorySquashNormalizer(MessageListNormalizer[Message]):
 
     @staticmethod
     def _validate_flattenable_converter_output(*, messages: list[Message]) -> None:
-        output_types = {
-            piece.converted_value_data_type
-            for message in messages
-            for piece in message.message_pieces
-            if piece.converted_value_data_type != "text"
-            and (
-                piece.original_value != piece.converted_value
-                or piece.original_value_data_type != piece.converted_value_data_type
-            )
-        }
+        output_types = get_unflattenable_converter_output_types(converted_messages=messages)
         if output_types:
             raise ValueError(
                 "Cannot flatten conversation history after request converters produced "
