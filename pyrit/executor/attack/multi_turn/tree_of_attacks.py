@@ -2374,6 +2374,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         exists, the final conversation message is returned only as an unscored
         reporting fallback.
 
+        Args:
+            conversation_id (str | None): The selected TAP conversation ID.
+            score (Score | None): The selected objective score.
+
         Returns:
             MessagePiece | None: The response associated with the selected score, the
                 final unscored message when no score exists, or `None` when it cannot
