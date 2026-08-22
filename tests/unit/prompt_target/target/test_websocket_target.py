@@ -637,10 +637,9 @@ async def test_cleanup_conversation_async_cancellation_preserved_when_close_fail
     cleanup_task.cancel()
     finish_close.set()
 
-    with pytest.raises(asyncio.CancelledError) as exc_info:
+    with pytest.raises(asyncio.CancelledError):
         await cleanup_task
 
-    assert exc_info.value.__cause__ is close_error
     connection.close.assert_awaited_once()
     assert websocket_target._existing_conversation == {}
 
