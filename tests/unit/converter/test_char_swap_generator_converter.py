@@ -136,14 +136,17 @@ async def test_char_swap_converter_proportion_unchanged_with_iterations():
     prompt = "Testing multiple words here today"
 
     # 50% proportion should select ~2-3 of the 5 eligible words, regardless of max_iterations
-    converter = CharSwapConverter(
-        max_iterations=10,
-        word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5),
-    )
+    strategy = WordProportionSelectionStrategy(proportion=0.5)
+    converter = CharSwapConverter(max_iterations=10, word_selection_strategy=strategy)
 
-    # Mock random.sample to select exactly 2 words (indices 0 and 2)
-    # This simulates the word selection strategy picking "Testing" and "words"
-    with patch("random.sample", return_value=[0, 2]) as mock_sample, patch("random.randint", return_value=1):
+    # Mock the strategy's own RNG to select exactly 2 words (indices 0 and 2).
+    # This simulates the word selection strategy picking "Testing" and "words".
+    # The strategy draws from a private Random instance rather than the global
+    # `random` module, so that a seeded strategy cannot disturb process-wide state.
+    with (
+        patch.object(strategy._rng, "sample", return_value=[0, 2]) as mock_sample,
+        patch("random.randint", return_value=1),
+    ):
         result = await converter.convert_async(prompt=prompt)
 
     # Verify sample was called once (word selection happens once, not per iteration)
