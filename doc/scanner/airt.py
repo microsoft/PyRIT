@@ -23,30 +23,11 @@ from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import (
-    LoadDefaultDatasets,
-    ScorerInitializer,
-    TargetInitializer,
-    TechniqueInitializer,
-)
-
-dataset_initializer = LoadDefaultDatasets()
-dataset_initializer.set_params_from_args(
-    args={
-        "dataset_names": [
-            "airt_hate",
-            "airt_imminent_crisis",
-            "airt_leakage",
-            "airt_malware",
-            "airt_scams",
-            "harmbench",
-        ]
-    }
-)
+from pyrit.setup.initializers import ScorerInitializer, TargetInitializer, TechniqueInitializer
 
 await initialize_pyrit_async(  # type: ignore
     memory_db_type=IN_MEMORY,
-    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), dataset_initializer],
+    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer()],
 )
 
 objective_target = OpenAIChatTarget()
@@ -183,7 +164,7 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan run airt.jailbreak \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --dataset-names harmbench \
 #   --max-dataset-size 1
@@ -226,7 +207,7 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan airt.multilingual \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --dataset-names harmbench \
 #   --max-dataset-size 1

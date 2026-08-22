@@ -62,12 +62,13 @@ def _create_aggregator(
     """
 
     def aggregator(scores: Iterable[Score]) -> ScoreAggregatorResult:
-        # Validate types and normalize input
-        for s in scores:
+        # Materialize before validating: `scores` is an Iterable, so validating by
+        # iterating it first would exhaust a generator and leave nothing to aggregate.
+        scores_list = list(scores)
+        for s in scores_list:
             if s.score_type != "true_false":
                 raise ValueError("All scores must be of type 'true_false'.")
 
-        scores_list = list(scores)
         if not scores_list:
             # No scores; return a neutral result
             return ScoreAggregatorResult(

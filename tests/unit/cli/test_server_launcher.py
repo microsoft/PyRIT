@@ -436,11 +436,39 @@ async def test_start_async_echoes_log_tail_on_timeout(capsys):
         patch.object(_server_launcher, "_terminate_process_tree", return_value=True),
         patch.object(ServerLauncher, "_read_log_tail", return_value="Traceback: boom"),
     ):
-        with pytest.raises(RuntimeError, match="did not become healthy"):
+        with pytest.raises(RuntimeError, match="did not become healthy") as exc_info:
             await launcher.start_async(host="localhost", port=8000, startup_timeout=0.01)
 
     err = capsys.readouterr().err
     assert "Traceback: boom" in err
+    assert "load_default_datasets" not in str(exc_info.value)
+
+
+async def test_start_async_timeout_suggests_on_demand_fetching_during_dataset_preload() -> None:
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.pid = 99
+    fake_proc.poll.return_value = None
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=AsyncMock(return_value=False)),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch.object(_server_launcher, "_terminate_process_tree", return_value=True),
+        patch.object(
+            ServerLauncher,
+            "_read_log_tail",
+            return_value="Loading datasets - this can take a few minutes: 42%",
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="did not become healthy") as exc_info:
+            await launcher.start_async(host="localhost", port=8000, startup_timeout=0.01)
+
+    message = str(exc_info.value)
+    assert "Recent logs include dataset preload activity" in message
+    assert "remove load_default_datasets" in message
+    assert "on-demand fetching" in message
+    assert "intentional preload" in message
+    assert "larger server.startup_timeout" in message
 
 
 # ---------------------------------------------------------------------------

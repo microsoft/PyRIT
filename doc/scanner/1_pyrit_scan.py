@@ -121,7 +121,8 @@
 # - `--max-retries <int>`: Maximum number of automatic retries if the scenario raises an exception
 # - `--memory-labels <json>`: Additional labels to apply to all attack runs (must be a JSON string with string keys and values)
 #
-# Dataset-backed scenarios can also select a supported dataset:
+# Dataset-backed scenarios can also select a supported dataset. Requested datasets are fetched
+# on demand, so a full dataset preload is not required:
 #
 # ```shell
 # pyrit_scan run garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
@@ -161,11 +162,11 @@
 #
 # ```shell
 # # Add the registered "translation_spanish" converter to role_play_movie_script only
-# pyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish
+# pyrit_scan run airt.rapid_response --target openai_chat --initializers target my_converters --techniques role_play_movie_script:converter.translation_spanish
 #
 # ```
 #
-# # Chain multiple converters (applied in order) and combine with plain techniquespyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
+# # Chain multiple converters (applied in order) and combine with plain techniquespyrit_scan run airt.rapid_response --target openai_chat --initializers target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 
 # %% [markdown]
 # #### Using Custom Scenarios
