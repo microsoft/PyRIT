@@ -24,7 +24,13 @@ class InsertPunctuationConverter(Converter):
     #: Common punctuation characters. Used if no punctuation list is provided.
     default_punctuation_list = [",", ".", "!", "?", ":", ";", "-"]
 
-    def __init__(self, *, word_swap_ratio: float = 0.2, between_words: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        word_swap_ratio: float = 0.2,
+        between_words: bool = True,
+        seed: int | None = None,
+    ) -> None:
         """
         Initialize the converter with a word swap ratio and punctuation insertion mode.
 
@@ -32,6 +38,7 @@ class InsertPunctuationConverter(Converter):
             word_swap_ratio (float): Percentage of words to perturb. Defaults to 0.2.
             between_words (bool): If True, insert punctuation only between words.
                 If False, insert punctuation within words. Defaults to True.
+            seed (int | None): Optional seed for reproducible output. Defaults to None.
 
         Raises:
             ValueError: If ``word_swap_ratio`` is not between 0 and 1.
@@ -42,6 +49,8 @@ class InsertPunctuationConverter(Converter):
 
         self._word_swap_ratio = word_swap_ratio
         self._between_words = between_words
+        self._seed = seed
+        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -54,6 +63,7 @@ class InsertPunctuationConverter(Converter):
             params={
                 "word_swap_ratio": self._word_swap_ratio,
                 "between_words": self._between_words,
+                "seed": self._seed,
             }
         )
 
@@ -90,6 +100,9 @@ class InsertPunctuationConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
+        if self._seed is not None:
+            self._rng.seed(self._seed)
+
         # Initialize default punctuation list
         # If not specified, defaults to default_punctuation_list
         if punctuation_list is None:
@@ -125,7 +138,7 @@ class InsertPunctuationConverter(Converter):
 
         # If there's no actual word without punctuations in the list, insert random punctuation at position 0
         if not word_indices:
-            return random.choice(punctuation_list) + prompt
+            return self._rng.choice(punctuation_list) + prompt
 
         if self._between_words:
             return self._insert_between_words(words, word_indices, num_insertions, punctuation_list)
@@ -146,15 +159,15 @@ class InsertPunctuationConverter(Converter):
         Returns:
             str: The modified prompt with inserted punctuation.
         """
-        insert_indices = random.sample(word_indices, num_insertions)
+        insert_indices = self._rng.sample(word_indices, num_insertions)
         # Randomly choose num_insertions indices from actual word indices.
         insert_before = 0
         insert_after = 1
         for index in insert_indices:
-            if random.randint(insert_before, insert_after) == insert_after:
-                words[index] += random.choice(punctuation_list)
+            if self._rng.randint(insert_before, insert_after) == insert_after:
+                words[index] += self._rng.choice(punctuation_list)
             else:
-                words[index] = random.choice(punctuation_list) + words[index]
+                words[index] = self._rng.choice(punctuation_list) + words[index]
         # Join the words list and return a modified prompt
         return "".join(words).strip()
 
@@ -175,11 +188,11 @@ class InsertPunctuationConverter(Converter):
         # Store random indices of prompt_list into insert_indices
         # If the prompt has only 0 or 1 chars, insert at the end of the prompt
         insert_indices = (
-            [1] if len(prompt_list) <= num_insertions else random.sample(range(len(prompt_list) - 1), num_insertions)
+            [1] if len(prompt_list) <= num_insertions else self._rng.sample(range(len(prompt_list) - 1), num_insertions)
         )
 
         for index in insert_indices:
             # Insert into prompt_list at the insert_indices with random punctuation from the punctuation_list
-            prompt_list.insert(index, random.choice(punctuation_list))
+            prompt_list.insert(index, self._rng.choice(punctuation_list))
 
         return "".join(prompt_list).strip()

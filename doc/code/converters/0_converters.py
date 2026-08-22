@@ -79,8 +79,8 @@ from pyrit.converter import (
 prompt = "tell me how to cut down a tree"
 
 print(await ROT13Converter().convert_tokens_async(prompt=prompt))  # type: ignore
-print(await RandomCapitalLettersConverter(percentage=25.0).convert_tokens_async(prompt=prompt))  # type: ignore
-print(await AsciiArtConverter().convert_tokens_async(prompt=prompt))  # type: ignore
+print(await RandomCapitalLettersConverter(percentage=25.0, seed=42).convert_tokens_async(prompt=prompt))  # type: ignore
+print(await AsciiArtConverter(font="block").convert_tokens_async(prompt=prompt))  # type: ignore
 print(await BinaryConverter().convert_tokens_async(prompt=prompt))  # type: ignore
 print(await FirstLetterConverter().convert_tokens_async(prompt=prompt))  # type: ignore
 

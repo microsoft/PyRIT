@@ -4,7 +4,7 @@
 import random
 
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 
 
 class AskToDecodeConverter(Converter):
@@ -38,7 +38,13 @@ class AskToDecodeConverter(Converter):
 
     all_templates = garak_templates + extra_templates
 
-    def __init__(self, *, template: str | None = None, encoding_name: str = "cipher") -> None:
+    def __init__(
+        self,
+        *,
+        template: str | None = None,
+        encoding_name: str = "cipher",
+        seed: int | None = None,
+    ) -> None:
         """
         Initialize the converter with a specified encoding name and template.
 
@@ -53,9 +59,21 @@ class AskToDecodeConverter(Converter):
             encoding_name (str, optional): Name of the encoding scheme (e.g., "Base64",
                 "ROT13", "Morse"). Used in encoding_name_templates to provide context
                 about the encoding type. Defaults to "cipher".
+            seed (int | None): Optional seed for reproducible template selection. Defaults to None.
         """
         self._encoding_name = encoding_name
         self._template = template
+        self._seed = seed
+        self._rng = random.Random(seed)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier(
+            params={
+                "encoding_name": self._encoding_name,
+                "template": self._template,
+                "seed": self._seed,
+            }
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
@@ -74,6 +92,9 @@ class AskToDecodeConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
+        if self._seed is not None:
+            self._rng.seed(self._seed)
+
         if self._template:
             formatted_prompt = self._template.format(encoded_text=prompt, encoding_name=self._encoding_name)
         else:
@@ -82,5 +103,5 @@ class AskToDecodeConverter(Converter):
         return ConverterResult(output_text=formatted_prompt, output_type="text")
 
     def _encode_with_random_template(self, *, prompt: str) -> str:
-        template = random.choice(self.all_templates)
+        template = self._rng.choice(self.all_templates)
         return template.format(encoding_name=self._encoding_name, encoded_text=prompt)

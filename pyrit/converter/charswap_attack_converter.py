@@ -21,6 +21,7 @@ class CharSwapConverter(WordLevelConverter):
         self,
         *,
         max_iterations: int = 10,
+        seed: int | None = None,
         word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
@@ -31,6 +32,7 @@ class CharSwapConverter(WordLevelConverter):
         Args:
             max_iterations (int): Number of times to generate perturbed prompts.
                 The higher the number the higher the chance that words are different from the original prompt.
+            seed (int | None): Optional seed for reproducible character swaps. Defaults to None.
             word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, defaults to WordProportionSelectionStrategy(proportion=0.2).
 
@@ -48,6 +50,8 @@ class CharSwapConverter(WordLevelConverter):
             raise ValueError("max_iterations must be greater than 0")
 
         self._max_iterations = max_iterations
+        self._seed = seed
+        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -59,6 +63,7 @@ class CharSwapConverter(WordLevelConverter):
         return self._create_identifier(
             params={
                 "max_iterations": self._max_iterations,
+                "seed": self._seed,
             },
         )
 
@@ -74,6 +79,11 @@ class CharSwapConverter(WordLevelConverter):
         """
         return self._perturb_word(word)
 
+    def validate_input(self, prompt: str) -> None:
+        """Reset seeded randomness before converting a prompt."""
+        if self._seed is not None:
+            self._rng.seed(self._seed)
+
     def _perturb_word(self, word: str) -> str:
         """
         Perturbs a word by swapping two adjacent characters.
@@ -87,7 +97,7 @@ class CharSwapConverter(WordLevelConverter):
         if word not in string.punctuation and len(word) > 3:
             idx_elements = list(word)
             for _ in range(self._max_iterations):
-                idx1 = random.randint(1, len(word) - 2)
+                idx1 = self._rng.randint(1, len(word) - 2)
                 # Swap characters
                 idx_elements[idx1], idx_elements[idx1 + 1] = (
                     idx_elements[idx1 + 1],

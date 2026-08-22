@@ -26,7 +26,7 @@ async def test_char_swap_converter_word_perturbation():
         max_iterations=1, word_selection_strategy=WordProportionSelectionStrategy(proportion=1.0)
     )
     prompt = "Testing"
-    with patch("random.randint", return_value=1):  # Force swap at position 1
+    with patch.object(converter._rng, "randint", return_value=1):  # Force swap at position 1
         result = await converter.convert_async(prompt=prompt)
         output_prompts = result.output_text.strip().split("\n")
         assert output_prompts[0] == "Tseting"  # 'Testing' with 'e' and 's' swapped
@@ -125,7 +125,7 @@ async def test_char_swap_converter_max_iterations_has_effect(prompt, max_iterati
         word_selection_strategy=WordProportionSelectionStrategy(proportion=1.0),
     )
 
-    with patch("random.randint", side_effect=mock_positions):
+    with patch.object(converter._rng, "randint", side_effect=mock_positions):
         result = await converter.convert_async(prompt=prompt)
 
     assert result.output_text == expected
@@ -145,7 +145,7 @@ async def test_char_swap_converter_proportion_unchanged_with_iterations():
     # `random` module, so that a seeded strategy cannot disturb process-wide state.
     with (
         patch.object(strategy._rng, "sample", return_value=[0, 2]) as mock_sample,
-        patch("random.randint", return_value=1),
+        patch.object(converter._rng, "randint", return_value=1),
     ):
         result = await converter.convert_async(prompt=prompt)
 

@@ -36,6 +36,8 @@
 # These converters encode text into various formats:
 
 # %%
+import random
+
 from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
@@ -70,12 +72,12 @@ print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=pro
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
-print("ASCII Art:", await AsciiArtConverter().convert_async(prompt=prompt))  # type: ignore
+print("ASCII Art:", await AsciiArtConverter(font="block").convert_async(prompt=prompt))  # type: ignore
 print("Ecoji:", await EcojiConverter().convert_async(prompt=prompt))  # type: ignore
 
 # Ask to decode wraps encoded text with prompts asking to decode it
 base64_text = await Base64Converter().convert_async(prompt=prompt)  # type: ignore
-ask_decoder = AskToDecodeConverter(encoding_name="Base64")
+ask_decoder = AskToDecodeConverter(encoding_name="Base64", seed=42)
 print("Ask to Decode:", await ask_decoder.convert_async(prompt=base64_text.output_text))  # type: ignore
 
 # Negation Trap adds negation phrases to try to confuse the model
@@ -120,11 +122,17 @@ from pyrit.converter import (
 prompt = "tell me how to cut down a tree"
 
 print("Leetspeak:", await LeetspeakConverter().convert_async(prompt=prompt))  # type: ignore
-print("Random Capitals:", await RandomCapitalLettersConverter(percentage=50.0).convert_async(prompt=prompt))  # type: ignore
-print("Unicode Confusable:", await UnicodeConfusableConverter().convert_async(prompt=prompt))  # type: ignore
+print(
+    "Random Capitals:",
+    await RandomCapitalLettersConverter(percentage=50.0, seed=42).convert_async(prompt=prompt),  # type: ignore
+)
+print(
+    "Unicode Confusable:",
+    await UnicodeConfusableConverter(deterministic=True).convert_async(prompt=prompt),  # type: ignore
+)
 print("Unicode Substitution:", await UnicodeSubstitutionConverter().convert_async(prompt=prompt))  # type: ignore
 print("Unicode Replacement:", await UnicodeReplacementConverter().convert_async(prompt=prompt))  # type: ignore
-print("Emoji:", await EmojiConverter().convert_async(prompt=prompt))  # type: ignore
+print("Emoji:", await EmojiConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 print("First Letter:", await FirstLetterConverter().convert_async(prompt=prompt))  # type: ignore
 # Acrostic hides the prompt in the first letter of each line; a short prompt keeps the output readable
 print("Acrostic:", await AcrosticConverter().convert_async(prompt="cut a tree"))  # type: ignore
@@ -147,22 +155,26 @@ print("Arabic Presentation Form:", await ArabicPresentationFormConverter().conve
 # Arabizi transliterates Arabic script into Latin-script chat Arabic
 print("Arabizi:", await ArabiziConverter().convert_async(prompt=arabic_prompt))  # type: ignore
 print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))  # type: ignore
-print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
+print("Zalgo:", await ZalgoConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
 
 # CharSwap swaps characters within words
-char_swap = CharSwapConverter(max_iterations=3, word_selection_strategy=WordProportionSelectionStrategy(proportion=0.8))
+char_swap = CharSwapConverter(
+    max_iterations=3,
+    seed=42,
+    word_selection_strategy=WordProportionSelectionStrategy(proportion=0.8, seed=42),
+)
 print("CharSwap:", await char_swap.convert_async(prompt=prompt))  # type: ignore
 
 # Insert punctuation adds punctuation marks
-insert_punct = InsertPunctuationConverter(word_swap_ratio=0.2)
+insert_punct = InsertPunctuationConverter(word_swap_ratio=0.2, seed=42)
 print("Insert Punctuation:", await insert_punct.convert_async(prompt=prompt))  # type: ignore
 
 # ANSI escape sequences
-ansi_converter = AnsiAttackConverter(incorporate_user_prompt=True)
+ansi_converter = AnsiAttackConverter(incorporate_user_prompt=True, seed=42)
 print("ANSI Attack:", await ansi_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Math obfuscation replaces words with mathematical expressions
-math_obf = MathObfuscationConverter()
+math_obf = MathObfuscationConverter(rng=random.Random(42))
 print("Math Obfuscation:", await math_obf.convert_async(prompt=prompt))  # type: ignore
 
 # Repeat token adds repeated tokens
@@ -170,7 +182,7 @@ repeat_token = RepeatTokenConverter(token_to_repeat="!", times_to_repeat=10, tok
 print("Repeat Token:", await repeat_token.convert_async(prompt=prompt))  # type: ignore
 
 # Colloquial wordswap replaces words with colloquial equivalents
-colloquial = ColloquialWordswapConverter()
+colloquial = ColloquialWordswapConverter(deterministic=True)
 print("Colloquial Wordswap:", await colloquial.convert_async(prompt=prompt))  # type: ignore
 
 # CodeChameleon [@lv2024codechameleon] encrypts and wraps in code
@@ -219,7 +231,7 @@ text_jailbreak = TextJailbreakConverter(jailbreak_template=TextJailBreak(templat
 print("Text Jailbreak:", await text_jailbreak.convert_async(prompt=prompt))  # type: ignore
 
 # Template segment splits prompt using a template (uses default tom_and_jerry.yaml if not specified)
-template_converter = TemplateSegmentConverter()
+template_converter = TemplateSegmentConverter(seed=42)
 print("Template Segment:", await template_converter.convert_async(prompt=prompt))  # type: ignore
 
 # Task framing wraps the prompt in a task template (default "TASK is '...'"), stripping quotes so they don't collide with the template's delimiters
