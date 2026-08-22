@@ -7,7 +7,6 @@ from typing import Any
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.converter.text_selection_strategy import (
-    DEFAULT_CONTENT_STOPWORDS,
     ContentWordSelectionStrategy,
     WordSelectionStrategy,
 )
@@ -32,10 +31,10 @@ SATA_TASK_TEMPLATE = (
 )
 
 _WHITESPACE_RE = re.compile(r"(\s+)")
-# Anchored scans only — a single ^(\W*)(.*?)(\W*)$ match backtracks quadratically
-# on long interior runs of non-word characters.
+# Anchored ^\W+ only. Searching \\W+$ backtracks at every position when a long
+# non-word run is followed by a word character; matching the same pattern on
+# the reversed body keeps the suffix scan linear.
 _LEADING_NONWORD_RE = re.compile(r"^\W+", re.UNICODE)
-_TRAILING_NONWORD_RE = re.compile(r"\W+$", re.UNICODE)
 
 
 class SATAMaskingConverter(Converter):
@@ -49,10 +48,15 @@ class SATAMaskingConverter(Converter):
 
     Selection is dependency-free (no POS tagger or NLTK download). Use
     ``ContentWordSelectionStrategy`` by default, or pass any
-    ``WordSelectionStrategy`` (including those used with ``SelectiveTextConverter``).
-    Strategies receive every whitespace-delimited token, including
-    punctuation-only tokens, so index-based selection matches
-    ``SelectiveTextConverter`` on space-separated text.
+    ``WordSelectionStrategy``.
+
+    This converter splits on any whitespace (``\\s+``) and never yields empty
+    tokens. ``SelectiveTextConverter`` splits on a single space by default,
+    so ``WordIndexSelectionStrategy`` indices match only when the prompt is
+    already single-space-separated, with no leading, trailing, or repeated
+    spaces. Tabs, newlines, and doubled spaces produce a different index
+    space here because those separators are preserved rather than treated as
+    part of a token.
 
     Whitespace (spaces, tabs, newlines) and punctuation attached to a selected
     word are preserved; only the word core is replaced. A punctuation-only
@@ -113,14 +117,8 @@ class SATAMaskingConverter(Converter):
             )
 
         self._mask_token = mask_token
-        self._uses_default_strategy = selection_strategy is None
         if selection_strategy is not None:
             self._selection_strategy = selection_strategy
-            self._num_masks = None
-            self._skip_first = None
-            self._min_word_length = None
-            self._stopwords = None
-            self._candidate_words = None
         else:
             resolved_num_masks = 2 if num_masks is None else num_masks
             resolved_skip_first = 1 if skip_first is None else skip_first
@@ -129,17 +127,6 @@ class SATAMaskingConverter(Converter):
                 raise ValueError(f"num_masks must be >= 1, got {resolved_num_masks}")
             if resolved_skip_first < 0:
                 raise ValueError(f"skip_first must be >= 0, got {resolved_skip_first}")
-            self._num_masks = resolved_num_masks
-            self._skip_first = resolved_skip_first
-            self._min_word_length = resolved_min_word_length
-            self._stopwords = (
-                frozenset(word.lower() for word in stopwords) if stopwords is not None else DEFAULT_CONTENT_STOPWORDS
-            )
-            self._candidate_words = (
-                frozenset(ContentWordSelectionStrategy._normalize_word(word) for word in candidate_words)
-                if candidate_words is not None
-                else None
-            )
             self._selection_strategy = ContentWordSelectionStrategy(
                 max_words=resolved_num_masks,
                 skip_first=resolved_skip_first,
@@ -159,13 +146,7 @@ class SATAMaskingConverter(Converter):
             "mask_token": self._mask_token,
             "selection_strategy": self._selection_strategy.__class__.__name__,
         }
-        if self._uses_default_strategy:
-            params["num_masks"] = self._num_masks
-            params["skip_first"] = self._skip_first
-            params["min_word_length"] = self._min_word_length
-            params["stopwords"] = sorted(self._stopwords or ())
-            if self._candidate_words is not None:
-                params["candidate_words"] = sorted(self._candidate_words)
+        params.update(self._selection_strategy.get_identifier_params())
         return self._create_identifier(params=params)
 
     @staticmethod
@@ -173,8 +154,9 @@ class SATAMaskingConverter(Converter):
         """
         Split ``token`` into leading punctuation, core, and trailing punctuation.
 
-        Leading and trailing non-word runs are scanned independently so the
-        split is linear in the token length.
+        Leading non-word runs are matched at the start of the token. The suffix
+        is found by applying the same anchored matcher to the reversed remainder
+        so both scans stay linear in the token length.
 
         Args:
             token (str): A whitespace-delimited token.
@@ -188,9 +170,10 @@ class SATAMaskingConverter(Converter):
         if prefix_end == len(token):
             return "", token, ""
         body = token[prefix_end:]
-        trailing = _TRAILING_NONWORD_RE.search(body)
+        trailing = _LEADING_NONWORD_RE.match(body[::-1])
         if trailing:
-            return token[:prefix_end], body[: trailing.start()], trailing.group(0)
+            suffix_len = trailing.end()
+            return token[:prefix_end], body[:-suffix_len], body[-suffix_len:]
         return token[:prefix_end], body, ""
 
     @staticmethod

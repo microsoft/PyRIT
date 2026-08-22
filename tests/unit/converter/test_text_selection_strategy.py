@@ -4,6 +4,7 @@
 import pytest
 
 from pyrit.converter.text_selection_strategy import (
+    DEFAULT_CONTENT_STOPWORDS,
     AllWordsSelectionStrategy,
     ContentWordSelectionStrategy,
     IndexSelectionStrategy,
@@ -336,6 +337,12 @@ class TestWordIndexSelectionStrategy:
         # "quick brown" starts at index 4 and ends at index 15
         assert result == (4, 15)
 
+    def test_identifier_params_are_order_independent(self):
+        left = WordIndexSelectionStrategy(indices=[2, 0])
+        right = WordIndexSelectionStrategy(indices=[0, 2])
+        assert left.get_identifier_params() == right.get_identifier_params()
+        assert left.get_identifier_params() == {"indices": [0, 2]}
+
 
 class TestWordKeywordSelectionStrategy:
     def test_select_words_exact_matches(self):
@@ -557,6 +564,32 @@ class TestContentWordSelectionStrategy:
     def test_invalid_skip_first_raises(self):
         with pytest.raises(ValueError, match="skip_first must be >= 0"):
             ContentWordSelectionStrategy(skip_first=-1)
+
+    def test_identifier_params_include_sorted_selection_sets(self):
+        left = ContentWordSelectionStrategy(
+            max_words=1,
+            skip_first=0,
+            stopwords=["The", "a"],
+            candidate_words=["device", "bomb"],
+        )
+        right = ContentWordSelectionStrategy(
+            max_words=1,
+            skip_first=0,
+            stopwords=["a", "the"],
+            candidate_words=["bomb", "device"],
+        )
+        assert left.get_identifier_params() == right.get_identifier_params()
+        assert left.get_identifier_params()["stopwords"] == ["a", "the"]
+        assert left.get_identifier_params()["candidate_words"] == ["bomb", "device"]
+
+    def test_identifier_params_distinguish_limits_and_candidates(self):
+        default = ContentWordSelectionStrategy()
+        other_max = ContentWordSelectionStrategy(max_words=1)
+        other_candidates = ContentWordSelectionStrategy(candidate_words=["device"])
+        assert default.get_identifier_params()["stopwords"] == sorted(DEFAULT_CONTENT_STOPWORDS)
+        assert "candidate_words" not in default.get_identifier_params()
+        assert default.get_identifier_params() != other_max.get_identifier_params()
+        assert default.get_identifier_params() != other_candidates.get_identifier_params()
 
 
 class TestAllWordsSelectionStrategy:

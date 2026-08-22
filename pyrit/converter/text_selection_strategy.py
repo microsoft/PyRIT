@@ -7,6 +7,7 @@ import re
 import string
 from collections.abc import Collection
 from re import Pattern
+from typing import Any
 
 # Common English function words used by ContentWordSelectionStrategy. This is a
 # dependency-free stand-in for POS filtering (no NLTK / tagger download).
@@ -199,6 +200,18 @@ class WordSelectionStrategy(TextSelectionStrategy):
         Returns:
             list[int]: A list of indices representing which words should be converted.
         """
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the parameters that affect which words this strategy selects.
+
+        Values must be JSON-serializable and stored in a stable, order-independent
+        form when the original input was a set-like collection.
+
+        Returns:
+            dict[str, Any]: Behavioral parameters for converter identifiers.
+        """
+        return {}
 
     def select_range(self, *, text: str, word_separator: str = " ") -> tuple[int, int]:
         """
@@ -521,6 +534,15 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
         """
         self._indices = indices
 
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the selected indices in sorted order.
+
+        Returns:
+            dict[str, Any]: The sorted index list.
+        """
+        return {"indices": sorted(self._indices)}
+
     def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select words at the specified indices.
@@ -561,6 +583,18 @@ class WordKeywordSelectionStrategy(WordSelectionStrategy):
         """
         self._keywords = keywords
         self._case_sensitive = case_sensitive
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the keyword list and case-sensitivity flag.
+
+        Returns:
+            dict[str, Any]: Sorted keywords and the case-sensitivity flag.
+        """
+        return {
+            "keywords": sorted(self._keywords),
+            "case_sensitive": self._case_sensitive,
+        }
 
     def select_words(self, *, words: list[str]) -> list[int]:
         """
@@ -603,6 +637,18 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
         self._proportion = proportion
         self._seed = seed
 
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the proportion and optional seed.
+
+        Returns:
+            dict[str, Any]: Proportion and seed when one was provided.
+        """
+        params: dict[str, Any] = {"proportion": self._proportion}
+        if self._seed is not None:
+            params["seed"] = self._seed
+        return params
+
     def select_words(self, *, words: list[str]) -> list[int]:
         """
         Select a random proportion of words.
@@ -636,6 +682,15 @@ class WordRegexSelectionStrategy(WordSelectionStrategy):
             pattern (str | Pattern[str]): The regex pattern to match against words.
         """
         self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the regex pattern and flags.
+
+        Returns:
+            dict[str, Any]: Pattern string and compiled flags.
+        """
+        return {"pattern": self._pattern.pattern, "flags": self._pattern.flags}
 
     def select_words(self, *, words: list[str]) -> list[int]:
         """
@@ -680,6 +735,18 @@ class WordPositionSelectionStrategy(WordSelectionStrategy):
 
         self._start_proportion = start_proportion
         self._end_proportion = end_proportion
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the start and end proportions.
+
+        Returns:
+            dict[str, Any]: Start and end proportions.
+        """
+        return {
+            "start_proportion": self._start_proportion,
+            "end_proportion": self._end_proportion,
+        }
 
     def select_words(self, *, words: list[str]) -> list[int]:
         """
@@ -774,6 +841,26 @@ class ContentWordSelectionStrategy(WordSelectionStrategy):
         self._candidate_words = (
             frozenset(self._normalize_word(word) for word in candidate_words) if candidate_words is not None else None
         )
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the content-word selection configuration.
+
+        Stopwords and candidate words are stored as sorted lists so order does
+        not affect identifier equality.
+
+        Returns:
+            dict[str, Any]: Selection limits, stopwords, and optional candidates.
+        """
+        params: dict[str, Any] = {
+            "max_words": self._max_words,
+            "skip_first": self._skip_first,
+            "min_word_length": self._min_word_length,
+            "stopwords": sorted(self._stopwords),
+        }
+        if self._candidate_words is not None:
+            params["candidate_words"] = sorted(self._candidate_words)
+        return params
 
     @staticmethod
     def _normalize_word(word: str) -> str:
