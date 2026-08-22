@@ -188,13 +188,24 @@ class WebsocketTarget(PromptTarget):
 
         Args:
             conversation_id (str): PyRIT conversation ID.
+
+        Raises:
+            asyncio.CancelledError: If cleanup is cancelled after the connection has finished closing.
         """
         conversation_lock = self._conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with conversation_lock:
             websocket = self._existing_conversation.pop(conversation_id, None)
             if websocket is None:
                 return
-            await websocket.close()
+            close_future = asyncio.ensure_future(websocket.close())
+            try:
+                await asyncio.shield(close_future)
+            except asyncio.CancelledError as cancellation_error:
+                try:
+                    await close_future
+                except BaseException as close_error:
+                    raise cancellation_error from close_error
+                raise
             logger.info("Disconnected WebSocket conversation: %s", conversation_id)
 
     async def cleanup_target_async(self) -> None:
