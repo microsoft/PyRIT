@@ -150,22 +150,22 @@ async def test_float_scale_threshold_scorer_attributes_result_to_aggregate_not_f
     scorer._score_nested_message_async = AsyncMock(
         return_value=[
             Score(
-                score_value="0.0",
+                score_value="0.857",
                 score_type="float_scale",
-                score_category=["Hate"],
-                score_rationale="Hate rationale",
-                score_metadata={"azure_severity": 0},
+                score_category=["Violence"],
+                score_rationale="Violence rationale",
+                score_metadata={"azure_severity": 6},
                 message_piece_id=prompt_id,
                 score_value_description="",
                 scorer_class_identifier=mock_identifier,
                 id=uuid.uuid4(),
             ),
             Score(
-                score_value="0.857",
+                score_value="0.0",
                 score_type="float_scale",
-                score_category=["Violence"],
-                score_rationale="Violence rationale",
-                score_metadata={"azure_severity": 6},
+                score_category=["Hate"],
+                score_rationale="Hate rationale",
+                score_metadata={"azure_severity": 0},
                 message_piece_id=prompt_id,
                 score_value_description="",
                 scorer_class_identifier=mock_identifier,
@@ -188,10 +188,10 @@ async def test_float_scale_threshold_scorer_attributes_result_to_aggregate_not_f
     # The rationale must mention the score that actually crossed, not only the first one.
     assert "Violence rationale" in score.score_rationale
 
-    # The original float value is the aggregate, so the metadata must not be the first
-    # score's severity of 0 sitting next to an original_float_value of 0.857.
+    # The aggregate spans categories with different severities, so the ambiguous
+    # category-specific severity must not be paired with the aggregate value.
     assert score.score_metadata["original_float_value"] == pytest.approx(0.857)
-    assert score.score_metadata["azure_severity"] != 0
+    assert "azure_severity" not in score.score_metadata
 
 
 async def test_float_scale_threshold_scorer_single_score_attribution_unchanged():
