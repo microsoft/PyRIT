@@ -104,6 +104,7 @@ from pyrit.datasets.seed_datasets.remote.promptintel_dataset import (
 from pyrit.datasets.seed_datasets.remote.red_team_social_bias_dataset import _RedTeamSocialBiasDataset
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
 from pyrit.datasets.seed_datasets.remote.salad_bench_dataset import _SaladBenchDataset
+from pyrit.datasets.seed_datasets.remote.semguard_dataset import _SemGuardDataset, SemGuardCategory
 from pyrit.datasets.seed_datasets.remote.sgxstest_dataset import SGXSTestLabel, _SGXSTestDataset
 from pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset import _SimpleSafetyTestsDataset
 from pyrit.datasets.seed_datasets.remote.siuo_dataset import SIUOCategory, _SIUODataset
@@ -225,6 +226,8 @@ __all__ = [
     "_RemoteDatasetLoader",
     "_SGXSTestDataset",
     "_SaladBenchDataset",
+    "_SemGuardDataset",
+    "SemGuardCategory",
     "_SimpleSafetyTestsDataset",
     "_SIUODataset",
     "_SOSBenchDataset",
