@@ -3,9 +3,14 @@
 
 import re
 from collections.abc import Collection
+from typing import Any
 
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.converter.text_selection_strategy import ContentWordSelectionStrategy, WordSelectionStrategy
+from pyrit.converter.text_selection_strategy import (
+    DEFAULT_CONTENT_STOPWORDS,
+    ContentWordSelectionStrategy,
+    WordSelectionStrategy,
+)
 from pyrit.models import ComponentIdentifier, PromptDataType
 
 # Wiki-infill template from Dong et al. (SATA). Compose with TaskFramingConverter
@@ -27,7 +32,10 @@ SATA_TASK_TEMPLATE = (
 )
 
 _WHITESPACE_RE = re.compile(r"(\s+)")
-_WORD_AFFIX_RE = re.compile(r"^(\W*)(.*?)(\W*)$", re.UNICODE)
+# Anchored scans only — a single ^(\W*)(.*?)(\W*)$ match backtracks quadratically
+# on long interior runs of non-word characters.
+_LEADING_NONWORD_RE = re.compile(r"^\W+", re.UNICODE)
+_TRAILING_NONWORD_RE = re.compile(r"\W+$", re.UNICODE)
 
 
 class SATAMaskingConverter(Converter):
@@ -91,8 +99,7 @@ class SATAMaskingConverter(Converter):
             raise ValueError("mask_token must be a non-empty string")
 
         strategy_kwargs_provided = any(
-            value is not None
-            for value in (num_masks, skip_first, min_word_length, stopwords, candidate_words)
+            value is not None for value in (num_masks, skip_first, min_word_length, stopwords, candidate_words)
         )
         if selection_strategy is not None and strategy_kwargs_provided:
             raise ValueError(
@@ -108,6 +115,8 @@ class SATAMaskingConverter(Converter):
             self._num_masks = None
             self._skip_first = None
             self._min_word_length = None
+            self._stopwords = None
+            self._candidate_words = None
         else:
             resolved_num_masks = 2 if num_masks is None else num_masks
             resolved_skip_first = 1 if skip_first is None else skip_first
@@ -119,6 +128,14 @@ class SATAMaskingConverter(Converter):
             self._num_masks = resolved_num_masks
             self._skip_first = resolved_skip_first
             self._min_word_length = resolved_min_word_length
+            self._stopwords = (
+                frozenset(word.lower() for word in stopwords) if stopwords is not None else DEFAULT_CONTENT_STOPWORDS
+            )
+            self._candidate_words = (
+                frozenset(ContentWordSelectionStrategy._normalize_word(word) for word in candidate_words)
+                if candidate_words is not None
+                else None
+            )
             self._selection_strategy = ContentWordSelectionStrategy(
                 max_words=resolved_num_masks,
                 skip_first=resolved_skip_first,
@@ -134,7 +151,7 @@ class SATAMaskingConverter(Converter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        params: dict[str, str | int | None] = {
+        params: dict[str, Any] = {
             "mask_token": self._mask_token,
             "selection_strategy": self._selection_strategy.__class__.__name__,
         }
@@ -142,7 +159,35 @@ class SATAMaskingConverter(Converter):
             params["num_masks"] = self._num_masks
             params["skip_first"] = self._skip_first
             params["min_word_length"] = self._min_word_length
+            params["stopwords"] = sorted(self._stopwords or ())
+            if self._candidate_words is not None:
+                params["candidate_words"] = sorted(self._candidate_words)
         return self._create_identifier(params=params)
+
+    @staticmethod
+    def _split_word_affixes(token: str) -> tuple[str, str, str]:
+        """
+        Split ``token`` into leading punctuation, core, and trailing punctuation.
+
+        Leading and trailing non-word runs are scanned independently so the
+        split is linear in the token length.
+
+        Args:
+            token (str): A whitespace-delimited token.
+
+        Returns:
+            tuple[str, str, str]: Prefix, core, and suffix. The core is empty
+                when the token is only punctuation.
+        """
+        leading = _LEADING_NONWORD_RE.match(token)
+        prefix_end = leading.end() if leading else 0
+        if prefix_end == len(token):
+            return token, "", ""
+        body = token[prefix_end:]
+        trailing = _TRAILING_NONWORD_RE.search(body)
+        if trailing:
+            return token[:prefix_end], body[: trailing.start()], trailing.group(0)
+        return token[:prefix_end], body, ""
 
     @staticmethod
     def _tokenize(prompt: str) -> tuple[list[str | tuple[str, str, str]], list[tuple[str, str, str]]]:
@@ -163,8 +208,7 @@ class SATAMaskingConverter(Converter):
             if piece == "" or _WHITESPACE_RE.fullmatch(piece):
                 pieces.append(piece)
                 continue
-            match = _WORD_AFFIX_RE.match(piece)
-            prefix, core, suffix = match.groups() if match else ("", piece, "")
+            prefix, core, suffix = SATAMaskingConverter._split_word_affixes(piece)
             if not core:
                 pieces.append(piece)
                 continue

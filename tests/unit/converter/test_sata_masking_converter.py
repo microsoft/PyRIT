@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import time
+
 import pytest
 
 from pyrit.converter import (
@@ -12,6 +14,7 @@ from pyrit.converter import (
     TaskFramingConverter,
     WordIndexSelectionStrategy,
 )
+from pyrit.converter.text_selection_strategy import DEFAULT_CONTENT_STOPWORDS
 
 
 async def test_convert_async_masks_content_words_deterministically():
@@ -84,6 +87,26 @@ async def test_convert_async_preserves_tabs_between_words():
     assert result.output_text == "[MASK].\tThen assemble"
 
 
+async def test_convert_async_long_punctuation_token_is_linear():
+    converter = SATAMaskingConverter(num_masks=1, skip_first=0)
+    token = "!" * 16_384
+    start = time.perf_counter()
+    result = await converter.convert_async(prompt=f"process {token} assemble")
+    elapsed = time.perf_counter() - start
+    assert elapsed < 0.5
+    assert result.output_text == f"[MASK] {token} assemble"
+
+
+async def test_convert_async_long_affix_token_is_linear_and_preserves_punctuation():
+    converter = SATAMaskingConverter(num_masks=1, skip_first=0)
+    token = ("!" * 8_192) + "payload" + ("!" * 8_192)
+    start = time.perf_counter()
+    result = await converter.convert_async(prompt=token)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 0.5
+    assert result.output_text == ("!" * 8_192) + "[MASK]" + ("!" * 8_192)
+
+
 async def test_convert_async_preserves_text_when_no_content_words():
     converter = SATAMaskingConverter()
     result = await converter.convert_async(prompt="to the a of")
@@ -118,6 +141,8 @@ def test_identifier_uses_default_strategy_params():
     assert params["skip_first"] == 0
     assert params["mask_token"] == "<unk>"
     assert params["selection_strategy"] == "ContentWordSelectionStrategy"
+    assert params["stopwords"] == sorted(DEFAULT_CONTENT_STOPWORDS)
+    assert "candidate_words" not in params
 
 
 def test_identifier_omits_unused_default_params_for_custom_strategy():
@@ -125,8 +150,34 @@ def test_identifier_omits_unused_default_params_for_custom_strategy():
     params = converter.get_identifier().params
     assert "num_masks" not in params
     assert "skip_first" not in params
+    assert "stopwords" not in params
+    assert "candidate_words" not in params
     assert params["selection_strategy"] == "WordIndexSelectionStrategy"
     assert params["mask_token"] == "[MASK]"
+
+
+def test_identifier_is_order_independent_for_selection_sets():
+    left = SATAMaskingConverter(
+        stopwords=["The", "a"],
+        candidate_words=["device", "bomb"],
+    )
+    right = SATAMaskingConverter(
+        stopwords=["a", "the"],
+        candidate_words=["bomb", "device"],
+    )
+    assert left.get_identifier() == right.get_identifier()
+    assert left.get_identifier().params["stopwords"] == ["a", "the"]
+    assert left.get_identifier().params["candidate_words"] == ["bomb", "device"]
+
+
+def test_identifier_distinguishes_stopwords_and_candidate_words():
+    default = SATAMaskingConverter()
+    custom_stopwords = SATAMaskingConverter(stopwords=["the"])
+    custom_candidates = SATAMaskingConverter(candidate_words=["device"])
+    other_candidates = SATAMaskingConverter(candidate_words=["bomb"])
+    assert default.get_identifier() != custom_stopwords.get_identifier()
+    assert default.get_identifier() != custom_candidates.get_identifier()
+    assert custom_candidates.get_identifier() != other_candidates.get_identifier()
 
 
 def test_input_output_types():
