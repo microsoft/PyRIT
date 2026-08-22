@@ -5,16 +5,21 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import functools
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, cast, get_args
 
 from pyrit import converter
+from pyrit.common.random_context import get_random_generator, random_execution
 from pyrit.models import ComponentIdentifier, ConverterIdentifier, Identifiable, PromptDataType
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    import random
+    from collections.abc import Awaitable, Callable
+
     from pyrit.prompt_target import PromptTarget
 
 
@@ -91,6 +96,24 @@ class Converter(Identifiable):
                     f"Declare the output modalities this converter produces."
                 )
 
+        convert_async = cast(
+            "Callable[..., Awaitable[ConverterResult]] | None",
+            cls.__dict__.get("convert_async"),
+        )
+        if convert_async and not getattr(convert_async, "__isabstractmethod__", False):
+
+            @functools.wraps(convert_async)
+            async def convert_with_random_context_async(
+                self: Converter,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ConverterResult:
+                namespace = f"{type(self).__module__}.{type(self).__qualname__}"
+                with random_execution(namespace=namespace, seed=getattr(self, "_seed", None), owner=self):
+                    return await convert_async(self, *args, **kwargs)
+
+            cls.convert_async = cast("Any", convert_with_random_context_async)
+
     def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
         """
         Initialize the converter.
@@ -139,6 +162,18 @@ class Converter(Identifiable):
             bool: True if the output type is supported, False otherwise.
         """
         return output_type in self.SUPPORTED_OUTPUT_TYPES
+
+    def _get_random_generator(self, *, stream: str) -> random.Random:
+        """
+        Return this conversion's generator for a named child stream.
+
+        Args:
+            stream (str): Stable name for the converter's independent random stream.
+
+        Returns:
+            random.Random: An operation-local generator.
+        """
+        return get_random_generator(stream=stream)
 
     async def convert_tokens_async(
         self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"

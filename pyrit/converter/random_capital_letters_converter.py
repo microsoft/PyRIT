@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import random
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
@@ -27,7 +26,6 @@ class RandomCapitalLettersConverter(Converter):
         """
         self.percentage = percentage
         self._seed = seed
-        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -81,7 +79,7 @@ class RandomCapitalLettersConverter(Converter):
             )
 
         # Generate a list of unique random positions
-        return self._rng.sample(range(total_length), set_number)
+        return self._get_random_generator(stream="capital-positions").sample(range(total_length), set_number)
 
     def string_to_upper_case_by_percentage(self, percentage: float, prompt: str) -> str:
         """
@@ -124,9 +122,6 @@ class RandomCapitalLettersConverter(Converter):
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
-
-        if self._seed is not None:
-            self._rng.seed(self._seed)
 
         output = self.string_to_upper_case_by_percentage(self.percentage, prompt)
         return ConverterResult(output_text=output, output_type="text")

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import random
 import string
 
 from pyrit.converter.text_selection_strategy import (
@@ -51,7 +50,6 @@ class CharSwapConverter(WordLevelConverter):
 
         self._max_iterations = max_iterations
         self._seed = seed
-        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -79,11 +77,6 @@ class CharSwapConverter(WordLevelConverter):
         """
         return self._perturb_word(word)
 
-    def validate_input(self, prompt: str) -> None:
-        """Reset seeded randomness before converting a prompt."""
-        if self._seed is not None:
-            self._rng.seed(self._seed)
-
     def _perturb_word(self, word: str) -> str:
         """
         Perturbs a word by swapping two adjacent characters.
@@ -95,9 +88,10 @@ class CharSwapConverter(WordLevelConverter):
             str: The perturbed word with swapped characters.
         """
         if word not in string.punctuation and len(word) > 3:
+            rng = self._get_random_generator(stream="character-swaps")
             idx_elements = list(word)
             for _ in range(self._max_iterations):
-                idx1 = self._rng.randint(1, len(word) - 2)
+                idx1 = rng.randint(1, len(word) - 2)
                 # Swap characters
                 idx_elements[idx1], idx_elements[idx1 + 1] = (
                     idx_elements[idx1 + 1],

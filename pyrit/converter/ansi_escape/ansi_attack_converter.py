@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import random
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
@@ -112,7 +111,6 @@ class AnsiAttackConverter(Converter):
         self.include_unescape = include_unescape
         self.incorporate_user_prompt = incorporate_user_prompt
         self._seed = seed
-        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
@@ -168,15 +166,14 @@ class AnsiAttackConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        if self._seed is not None:
-            self._rng.seed(self._seed)
+        rng = self._get_random_generator(stream="scenario")
 
         scenario_choices: list[str] = []
 
         # Scenario 1: Ask about ANSI codes (if allowed)
         if self.include_tasks:
-            ask = self._rng.choice(self.ASKS)
-            task = self._rng.choice(self.HIGH_LEVEL_TASKS)
+            ask = rng.choice(self.ASKS)
+            task = rng.choice(self.HIGH_LEVEL_TASKS)
             scenario_choices.append(f"{ask} {task}")
 
         # Scenario 2: Repeat a payload (if allowed)
@@ -188,14 +185,14 @@ class AnsiAttackConverter(Converter):
                 possible_payloads.extend(self.ESCAPED_PAYLOADS)
 
             if possible_payloads:
-                repeat_stub = self._rng.choice(self.REPEAT_STUBS)
-                chosen_payload = self._rng.choice(possible_payloads)
+                repeat_stub = rng.choice(self.REPEAT_STUBS)
+                chosen_payload = rng.choice(possible_payloads)
                 scenario_choices.append(f"{repeat_stub} {chosen_payload}")
 
         # Scenario 3: Unescape a string (if allowed and we have escaped payloads)
         if self.include_unescape and self.include_escaped:
-            unescape_stub = self._rng.choice(self.UNESCAPE_STUBS)
-            escaped_payload = self._rng.choice(self.ESCAPED_PAYLOADS)
+            unescape_stub = rng.choice(self.UNESCAPE_STUBS)
+            escaped_payload = rng.choice(self.ESCAPED_PAYLOADS)
             scenario_choices.append(f"{unescape_stub} {escaped_payload}")
 
         # If no scenarios were selected (all features disabled), fallback scenario:
@@ -203,7 +200,7 @@ class AnsiAttackConverter(Converter):
             scenario_choices.append("What's the ANSI code to render green terminal text?")
 
         # Pick one scenario at random
-        final_scenario = self._rng.choice(scenario_choices)
+        final_scenario = rng.choice(scenario_choices)
 
         # Incorporate the user's original prompt into the scenario if desired.
         # For example, we can append the user's prompt as an additional context or requirement.

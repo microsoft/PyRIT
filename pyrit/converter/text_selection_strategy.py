@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 import abc
-import random
 import re
 from re import Pattern
+
+from pyrit.common.random_context import get_random_generator
 
 
 class TextSelectionStrategy(abc.ABC):
@@ -317,9 +318,6 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
         self._proportion = proportion
         self._anchor = anchor
         self._seed = seed
-        # Own the RNG rather than seeding the global one, so a seeded strategy
-        # does not make every other `random`-based component reproducible.
-        self._rng = random.Random(seed)
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
@@ -342,10 +340,14 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
             start = (text_len - selection_len) // 2
             return (start, start + selection_len)
         # random
-        if self._seed is not None:
-            self._rng.seed(self._seed)
+        rng = get_random_generator(
+            namespace=f"{type(self).__module__}.{type(self).__qualname__}",
+            stream="text-range",
+            seed=self._seed,
+            owner=self,
+        )
         max_start = max(0, text_len - selection_len)
-        start = self._rng.randint(0, max_start) if max_start > 0 else 0
+        start = rng.randint(0, max_start) if max_start > 0 else 0
         return (start, start + selection_len)
 
 
@@ -495,9 +497,6 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
 
         self._proportion = proportion
         self._seed = seed
-        # Own the RNG rather than seeding the global one, so a seeded strategy
-        # does not make every other `random`-based component reproducible.
-        self._rng = random.Random(seed)
 
     def select_words(self, *, words: list[str]) -> list[int]:
         """
@@ -512,11 +511,14 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
         if not words:
             return []
 
-        if self._seed is not None:
-            self._rng.seed(self._seed)
-
         num_to_select = int(len(words) * self._proportion)
-        return self._rng.sample(range(len(words)), num_to_select) if num_to_select > 0 else []
+        rng = get_random_generator(
+            namespace=f"{type(self).__module__}.{type(self).__qualname__}",
+            stream="word-selection",
+            seed=self._seed,
+            owner=self,
+        )
+        return rng.sample(range(len(words)), num_to_select) if num_to_select > 0 else []
 
 
 class WordRegexSelectionStrategy(WordSelectionStrategy):

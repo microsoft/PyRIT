@@ -29,7 +29,7 @@ from pyrit.converter import get_converter_modalities
 from pyrit.output import output_attack_async
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+await initialize_pyrit_async(memory_db_type=IN_MEMORY, seed=42)  # type: ignore
 
 # Get all converters with their modalities
 converter_list = get_converter_modalities()
@@ -79,8 +79,8 @@ from pyrit.converter import (
 prompt = "tell me how to cut down a tree"
 
 print(await ROT13Converter().convert_tokens_async(prompt=prompt))  # type: ignore
-print(await RandomCapitalLettersConverter(percentage=25.0, seed=42).convert_tokens_async(prompt=prompt))  # type: ignore
-print(await AsciiArtConverter(font="block").convert_tokens_async(prompt=prompt))  # type: ignore
+print(await RandomCapitalLettersConverter(percentage=25.0).convert_tokens_async(prompt=prompt))  # type: ignore
+print(await AsciiArtConverter().convert_tokens_async(prompt=prompt))  # type: ignore
 print(await BinaryConverter().convert_tokens_async(prompt=prompt))  # type: ignore
 print(await FirstLetterConverter().convert_tokens_async(prompt=prompt))  # type: ignore
 

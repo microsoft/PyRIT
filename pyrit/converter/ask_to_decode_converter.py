@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import random
-
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -64,7 +62,6 @@ class AskToDecodeConverter(Converter):
         self._encoding_name = encoding_name
         self._template = template
         self._seed = seed
-        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
@@ -92,9 +89,6 @@ class AskToDecodeConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        if self._seed is not None:
-            self._rng.seed(self._seed)
-
         if self._template:
             formatted_prompt = self._template.format(encoded_text=prompt, encoding_name=self._encoding_name)
         else:
@@ -103,5 +97,5 @@ class AskToDecodeConverter(Converter):
         return ConverterResult(output_text=formatted_prompt, output_type="text")
 
     def _encode_with_random_template(self, *, prompt: str) -> str:
-        template = self._rng.choice(self.all_templates)
+        template = self._get_random_generator(stream="template").choice(self.all_templates)
         return template.format(encoding_name=self._encoding_name, encoded_text=prompt)

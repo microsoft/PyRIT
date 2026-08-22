@@ -4,7 +4,6 @@
 import hashlib
 import logging
 import pathlib
-import random
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
@@ -53,7 +52,6 @@ class TemplateSegmentConverter(Converter):
 
         self._number_parameters = len(self.prompt_template.parameters or [])
         self._seed = seed
-        self._rng = random.Random(seed)
 
         if self._number_parameters < 2:
             raise ValueError(
@@ -108,9 +106,6 @@ class TemplateSegmentConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        if self._seed is not None:
-            self._rng.seed(self._seed)
-
         segments = self._split_prompt_into_segments(prompt)
         filled_template = self.prompt_template.render_template_value(
             **dict(zip(self.prompt_template.parameters or [], segments, strict=False))
@@ -133,7 +128,9 @@ class TemplateSegmentConverter(Converter):
 
         # Handle edge case where we can't sample from an empty range
         if num_splits > 0 and len(words) > 1:
-            split_points = sorted(self._rng.sample(range(1, len(words)), num_splits))
+            split_points = sorted(
+                self._get_random_generator(stream="segment-boundaries").sample(range(1, len(words)), num_splits)
+            )
         else:
             split_points = []
 

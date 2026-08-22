@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from art import text2art
+from art import ASCII_FONTS, text2art
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
@@ -55,4 +55,8 @@ class AsciiArtConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        return ConverterResult(output_text=text2art(prompt, font=self._font), output_type="text")
+        font = self._font
+        if font == "rand":
+            font = self._get_random_generator(stream="font").choice(ASCII_FONTS)
+
+        return ConverterResult(output_text=text2art(prompt, font=font), output_type="text")

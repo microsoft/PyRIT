@@ -46,7 +46,8 @@ async def test_convert_async_unescape_scenario():
         include_unescape=True,
         incorporate_user_prompt=True,
     )
-    with patch.object(converter._rng, "choice") as mock_choice:
+    with patch.object(converter, "_get_random_generator") as mock_get_rng:
+        mock_choice = mock_get_rng.return_value.choice
         # We pick a stable return sequence for mock_choice:
         # The converter tries to pick scenario from scenario_choices which is influenced by multiple
         # random.choice calls. We'll guide it step-by-step.

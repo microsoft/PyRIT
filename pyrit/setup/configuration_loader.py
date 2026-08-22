@@ -102,6 +102,7 @@ class ConfigurationLoader(YamlLoadable):
         env_akv_strict: Whether malformed or valueless entries in a Key Vault
             bootstrap document should fail initialization.
         silent: Whether to suppress initialization messages.
+        seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
         operation: Name for the current operation.
 
@@ -142,6 +143,7 @@ class ConfigurationLoader(YamlLoadable):
     env_akv_ref: list[str] | None = None
     env_akv_strict: bool = True
     silent: bool = False
+    seed: int | None = None
     operator: str | None = None
     operation: str | None = None
     max_concurrent_scenario_runs: int = 3
@@ -647,6 +649,7 @@ class ConfigurationLoader(YamlLoadable):
             env_akv_ref=self.env_akv_ref,
             env_akv_strict=self.env_akv_strict,
             silent=self.silent,
+            seed=self.seed,
         )
 
 

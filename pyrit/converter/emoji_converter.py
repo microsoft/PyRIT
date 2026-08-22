@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import random
-
 from pyrit.converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
@@ -61,15 +59,9 @@ class EmojiConverter(WordLevelConverter):
         """
         super().__init__(word_selection_strategy=word_selection_strategy)
         self._seed = seed
-        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(params={"seed": self._seed})
-
-    def validate_input(self, prompt: str) -> None:
-        """Reset seeded randomness before converting a prompt."""
-        if self._seed is not None:
-            self._rng.seed(self._seed)
 
     async def convert_word_async(self, word: str) -> str:
         """
@@ -82,10 +74,11 @@ class EmojiConverter(WordLevelConverter):
             str: The converted word.
         """
         word = word.lower()
+        rng = self._get_random_generator(stream="emoji-substitutions")
         result = []
         for char in word:
             if char in EmojiConverter.emoji_dict:
-                result.append(self._rng.choice(EmojiConverter.emoji_dict[char]))
+                result.append(rng.choice(EmojiConverter.emoji_dict[char]))
             else:
                 result.append(char)
         return "".join(result)
