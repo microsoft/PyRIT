@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -27,7 +27,7 @@
 # up and is reused by every command below. We stop it again at the end of the notebook.
 
 # %%
-# !pyrit_scan --start-server
+# !pyrit_scan start-server
 
 # %% [markdown]
 # ## Quick Start
@@ -43,16 +43,18 @@
 # List all available scenarios:
 
 # %%
-# !pyrit_scan --list-scenarios
+# !pyrit_scan list-scenarios
 
 # %% [markdown]
-# **Tip**: You can also discover user-defined scenarios by providing initialization scripts:
+# **Tip**: You can also surface user-defined scenarios. List your initializer script in the
+# `initialization_scripts` section of the config file the backend loads (see [here](../getting_started/pyrit_conf.md)).
+# The backend runs those scripts at startup and auto-discovers any `Scenario` subclasses they
+# define, so start the server with that config, then list:
 #
 # ```shell
-# pyrit_scan --list-scenarios --initialization-scripts ./my_custom_initializer.py
+# pyrit_scan --config-file ./my_pyrit_conf.yaml start-server
+# pyrit_scan list-scenarios
 # ```
-#
-# This will load your custom scenario definitions and include them in the list.
 #
 # ## Initializers
 #
@@ -63,7 +65,7 @@
 # List the available initializers using the --list-initializers flag.
 
 # %%
-# !pyrit_scan --list-initializers
+# !pyrit_scan list-initializers
 
 # %% [markdown]
 # ### Running Scenarios
@@ -71,47 +73,47 @@
 # You need a single scenario to run, you need two things:
 #
 # 1. A Scenario. Many are defined in `pyrit.scenario.scenarios`. But you can also define your own in initialization_scripts.
-# 2. Initializers (which can be supplied via `--initializers` or `--initialization-scripts` or `initializers` section of config file (see [here](../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
+# 2. Initializers (which can be supplied via the `--initializers` flag on `run`, or the `initializers` / `initialization_scripts` sections of a config file (see [here](../getting_started/pyrit_conf.md))). Scenarios often don't need many arguments, but they can be configured in different ways. And at the very least, most need an `objective_target` (the thing you're running a scan against) which you can configure by using the `--target` flag if your initializer registers targets (e.g. `target` initializer)
 # 3. Scenario Techniques (optional). These are supplied by the `--techniques` flag and tell the scenario what to test, but they are always optional. Also note you can obtain these by running `--list-scenarios`
 #
 # Basic usage will look something like:
 #
 # ```shell
-# pyrit_scan <scenario> --target <target_name> --initializers <initializer1> <initializer2> --techniques <technique1> <technique2>
+# pyrit_scan run <scenario> --target <target_name> --initializers <initializer1> <initializer2> --techniques <technique1> <technique2>
 # ```
 #
 # You can also override scenario parameters directly from the CLI:
 #
 # ```shell
-# pyrit_scan <scenario> --max-concurrency 10 --max-retries 3 --memory-labels '{"experiment": "test1", "version": "v2"}'
+# pyrit_scan run <scenario> --max-concurrency 10 --max-retries 3 --memory-labels '{"experiment": "test1", "version": "v2"}'
 # ```
 #
 # Or concretely:
 #
 # ```shell
-# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques base64
+# !pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 # ```
 #
 # Example with a basic configuration that runs the Foundry scenario against the objective target defined in the `target` initializer.
 
 # %%
-# !pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques base64
+# !pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 
 # %% [markdown]
 # Or with all options and multiple techniques:
 #
 # ```shell
-# pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --techniques easy crescendo
+# pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --techniques easy crescendo
 # ```
 #
 # You can also override scenario execution parameters:
 #
 # ```shell
 # # Override concurrency and retry settings
-# pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --max-concurrency 10 --max-retries 3
+# pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --max-concurrency 10 --max-retries 3
 #
 # # Add custom memory labels for tracking (must be valid JSON)
-# pyrit_scan foundry.red_team_agent --target openai_chat --initializers target --memory-labels '{"experiment": "test1", "version": "v2", "researcher": "alice"}'
+# pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --memory-labels '{"experiment": "test1", "version": "v2", "researcher": "alice"}'
 # ```
 #
 # Available CLI parameter overrides:
@@ -119,10 +121,22 @@
 # - `--max-retries <int>`: Maximum number of automatic retries if the scenario raises an exception
 # - `--memory-labels <json>`: Additional labels to apply to all attack runs (must be a JSON string with string keys and values)
 #
-# You can also use custom initialization scripts by passing file paths. It is relative to your current working directory, but to avoid confusion, full paths are always better:
+# Dataset-backed scenarios can also select a supported dataset. Requested datasets are fetched
+# on demand, so a full dataset preload is not required:
 #
 # ```shell
-# pyrit_scan garak.encoding --initialization-scripts ./my_custom_config.py
+# pyrit_scan run garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
+# ```
+#
+# Custom initialization scripts are loaded by the backend at startup: list them in the
+# `initialization_scripts` section of the config the server loads (paths are relative to your
+# working directory, but full paths avoid confusion). Once the server is running with that
+# config, they apply to every `run`:
+#
+#
+# ```shell
+# pyrit_scan --config-file ./my_pyrit_conf.yaml start-server
+# pyrit_scan run garak.encoding
 # ```
 
 # %% [markdown]
@@ -133,22 +147,26 @@
 # the technique produces, on top of any converters the technique already bakes in. This also works on
 # aggregate techniques (the converter is applied to every technique the aggregate expands to).
 #
-# First discover the registered converter instances with `--list-converters` (converters are
-# registered by initializers, so pass the same `--initializers`/`--initialization-scripts` you use to run):
+# First discover the registered converter instances with `list-converters`. Converters are
+# registered by initializers that the backend runs at startup, so the initializer that registers
+# them must be part of the server's configuration — a built-in in the `initializers` section, or a
+# custom script in the `initialization_scripts` section of the config the server loads (see
+# [here](../getting_started/pyrit_conf.md)). Start the server with that config, then list:
 #
 # ```shell
-# pyrit_scan --list-converters --initializers my_converters
+# pyrit_scan --config-file ./my_pyrit_conf.yaml start-server
+# pyrit_scan list-converters
 # ```
 #
 # Then reference a converter by name in `--techniques`:
 #
 # ```shell
 # # Add the registered "translation_spanish" converter to role_play_movie_script only
-# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish
+# pyrit_scan run airt.rapid_response --target openai_chat --initializers target my_converters --techniques role_play_movie_script:converter.translation_spanish
 #
-# # Chain multiple converters (applied in order) and combine with plain techniques
-# pyrit_scan airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 # ```
+#
+# # Chain multiple converters (applied in order) and combine with plain techniquespyrit_scan run airt.rapid_response --target openai_chat --initializers target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
 
 # %% [markdown]
 # #### Using Custom Scenarios
@@ -206,14 +224,17 @@ MyCustomScenario()
 # Then discover and run it:
 #
 # ```shell
-# # List to see it's available
-# pyrit_scan --list-scenarios --initialization-scripts ./my_custom_scenarios.py
+# # Start the backend with a config whose initialization_scripts lists my_custom_scenarios.py
+# pyrit_scan --config-file ./my_pyrit_conf.yaml start-server
+#
+# # List to confirm it's available
+# pyrit_scan list-scenarios
 #
 # # Run it with parameter overrides
-# pyrit_scan my_custom_scenario --initialization-scripts ./my_custom_scenarios.py --max-concurrency 10
-# ```
+# pyrit_scan run my_custom_scenario --max-concurrency 10
 #
-# The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
+# ```The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
+#
 
 # %% [markdown]
 # ## Stopping the Backend Server
@@ -221,4 +242,4 @@ MyCustomScenario()
 # When you're done, stop the local backend that we started at the top of the notebook.
 
 # %%
-# !pyrit_scan --stop-server
+# !pyrit_scan stop-server

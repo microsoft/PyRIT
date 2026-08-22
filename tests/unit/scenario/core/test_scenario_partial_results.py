@@ -9,10 +9,16 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+try:
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
+except ImportError:  # pragma: no cover - 3.10 only
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
+
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioRunState
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 
@@ -28,7 +34,7 @@ def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
 @pytest.fixture
 def mock_objective_target():
     """Create a mock objective target for testing."""
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = ComponentIdentifier(
         class_name="MockTarget",
         class_module="test",
@@ -627,3 +633,144 @@ class TestScenarioPartialAttackCompletion:
         assert len(result.attack_results["attack_1"]) == 2
         assert len(result.attack_results["attack_2"]) == 3
         assert len(result.attack_results["attack_3"]) == 1
+
+    async def test_concurrent_partial_failures_resume_without_duplicate_results(self, mock_objective_target):
+        """
+        Concurrent partial failures should surface together and resume only unfinished objectives.
+
+        Three attacks start together. Two persist one result each before failing, while the
+        third succeeds. A second run must execute only the two unfinished objectives.
+        """
+        attack_a = create_mock_atomic_attack("attack-a", ["a-complete", "a-retry"])
+        attack_b = create_mock_atomic_attack("attack-b", ["b-complete", "b-retry"])
+        attack_c = create_mock_atomic_attack("attack-c", ["c-complete"])
+
+        all_started = asyncio.Event()
+        attack_a_finished = asyncio.Event()
+        attack_b_finished = asyncio.Event()
+        started_attacks: set[str] = set()
+        objective_batches: dict[str, list[list[str]]] = {"attack-a": [], "attack-b": [], "attack-c": []}
+
+        async def wait_until_all_started_async(*, attack_name: str) -> None:
+            started_attacks.add(attack_name)
+            if len(started_attacks) == 3:
+                all_started.set()
+            await all_started.wait()
+
+        def save_result(*, objective: str, attack: MagicMock) -> AttackResult:
+            result = AttackResult(
+                conversation_id=f"conv-{objective}",
+                objective=objective,
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=1,
+            )
+            save_attack_results_to_memory([result], atomic_attack=attack)
+            return result
+
+        async def run_attack_a_async(*args, **kwargs) -> AttackExecutorResult[AttackResult]:
+            objectives = list(attack_a.objectives)
+            objective_batches["attack-a"].append(objectives)
+            if len(objective_batches["attack-a"]) == 1:
+                await wait_until_all_started_async(attack_name="attack-a")
+                completed = save_result(objective="a-complete", attack=attack_a)
+                attack_a_finished.set()
+                return AttackExecutorResult(
+                    completed_results=[completed],
+                    incomplete_objectives=[("a-retry", RuntimeError("attack-a interrupted"))],
+                )
+            completed = save_result(objective="a-retry", attack=attack_a)
+            return AttackExecutorResult(completed_results=[completed], incomplete_objectives=[])
+
+        async def run_attack_b_async(*args, **kwargs) -> AttackExecutorResult[AttackResult]:
+            objectives = list(attack_b.objectives)
+            objective_batches["attack-b"].append(objectives)
+            if len(objective_batches["attack-b"]) == 1:
+                await wait_until_all_started_async(attack_name="attack-b")
+                await attack_a_finished.wait()
+                completed = save_result(objective="b-complete", attack=attack_b)
+                attack_b_finished.set()
+                return AttackExecutorResult(
+                    completed_results=[completed],
+                    incomplete_objectives=[("b-retry", TimeoutError("attack-b timed out"))],
+                )
+            completed = save_result(objective="b-retry", attack=attack_b)
+            return AttackExecutorResult(completed_results=[completed], incomplete_objectives=[])
+
+        async def run_attack_c_async(*args, **kwargs) -> AttackExecutorResult[AttackResult]:
+            objectives = list(attack_c.objectives)
+            objective_batches["attack-c"].append(objectives)
+            await wait_until_all_started_async(attack_name="attack-c")
+            await attack_b_finished.wait()
+            completed = save_result(objective="c-complete", attack=attack_c)
+            return AttackExecutorResult(completed_results=[completed], incomplete_objectives=[])
+
+        attack_a.run_async = AsyncMock(side_effect=run_attack_a_async)
+        attack_b.run_async = AsyncMock(side_effect=run_attack_b_async)
+        attack_c.run_async = AsyncMock(side_effect=run_attack_c_async)
+
+        scenario = ConcreteScenario(
+            name="Concurrent partial failure scenario",
+            version=1,
+            atomic_attacks_to_return=[attack_a, attack_b, attack_c],
+        )
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 3,
+                "max_retries": 0,
+            }
+        )
+        await scenario.initialize_async()
+
+        with patch.object(
+            scenario._memory,
+            "update_scenario_run_state",
+            wraps=scenario._memory.update_scenario_run_state,
+        ) as update_state:
+            with pytest.raises(ExceptionGroup) as exc_info:
+                await asyncio.wait_for(scenario.run_async(), timeout=10)
+
+            assert all(isinstance(error, ScenarioPartialFailureException) for error in exc_info.value.exceptions)
+            partial_failures = {
+                error.atomic_attack_name: error
+                for error in exc_info.value.exceptions
+                if isinstance(error, ScenarioPartialFailureException)
+            }
+            assert set(partial_failures) == {"attack-a", "attack-b"}
+            assert isinstance(partial_failures["attack-a"].incomplete_objectives[0][1], RuntimeError)
+            assert isinstance(partial_failures["attack-b"].incomplete_objectives[0][1], TimeoutError)
+
+            failed_result = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])[0]
+            assert failed_result.scenario_run_state == ScenarioRunState.FAILED
+            assert failed_result.number_tries == 1
+
+            final_result = await asyncio.wait_for(scenario.run_async(), timeout=10)
+
+        assert final_result.scenario_run_state == ScenarioRunState.COMPLETED
+        assert final_result.number_tries == 2
+        assert objective_batches == {
+            "attack-a": [["a-complete", "a-retry"], ["a-retry"]],
+            "attack-b": [["b-complete", "b-retry"], ["b-retry"]],
+            "attack-c": [["c-complete"]],
+        }
+        assert attack_a.run_async.await_count == 2
+        assert attack_b.run_async.await_count == 2
+        assert attack_c.run_async.await_count == 1
+
+        stored_results = [
+            result for attack_results in final_result.attack_results.values() for result in attack_results
+        ]
+        assert sorted(result.objective for result in stored_results) == [
+            "a-complete",
+            "a-retry",
+            "b-complete",
+            "b-retry",
+            "c-complete",
+        ]
+        assert len({result.attack_result_id for result in stored_results}) == 5
+        assert [call.kwargs["scenario_run_state"] for call in update_state.call_args_list] == [
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.COMPLETED,
+        ]

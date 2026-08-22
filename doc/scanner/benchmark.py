@@ -25,11 +25,11 @@
 #
 # Adversarial targets are user-provided via the `adversarial_targets` scenario parameter. Each name
 # must already be registered in `TargetRegistry` — typically by `TargetInitializer` from the
-# `ADVERSARIAL_CHAT_*` env vars (see `.env_example`). Use `pyrit_scan --list-targets` to see every
+# `ADVERSARIAL_CHAT_*` env vars (see `.env_example`). Use `pyrit_scan list-targets` to see every
 # target currently registered.
 #
 # ```bash
-# pyrit_scan benchmark.adversarial \
+# pyrit_scan run benchmark.adversarial \
 #   --initializers target \
 #   --target openai_chat \
 #   --adversarial-targets adversarial_chat_singleturn adversarial_chat_multiturn \
@@ -52,16 +52,11 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import (
-    LoadDefaultDatasets,
-    ScorerInitializer,
-    TargetInitializer,
-    TechniqueInitializer,
-)
+from pyrit.setup.initializers import ScorerInitializer, TargetInitializer, TechniqueInitializer
 
 await initialize_pyrit_async(  # type: ignore
     memory_db_type=IN_MEMORY,
-    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), LoadDefaultDatasets()],
+    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer()],
 )
 
 objective_target = OpenAIChatTarget()

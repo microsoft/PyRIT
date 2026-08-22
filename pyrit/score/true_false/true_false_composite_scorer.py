@@ -7,7 +7,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import (
+    ComponentIdentifier,
+    Condition,
+    Message,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -75,20 +82,42 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 return target
         return None
 
-    async def _score_async(
+    def matched_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report the union of what the constituent scorers match.
+
+        Returns:
+            frozenset[type[Condition]]: The condition types this composite routes.
+        """
+        conditions: set[type[Condition]] = set()
+        for scorer in self._scorers:
+            conditions.update(scorer.matched_conditions())
+        return frozenset(conditions)
+
+    def required_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report the union of conditions required by the constituent scorers.
+
+        Returns:
+            frozenset[type[Condition]]: The required condition types.
+        """
+        conditions: set[type[Condition]] = set()
+        for scorer in self._scorers:
+            conditions.update(scorer.required_conditions())
+        return frozenset(conditions)
+
+    async def _score_prepared_message_async(
         self,
-        message: Message,
         *,
-        objective: str | None = None,
-        role_filter: ChatMessageRole | None = None,
+        message: Message,
+        expectation: ScoringExpectation | None,
     ) -> list[Score]:
         """
         Score a request/response by combining results from all constituent scorers.
 
         Args:
             message (Message): The request/response to score.
-            objective (str | None): Scoring objective or context.
-            role_filter (ChatMessageRole | None): Optional filter for message roles. Defaults to None.
+            expectation (ScoringExpectation | None): What the child scorers should look for.
 
         Returns:
             list[Score]: A single-element list with the aggregated true/false score.
@@ -97,9 +126,11 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             ValueError: If any constituent scorer does not return exactly one score.
             ValueError: If no scores are generated from the request response pieces.
         """
+        # The children score the evidence this scorer was handed, substitutions and all.
+        # Naming it instead would send them back to memory for the pre-substitution pieces,
+        # or discard the role and error state of a message that was never persisted.
         tasks = [
-            scorer.score_async(message=message, objective=objective, role_filter=role_filter)
-            for scorer in self._scorers
+            scorer._score_nested_message_async(message=message, expectation=expectation) for scorer in self._scorers
         ]
 
         # Run all response scorings concurrently
@@ -116,6 +147,7 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             raise ValueError("No scores were generated from the request response pieces.")
 
         result = self._score_aggregator(score_list)
+        objective = expectation.objective if expectation else None
 
         # Ensure the message piece has an ID
         piece_id = message.message_pieces[0].id
