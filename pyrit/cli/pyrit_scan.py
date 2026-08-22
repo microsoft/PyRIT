@@ -20,6 +20,8 @@ from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args, get_origin
 
+import aiofiles
+
 from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
@@ -761,12 +763,13 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
     from pyrit.cli.api_client import ServerNotAvailableError
 
     for script_path_str in parsed_args.files:
-        script_path = Path(script_path_str).resolve()
-        if not script_path.exists():
+        script_path = await asyncio.to_thread(Path(script_path_str).resolve)
+        if not await asyncio.to_thread(script_path.exists):
             print(f"Error: File not found: {script_path}")
             return 1
         try:
-            script_content = script_path.read_text()
+            async with aiofiles.open(script_path) as script_file:
+                script_content = await script_file.read()
             await client.register_initializer_async(
                 name=script_path.stem,
                 script_content=script_content,

@@ -21,6 +21,7 @@ from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
+from pyrit.setup.environment_loading import validate_env_akv_strict
 from pyrit.setup.initialization import (
     AZURE_SQL,
     IN_MEMORY,
@@ -95,7 +96,11 @@ class ConfigurationLoader(YamlLoadable):
         initialization_scripts: List of paths to custom initialization scripts.
             None means "use defaults", [] means "load nothing".
         env_files: List of environment file paths to load.
-            None means "use defaults (.env, .env.local)", [] means "load nothing".
+            None means auto-discover supported ``.env`` and ``.env.local``;
+            [] means "load nothing".
+        env_akv_ref: List containing at most one Key Vault bootstrap secret URL.
+        env_akv_strict: Whether malformed or valueless entries in a Key Vault
+            bootstrap document should fail initialization.
         silent: Whether to suppress initialization messages.
         operator: Name for the current operator, e.g. a team or username.
         operation: Name for the current operation.
@@ -135,6 +140,7 @@ class ConfigurationLoader(YamlLoadable):
     initialization_scripts: list[str] | None = None
     env_files: list[str] | None = None
     env_akv_ref: list[str] | None = None
+    env_akv_strict: bool = True
     silent: bool = False
     operator: str | None = None
     operation: str | None = None
@@ -145,9 +151,27 @@ class ConfigurationLoader(YamlLoadable):
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
+        validate_env_akv_strict(env_akv_strict=self.env_akv_strict)
         self._normalize_memory_db_type()
         self._normalize_initializers()
+        self._validate_env_akv_ref()
         self._normalize_server()
+
+    def _validate_env_akv_ref(self) -> None:
+        """
+        Validate the Key Vault bootstrap secret reference.
+
+        Raises:
+            ValueError: If env_akv_ref is not a list of non-empty strings.
+        """
+        if self.env_akv_ref is None:
+            return
+        if not isinstance(self.env_akv_ref, list):
+            raise ValueError("env_akv_ref must be a list of Azure Key Vault secret URLs.")
+        if len(self.env_akv_ref) > 1:
+            raise ValueError("env_akv_ref supports at most one Azure Key Vault bootstrap secret URL.")
+        if any(not isinstance(secret_url, str) or not secret_url.strip() for secret_url in self.env_akv_ref):
+            raise ValueError("env_akv_ref must contain only non-empty Azure Key Vault secret URLs.")
 
     def _normalize_memory_db_type(self) -> None:
         """
@@ -401,6 +425,7 @@ class ConfigurationLoader(YamlLoadable):
         initialization_scripts: Sequence[str] | None = None,
         env_files: Sequence[str] | None = None,
         env_akv_ref: Sequence[str] | None = None,
+        env_akv_strict: bool | None = None,
     ) -> "ConfigurationLoader":
         """
         Load configuration with optional overrides.
@@ -416,7 +441,8 @@ class ConfigurationLoader(YamlLoadable):
             initializers: Override for initializer list.
             initialization_scripts: Override for initialization script paths.
             env_files: Override for environment file paths.
-            env_akv_ref: Override for Azure Key Vault secret URLs.
+            env_akv_ref: Override containing at most one Azure Key Vault bootstrap secret URL.
+            env_akv_strict: Override for strict Key Vault bootstrap validation.
 
         Returns:
             A merged ConfigurationLoader instance.
@@ -477,7 +503,12 @@ class ConfigurationLoader(YamlLoadable):
             config_data["env_files"] = list(env_files)
 
         if env_akv_ref is not None:
+            if isinstance(env_akv_ref, str):
+                raise ValueError("env_akv_ref must be a sequence of Azure Key Vault secret URLs.")
             config_data["env_akv_ref"] = list(env_akv_ref)
+
+        if env_akv_strict is not None:
+            config_data["env_akv_strict"] = env_akv_strict
 
         return cls.from_dict(config_data)
 
@@ -582,10 +613,10 @@ class ConfigurationLoader(YamlLoadable):
 
     def resolve_env_akv_ref(self) -> list[str] | None:
         """
-        Return the list of AKV secret URLs, or ``None`` when not configured.
+        Return the AKV bootstrap secret URLs, or ``None`` when not configured.
 
         Returns:
-            list[str] | None: The configured AKV secret URLs, or ``None``.
+            list[str] | None: The configured AKV bootstrap secret URLs, or ``None``.
         """
         return self.env_akv_ref
 
@@ -614,6 +645,7 @@ class ConfigurationLoader(YamlLoadable):
             initializers=resolved_initializers if resolved_initializers else None,
             env_files=resolved_env_files,
             env_akv_ref=self.env_akv_ref,
+            env_akv_strict=self.env_akv_strict,
             silent=self.silent,
         )
 
