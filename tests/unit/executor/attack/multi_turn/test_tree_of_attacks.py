@@ -1773,6 +1773,85 @@ class TestTreeOfAttacksNode:
         assert node.error_message is not None
         assert "Execution error" in node.error_message
 
+    async def test_node_later_scorer_failure_clears_previous_turn_outcome(self, node_components, basic_attack):
+        """A later scorer failure must not leave the branch eligible under its previous score."""
+        node = _TreeOfAttacksNode(**node_components)
+        previous_score = Score(
+            score_value="0.7",
+            score_value_description="previous turn",
+            score_type="float_scale",
+            score_rationale="previous turn succeeded",
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=node._objective_scorer.get_identifier(),
+            objective="Test objective",
+        )
+        response = Message.from_prompt(prompt="unscored response", role="assistant")
+
+        node.completed = True
+        node.objective_score = previous_score
+        node.auxiliary_scores = {"previous": previous_score}
+        node.error_message = "previous error"
+
+        with (
+            patch.object(
+                node,
+                "_generate_adversarial_prompt_async",
+                new_callable=AsyncMock,
+                return_value="next prompt",
+            ),
+            patch.object(
+                node,
+                "_send_prompt_to_target_async",
+                new_callable=AsyncMock,
+                return_value=response,
+            ),
+            patch.object(
+                node,
+                "_score_response_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("scorer unavailable"),
+            ),
+        ):
+            await node.send_prompt_async(objective="Test objective")
+
+        assert node.completed is False
+        assert node.objective_score is None
+        assert node.auxiliary_scores == {}
+        assert node.error_message == "Execution error: scorer unavailable"
+        assert basic_attack._get_completed_nodes_sorted_by_score([node]) == []
+
+    async def test_node_empty_objective_scores_marks_turn_incomplete(self, node_components):
+        """A scorer response without an objective score must prune the branch."""
+        node = _TreeOfAttacksNode(**node_components)
+        response = Message.from_prompt(prompt="unscored response", role="assistant")
+
+        with (
+            patch.object(
+                node,
+                "_generate_adversarial_prompt_async",
+                new_callable=AsyncMock,
+                return_value="next prompt",
+            ),
+            patch.object(
+                node,
+                "_send_prompt_to_target_async",
+                new_callable=AsyncMock,
+                return_value=response,
+            ),
+            patch.object(
+                Scorer,
+                "score_response_async",
+                new_callable=AsyncMock,
+                return_value={"objective_scores": [], "auxiliary_scores": []},
+            ) as score_response,
+        ):
+            await node.send_prompt_async(objective="Test objective")
+
+        score_response.assert_awaited_once()
+        assert node.completed is False
+        assert node.objective_score is None
+        assert node.error_message == "Execution error: No objective scores returned from scoring process."
+
     async def test_node_off_topic_detection(self, node_components):
         """Test off-topic detection in nodes after retry exhaustion.
 
@@ -1973,6 +2052,48 @@ class TestTreeOfAttacksNode:
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksErrorHandling:
     """Tests for error handling in TreeOfAttacksWithPruningAttack."""
+
+    def test_attack_result_uses_response_linked_to_best_score(self, attack_builder, helpers):
+        """A later unscored response must not be paired with an earlier best score."""
+        attack = attack_builder.with_default_mocks().build()
+        context = helpers.create_basic_context()
+        conversation_id = str(uuid.uuid4())
+        original_response_id = uuid.uuid4()
+        scored_response = MessagePiece(
+            role="assistant",
+            original_value="scored response",
+            converted_value="scored response",
+            conversation_id=conversation_id,
+            original_prompt_id=original_response_id,
+        )
+        later_response = MessagePiece(
+            role="assistant",
+            original_value="later unscored response",
+            converted_value="later unscored response",
+            conversation_id=conversation_id,
+        )
+        best_score = Score(
+            score_value="0.7",
+            score_value_description="best score",
+            score_type="float_scale",
+            score_rationale="best scored response",
+            message_piece_id=str(original_response_id),
+            scorer_class_identifier=attack._objective_scorer.get_identifier(),
+            objective=context.objective,
+        )
+        context.best_conversation_id = conversation_id
+        context.best_objective_score = best_score
+
+        with patch.object(
+            attack._memory,
+            "get_message_pieces",
+            return_value=[scored_response, later_response],
+        ):
+            result = attack._create_failure_result(context)
+
+        assert result.last_response is scored_response
+        assert result.last_score is best_score
+        assert str(result.last_score.message_piece_id) == str(result.last_response.original_prompt_id)
 
     async def test_attack_handles_all_nodes_failing(self, attack_builder, helpers, node_factory):
         """Test attack behavior when all nodes fail."""

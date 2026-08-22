@@ -239,6 +239,20 @@ silent: true
         finally:
             pathlib.Path(yaml_path).unlink()
 
+    def test_example_uses_on_demand_dataset_fetching(self) -> None:
+        example_path = pathlib.Path(__file__).parents[3] / ".pyrit_conf_example"
+
+        config = ConfigurationLoader.from_yaml_file(example_path)
+        initializer_names = [initializer.name for initializer in config._initializer_configs]
+        example_text = example_path.read_text(encoding="utf-8")
+
+        assert initializer_names == ["target", "scorer", "technique"]
+        assert "# - name: load_default_datasets" in example_text
+        assert "several minutes" in example_text
+        assert "provider credentials" in example_text
+        assert "dataset licenses" in example_text
+        assert "server.startup_timeout" in example_text
+
     def test_from_yaml_rejects_quoted_env_akv_strict(self, tmp_path):
         yaml_path = tmp_path / "quoted-boolean.yaml"
         yaml_path.write_text('env_akv_strict: "false"\n', encoding="utf-8")
