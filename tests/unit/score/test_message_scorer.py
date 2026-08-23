@@ -4,10 +4,11 @@
 import dataclasses
 import inspect
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -16,6 +17,7 @@ from pyrit.models import (
     MatchesObjective,
     Message,
     MessagePiece,
+    PromptResponseError,
     Score,
     ScoringExpectation,
 )
@@ -304,6 +306,156 @@ class TestExpectation:
         await scorer.score_async(scorable=MessageScorable.from_message(_assistant_message()))
 
         assert scorer.scored_objectives == [None]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestMessageScoringPolicyMatrix:
+    """The prepared input makes substitutions, filtering, and objective state explicit."""
+
+    @pytest.mark.parametrize(
+        (
+            "role_filter",
+            "skip_on_error_result",
+            "structured_refusal",
+            "partial_content",
+            "score_blocked_content",
+            "input_response_error",
+            "expected_skip",
+            "expected_value",
+            "expected_response_error",
+        ),
+        [
+            (None, False, None, None, False, "none", False, "response", "none"),
+            ("user", False, None, None, False, "none", True, "response", "none"),
+            (None, True, None, None, False, "blocked", True, "blocked", "blocked"),
+            (None, True, "I cannot assist.", None, False, "blocked", False, "I cannot assist.", "blocked"),
+            (None, True, None, "partial response", True, "blocked", False, "partial response", "none"),
+            (None, True, None, None, True, "blocked", True, "blocked", "blocked"),
+        ],
+    )
+    def test_prepared_input_policy_matrix(
+        self,
+        role_filter: ChatMessageRole | None,
+        skip_on_error_result: bool,
+        structured_refusal: str | None,
+        partial_content: str | None,
+        score_blocked_content: bool,
+        input_response_error: PromptResponseError,
+        expected_skip: bool,
+        expected_value: str,
+        expected_response_error: PromptResponseError,
+    ) -> None:
+        is_blocked = input_response_error == "blocked"
+        piece = MessagePiece(
+            role="assistant",
+            original_value="blocked" if is_blocked else "response",
+            original_value_data_type="error" if is_blocked else "text",
+            converted_value_data_type="error" if is_blocked else "text",
+            response_error=input_response_error,
+            prompt_metadata={"partial_content": partial_content} if partial_content is not None else {},
+        )
+        if structured_refusal is not None:
+            piece.mark_as_structured_refusal(refusal=structured_refusal)
+        scorer = RecordingScorer()
+        scorer.score_blocked_content = score_blocked_content
+
+        scoring_input = scorer._prepare_message_scoring_input(
+            message=piece.to_message(),
+            expectation=ScoringExpectation(objective="objective"),
+            options=MessageScoringOptions(
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
+            ),
+            infer_objective_from_request=False,
+        )
+
+        assert scoring_input.should_skip is expected_skip
+        assert scoring_input.objective == "objective"
+        assert scoring_input.message.get_value() == expected_value
+        assert scoring_input.message.get_piece().response_error == expected_response_error
+
+    def test_inferred_objective_is_part_of_the_prepared_input(self, sqlite_instance: MemoryInterface) -> None:
+        conversation_id = str(uuid.uuid4())
+        sqlite_instance.add_message_to_memory(
+            request=MessagePiece(
+                role="user",
+                original_value="the inferred objective",
+                conversation_id=conversation_id,
+                sequence=0,
+            ).to_message()
+        )
+        message = _assistant_message("response", conversation_id=conversation_id)
+        scorer = RecordingScorer()
+
+        scoring_input = scorer._prepare_message_scoring_input(
+            message=message,
+            expectation=None,
+            options=MessageScoringOptions(),
+            infer_objective_from_request=True,
+        )
+
+        assert scoring_input.objective == "the inferred objective"
+        assert scoring_input.expectation == ScoringExpectation(objective="the inferred objective")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestMessageScoringExecutionAndFinalization:
+    """Execution policy and outer score persistence retain their exact contracts."""
+
+    async def test_pyrit_exception_keeps_type_and_gains_scorer_context(self) -> None:
+        scorer = RecordingScorer()
+        error = InvalidJsonException(message="invalid scorer response")
+
+        with patch.object(
+            scorer,
+            "_score_prepared_message_async",
+            new=AsyncMock(side_effect=error),
+        ):
+            with pytest.raises(InvalidJsonException) as exception_info:
+                await scorer.score_async(scorable=MessageScorable.from_message(_assistant_message()))
+
+        assert exception_info.value is error
+        assert error.message == "Error in scorer RecordingScorer: invalid scorer response"
+
+    async def test_non_pyrit_exception_is_wrapped_with_scorer_context(self) -> None:
+        scorer = RecordingScorer()
+        error = ValueError("unexpected scorer failure")
+
+        with patch.object(
+            scorer,
+            "_score_prepared_message_async",
+            new=AsyncMock(side_effect=error),
+        ):
+            with pytest.raises(RuntimeError, match="Error in scorer RecordingScorer") as exception_info:
+                await scorer.score_async(scorable=MessageScorable.from_message(_assistant_message()))
+
+        assert exception_info.value.__cause__ is error
+
+    async def test_success_validates_and_persists_scores_once(self) -> None:
+        scorer = RecordingScorer()
+        with (
+            patch.object(scorer, "validate_return_scores", wraps=scorer.validate_return_scores) as validate,
+            patch.object(scorer._memory, "add_scores_to_memory") as persist,
+        ):
+            scores = await scorer.score_async(scorable=MessageScorable.from_message(_assistant_message()))
+
+        validate.assert_called_once_with(scores=scores)
+        persist.assert_called_once_with(scores=scores)
+
+    async def test_skipped_input_is_not_validated_or_persisted(self) -> None:
+        scorer = RecordingScorer()
+        with (
+            patch.object(scorer, "validate_return_scores", wraps=scorer.validate_return_scores) as validate,
+            patch.object(scorer._memory, "add_scores_to_memory") as persist,
+        ):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(_assistant_message()),
+                message_options=MessageScoringOptions(role_filter="user"),
+            )
+
+        assert scores == []
+        validate.assert_not_called()
+        persist.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")

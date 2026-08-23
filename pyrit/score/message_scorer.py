@@ -41,6 +41,20 @@ class MessageScoringOptions:
     skip_on_error_result: bool = False
 
 
+@dataclass(frozen=True, kw_only=True)
+class _PreparedMessageScoringInput:
+    """The effective input and policy decision for one message-scoring call."""
+
+    message: Message
+    expectation: ScoringExpectation | None
+    should_skip: bool = False
+
+    @property
+    def objective(self) -> str | None:
+        """The objective attached to the effective expectation."""
+        return self.expectation.objective if self.expectation else None
+
+
 def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInterface) -> str:
     """
     Read the text of the turn before an assistant message and use it as the objective.
@@ -420,28 +434,53 @@ class MessageScorer(Scorer):
             PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
+        scoring_input = self._prepare_message_scoring_input(
+            message=message,
+            expectation=expectation,
+            options=options,
+            infer_objective_from_request=infer_objective_from_request,
+        )
+        if scoring_input.should_skip:
+            return []
+
+        scores = await self._execute_message_scoring_async(scoring_input=scoring_input)
+        return self._finalize_message_scores(scoring_input=scoring_input, scores=scores)
+
+    def _prepare_message_scoring_input(
+        self,
+        *,
+        message: Message,
+        expectation: ScoringExpectation | None,
+        options: MessageScoringOptions,
+        infer_objective_from_request: bool,
+    ) -> _PreparedMessageScoringInput:
+        """
+        Apply message policy and return the effective input for execution.
+
+        Args:
+            message (Message): The acquired message.
+            expectation (ScoringExpectation | None): What to look for.
+            options (MessageScoringOptions): Message-only scoring policy.
+            infer_objective_from_request (bool): Whether to infer a missing objective.
+
+        Returns:
+            _PreparedMessageScoringInput: The effective input and skip decision.
+        """
         objective = expectation.objective if expectation else None
-
-        # Structured refusals are persisted as blocked error pieces, but scorers should
-        # receive the refusal explanation as text. Keep response_error="blocked" so
-        # refusal scorers can still use their deterministic blocked-response path.
         scoring_message = self._apply_structured_refusal_substitution(message)
-
-        # When score_blocked_content is enabled, blocked pieces with partial content
-        # take precedence and are replaced with text substitutes (response_error="none").
         if self.score_blocked_content:
             scoring_message = self._apply_blocked_content_substitution(scoring_message)
 
         self._validator.validate(scoring_message, objective=objective)
 
+        should_skip = False
         if options.role_filter is not None and message.get_piece().role != options.role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
-            return []
+            should_skip = True
+        elif options.skip_on_error_result and self._should_skip_on_error(message):
+            should_skip = True
 
-        if options.skip_on_error_result and self._should_skip_on_error(message):
-            return []
-
-        if infer_objective_from_request and (not objective):
+        if not should_skip and infer_objective_from_request and not objective:
             objective = extract_objective_from_previous_turn(message=message, memory=self._memory)
 
         effective_expectation = expectation
@@ -453,44 +492,81 @@ class MessageScorer(Scorer):
                 conditions=expectation.conditions,
             )
 
+        return _PreparedMessageScoringInput(
+            message=scoring_message,
+            expectation=effective_expectation,
+            should_skip=should_skip,
+        )
+
+    async def _execute_message_scoring_async(
+        self,
+        *,
+        scoring_input: _PreparedMessageScoringInput,
+    ) -> list[Score]:
+        """
+        Run scorer code with the scorer-layer exception policy.
+
+        Args:
+            scoring_input (_PreparedMessageScoringInput): The prepared scoring input.
+
+        Returns:
+            list[Score]: The scores produced by the scorer or its blocked fallback.
+
+        Raises:
+            ScorerLLMResponseBlockedException: If the scorer's own LLM response is blocked
+                and ``raise_if_scorer_blocks`` is True.
+            PyritException: If scoring raises a PyRIT exception.
+            RuntimeError: If scoring raises a non-PyRIT exception.
+        """
         try:
-            scores = await self._score_prepared_message_async(
-                message=scoring_message,
-                expectation=effective_expectation,
+            return await self._score_prepared_message_async(
+                message=scoring_input.message,
+                expectation=scoring_input.expectation,
             )
-        except ScorerLLMResponseBlockedException as e:
-            # The scorer's own LLM response was content-filtered. By default this is a real
-            # error and propagates; when raise_if_scorer_blocks is False, fall back to the
-            # scorer's type default (False / 0.0) instead. The decision lives here in the
-            # scorer, not the transport (see doc/code/framework.md).
+        except ScorerLLMResponseBlockedException as error:
             if self.raise_if_scorer_blocks:
-                e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
-                e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
+                error.message = f"Error in scorer {self.__class__.__name__}: {error.message}"
+                error.args = (f"Status Code: {error.status_code}, Message: {error.message}",)
                 raise
             logger.info(
                 "Scorer %s LLM response was blocked by content filtering; "
                 "returning default score (raise_if_scorer_blocks=False).",
                 self.__class__.__name__,
             )
-            scores = self._build_fallback_score(
-                message=scoring_message,
-                objective=objective,
+            return self._build_fallback_score(
+                message=scoring_input.message,
+                objective=scoring_input.objective,
                 scorer_response_blocked=True,
             )
-        except PyritException as e:
-            # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
-            e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
-            e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
+        except PyritException as error:
+            error.message = f"Error in scorer {self.__class__.__name__}: {error.message}"
+            error.args = (f"Status Code: {error.status_code}, Message: {error.message}",)
             raise
-        except Exception as e:
-            # Wrap non-PyRIT exceptions for better error tracing
-            raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
+        except Exception as error:
+            raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(error)}") from error
 
-        if not scores and scoring_message.message_pieces:
-            scores = self._build_fallback_score(message=scoring_message, objective=objective)
+    def _finalize_message_scores(
+        self,
+        *,
+        scoring_input: _PreparedMessageScoringInput,
+        scores: list[Score],
+    ) -> list[Score]:
+        """
+        Apply fallback behavior and clear links to ephemeral message pieces.
 
-        self._drop_ephemeral_score_links(message=scoring_message, scores=scores)
+        Args:
+            scoring_input (_PreparedMessageScoringInput): The prepared scoring input.
+            scores (list[Score]): The scores produced by execution.
 
+        Returns:
+            list[Score]: The finalized scores.
+        """
+        if not scores and scoring_input.message.message_pieces:
+            scores = self._build_fallback_score(
+                message=scoring_input.message,
+                objective=scoring_input.objective,
+            )
+        self._drop_ephemeral_score_links(message=scoring_input.message, scores=scores)
         return scores
 
     async def _score_prepared_message_async(
