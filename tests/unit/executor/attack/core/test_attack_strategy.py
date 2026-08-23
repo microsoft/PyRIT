@@ -905,6 +905,56 @@ class TestAttackStrategyIntegration:
         # Current behavior: execution_time_ms is not modified by event handler
         assert result.execution_time_ms == 500
 
+    async def test_post_execute_persistence_failure_is_propagated_and_recorded(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
+        teardown_calls = 0
+
+        class TestStrategy(AttackStrategy):
+            def _validate_context(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _setup_async(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _perform_async(self, *, context: AttackContext) -> AttackResult:
+                return AttackResult(
+                    conversation_id="test-conversation-id",
+                    objective=context.objective,
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=1,
+                )
+
+            async def _teardown_async(self, *, context: AttackContext) -> None:
+                nonlocal teardown_calls
+                teardown_calls += 1
+
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+        persist = memory.add_attack_results_to_memory
+        persist_calls = 0
+
+        def fail_first_persist(*, attack_results: list[AttackResult]) -> None:
+            nonlocal persist_calls
+            persist_calls += 1
+            if persist_calls == 1:
+                raise RuntimeError("database unavailable")
+            persist(attack_results=attack_results)
+
+        with (
+            patch.object(memory, "add_attack_results_to_memory", side_effect=fail_first_persist),
+            pytest.raises(RuntimeError, match="database unavailable") as exc_info,
+        ):
+            await strategy.execute_async(objective="Test objective")
+
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert teardown_calls == 1
+        assert persist_calls == 2
+        [stored_result] = memory.get_attack_results(objective="Test objective")
+        assert stored_result.outcome is AttackOutcome.ERROR
+        assert stored_result.error_type == "RuntimeError"
+        assert stored_result.error_message == "database unavailable"
+
     async def test_cancellation_clears_retry_collector(self, mock_objective_target):
         teardown_calls = 0
 
