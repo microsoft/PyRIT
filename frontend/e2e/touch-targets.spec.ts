@@ -4,6 +4,7 @@ import { makeTarget } from "./_targets";
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 const MINIMUM_TOUCH_TARGET_SIZE = 44;
+const LONG_SCORE_VALUE = "a".repeat(200);
 
 const TARGETS = [
   makeTarget({
@@ -78,8 +79,11 @@ const MESSAGES = [
           id: `mobile-assistant-score-${scoreIndex}`,
           message_piece_id: "mobile-assistant-piece",
           scorer_type: `SelfAskRefusalScorer${scoreIndex}`,
-          score_type: "true_false",
-          score_value: scoreIndex === 0 ? "true" : "false",
+          score_type: scoreIndex === 0 ? "unknown" : "true_false",
+          score_value:
+            scoreIndex === 0
+              ? LONG_SCORE_VALUE
+              : "false",
           is_objective_score: scoreIndex === 0,
           score_category: ["refusal"],
           score_rationale: `Deterministic rationale ${scoreIndex} for touch-target tests.`,
@@ -458,6 +462,7 @@ test.describe("Mobile touch targets", () => {
   test("keeps Chat message, input, and conversation controls at least 44px", async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 320, height: MOBILE_VIEWPORT.height });
     // Deep-link directly into the attack (rather than creating one through
     // the chat flow) so the objective is actually hydrated from the backend:
     // the create-attack flow seeds the objective as "" client-side and never
@@ -483,6 +488,27 @@ test.describe("Mobile touch targets", () => {
     await expect(scoreStack).toBeVisible();
     await expectMinimumTouchTarget(scoreStack);
     await scoreStack.click();
+
+    const scoreDetails = page.locator(
+      '[data-testid^="message-score-details-1-"]'
+    );
+    const scoreValue = scoreDetails.getByText(LONG_SCORE_VALUE, { exact: true });
+    await expect(scoreValue).toBeVisible();
+    const scoreGeometry = await scoreDetails.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(scoreGeometry.scrollWidth).toBeLessThanOrEqual(
+      scoreGeometry.clientWidth
+    );
+    const valueGeometry = await scoreValue.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(valueGeometry.scrollWidth).toBeLessThanOrEqual(
+      valueGeometry.clientWidth
+    );
+    await expectNoDocumentOverflow(page);
 
     const scoreTabs = page.locator('[data-testid^="message-score-tab-1-"]');
     await expect(scoreTabs).toHaveCount(2);

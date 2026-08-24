@@ -112,30 +112,30 @@ function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }
       <Text weight="semibold">Score details</Text>
       <div className={styles.scoreRow}>
         <Text size={200} weight="semibold" className={styles.scoreLabel}>Value</Text>
-        <Badge appearance="tint" color="brand" size="small">{score.score_value}</Badge>
+        <Badge appearance="tint" color="brand" size="small" className={styles.scoreValue}>{score.score_value}</Badge>
       </div>
       <div className={styles.scoreRow}>
         <Text size={200} weight="semibold" className={styles.scoreLabel}>Type</Text>
-        <Text size={200}>{score.score_type}</Text>
+        <Text size={200} className={styles.scoreValue}>{score.score_type}</Text>
       </div>
       <div className={styles.scoreRow}>
         <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
-        <Text size={200}>{score.scorer_type}</Text>
+        <Text size={200} className={styles.scoreValue}>{score.scorer_type}</Text>
       </div>
       <div className={styles.scoreRow}>
         <Text size={200} weight="semibold" className={styles.scoreLabel}>Objective</Text>
-        <Text size={200}>{score.is_objective_score ? 'Yes' : 'No'}</Text>
+        <Text size={200} className={styles.scoreValue}>{score.is_objective_score ? 'Yes' : 'No'}</Text>
       </div>
       {score.sourceLabel && (
         <div className={styles.scoreRow}>
           <Text size={200} weight="semibold" className={styles.scoreLabel}>Piece</Text>
-          <Text size={200}>{score.sourceLabel}</Text>
+          <Text size={200} className={styles.scoreValue}>{score.sourceLabel}</Text>
         </div>
       )}
       {categories.length > 0 && (
         <div className={styles.scoreRow}>
           <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
-          <Text size={200}>{categories.join(', ')}</Text>
+          <Text size={200} className={styles.scoreValue}>{categories.join(', ')}</Text>
         </div>
       )}
       {score.score_rationale && (
@@ -690,7 +690,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         className={styles.attachmentItem}
                         data-testid={`message-piece-${index}-${piece.pieceIndex}`}
                       >
-                        {att.type === 'image' && att.url && (
+                        {att?.type === 'image' && att.url && (
                           <ImageWithSpinner
                             src={att.url}
                             alt={att.name}
@@ -700,13 +700,13 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                             spinnerClassName={styles.imageSpinner}
                           />
                         )}
-                        {att.type === 'video' && att.url && (
+                        {att?.type === 'video' && att.url && (
                           <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />
                         )}
-                        {att.type === 'audio' && att.url && (
+                        {att?.type === 'audio' && att.url && (
                           <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />
                         )}
-                        {att.type === 'file' && (
+                        {att?.type === 'file' && (
                           <div className={styles.attachmentFile}>
                             <Text size={200} className={styles.attachmentFileName}>📄 {att.name}</Text>
                             {att.url && (
@@ -725,8 +725,8 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                             )}
                           </div>
                         )}
-                        {att.scores && att.scores.length > 0 && (
-                          <MessageScores scores={att.scores} groupId={groupId} />
+                        {piece.scores && piece.scores.length > 0 && (
+                          <MessageScores scores={piece.scores} groupId={groupId} />
                         )}
                       </div>
                     )
@@ -855,7 +855,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   })()}
 
                   {/* Download: non-text media only */}
-                  {message.attachments && message.attachments.filter(a => a.type !== 'file').map((att, ai) => (
+                  {message.attachments && message.attachments.filter(a => a.type !== 'file' && a.url).map((att, ai) => (
                     <Tooltip key={ai} content={`Download ${att.name}`} relationship="label">
                       <Button
                         appearance="subtle"

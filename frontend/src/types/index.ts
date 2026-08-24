@@ -18,8 +18,6 @@ export interface MessageAttachment {
   pieceId?: string
   /** Backend prompt_metadata — preserved so video_id etc. carry over on remix/copy */
   metadata?: Record<string, unknown>
-  /** Scores attached to the piece this attachment came from, newest first. */
-  scores?: DisplayScore[]
 }
 
 export interface MessageTextDisplayPiece {
@@ -34,7 +32,14 @@ export interface MessageMediaDisplayPiece {
   type: 'media'
   pieceId: string
   pieceIndex: number
-  attachment: MessageAttachment
+  /**
+   * Renderable media for this piece. Absent when the backend piece carries no
+   * usable media value (e.g. an empty or blocked response) but still has
+   * scores to present — such pieces must never enter copy/download/export
+   * paths, so they deliberately have no attachment.
+   */
+  attachment?: MessageAttachment
+  scores?: DisplayScore[]
 }
 
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece

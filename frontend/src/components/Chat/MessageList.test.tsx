@@ -704,20 +704,39 @@ describe("MessageList", () => {
         role: "assistant",
         content: "Scored text",
         timestamp: new Date().toISOString(),
-        scores: sharedScores.map((score) => ({
-          ...score,
-          id: `${score.id}-text`,
-          message_piece_id: "piece-1",
-          pieceIndex: 0,
-          pieceType: "text",
-          sourceLabel: "Piece 1 · text",
-        })),
         attachments: [
           {
             type: "image",
             name: "test.png",
             url: "data:image/png;base64,iVBORw0KGgo=",
             mimeType: "image/png",
+          },
+        ],
+        displayPieces: [
+          {
+            type: "text",
+            pieceId: "piece-1",
+            pieceIndex: 0,
+            content: "Scored text",
+            scores: sharedScores.map((score) => ({
+              ...score,
+              id: `${score.id}-text`,
+              message_piece_id: "piece-1",
+              pieceIndex: 0,
+              pieceType: "text",
+              sourceLabel: "Piece 1 · text",
+            })),
+          },
+          {
+            type: "media",
+            pieceId: "piece-2",
+            pieceIndex: 1,
+            attachment: {
+              type: "image",
+              name: "test.png",
+              url: "data:image/png;base64,iVBORw0KGgo=",
+              mimeType: "image/png",
+            },
             scores: sharedScores.map((score) => ({
               ...score,
               id: `${score.id}-image`,
@@ -784,20 +803,20 @@ describe("MessageList", () => {
               name: "test.png",
               url: "data:image/png;base64,iVBORw0KGgo=",
               mimeType: "image/png",
-              scores: [
-                {
-                  id: "score-2",
-                  message_piece_id: "piece-2",
-                  scorer_type: "ImageScorer",
-                  score_type: "unknown",
-                  score_value: "image-only",
-                  pieceIndex: 1,
-                  pieceType: "image_path",
-                  sourceLabel: "Piece 2 · image_path · test.png",
-                  timestamp: "2026-02-15T00:01:00Z",
-                },
-              ],
             },
+            scores: [
+              {
+                id: "score-2",
+                message_piece_id: "piece-2",
+                scorer_type: "ImageScorer",
+                score_type: "unknown",
+                score_value: "image-only",
+                pieceIndex: 1,
+                pieceType: "image_path",
+                sourceLabel: "Piece 2 · image_path · test.png",
+                timestamp: "2026-02-15T00:01:00Z",
+              },
+            ],
           },
           {
             type: "text",
@@ -840,8 +859,73 @@ describe("MessageList", () => {
     expect(within(pieces[2]).queryByRole("button", { name: /first-only/i })).not.toBeInTheDocument();
   });
 
-  it("should preserve the message-level score test ID for a single display piece", () => {
-    const scores = ["FirstScorer", "SecondScorer"].map((scorerType, index) => ({
+  it("should render a score-only media piece without an actionable attachment", async () => {
+    const user = userEvent.setup();
+    const onCopyToInput = jest.fn();
+    const scoreOnlyMessage: Message = {
+      role: "assistant",
+      content: "",
+      timestamp: new Date().toISOString(),
+      displayPieces: [
+        {
+          type: "media",
+          pieceId: "piece-blocked",
+          pieceIndex: 0,
+          scores: [
+            {
+              id: "score-blocked",
+              message_piece_id: "piece-blocked",
+              scorer_type: "ImageScorer",
+              score_type: "true_false",
+              score_value: "blocked-media",
+              pieceIndex: 0,
+              pieceType: "image_path",
+              sourceLabel: "Piece 1 · image_path",
+              timestamp: "2026-02-15T00:00:00Z",
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <TestWrapper>
+        <MessageList messages={[scoreOnlyMessage]} onCopyToInput={onCopyToInput} />
+      </TestWrapper>
+    );
+
+    const piece = screen.getByTestId("message-piece-0-0");
+    expect(
+      within(piece).getByRole("button", { name: /score blocked-media from imagescorer/i })
+    ).toBeInTheDocument();
+    expect(within(piece).queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("download-btn-0-0")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("copy-to-input-btn-0"));
+    expect(onCopyToInput).toHaveBeenCalledWith(0);
+  });
+
+  it("should not offer a download action for an attachment with no URL", () => {
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[{
+            role: "assistant",
+            content: "Blocked media",
+            timestamp: new Date().toISOString(),
+            attachments: [
+              { type: "image", name: "blocked.png", url: "", mimeType: "image/png" },
+            ],
+          }]}
+          onCopyToInput={jest.fn()}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByTestId("download-btn-0-0")).not.toBeInTheDocument();
+  });
+
+  it("should preserve the message-level score test ID for a single display piece", () => {    const scores = ["FirstScorer", "SecondScorer"].map((scorerType, index) => ({
       id: `score-${index}`,
       message_piece_id: "piece-1",
       scorer_type: scorerType,
@@ -935,6 +1019,20 @@ describe("MessageList", () => {
             url: "data:image/png;base64,iVBORw0KGgo=",
             mimeType: "image/png",
             size: 1024,
+          },
+        ],
+        displayPieces: [
+          {
+            type: "media",
+            pieceId: "piece-image",
+            pieceIndex: 0,
+            attachment: {
+              type: "image",
+              name: "test.png",
+              url: "data:image/png;base64,iVBORw0KGgo=",
+              mimeType: "image/png",
+              size: 1024,
+            },
             scores: [
               {
                 id: "score-image",

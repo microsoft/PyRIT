@@ -204,7 +204,7 @@ describe("messageMapper", () => {
       ]);
     });
 
-    it("should attach an image piece's scores to its attachment, not to message.scores", () => {
+    it("should attach an image piece's scores to its display piece, not to message.scores", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
@@ -236,25 +236,26 @@ describe("messageMapper", () => {
 
       expect(result.scores).toBeUndefined();
       expect(result.attachments).toHaveLength(1);
+      expect(result.attachments![0].scores).toBeUndefined();
       expect(result.displayPieces).toEqual([
         expect.objectContaining({
           type: "media",
           pieceId: "p1",
           pieceIndex: 0,
           attachment: result.attachments![0],
-        }),
-      ]);
-      expect(result.attachments![0].scores).toEqual([
-        expect.objectContaining({
-          ...msg.message_pieces[0].scores[0],
-          pieceIndex: 0,
-          pieceType: "image_path",
-          sourceLabel: "Piece 1 · image_path · image_path_p1",
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[0].scores[0],
+              pieceIndex: 0,
+              pieceType: "image_path",
+              sourceLabel: "Piece 1 · image_path · image_path_p1",
+            }),
+          ],
         }),
       ]);
     });
 
-    it("should retain an empty media piece as a score-only attachment", () => {
+    it("should keep a media piece with no renderable value as a score-only display piece", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
@@ -285,11 +286,13 @@ describe("messageMapper", () => {
       const result = backendMessageToFrontend(msg);
 
       expect(result.scores).toBeUndefined();
-      expect(result.attachments).toEqual([
-        expect.objectContaining({
-          type: "image",
-          url: "",
+      expect(result.attachments).toBeUndefined();
+      expect(result.displayPieces).toEqual([
+        {
+          type: "media",
           pieceId: "p1",
+          pieceIndex: 0,
+          attachment: undefined,
           scores: [
             expect.objectContaining({
               ...msg.message_pieces[0].scores[0],
@@ -298,7 +301,7 @@ describe("messageMapper", () => {
               sourceLabel: "Piece 1 · image_path · image_path_p1",
             }),
           ],
-        }),
+        },
       ]);
     });
 

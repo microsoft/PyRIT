@@ -155,7 +155,6 @@ function scoreWithProvenance(
  */
 function pieceToAttachment(
   piece: BackendMessagePiece,
-  pieceIndex: number,
   source: 'converted' | 'original' = 'converted',
 ): MessageAttachment | null {
   const isOriginal = source === 'original'
@@ -167,8 +166,10 @@ function pieceToAttachment(
   if (!isMediaDataType(dataType)) return null
 
   const mediaValue = value || ''
-  const hasRenderableMedia = Boolean(valueUrl || mediaValue)
-  if (!hasRenderableMedia && (isOriginal || piece.scores.length === 0)) return null
+  // No renderable media: produce no attachment at all. Any scores on the piece
+  // are surfaced by the media display piece instead, so score-only pieces never
+  // leak into copy / download / export paths.
+  if (!valueUrl && !mediaValue) return null
 
   const mime = mimeField || defaultMimeForDataType(dataType)
   // Detect base64-encoded content while excluding file paths and URL schemes.
@@ -190,13 +191,6 @@ function pieceToAttachment(
   // reference, not the payload), so size is omitted and the UI must hide it.
   const size = isBase64 && !valueUrl ? decodedBase64ByteCount(mediaValue) : undefined
 
-  // Scores belong to the piece, not to "converted" vs "original" — attach them
-  // only to the converted attachment (the one actually rendered by default) so
-  // a score chip isn't duplicated when both original and converted are shown.
-  const sortedScores = piece.scores
-    .map((score) => scoreWithProvenance(score, { piece, pieceIndex, filename: filename || fallbackName }))
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-
   return {
     type: dataTypeToAttachmentType(dataType),
     name: filename || fallbackName,
@@ -205,8 +199,15 @@ function pieceToAttachment(
     size,
     pieceId: piece.id,
     metadata: piece.prompt_metadata || undefined,
-    scores: !isOriginal && sortedScores.length > 0 ? sortedScores : undefined,
   }
+}
+
+/**
+ * Build the display name used to label a media piece's scores, matching the
+ * attachment name so score provenance reads the same with or without media.
+ */
+function mediaPieceScoreFilename(piece: BackendMessagePiece): string {
+  return piece.converted_filename || `${piece.converted_value_data_type}_${piece.id.slice(0, 8)}`
 }
 
 /**
@@ -272,20 +273,33 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
       originalTextParts.push(piece.original_value)
     }
 
-    // Extract media attachments (converted)
-    const att = pieceToAttachment(piece, pieceIndex)
-    if (att) {
-      attachments.push(att)
-      displayPieces.push({
-        type: 'media',
-        pieceId: piece.id,
-        pieceIndex,
-        attachment: att,
-      })
+    // Extract media attachments (converted). Scores live on the display piece
+    // so a piece with scores but no renderable media still shows them without
+    // fabricating an attachment.
+    if (isMediaDataType(piece.converted_value_data_type)) {
+      const att = pieceToAttachment(piece)
+      const mediaScores = piece.scores
+        .map((score) =>
+          scoreWithProvenance(score, { piece, pieceIndex, filename: mediaPieceScoreFilename(piece) }),
+        )
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+      if (att) {
+        attachments.push(att)
+      }
+      if (att || mediaScores.length > 0) {
+        displayPieces.push({
+          type: 'media',
+          pieceId: piece.id,
+          pieceIndex,
+          attachment: att || undefined,
+          scores: mediaScores.length > 0 ? mediaScores : undefined,
+        })
+      }
     }
 
     // Extract original media attachments
-    const origAtt = pieceToAttachment(piece, pieceIndex, 'original')
+    const origAtt = pieceToAttachment(piece, 'original')
     if (origAtt) {
       originalAttachments.push(origAtt)
     }

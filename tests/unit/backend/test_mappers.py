@@ -925,6 +925,59 @@ class TestPyritMessagesToDtoRealObjects:
         assert len(assistant_scores) == 2
         assert {s.score_value for s in assistant_scores} == {"true", "0.1"}
 
+    async def test_multi_piece_scores_preserve_provenance_and_objective_flag(self, sqlite_instance) -> None:
+        """Scores stay on their source pieces and only the selected score is objective."""
+        conversation_id = "real-conv-score-provenance"
+        text_piece = MessagePiece(
+            role="assistant",
+            original_value="caption",
+            conversation_id=conversation_id,
+            sequence=1,
+        )
+        media_piece = MessagePiece(
+            role="assistant",
+            original_value="/tmp/nonexistent-score-provenance.png",
+            original_value_data_type="image_path",
+            conversation_id=conversation_id,
+            sequence=1,
+        )
+        sqlite_instance.add_message_to_memory(request=Message(message_pieces=[text_piece, media_piece]))
+
+        text_score_one = Score(score_value="true", score_type="true_false", message_piece_id=text_piece.id)
+        text_score_two = Score(score_value="0.8", score_type="float_scale", message_piece_id=text_piece.id)
+        media_score = Score(score_value="blocked", score_type="unknown", message_piece_id=media_piece.id)
+        scores = [text_score_one, text_score_two, media_score]
+        sqlite_instance.add_scores_to_memory(scores=scores)
+
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
+        expected_score_ids_by_piece = {
+            str(text_piece.id): {str(text_score_one.id), str(text_score_two.id)},
+            str(media_piece.id): {str(media_score.id)},
+        }
+
+        for objective_score_id in (media_score.id, None):
+            result = await pyrit_messages_to_dto_async(
+                list(reloaded),
+                objective_score_id=objective_score_id,
+            )
+
+            assert len(result) == 1
+            actual_scores_by_piece = {
+                str(piece.id): {str(score.id): score for score in piece.scores} for piece in result[0].message_pieces
+            }
+            assert {
+                piece_id: set(piece_scores) for piece_id, piece_scores in actual_scores_by_piece.items()
+            } == expected_score_ids_by_piece
+
+            objective_score_ids = {
+                score_id
+                for piece_scores in actual_scores_by_piece.values()
+                for score_id, score in piece_scores.items()
+                if score.is_objective_score
+            }
+            expected_objective_score_ids = {str(media_score.id)} if objective_score_id is not None else set()
+            assert objective_score_ids == expected_objective_score_ids
+
 
 class TestIsAzureBlobUrl:
     """Tests for _is_azure_blob_url helper."""
