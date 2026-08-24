@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -50,6 +50,24 @@ class AudioTrueFalseScorer(TrueFalseScorer):
         return self._create_identifier(
             sub_scorers=[self._audio_helper.text_scorer.get_identifier()],
         )
+
+    def matched_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report the conditions matched by the transcript scorer.
+
+        Returns:
+            frozenset[type[Condition]]: The matched condition types.
+        """
+        return self._audio_helper.text_scorer.matched_conditions()
+
+    def required_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report the conditions required by the transcript scorer.
+
+        Returns:
+            frozenset[type[Condition]]: The required condition types.
+        """
+        return self._audio_helper.text_scorer.required_conditions()
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """

@@ -27,13 +27,8 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_response_pieces_async,
-    capture_usage_and_finish_reason,
     detect_response_content,
-    extract_partial_content,
-    get_finish_reason,
-    is_content_filter_response,
     save_audio_response_async,
-    validate_chat_completion_response,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -42,8 +37,8 @@ from pyrit.prompt_target.common.utils import (
     limit_requests_per_minute,
     validate_temperature,
     validate_top_p,
-    warn_truncated_response,
 )
+from pyrit.prompt_target.openai._response_adapter import ChatCompletionsResponseAdapter
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -93,6 +88,7 @@ class OpenAIChatTarget(OpenAITarget):
             ),
         )
     )
+    _response_adapter = ChatCompletionsResponseAdapter()
 
     @forward_init_parameters
     def __init__(
@@ -248,96 +244,6 @@ class OpenAIChatTarget(OpenAITarget):
             request=message,
         )
         return [response]
-
-    def _check_content_filter(self, response: Any) -> bool:
-        """
-        Check if a Chat Completions API response has finish_reason=content_filter.
-
-        Args:
-            response: A ChatCompletion object from the OpenAI SDK.
-
-        Returns:
-            True if content was filtered, False otherwise.
-        """
-        return is_content_filter_response(response)
-
-    def _extract_partial_content(self, response: Any) -> str | None:
-        """
-        Extract partial content from a Chat Completions response with finish_reason=content_filter.
-
-        When Azure Content Safety triggers mid-generation, the model may have produced partial
-        text in ``response.choices[0].message.content`` before being cut off.
-
-        Args:
-            response: A ChatCompletion object from the OpenAI SDK.
-
-        Returns:
-            The partial text content, or None if no content was generated.
-        """
-        return extract_partial_content(response)
-
-    def _capture_response_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
-        """
-        Record token usage and ``finish_reason`` from a Chat Completions response.
-
-        Args:
-            response: A ChatCompletion object from the OpenAI SDK, or the synthetic stand-in used
-                when the SDK raises on a content filter.
-            pieces (list[MessagePiece]): The constructed response pieces.
-        """
-        capture_usage_and_finish_reason(pieces=pieces, response=response)
-
-    def _validate_response(self, response: ChatCompletion, request: MessagePiece) -> None:
-        """
-        Validate a Chat Completions API response for errors.
-
-        Checks for:
-        - Missing choices
-        - Invalid finish_reason
-        - At least one valid response type (text content, audio, or tool_calls)
-
-        A ``finish_reason == "length"`` (token-limit truncation) response is treated as valid, with a
-        warning, so that ``_construct_message_from_response_async`` can preserve any partial content
-        or fall back to a graceful empty response. Genuinely empty responses (no truncation) are
-        raised so the retry logic can attempt to get a complete response. Content filter responses
-        are handled separately by ``_check_content_filter``.
-
-        Args:
-            response: The ChatCompletion response from OpenAI SDK.
-            request: The original request MessagePiece.
-
-        Raises:
-            PyritException: For unexpected response structures or finish reasons.
-            EmptyResponseException: When the API returns an empty response that was not caused by
-                token-limit truncation.
-        """
-        # Token-limit truncation is handled before the shared validator, which would otherwise raise
-        # EmptyResponseException on a validly truncated but empty response. Reasoning models can spend
-        # the whole budget on hidden reasoning before emitting a visible answer, and a low limit may be
-        # deliberate, so warn instead of raising and let construction preserve any partial content or
-        # fall back to a graceful empty response.
-        if self._is_truncated_response(response):
-            warn_truncated_response(signal="finish_reason='length'", limit_parameter="max_completion_tokens")
-            return
-
-        # Genuinely empty responses (no truncation) raise so the retry logic can attempt to get a
-        # complete response.
-        validate_chat_completion_response(response=response)
-
-    def _is_truncated_response(self, response: ChatCompletion) -> bool:
-        """
-        Return True if the response was cut off by the token limit.
-
-        The Chat Completions API signals token-limit truncation via ``finish_reason == "length"``
-        on the first choice.
-
-        Args:
-            response: A ChatCompletion response from the OpenAI SDK.
-
-        Returns:
-            bool: True if the response was truncated at the token limit, False otherwise.
-        """
-        return get_finish_reason(response=response) == "length"
 
     def _detect_response_content(self, message: Any) -> tuple[bool, bool, bool]:
         """

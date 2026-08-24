@@ -458,12 +458,14 @@ class TestCrescendoAttackInitialization:
         """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
         from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
-        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: (
-            capability != CapabilityName(missing_capability)
-        )
+        missing = {
+            "multi_turn": CapabilityName.MULTI_TURN,
+            "system_prompt": CapabilityName.SYSTEM_PROMPT,
+        }[missing_capability]
+        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: capability != missing
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
 
-        with pytest.raises(ValueError, match=f"CrescendoAttack .*{missing_capability}"):
+        with pytest.raises(ValueError, match=f"supports_{missing_capability}"):
             CrescendoAttack(
                 objective_target=mock_objective_target,
                 attack_adversarial_config=adversarial_config,
@@ -923,6 +925,29 @@ class TestPromptGeneration:
         assert "0.30" in result  # Score value
         assert failure_objective_score.score_rationale in result
 
+    def test_build_adversarial_prompt_without_score_feedback(
+        self,
+        mock_objective_target: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: CrescendoAttackContext,
+        sample_response: Message,
+        failure_objective_score: Score,
+    ):
+        """The response remains available when objective-score feedback is disabled."""
+        attack = CrescendoAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            attack_scoring_config=AttackScoringConfig(use_score_as_feedback=False),
+        )
+        basic_context.last_response = sample_response
+        basic_context.last_score = failure_objective_score
+
+        result = attack._build_adversarial_prompt(context=basic_context, refused_text="")
+
+        assert "Test response" in result
+        assert "received a score of" not in result
+        assert failure_objective_score.score_rationale not in result
+
     async def test_generate_next_prompt_raises_when_adversarial_chat_returns_no_response(
         self,
         mock_objective_target: MagicMock,
@@ -1201,10 +1226,10 @@ class TestResponseScoring:
 
         await attack._check_refusal_async(context=basic_context, objective="test task")
 
-        # Verify score_async was called with skip_on_error_result=False
+        # Verify message policy does not skip error results
         mock_refusal_scorer.score_async.assert_called_once()
-        call_kwargs = mock_refusal_scorer.score_async.call_args.kwargs
-        assert call_kwargs.get("skip_on_error_result") is False, (
+        message_options = mock_refusal_scorer.score_async.call_args.kwargs["message_options"]
+        assert message_options.skip_on_error_result is False, (
             "Refusal scorer must be called with skip_on_error_result=False "
             "to ensure error responses are scored (treated as refusals) rather than skipped"
         )

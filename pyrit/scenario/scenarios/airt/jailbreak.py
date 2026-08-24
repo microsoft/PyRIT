@@ -107,23 +107,14 @@ def _extra_default_factories() -> dict[str, AttackTechniqueFactory]:
 @cache
 def _build_jailbreak_technique() -> type[ScenarioTechnique]:
     """
-    Build the Jailbreak technique class dynamically from every registered factory plus the
-    scenario-local defaults.
-
-    The technique axis is the set of *attack techniques* a jailbreak is delivered through: the two
-    default deliveries (``prompt_sending`` and ``jailbreak_system_prompt``) plus whatever techniques
-    are registered (``role_play_*``, ``many_shot``, ``tap``, …). Jailbreak templates are a separate
-    selector (``num_jailbreaks`` / ``jailbreak_names``), so only the two deliveries are on by default
-    — crossing every template with every registered technique explodes quickly.
+    Build the Jailbreak technique class from its two scenario-owned delivery methods.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    registry = AttackTechniqueRegistry.get_registry_singleton()
-    factories = list(registry.get_factories_or_raise().values()) + list(_extra_default_factories().values())
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="JailbreakTechnique",
-        factories=factories,
+        factories=list(_extra_default_factories().values()),
         default_names=set(_DEFAULT_TECHNIQUES),
     )
 
@@ -136,24 +127,23 @@ class Jailbreak(Scenario):
     selectors:
 
     - **dataset** — the harmful objectives (HarmBench).
-    - **techniques** — the *attack techniques* each jailbreak is delivered through. Two deliveries
-      are on by default: ``prompt_sending`` (the template rendered inline into the user message) and
+    - **techniques** — two delivery methods for each jailbreak: ``prompt_sending`` (the template
+      rendered inline into the user message) and
       ``jailbreak_system_prompt`` (the template set as the system prompt with the objective sent as
-      the user turn). The registry techniques (``role_play_*``, ``many_shot``, ``tap``, …) are
-      opt-in.
+      the user turn).
     - **jailbreaks** — which jailbreak templates to run (a random ``num_jailbreaks`` sample or an
       explicit ``jailbreak_names`` set).
 
     ``prompt_sending`` applies each template as a ``TextJailbreakConverter`` on the outgoing request,
-    so the objective is rendered inline into the template's ``{{prompt}}`` slot; this keeps that
-    delivery target-agnostic and lets it compose with every technique. ``jailbreak_system_prompt``
-    instead sets the template as a native system prompt and sends the objective as its own user turn,
-    so it is only built for targets that natively support editable history and system prompts (it is
-    skipped for incapable targets, or raises if it is the only selected technique). Responses are
-    scored to determine whether the jailbreak succeeded (non-refusal).
+    so the objective is rendered inline into the template's ``{{prompt}}`` slot.
+    ``jailbreak_system_prompt`` instead sets the template as a native system prompt and sends the
+    objective as its own user turn, so it is only built for targets that natively support editable
+    history and system prompts (it is skipped for incapable targets, or raises if it is the only
+    selected technique). Responses are scored to determine whether the jailbreak succeeded
+    (non-refusal).
     """
 
-    VERSION: int = 3
+    VERSION: int = 4
 
     #: Baseline (an un-jailbroken prompt-send over the objectives) is included by default: a model
     #: that complies with the bare objective is itself interesting signal. Callers opt out per run
@@ -232,6 +222,30 @@ class Jailbreak(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
+    def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
+        """
+        Resolve techniques while rejecting stale or incompatible enum members.
+
+        Args:
+            scenario_techniques (Any): Requested Jailbreak technique members.
+
+        Returns:
+            list[ScenarioTechnique]: Compatible concrete techniques.
+
+        Raises:
+            ValueError: If a caller supplies members from an older or different
+                technique enum.
+        """
+        if scenario_techniques:
+            incompatible = [item for item in scenario_techniques if not isinstance(item, self._technique_class)]
+            if incompatible:
+                values = [getattr(item, "value", repr(item)) for item in incompatible]
+                raise ValueError(
+                    "Jailbreak received stale or incompatible techniques "
+                    f"{values}. Select 'prompt_sending' or 'jailbreak_system_prompt'."
+                )
+        return super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
+
     def _resolve_templates(self) -> list[str]:
         """
         Resolve the jailbreak templates for this run, replaying the persisted set on resume.
@@ -286,13 +300,12 @@ class Jailbreak(Scenario):
         """
         Build one atomic attack per (technique x jailbreak template x dataset x attempt).
 
-        ``prompt_sending`` (and any opt-in registry techniques) deliver each jailbreak template as a
-        ``TextJailbreakConverter`` appended to that technique's request converters, so the objective
-        is rendered inline into the template's ``{{prompt}}`` slot on the wire — target-agnostic and
-        composable with every technique. ``jailbreak_system_prompt`` instead delivers the template as
-        a native system prompt (no converter) with the objective sent as its own user turn, so it is
-        only built when the objective target natively supports editable history and system prompts.
-        Results group by jailbreak template so per-template ASR rolls up naturally.
+        ``prompt_sending`` delivers each jailbreak template as a ``TextJailbreakConverter`` so the
+        objective is rendered inline into the template's ``{{prompt}}`` slot on the wire.
+        ``jailbreak_system_prompt`` instead delivers the template as a native system prompt (no
+        converter) with the objective sent as its own user turn, so it is only built when the
+        objective target natively supports editable history and system prompts. Results group by
+        jailbreak template so per-template ASR rolls up naturally.
 
         Args:
             context (ScenarioContext): The resolved runtime inputs for this run.
@@ -314,17 +327,20 @@ class Jailbreak(Scenario):
         num_attempts = self.params.get("num_jailbreak_attempts", 1)
 
         technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())
+        selected_names = {technique.value for technique in context.scenario_techniques}
+        missing = selected_names - set(technique_factories)
+        if missing:
+            raise ValueError(
+                "Jailbreak selected techniques that are no longer available: "
+                f"{sorted(missing)}. Refresh the plan and select a supported delivery method."
+            )
 
-        # ``jailbreak_system_prompt`` is delivered separately (native system prompt, no converter);
-        # every other technique goes through the inline converter path.
+        prompt_sending_factory = technique_factories.get(_PROMPT_SENDING)
         system_selected = _JAILBREAK_SYSTEM_PROMPT in technique_factories
-        converter_factories = {
-            name: factory for name, factory in technique_factories.items() if name != _JAILBREAK_SYSTEM_PROMPT
-        }
 
         build_system_delivery = system_selected and self._target_supports_system_delivery(self._objective_target)
         if system_selected and not build_system_delivery:
-            if not converter_factories:
+            if prompt_sending_factory is None:
                 raise ValueError(
                     "The 'jailbreak_system_prompt' technique needs a target that natively supports "
                     "editable history and system prompts. Choose a capable target or a different technique."
@@ -353,22 +369,21 @@ class Jailbreak(Scenario):
         for template_file_name in self._resolved_jailbreaks:
             template_stem = Path(template_file_name).stem
 
-            if converter_factories:
+            if prompt_sending_factory is not None:
                 jailbreak_converter = TextJailbreakConverter(
                     jailbreak_template=TextJailBreak(template_file_name=template_file_name)
                 )
-                # Within the extra-converter stack, apply the jailbreak first (wrap the raw objective
-                # in the template), then any per-technique converters the caller layered on via
-                # ``--techniques <name>:converter.*``. (A technique's own built-in converters, if any,
-                # still run ahead of this extra stack inside the factory.)
+                # Apply the jailbreak before any caller-supplied prompt_sending converters.
                 technique_converters = {
-                    technique_name: [jailbreak_converter, *self._technique_converters.get(technique_name, [])]
-                    for technique_name in converter_factories
+                    _PROMPT_SENDING: [
+                        jailbreak_converter,
+                        *self._technique_converters.get(_PROMPT_SENDING, []),
+                    ]
                 }
                 atomic_attacks.extend(
                     self._build_delivery_attacks(
                         builder=builder,
-                        technique_factories=converter_factories,
+                        technique_factories={_PROMPT_SENDING: prompt_sending_factory},
                         technique_converters=technique_converters,
                         dataset_groups=context.seed_groups_by_dataset,
                         template_stem=template_stem,

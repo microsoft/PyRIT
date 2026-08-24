@@ -56,3 +56,17 @@ def test_random_translation_converter_custom_languages() -> None:
     assert len(converter.languages) == 3
     assert "French" in converter.languages
     assert "Javanese" not in converter.languages
+
+
+def test_random_translation_converter_identifier_canonicalizes_language_order(mock_target) -> None:
+    first = RandomTranslationConverter(converter_target=mock_target, languages=["French", "Spanish"])
+    reordered = RandomTranslationConverter(converter_target=mock_target, languages=["Spanish", "French"])
+
+    assert first.get_identifier().hash == reordered.get_identifier().hash
+
+
+def test_random_translation_converter_identifier_distinguishes_language_pools(mock_target) -> None:
+    first = RandomTranslationConverter(converter_target=mock_target, languages=["French", "Spanish"])
+    different = RandomTranslationConverter(converter_target=mock_target, languages=["German", "Japanese"])
+
+    assert first.get_identifier().hash != different.get_identifier().hash

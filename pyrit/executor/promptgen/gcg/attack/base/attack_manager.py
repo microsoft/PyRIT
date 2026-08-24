@@ -307,14 +307,14 @@ class AttackPrompt:
         # token. Both are necessary for the slice arithmetic to remain valid
         # across tokenizers/templates.
         def end_tok(char_pos: int) -> int:
-            tok = encoding.char_to_token(char_pos)
+            tok: int | None = encoding.char_to_token(char_pos)
             return len(toks) if tok is None else tok
 
         def start_tok(char_pos: int) -> int:
             limit = len(prompt)
             cur = char_pos
             while cur < limit:
-                tok = encoding.char_to_token(cur)
+                tok: int | None = encoding.char_to_token(cur)
                 if tok is not None:
                     return tok
                 cur += 1
@@ -355,11 +355,11 @@ class AttackPrompt:
             logger.warning("max_new_tokens > 32 may cause testing to slow down.")
         input_ids = self.input_ids[: self._assistant_role_slice.stop].to(model.device).unsqueeze(0)
         attn_masks = torch.ones_like(input_ids).to(model.device)
-        output_ids = model.generate(
+        output_ids: torch.Tensor = model.generate(
             input_ids, attention_mask=attn_masks, generation_config=gen_config, pad_token_id=self.tokenizer.pad_token_id
         )[0]
 
-        return output_ids[self._assistant_role_slice.stop :]  # type: ignore[no-any-return, unused-ignore]
+        return output_ids[self._assistant_role_slice.stop :]
 
     def generate_str(self, model: Any, gen_config: Any = None) -> Any:
         """
@@ -564,11 +564,8 @@ class AttackPrompt:
     @property
     def eval_str(self) -> str:
         """The decoded input used for evaluation."""
-        return (  # type: ignore[no-any-return, unused-ignore]
-            self.tokenizer.decode(self.input_ids[: self._assistant_role_slice.stop])
-            .replace("<s>", "")
-            .replace("</s>", "")
-        )
+        decoded: str = self.tokenizer.decode(self.input_ids[: self._assistant_role_slice.stop])
+        return decoded.replace("<s>", "").replace("</s>", "")
 
 
 class PromptManager:
@@ -754,7 +751,8 @@ class PromptManager:
     @property
     def control_str(self) -> str:
         """The shared decoded control suffix."""
-        return self._prompts[0].control_str  # type: ignore[no-any-return, unused-ignore]
+        control: str = self._prompts[0].control_str
+        return control
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -837,9 +835,10 @@ class MultiPromptAttack:
         self.managers = managers
 
     @property
-    def control_str(self) -> Any:
+    def control_str(self) -> str:
         """The shared decoded control suffix."""
-        return self.prompts[0].control_str
+        control: str = self.prompts[0].control_str
+        return control
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -871,7 +870,8 @@ class MultiPromptAttack:
         Returns:
             list[str]: Decoded candidate controls.
         """
-        cands, count = [], 0
+        cands: list[str] = []
+        count = 0
         worker = self.workers[worker_index]
 
         logger.info("Masking out of range token_id.")
@@ -1019,8 +1019,8 @@ class MultiPromptAttack:
         for j, worker in enumerate(workers):
             worker(prompts[j], ModelWorkerOperation.TEST)
         model_tests = np.array([worker.results.get() for worker in workers])
-        model_tests_jb = model_tests[..., 0].tolist()
-        model_tests_mb = model_tests[..., 1].tolist()
+        model_tests_jb: list[list[bool]] = model_tests[..., 0].tolist()
+        model_tests_mb: list[list[int]] = model_tests[..., 1].tolist()
         model_tests_loss: list[list[float]] = []
         if include_loss:
             for j, worker in enumerate(workers):
@@ -1334,7 +1334,7 @@ class ProgressiveMultiPromptAttack:
             )
             if num_goals == len(self.goals) and num_workers == len(self.workers):
                 stop_inner_on_success = False
-            control, loss, inner_steps = attack.run(
+            inner_result: tuple[str, float, int] = attack.run(
                 n_steps=n_steps - step,
                 batch_size=batch_size,
                 topk=topk,
@@ -1350,6 +1350,7 @@ class ProgressiveMultiPromptAttack:
                 filter_cand=filter_cand,
                 verbose=verbose,
             )
+            control, loss, inner_steps = inner_result
 
             step += inner_steps
             self.control = control
@@ -1683,8 +1684,12 @@ class EvaluateAttack:
 
         _update_attack_log_params(logfile=self.logfile, params={"num_tests": len(controls)})
 
-        total_jb, total_em, total_outputs = [], [], []
-        test_total_jb, test_total_em, test_total_outputs = [], [], []
+        total_jb: list[list[bool]] = []
+        total_em: list[list[bool]] = []
+        total_outputs: list[list[str]] = []
+        test_total_jb: list[list[bool]] = []
+        test_total_em: list[list[bool]] = []
+        test_total_outputs: list[list[str]] = []
         curr_jb: list[bool] = []
         curr_em: list[bool] = []
         all_outputs: list[str] = []
@@ -1959,6 +1964,24 @@ def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker
     return workers[:num_train_models], workers[num_train_models:]
 
 
+def _read_string_column(*, data: Any, column: str, start: int = 0, end: int | None = None) -> list[str]:
+    """
+    Read a slice of a dataframe column as strings.
+
+    Returns:
+        list[str]: The requested column values.
+
+    Raises:
+        ValueError: If the requested column contains a non-string value.
+    """
+    values: list[str] = []
+    for value in data[column].tolist()[start:end]:
+        if not isinstance(value, str):
+            raise ValueError(f"Column '{column}' must contain only strings, got {type(value).__name__}")
+        values.append(value)
+    return values
+
+
 def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str], list[str]]:
     """
     Load training and held-out goals and targets from parameters or CSV files.
@@ -1970,10 +1993,10 @@ def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str],
     Raises:
         ValueError: If a goal list and its corresponding target list differ in length.
     """
-    train_goals = getattr(params, "goals", [])
-    train_targets = getattr(params, "targets", [])
-    test_goals = getattr(params, "test_goals", [])
-    test_targets = getattr(params, "test_targets", [])
+    train_goals: list[str] = getattr(params, "goals", [])
+    train_targets: list[str] = getattr(params, "targets", [])
+    test_goals: list[str] = getattr(params, "test_goals", [])
+    test_targets: list[str] = getattr(params, "test_targets", [])
 
     if params.train_data:
         train_data = pd.read_csv(params.train_data)
@@ -1981,22 +2004,32 @@ def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str],
         # this line shuffles the rows of train data randomly with a random seed
         train_data = train_data.sample(frac=1, random_state=params.random_seed).reset_index(drop=True)
 
-        train_targets = train_data["target"].tolist()[: params.n_train_data]
+        train_targets = _read_string_column(data=train_data, column="target", end=params.n_train_data)
         if "goal" in train_data.columns:
-            train_goals = train_data["goal"].tolist()[: params.n_train_data]
+            train_goals = _read_string_column(data=train_data, column="goal", end=params.n_train_data)
         else:
             train_goals = [""] * len(train_targets)
         if params.test_data and params.n_test_data > 0:
             test_data = pd.read_csv(params.test_data)
-            test_targets = test_data["target"].tolist()[: params.n_test_data]
+            test_targets = _read_string_column(data=test_data, column="target", end=params.n_test_data)
             if "goal" in test_data.columns:
-                test_goals = test_data["goal"].tolist()[: params.n_test_data]
+                test_goals = _read_string_column(data=test_data, column="goal", end=params.n_test_data)
             else:
                 test_goals = [""] * len(test_targets)
         elif params.n_test_data > 0:
-            test_targets = train_data["target"].tolist()[params.n_train_data : params.n_train_data + params.n_test_data]
+            test_targets = _read_string_column(
+                data=train_data,
+                column="target",
+                start=params.n_train_data,
+                end=params.n_train_data + params.n_test_data,
+            )
             if "goal" in train_data.columns:
-                test_goals = train_data["goal"].tolist()[params.n_train_data : params.n_train_data + params.n_test_data]
+                test_goals = _read_string_column(
+                    data=train_data,
+                    column="goal",
+                    start=params.n_train_data,
+                    end=params.n_train_data + params.n_test_data,
+                )
             else:
                 test_goals = [""] * len(test_targets)
 
