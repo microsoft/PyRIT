@@ -45,6 +45,7 @@
 # Multilingual Vulnerabilities [@tang2025multilingual],
 # OR-Bench [@cui2024orbench],
 # PKU-SafeRLHF [@ji2024pkusaferlhf],
+# FORTRESS [@knight2025fortress],
 # SALAD-Bench [@li2024saladbench],
 # SimpleSafetyTests [@vidgen2023simplesafetytests],
 # SIUO [@wang2025siuo],

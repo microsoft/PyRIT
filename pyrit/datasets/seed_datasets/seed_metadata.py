@@ -73,6 +73,8 @@ RECOMMENDED_TAGS: frozenset[str] = frozenset(
         "objectives",  # loader emits SeedObjective goals rather than polished SeedPrompt attacks
         "system_prompt",  # collections of system prompts used as extraction targets (e.g., garak sysprompt probes)
         "feed",  # live-API feed rather than a static, versioned dataset release (e.g., PromptIntel)
+        "national_security",  # national-security / public-safety domain (CBRNE, terrorism, etc.)
+        "calibration",  # paired safety / over-refusal calibration datasets (e.g., FORTRESS)
     }
 )
 

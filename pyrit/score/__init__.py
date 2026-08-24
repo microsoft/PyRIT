@@ -19,6 +19,7 @@ from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.fortress_rubric_scorer import FortressRubricScorer
 from pyrit.score.float_scale.insecure_code_scorer import (
     InsecureCodeScorer,
     render_insecure_code_system_prompt,
@@ -194,6 +195,7 @@ __all__ = [
     "FloatScaleScorerByCategory",
     "FloatScaleScorer",
     "FloatScaleThresholdScorer",
+    "FortressRubricScorer",
     "GandalfScorer",
     "HarmHumanLabeledEntry",
     "HarmScorerEvaluator",

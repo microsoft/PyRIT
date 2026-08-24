@@ -48,6 +48,12 @@ from pyrit.datasets.seed_datasets.remote.figstep_dataset import (
     _FigStepProDataset,
 )
 from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import _ForbiddenQuestionsDataset
+from pyrit.datasets.seed_datasets.remote.fortress_dataset import (
+    FortressRiskDomain,
+    FortressRiskSubdomain,
+    FortressSplit,
+    _FortressDataset,
+)
 from pyrit.datasets.seed_datasets.remote.garak_audio_dataset import _GarakAudioAchillesHeelDataset
 from pyrit.datasets.seed_datasets.remote.garak_package_hallucination_dataset import (
     _GarakCratesDataset,
@@ -149,6 +155,9 @@ __all__ = [
     "DecodingTrustToxicitySubset",
     "FigStepCategory",
     "FigStepVariant",
+    "FortressRiskDomain",
+    "FortressRiskSubdomain",
+    "FortressSplit",
     "HiXSTestLanguage",
     "MMSafetyBenchCategory",
     "MMSafetyBenchVariant",
@@ -189,6 +198,7 @@ __all__ = [
     "_FigStepDataset",
     "_FigStepProDataset",
     "_ForbiddenQuestionsDataset",
+    "_FortressDataset",
     "_GarakAudioAchillesHeelDataset",
     "_GarakCratesDataset",
     "_GarakDartDataset",
