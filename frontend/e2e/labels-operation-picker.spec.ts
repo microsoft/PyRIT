@@ -402,3 +402,44 @@ test.describe("operation picker persistence", () => {
     await expect(page.getByTestId("label-operation")).toContainText("op_beta");
   });
 });
+
+test.describe("switching between labels", () => {
+  test("keeps the label you click on next while leaving the picker", async ({
+    page,
+  }) => {
+    // Both editors finish on blur a turn later, so the click that takes the
+    // focus has already opened the next editor by then. jsdom does not order
+    // blur and click the way a browser does, so only this can see it.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await openOperationPicker(page);
+
+    await page.getByTestId("label-operator").click();
+
+    const operatorEditor = page.getByTestId("edit-label-operator");
+    await expect(operatorEditor).toBeVisible();
+    await expect(operatorEditor).toHaveValue("roakey");
+    await page.waitForTimeout(500);
+    await expect(operatorEditor).toBeVisible();
+    await expect(operatorEditor).toHaveValue("roakey");
+  });
+
+  test("keeps the picker you open while leaving another label", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await page.goto("/");
+
+    await page.getByTestId("label-operator").click();
+    await page.getByTestId("edit-label-operator").fill("alice");
+    await page.getByTestId("label-operation").click();
+
+    await expect(page.getByRole("listbox")).toBeVisible();
+    await page.waitForTimeout(500);
+    await expect(page.getByRole("listbox")).toBeVisible();
+    // The operator edit still went in; only its clean-up was skipped.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("label-operator")).toContainText("alice");
+  });
+});

@@ -88,6 +88,26 @@ describe('LabelsBar', () => {
     })
   })
 
+  it('should keep the remove button out of the edit control', async () => {
+    // A control that removes the label cannot sit inside the control that
+    // edits it: screen readers flatten the inner one and it loses its name.
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS, team: 'red' }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    const edit = screen.getByTestId('label-team')
+    const remove = screen.getByTestId('remove-label-team')
+
+    expect(edit).toHaveAttribute('role', 'button')
+    expect(edit).not.toContainElement(remove)
+    expect(remove).toHaveAccessibleName('Remove team label')
+    // Required labels have nothing to nest in the first place.
+    expect(screen.getByTestId('label-operator')).toHaveAttribute('role', 'button')
+  })
+
   it('should add a new label via popover', async () => {
     const onChange = jest.fn()
     render(
@@ -284,6 +304,56 @@ describe('LabelsBar', () => {
       ...DEFAULT_GLOBAL_LABELS,
       operator: 'alice',
     })
+  })
+
+  it('should keep the edit you just started when leaving another one', async () => {
+    // Both editors finish on blur a turn later. If that late work is not tied
+    // to the label it was started for, it ends whichever edit is open by then,
+    // and the click that opened it looks like it did nothing.
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-operator'))
+    const operatorInput = await screen.findByTestId('edit-label-operator')
+    fireEvent.change(operatorInput, { target: { value: 'alice' } })
+
+    // Leaving the operator schedules its save; the click starts the next edit.
+    fireEvent.blur(operatorInput)
+    fireEvent.click(screen.getByTestId('label-operation'))
+    await screen.findByTestId('edit-label-operation')
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    expect(screen.getByTestId('edit-label-operation')).toBeInTheDocument()
+    expect(screen.queryByTestId('edit-label-operator')).not.toBeInTheDocument()
+    // The operator edit still went in; only its clean-up was skipped.
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS, operator: 'alice' })
+  })
+
+  it('should not clear the value of the edit you just started', async () => {
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    // Leaving the operation picker for the operator, the other way round.
+    fireEvent.click(screen.getByTestId('label-operation'))
+    const operationInput = await screen.findByTestId('edit-label-operation')
+    fireEvent.blur(operationInput)
+    fireEvent.click(screen.getByTestId('label-operator'))
+    const operatorInput = await screen.findByTestId('edit-label-operator')
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    // An editor that opens empty is the same bug wearing a different hat.
+    expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
+    expect(operatorInput).toHaveValue(DEFAULT_GLOBAL_LABELS.operator)
   })
 
   it('should cancel edit on Escape key', async () => {

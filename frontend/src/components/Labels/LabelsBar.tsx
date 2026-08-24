@@ -180,6 +180,11 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const [labelsLoading, setLabelsLoading] = useState(true)
   const [labelsFailed, setLabelsFailed] = useState(false)
   const editInputRef = useRef<HTMLInputElement>(null)
+  // Both editors finish their work on blur, one turn later, so that focus lands
+  // first. By then the click that took the focus may already have opened a
+  // different label's editor, which this has to be able to notice.
+  const editingLabelRef = useRef<string | null>(null)
+  useEffect(() => { editingLabelRef.current = editingLabel }, [editingLabel])
 
   // Fetch existing label keys/values for suggestions
   useEffect(() => {
@@ -245,25 +250,25 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     }
   }
 
+  /** Ends an edit, unless the user has already moved on to another label. */
+  const endEdit = (key: string) => {
+    if (editingLabelRef.current !== key) return
+    setEditingLabel(null)
+    setEditValue('')
+    setError('')
+  }
+
   const handleSaveEdit = () => {
     if (!editingLabel) return
     const valueError = validateValue(editValue)
     if (valueError) { setError(valueError); return }
     onLabelsChange({ ...labels, [editingLabel]: editValue })
-    setEditingLabel(null)
-    setEditValue('')
-    setError('')
+    endEdit(editingLabel)
   }
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSaveEdit()
     if (e.key === 'Escape') { setEditingLabel(null); setError('') }
-  }
-
-  const handleCancelEdit = () => {
-    setEditingLabel(null)
-    setEditValue('')
-    setError('')
   }
 
   const handleSelectOperation = (operation: string) => {
@@ -383,7 +388,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             loadFailed={labelsFailed}
             onSelect={handleSelectOperation}
             onSearchChange={() => setError('')}
-            onDismiss={handleCancelEdit}
+            onDismiss={() => endEdit(key)}
             inputRef={editInputRef}
           />
           {error && <Text size={200} className={styles.errorText}>{error}</Text>}
@@ -461,16 +466,20 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         <div
           data-label-idx={idx}
           className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
-          onClick={() => handleStartEdit(key)}
-          onKeyDown={e => handleStartEditKeyDown(e, key)}
-          role="button"
-          tabIndex={0}
-          aria-label={`Edit ${key} label, currently ${value}`}
-          data-testid={`label-${key}`}
           style={{ flexShrink: 0 }}
         >
-          <Text size={200} weight="semibold">{key}:</Text>
-          <Text size={200} style={{ whiteSpace: 'nowrap' }}>{value}</Text>
+          <div
+            className={styles.labelEdit}
+            onClick={() => handleStartEdit(key)}
+            onKeyDown={e => handleStartEditKeyDown(e, key)}
+            role="button"
+            tabIndex={0}
+            aria-label={`Edit ${key} label, currently ${value}`}
+            data-testid={`label-${key}`}
+          >
+            <Text size={200} weight="semibold">{key}:</Text>
+            <Text size={200} style={{ whiteSpace: 'nowrap' }}>{value}</Text>
+          </div>
           {!isRequired && (
             <Button
               className={styles.removeBtn}
@@ -478,6 +487,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
               size="small"
               icon={<DismissRegular fontSize={12} />}
               onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
+              aria-label={`Remove ${key} label`}
               data-testid={`remove-label-${key}`}
             />
           )}
@@ -502,16 +512,20 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           <div
             key={key}
             className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
-            onClick={() => handleStartEdit(key)}
-            onKeyDown={e => handleStartEditKeyDown(e, key)}
-            role="button"
-            tabIndex={0}
-            aria-label={`Edit ${key} label, currently ${value}`}
-            data-testid={`popover-label-${key}`}
             style={{ flexShrink: 0 }}
           >
-            <Text size={200} weight="semibold">{key}:</Text>
-            <Text size={200}>{value}</Text>
+            <div
+              className={styles.labelEdit}
+              onClick={() => handleStartEdit(key)}
+              onKeyDown={e => handleStartEditKeyDown(e, key)}
+              role="button"
+              tabIndex={0}
+              aria-label={`Edit ${key} label, currently ${value}`}
+              data-testid={`popover-label-${key}`}
+            >
+              <Text size={200} weight="semibold">{key}:</Text>
+              <Text size={200}>{value}</Text>
+            </div>
             {!isRequired && (
               <Button
                 className={styles.removeBtn}
@@ -519,6 +533,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
                 size="small"
                 icon={<DismissRegular fontSize={12} />}
                 onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
+                aria-label={`Remove ${key} label`}
                 data-testid={`popover-remove-label-${key}`}
               />
             )}
