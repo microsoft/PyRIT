@@ -38,10 +38,12 @@
 #
 # Pass multiple `--adversarial-targets` values to compare across models in a single run.
 #
-# **Available techniques:** `light` (default — a quick snapshot using the cheaper techniques),
-# `single_turn`, `multi_turn`, plus one member per adversarial-capable source technique
-# (e.g. `red_teaming`, `tap`, `crescendo_simulated`). The `light` aggregate excludes `tap` and
-# `crescendo_simulated`, which can take hours.
+# **Default techniques:** `role_play_video_game`, `crescendo_simulated`, and `tap`. TAP's
+# branching search makes this default slower and more expensive than the former `light` default.
+# For a cheaper run, explicitly pass `--techniques light`.
+#
+# **Other available selections:** `light`, `single_turn`, `multi_turn`, plus one member per
+# adversarial-capable source technique (e.g. `red_teaming`, `tap`, `crescendo_simulated`).
 
 # %% [markdown]
 # ## Setup
