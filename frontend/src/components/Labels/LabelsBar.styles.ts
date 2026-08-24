@@ -47,7 +47,7 @@ export const useLabelsBarStyles = makeStyles({
     display: 'inline-flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalXXS,
-    padding: `2px ${tokens.spacingHorizontalS}`,
+    padding: `0 ${tokens.spacingHorizontalS}`,
     borderRadius: tokens.borderRadiusMedium,
     cursor: 'pointer',
     userSelect: 'none' as const,
@@ -65,9 +65,11 @@ export const useLabelsBarStyles = makeStyles({
     display: 'inline-flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalXXS,
+    // The badge keeps the horizontal padding so the pill looks the same; the
+    // vertical padding lives here so the whole height of it starts an edit.
+    padding: '2px 0',
     background: 'none',
     border: 'none',
-    padding: 0,
     margin: 0,
     font: 'inherit',
     color: 'inherit',
