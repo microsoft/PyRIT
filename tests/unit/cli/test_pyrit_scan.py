@@ -1024,6 +1024,43 @@ class TestResolveServerUrl:
         ):
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) == DEFAULT_SERVER_URL
 
+    async def test_raises_type_error_when_configured_url_is_not_a_string(self):
+        """A non-string configured URL (e.g. malformed config) raises TypeError."""
+        parsed = Namespace(server_url=None, start_server=False, config_file=None)
+        with patch(
+            "pyrit.cli._config_reader.read_server_settings",
+            return_value=pyrit_scan_config_reader.ServerSettings(url=12345),  # type: ignore[arg-type]
+        ):
+            with pytest.raises(TypeError, match="Configured server URL must be a string"):
+                await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
+
+
+class TestResolveConfiguredServerUrl:
+    """Tests for _resolve_configured_server_url."""
+
+    def test_uses_cli_flag_when_provided(self):
+        parsed = Namespace(server_url="http://cli:1111", config_file=None)
+        assert pyrit_scan._resolve_configured_server_url(parsed_args=parsed) == "http://cli:1111"
+
+    def test_falls_back_to_config_file(self):
+        parsed = Namespace(server_url=None, config_file=None)
+        with patch("pyrit.cli._config_reader.read_server_url", return_value="http://cfg:2222"):
+            assert pyrit_scan._resolve_configured_server_url(parsed_args=parsed) == "http://cfg:2222"
+
+    def test_falls_back_to_default(self):
+        from pyrit.cli._config_reader import DEFAULT_SERVER_URL
+
+        parsed = Namespace(server_url=None, config_file=None)
+        with patch("pyrit.cli._config_reader.read_server_url", return_value=None):
+            assert pyrit_scan._resolve_configured_server_url(parsed_args=parsed) == DEFAULT_SERVER_URL
+
+    def test_raises_type_error_when_configured_url_is_not_a_string(self):
+        """A non-string configured URL (e.g. malformed config) raises TypeError."""
+        parsed = Namespace(server_url=None, config_file=None)
+        with patch("pyrit.cli._config_reader.read_server_url", return_value=12345):
+            with pytest.raises(TypeError, match="Configured server URL must be a string"):
+                pyrit_scan._resolve_configured_server_url(parsed_args=parsed)
+
 
 class TestScenarioParamCoercion:
     """Regression tests for client-side coercion of typed scenario-declared params."""
@@ -1321,6 +1358,24 @@ class TestMainExtraPaths:
         assert result == 0
         assert "Registered initializer 'myinit'" in capsys.readouterr().out
         mock_client.register_initializer_async.assert_awaited_once()
+
+    async def test_handle_add_initializer_reads_with_aiofiles(self, tmp_path):
+        script = tmp_path / "myinit.py"
+        script.write_text("content read outside the event loop")
+        parsed_args = Namespace(files=[str(script)])
+        client = AsyncMock()
+        async_file = MagicMock()
+        async_file.__aenter__ = AsyncMock(return_value=async_file)
+        async_file.__aexit__ = AsyncMock(return_value=None)
+        async_file.read = AsyncMock(return_value="# stub initializer\n")
+
+        with patch("pyrit.cli.pyrit_scan.aiofiles.open", return_value=async_file) as open_mock:
+            result = await pyrit_scan._handle_add_initializer_async(client=client, parsed_args=parsed_args)
+
+        assert result == 0
+        open_mock.assert_called_once_with(script.resolve())
+        async_file.read.assert_awaited_once()
+        assert client.register_initializer_async.await_args.kwargs["script_content"] == "# stub initializer\n"
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",

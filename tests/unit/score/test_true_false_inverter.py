@@ -5,12 +5,12 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from unit.mocks import get_image_message_piece
+from unit.mocks import get_image_message_piece, store_message
 
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import MessagePiece
-from pyrit.score import SubStringScorer, TrueFalseInverterScorer
+from pyrit.score import MessageScorable, SubStringScorer, TrueFalseInverterScorer
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ async def test_score_async_unsupported_data_type_inverts_false_to_true(
 
     # With raise_on_no_valid_pieces=False (default), the inner scorer returns False,
     # and the inverter inverts it to True
-    scores = await scorer.score_async(request)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
     assert len(scores) == 1
     # Inverter inverts False -> True
     assert scores[0].get_value() is True

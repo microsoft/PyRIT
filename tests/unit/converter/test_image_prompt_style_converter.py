@@ -155,7 +155,6 @@ def test_list_available_filters() -> None:
     assert len(filters) > 0
 
 
-@pytest.mark.asyncio
 async def test_convert_async_with_specific_variation(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
@@ -174,7 +173,6 @@ async def test_convert_async_with_specific_variation(mock_target) -> None:
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_with_random_variation(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
@@ -190,7 +188,6 @@ async def test_convert_async_with_random_variation(mock_target) -> None:
     assert result.output_text == "A blurry bodycam shot of a figure in a dark alley"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_unsupported_input_type_raises(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,

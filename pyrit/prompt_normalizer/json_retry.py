@@ -75,4 +75,5 @@ async def send_json_with_retry_async(
             raise ValueError(f"No response received for conversation ID: {conversation_id}")
         return parse(response)
 
-    return await _attempt_async()
+    result: T = await _attempt_async()
+    return result
