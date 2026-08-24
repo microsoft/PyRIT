@@ -24,6 +24,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ScenarioRunState,
     SeedObjective,
+    SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import (
@@ -1315,6 +1316,51 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         resumed_header = resumed._memory.get_scenario_result_header(scenario_result_id=original_id)
         assert resumed_header is not None
         assert resumed_header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == original_plan
+
+    async def test_resume_rejects_changed_companion_seed_with_same_objective(self, mock_objective_target):
+        objective = "unchanged objective"
+        original_seed_group = AttackSeedGroup(
+            seeds=[SeedObjective(value=objective), SeedPrompt(value="original context")]
+        )
+        scenario = self._StrategyScenario(name="Changed seed-group resume", version=1)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": DatasetAttackConfiguration(seed_groups=[original_seed_group]),
+                "include_baseline": False,
+            }
+        )
+        await scenario.initialize_async()
+
+        scenario_result_id = scenario._scenario_result_id
+        assert scenario_result_id is not None
+        header = scenario._memory.get_scenario_result_header(scenario_result_id=scenario_result_id)
+        assert header is not None
+        persisted_plan = header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+        assert persisted_plan["atomic_groups"][0]["seed_group_ids"] == [original_seed_group.logical_id]
+
+        changed_seed_group = AttackSeedGroup(
+            seeds=[SeedObjective(value=objective), SeedPrompt(value="changed context")]
+        )
+        assert changed_seed_group.logical_id != original_seed_group.logical_id
+        resumed = self._StrategyScenario(
+            name="Changed seed-group resume",
+            version=1,
+            scenario_result_id=scenario_result_id,
+        )
+        resumed.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": DatasetAttackConfiguration(seed_groups=[changed_seed_group]),
+                "include_baseline": False,
+            }
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=r"cannot resume: atomic group 'strategy' is missing 1 planned seed group",
+        ):
+            await resumed.initialize_async()
 
     async def test_resume_reconstructs_plan_for_legacy_resumable_run(self, mock_objective_target):
         config = self._make_config()
