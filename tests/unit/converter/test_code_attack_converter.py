@@ -1,17 +1,47 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import ast
 import re
 
 import pytest
 
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter import CodeAttackConverter, ConverterResult
 
 Template = CodeAttackConverter.Template
+Encoding = CodeAttackConverter.Encoding
+
+# Matches a whole double-quoted literal including its escape sequences.
+_LITERAL = r'"((?:[^"\\]|\\.)*)"'
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _decode_literals(converted: str, call: str) -> list[str]:
+    """Return the decoded values of every ``call("...")`` in code order.
+
+    The literal is evaluated rather than string-matched, so assertions compare
+    the value the target language would actually see, not its escaped form.
+    """
+    raw = re.findall(rf"{call}\({_LITERAL}\)", converted)
+    return [ast.literal_eval(f'"{item}"') for item in raw]
+
+
+def _decode_assignment(converted: str, prefix: str) -> str:
+    """Return the decoded value of a ``prefix "..."`` assignment."""
+    match = re.search(rf"{prefix}\s*{_LITERAL}", converted)
+    assert match is not None, f"Assignment {prefix!r} not found in output"
+    return ast.literal_eval(f'"{match.group(1)}"')
+
+
+def _write_template(directory, body: str, name: str = "custom.yaml"):
+    """Write a template YAML into ``directory`` and return its path."""
+    path = directory / name
+    path.write_text(body, encoding="utf-8")
+    return path
 
 
 def _extract_stack_words(converted: str) -> list[str]:
@@ -41,17 +71,25 @@ def test_invalid_template_type_raises():
         CodeAttackConverter(template="python_stack")  # type: ignore[arg-type]
 
 
-def test_all_template_members_construct():
-    for tmpl in Template:
-        c = CodeAttackConverter(template=tmpl)
-        assert c is not None
+@pytest.mark.parametrize("template", list(Template), ids=lambda t: t.name)
+async def test_every_template_member_renders(template):
+    """Every built-in template must actually render the objective, not just construct."""
+    converter = CodeAttackConverter(template=template)
+    result = await converter.convert_async(prompt="cut down a tree")
+
+    assert isinstance(result, ConverterResult)
+    assert result.output_type == "text"
+    assert result.output_text.strip(), f"{template.name} rendered empty output"
+    # The template placeholder must have been substituted.
+    assert "wrapped_input" not in result.output_text
+    # The encoded objective must be present in the rendered code.
+    assert re.search(_LITERAL, result.output_text), f"{template.name} produced no string literal"
 
 
 def test_custom_path_template_constructs(tmp_path):
-    fake_yaml = tmp_path / "custom.yaml"
-    fake_yaml.write_text("name: custom\nvalue: '{{ wrapped_input }}'\ndata_type: text\n")
-    c = CodeAttackConverter(template=fake_yaml)
-    assert c._language == "python_string"
+    fake_yaml = _write_template(tmp_path, "name: custom\nvalue: '{{ wrapped_input }}'\ndata_type: text\n")
+    converter = CodeAttackConverter(template=fake_yaml, encoding=Encoding.PYTHON_STRING)
+    assert converter._encoding is Encoding.PYTHON_STRING
 
 
 async def test_unsupported_input_type_raises():
@@ -218,34 +256,34 @@ async def test_special_characters_python_string():
 async def test_embedded_double_quote_python_string():
     converter = CodeAttackConverter(template=Template.PYTHON_STRING)
     result = await converter.convert_async(prompt='say "hi"')
-    # Bare unescaped inner quotes produce malformed code: my_string = "say "hi""
+    # Bare unescaped inner quotes would produce malformed code: my_string = "say "hi""
     assert 'my_string = "say "hi""' not in result.output_text
-    # json.dumps escapes: my_string = "say \"hi\""
-    assert '\\"hi\\"' in result.output_text
+    # The literal must decode back to exactly the original text.
+    assert _decode_assignment(result.output_text, "my_string =") == 'say "hi"'
 
 
 async def test_embedded_double_quote_python_list():
     converter = CodeAttackConverter(template=Template.PYTHON_LIST)
     result = await converter.convert_async(prompt='say "hi" now')
-    assert '\\"hi\\"' in result.output_text
+    assert _decode_literals(result.output_text, "my_list.append") == ["say", '"hi"', "now"]
 
 
 async def test_embedded_double_quote_python_stack():
     converter = CodeAttackConverter(template=Template.PYTHON_STACK)
     result = await converter.convert_async(prompt='say "hi" now')
-    assert '\\"hi\\"' in result.output_text
+    assert _decode_literals(result.output_text, "my_stack.append")[::-1] == ["say", '"hi"', "now"]
 
 
 async def test_embedded_double_quote_cpp():
     converter = CodeAttackConverter(template=Template.CPP)
     result = await converter.convert_async(prompt='say "hi"')
-    assert '\\"hi\\"' in result.output_text
+    assert _decode_assignment(result.output_text, "std::string my_string =") == 'say "hi"'
 
 
 async def test_embedded_double_quote_go():
     converter = CodeAttackConverter(template=Template.GO)
     result = await converter.convert_async(prompt='say "hi"')
-    assert '\\"hi\\"' in result.output_text
+    assert _decode_assignment(result.output_text, "myQueue :=") == 'say "hi"'
 
 
 async def test_long_prompt_all_words_present_python_list():
@@ -284,11 +322,228 @@ async def test_default_template_is_python_stack_verbose():
 
 
 async def test_custom_path_template_renders(tmp_path):
-    yaml_content = "name: custom\nvalue: 'ENCODED: {{ wrapped_input }}'\ndata_type: text\n"
-    custom = tmp_path / "custom.yaml"
-    custom.write_text(yaml_content)
+    custom = _write_template(tmp_path, "name: custom\nvalue: 'ENCODED: {{ wrapped_input }}'\ndata_type: text\n")
 
-    converter = CodeAttackConverter(template=custom)
+    converter = CodeAttackConverter(template=custom, encoding=Encoding.PYTHON_STRING)
     result = await converter.convert_async(prompt="hello world")
     assert "ENCODED:" in result.output_text
     assert "hello world" in result.output_text
+
+
+# ---------------------------------------------------------------------------
+# Non-BMP Unicode: the objective must survive as literal UTF-8
+#
+# json.dumps(ensure_ascii=True) would emit a surrogate pair ("😀").
+# Python evaluates that to two lone surrogates and Go and C++ reject surrogate
+# escapes outright, so the encoders must emit the character itself.
+# ---------------------------------------------------------------------------
+
+_EMOJI = "\U0001f600"
+_TREE = "\U0001f332"
+
+
+def _assert_no_surrogate_escape(converted: str) -> None:
+    assert "\\ud83d" not in converted.lower(), "non-BMP character was escaped as a surrogate pair"
+
+
+async def test_non_bmp_roundtrip_python_string():
+    prompt = f"cut down a tree {_EMOJI}"
+    result = await CodeAttackConverter(template=Template.PYTHON_STRING).convert_async(prompt=prompt)
+    _assert_no_surrogate_escape(result.output_text)
+    assert _decode_assignment(result.output_text, "my_string =") == prompt
+
+
+async def test_non_bmp_roundtrip_cpp():
+    prompt = f"cut down a tree {_EMOJI}"
+    result = await CodeAttackConverter(template=Template.CPP).convert_async(prompt=prompt)
+    _assert_no_surrogate_escape(result.output_text)
+    assert _decode_assignment(result.output_text, "std::string my_string =") == prompt
+
+
+async def test_non_bmp_roundtrip_go():
+    prompt = f"cut down a tree {_EMOJI}"
+    result = await CodeAttackConverter(template=Template.GO).convert_async(prompt=prompt)
+    _assert_no_surrogate_escape(result.output_text)
+    assert _decode_assignment(result.output_text, "myQueue :=") == prompt
+
+
+async def test_non_bmp_roundtrip_python_list():
+    prompt = f"burn {_EMOJI} the {_TREE} tree"
+    result = await CodeAttackConverter(template=Template.PYTHON_LIST).convert_async(prompt=prompt)
+    _assert_no_surrogate_escape(result.output_text)
+    assert _decode_literals(result.output_text, "my_list.append") == ["burn", _EMOJI, "the", _TREE, "tree"]
+
+
+async def test_non_bmp_roundtrip_python_stack():
+    prompt = f"burn {_EMOJI} the {_TREE} tree"
+    result = await CodeAttackConverter(template=Template.PYTHON_STACK).convert_async(prompt=prompt)
+    _assert_no_surrogate_escape(result.output_text)
+    decoded = _decode_literals(result.output_text, "my_stack.append")[::-1]
+    assert decoded == ["burn", _EMOJI, "the", _TREE, "tree"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["tab\tsep", "line\nbreak", "back\\slash", 'quote"inside', "ctrl\x01then1234", "del\x7fchar"],
+    ids=["tab", "newline", "backslash", "quote", "control", "delete"],
+)
+async def test_control_characters_roundtrip_python_string(raw):
+    """Control and escape characters must decode back to exactly the input."""
+    result = await CodeAttackConverter(template=Template.PYTHON_STRING).convert_async(prompt=raw)
+    assert _decode_assignment(result.output_text, "my_string =") == raw
+
+
+# ---------------------------------------------------------------------------
+# Identifier: derived from template contents, not from where the file lives
+# ---------------------------------------------------------------------------
+
+
+def test_identifier_exposes_template_hash_and_encoding():
+    identifier = CodeAttackConverter(template=Template.PYTHON_LIST).get_identifier()
+    params = identifier.params
+    assert params["template"] == "PYTHON_LIST"
+    assert params["encoding"] == "python_list"
+    assert re.fullmatch(r"[0-9a-f]{16}", params["template_hash"])
+
+
+def test_identifier_does_not_leak_absolute_path():
+    identifier = CodeAttackConverter(template=Template.CPP).get_identifier()
+    assert "/" not in str(identifier.params["template"])
+    assert str(CONVERTER_SEED_PROMPT_PATH) not in str(identifier.params)
+
+
+def test_identifier_stable_across_paths_with_identical_content(tmp_path):
+    """Same template contents at two different paths must give the same identifier."""
+    body = "name: custom\nvalue: 'X {{ wrapped_input }}'\ndata_type: text\n"
+    first = _write_template(tmp_path, body, name="one.yaml")
+    second = _write_template(tmp_path, body, name="two.yaml")
+
+    left = CodeAttackConverter(template=first, encoding=Encoding.PYTHON_STRING).get_identifier()
+    right = CodeAttackConverter(template=second, encoding=Encoding.PYTHON_STRING).get_identifier()
+
+    assert first != second
+    assert left.params["template_hash"] == right.params["template_hash"]
+    assert left.params == right.params
+
+
+def test_identifier_sensitive_to_template_content(tmp_path):
+    """Changing the template body must change the identifier."""
+    original = _write_template(
+        tmp_path, "name: custom\nvalue: 'X {{ wrapped_input }}'\ndata_type: text\n", name="one.yaml"
+    )
+    modified = _write_template(
+        tmp_path, "name: custom\nvalue: 'Y {{ wrapped_input }}'\ndata_type: text\n", name="two.yaml"
+    )
+
+    left = CodeAttackConverter(template=original, encoding=Encoding.PYTHON_STRING).get_identifier()
+    right = CodeAttackConverter(template=modified, encoding=Encoding.PYTHON_STRING).get_identifier()
+
+    assert left.params["template_hash"] != right.params["template_hash"]
+
+
+def test_identifier_sensitive_to_encoding(tmp_path):
+    """Same template, different encoding, must not collide."""
+    body = "name: custom\nvalue: 'X {{ wrapped_input }}'\ndata_type: text\n"
+    path = _write_template(tmp_path, body)
+
+    left = CodeAttackConverter(template=path, encoding=Encoding.PYTHON_LIST).get_identifier()
+    right = CodeAttackConverter(template=path, encoding=Encoding.GO).get_identifier()
+
+    assert left.params["encoding"] != right.params["encoding"]
+    assert left.params != right.params
+
+
+def test_identifier_distinguishes_builtin_templates():
+    """Two built-in templates must not share an identifier."""
+    left = CodeAttackConverter(template=Template.PYTHON_STACK).get_identifier()
+    right = CodeAttackConverter(template=Template.PYTHON_STACK_VERBOSE).get_identifier()
+    assert left.params["template"] != right.params["template"]
+    assert left.params["template_hash"] != right.params["template_hash"]
+
+
+# ---------------------------------------------------------------------------
+# Custom template validation, all at construction time
+# ---------------------------------------------------------------------------
+
+
+def test_missing_template_file_raises_at_construction(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        CodeAttackConverter(template=tmp_path / "does_not_exist.yaml", encoding=Encoding.PYTHON_STRING)
+
+
+def test_malformed_yaml_raises_at_construction(tmp_path):
+    broken = _write_template(tmp_path, "name: x\n  bad indent: [\n", name="broken.yaml")
+    with pytest.raises(ValueError, match="Invalid YAML"):
+        CodeAttackConverter(template=broken, encoding=Encoding.PYTHON_STRING)
+
+
+def test_template_without_wrapped_input_raises(tmp_path):
+    """A template that never references wrapped_input silently drops the objective."""
+    static = _write_template(tmp_path, "name: static\nvalue: 'no parameter here'\ndata_type: text\n")
+    with pytest.raises(ValueError, match="wrapped_input"):
+        CodeAttackConverter(template=static, encoding=Encoding.PYTHON_STRING)
+
+
+def test_path_without_encoding_raises(tmp_path):
+    """A custom path cannot infer its data structure, so encoding is required."""
+    custom = _write_template(tmp_path, "name: custom\nvalue: '{{ wrapped_input }}'\ndata_type: text\n")
+    with pytest.raises(ValueError, match="encoding is required"):
+        CodeAttackConverter(template=custom)
+
+
+def test_invalid_encoding_type_raises(tmp_path):
+    custom = _write_template(tmp_path, "name: custom\nvalue: '{{ wrapped_input }}'\ndata_type: text\n")
+    with pytest.raises(TypeError, match="Encoding"):
+        CodeAttackConverter(template=custom, encoding="python_string")  # type: ignore[arg-type]
+
+
+def test_explicit_encoding_overrides_builtin_template_default():
+    """A built-in template may be paired with a different encoding explicitly."""
+    converter = CodeAttackConverter(template=Template.PYTHON_STACK, encoding=Encoding.PYTHON_LIST)
+    assert converter._encoding is Encoding.PYTHON_LIST
+
+
+async def test_custom_path_supports_non_python_string_encodings(tmp_path):
+    """Regression: a custom template used to be forced to python_string."""
+    custom = _write_template(tmp_path, "name: custom\nvalue: '{{ wrapped_input }}'\ndata_type: text\n")
+
+    result = await CodeAttackConverter(template=custom, encoding=Encoding.GO).convert_async(prompt="a b")
+    assert "myQueue :=" in result.output_text
+
+    result = await CodeAttackConverter(template=custom, encoding=Encoding.PYTHON_LIST).convert_async(prompt="a b")
+    assert _decode_literals(result.output_text, "my_list.append") == ["a", "b"]
+
+
+def test_template_loaded_once_at_construction(tmp_path):
+    """Deleting the file after construction must not break conversion."""
+    custom = _write_template(tmp_path, "name: custom\nvalue: 'X {{ wrapped_input }}'\ndata_type: text\n")
+    converter = CodeAttackConverter(template=custom, encoding=Encoding.PYTHON_STRING)
+    custom.unlink()
+    assert converter._seed_prompt is not None
+
+
+# ---------------------------------------------------------------------------
+# Technique factory wiring
+# ---------------------------------------------------------------------------
+
+
+def test_code_attack_technique_factory_wiring():
+    """The code_attack technique must wire this converter onto PromptSendingAttack."""
+    from pyrit.executor.attack import PromptSendingAttack
+    from pyrit.setup.initializers.techniques.core import get_technique_factories
+
+    factories = {factory.name: factory for factory in get_technique_factories()}
+    assert "code_attack" in factories
+
+    factory = factories["code_attack"]
+    assert factory._attack_class is PromptSendingAttack
+    assert factory.description
+
+    converter_config = factory._attack_kwargs["attack_converter_config"]
+    converters = [c for group in converter_config.request_converters for c in group.converters]
+    assert len(converters) == 1
+
+    converter = converters[0]
+    assert isinstance(converter, CodeAttackConverter)
+    assert converter._encoding is Encoding.PYTHON_STACK
+    assert converter._template_name == "PYTHON_STACK_VERBOSE"

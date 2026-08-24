@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
+import hashlib
 import pathlib
 import re
 from enum import Enum
 from typing import TYPE_CHECKING
+
+from jinja2 import meta
+from jinja2.sandbox import SandboxedEnvironment
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
@@ -14,27 +17,56 @@ from pyrit.models import PromptDataType, SeedPrompt
 if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier
 
+# Template parameter that receives the encoded objective.
+_WRAPPED_INPUT = "wrapped_input"
+
 
 class CodeAttackConverter(Converter):
     """
     Encodes a prompt as a code-completion task (CodeAttack, Ren et al. ACL 2024).
 
-    The prompt is encoded word-by-word into a data-structure initialisation
-    sequence embedded inside a partial code template. The model is asked to
-    complete the code, which sidesteps natural-language safety training.
+    The prompt is encoded into a data-structure initialisation sequence embedded
+    inside a partial code template. The model is asked to complete the code,
+    which sidesteps natural-language safety training.
 
-    **Separator normalisation (python_stack only):** tokens are split on
-    ``[\\s\\-]+``, so hyphens and runs of whitespace are treated as delimiters
-    and do not survive the encode/decode cycle. Byte-identical round-trips are
-    only guaranteed for inputs whose words are separated by a single space with
-    no hyphens. ``python_list`` uses ``str.split()`` and preserves token
-    boundaries without consuming hyphens.
+    **Separator normalisation.** How much of the input survives the encode step
+    depends on the encoding, because each one splits the prompt differently:
+
+    - ``PYTHON_STRING``, ``CPP`` and ``GO`` embed the prompt as a single string
+      literal. Every character survives, including whitespace runs, hyphens,
+      tabs, newlines and non-BMP characters such as emoji. These round-trip
+      byte-identically.
+    - ``PYTHON_LIST`` splits on ``str.split()``, so *any* run of whitespace
+      (spaces, tabs, newlines) collapses to a single token boundary and leading
+      and trailing whitespace is dropped. Hyphens are preserved inside tokens.
+      Round-trips losslessly only when words are separated by single spaces.
+    - ``PYTHON_STACK`` splits on ``[\\s\\-]+``, so it collapses whitespace runs
+      exactly like ``PYTHON_LIST`` *and additionally* consumes hyphens as
+      delimiters. It also reverses token order (the template's ``decode()``
+      pops the stack). A prompt that yields a single token is exploded into
+      individual characters. Round-trips losslessly only when words are
+      separated by single spaces and contain no hyphens.
+
+    In every case the encoded literals are escaped for the target language, so
+    quotes, backslashes and control characters cannot break out of the literal.
 
     CodeAttack [@ren2024codeattack].
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
     SUPPORTED_OUTPUT_TYPES = ("text",)
+
+    class Encoding(Enum):
+        """
+        The data structure the objective is encoded into, and the language whose
+        string-literal escaping rules apply.
+        """
+
+        PYTHON_STACK = "python_stack"
+        PYTHON_LIST = "python_list"
+        PYTHON_STRING = "python_string"
+        CPP = "cpp"
+        GO = "go"
 
     class Template(Enum):
         """
@@ -56,34 +88,97 @@ class CodeAttackConverter(Converter):
         self,
         *,
         template: "CodeAttackConverter.Template | pathlib.Path" = Template.PYTHON_STACK_VERBOSE,
+        encoding: "CodeAttackConverter.Encoding | None" = None,
     ) -> None:
         """
         Args:
-            template: The encoding template to use. Pass a
+            template: The code template to render. Pass a
                 ``CodeAttackConverter.Template`` member to use one of the
-                built-in templates, or a ``pathlib.Path`` to a custom YAML
-                file. When a custom path is supplied the encoder defaults to
-                the ``python_string`` structure because the language cannot be
-                inferred from the path.
+                built-in templates, or a ``pathlib.Path`` to a custom YAML file.
+            encoding: The data structure the objective is encoded into. For a
+                built-in ``Template`` this defaults to the encoding that matches
+                the template and normally does not need to be passed. For a
+                ``pathlib.Path`` it is required, because the data structure
+                cannot be inferred from a custom file.
 
         Raises:
             TypeError: If ``template`` is not a ``CodeAttackConverter.Template``
-                or a ``pathlib.Path``.
+                or a ``pathlib.Path``, or if ``encoding`` is not a
+                ``CodeAttackConverter.Encoding``.
+            ValueError: If ``template`` is a ``pathlib.Path`` and ``encoding``
+                is not supplied, if the template file is malformed, or if the
+                template does not reference the ``wrapped_input`` parameter.
+            FileNotFoundError: If the template file does not exist.
         """
+        if encoding is not None and not isinstance(encoding, CodeAttackConverter.Encoding):
+            raise TypeError("encoding must be a CodeAttackConverter.Encoding.")
+
         if isinstance(template, CodeAttackConverter.Template):
             self._template_path = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / f"{template.value}.yaml"
-            self._language = _TEMPLATE_LANGUAGE[template]
+            self._template_name: str = template.name
+            resolved_encoding = encoding if encoding is not None else _TEMPLATE_ENCODING[template]
         elif isinstance(template, pathlib.Path):
-            # Custom template supplied by the caller. Encoder defaults to the
-            # python_string structure since the language cannot be inferred.
+            if encoding is None:
+                valid = ", ".join(f"Encoding.{member.name}" for member in CodeAttackConverter.Encoding)
+                raise ValueError(
+                    "encoding is required when template is a pathlib.Path, because the data "
+                    f"structure cannot be inferred from a custom file. Pass one of: {valid}."
+                )
             self._template_path = template
-            self._language = "python_string"
+            self._template_name = f"custom:{encoding.value}"
+            resolved_encoding = encoding
         else:
             raise TypeError("template must be a CodeAttackConverter.Template or a pathlib.Path.")
 
+        self._encoding = resolved_encoding
+
+        # Load and validate the template once, so a broken custom file fails at
+        # construction rather than on the first conversion.
+        self._seed_prompt = SeedPrompt.from_yaml_file(self._template_path)
+        self._validate_template(self._seed_prompt, self._template_path)
+
+    @staticmethod
+    def _validate_template(seed_prompt: SeedPrompt, path: pathlib.Path) -> None:
+        """
+        Ensure the template actually injects the encoded objective.
+
+        A template whose value never references ``wrapped_input`` renders to a
+        constant string and silently discards the objective, so reject it.
+
+        Args:
+            seed_prompt: The loaded template.
+            path: Path the template was loaded from, used in the error message.
+
+        Raises:
+            ValueError: If the template does not reference ``wrapped_input``.
+        """
+        environment = SandboxedEnvironment()
+        referenced = meta.find_undeclared_variables(environment.parse(seed_prompt.value))
+        if _WRAPPED_INPUT not in referenced:
+            raise ValueError(
+                f"CodeAttack template {path} does not reference the '{_WRAPPED_INPUT}' parameter, "
+                "so the objective would be silently discarded. Add "
+                f"'{{{{ {_WRAPPED_INPUT} }}}}' to the template value."
+            )
+
     def _build_identifier(self) -> "ComponentIdentifier":
+        """
+        Build identifier from the template contents rather than its location.
+
+        Hashing the loaded template value keeps the identifier stable when the
+        same template is read from a different path, and changes it when a
+        custom template's contents change.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        template_hash = hashlib.sha256(str(self._seed_prompt.value).encode("utf-8")).hexdigest()[:16]
         return self._create_identifier(
-            params={"template": str(self._template_path)},
+            params={
+                "template": self._template_name,
+                "template_hash": template_hash,
+                "encoding": self._encoding.value,
+            }
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
@@ -105,8 +200,7 @@ class CodeAttackConverter(Converter):
             raise ValueError("Input type not supported")
 
         wrapped_input = self._encode(prompt)
-        seed_prompt = SeedPrompt.from_yaml_file(self._template_path)
-        formatted = seed_prompt.render_template_value(wrapped_input=wrapped_input)
+        formatted = self._seed_prompt.render_template_value(wrapped_input=wrapped_input)
         return ConverterResult(output_text=formatted, output_type="text")
 
     # ------------------------------------------------------------------
@@ -115,59 +209,108 @@ class CodeAttackConverter(Converter):
 
     def _encode(self, prompt: str) -> str:
         """
-        Dispatch to the appropriate encoding method for the selected language.
+        Dispatch to the appropriate encoding method for the selected encoding.
 
         Returns:
             The encoded wrapped_input string ready for template injection.
 
         Raises:
-            ValueError: If ``self._language`` is not a recognised value (guard
+            ValueError: If ``self._encoding`` is not a recognised value (guard
                 against future inconsistency).
         """
-        match self._language:
-            case "python_stack":
+        match self._encoding:
+            case CodeAttackConverter.Encoding.PYTHON_STACK:
                 return self._encode_python_stack(prompt)
-            case "python_list":
+            case CodeAttackConverter.Encoding.PYTHON_LIST:
                 return self._encode_python_list(prompt)
-            case "python_string":
+            case CodeAttackConverter.Encoding.PYTHON_STRING:
                 return self._encode_python_string(prompt)
-            case "cpp":
+            case CodeAttackConverter.Encoding.CPP:
                 return self._encode_cpp(prompt)
-            case "go":
+            case CodeAttackConverter.Encoding.GO:
                 return self._encode_go(prompt)
             case _:
-                raise ValueError(f"Unsupported language: {self._language!r}")
+                raise ValueError(f"Unsupported encoding: {self._encoding!r}")
 
     def _encode_python_stack(self, prompt: str) -> str:
         words = re.split(r"[\s\-]+", prompt)
         if len(words) == 1:
             words = list(words[0])
         words = words[::-1]
-        return "\n".join(f"    my_stack.append({json.dumps(word)})" for word in words)
+        literals = (_escape_string_literal(word, CodeAttackConverter.Encoding.PYTHON_STACK) for word in words)
+        return "\n".join(f"    my_stack.append({literal})" for literal in literals)
 
     def _encode_python_list(self, prompt: str) -> str:
-        words = prompt.split()
-        return "\n".join(f"    my_list.append({json.dumps(word)})" for word in words)
+        literals = (_escape_string_literal(word, CodeAttackConverter.Encoding.PYTHON_LIST) for word in prompt.split())
+        return "\n".join(f"    my_list.append({literal})" for literal in literals)
 
     def _encode_python_string(self, prompt: str) -> str:
-        return f"    my_string = {json.dumps(prompt)}"
+        return f"    my_string = {_escape_string_literal(prompt, CodeAttackConverter.Encoding.PYTHON_STRING)}"
 
     def _encode_cpp(self, prompt: str) -> str:
-        return f"    std::string my_string = {json.dumps(prompt)};"
+        return f"    std::string my_string = {_escape_string_literal(prompt, CodeAttackConverter.Encoding.CPP)};"
 
     def _encode_go(self, prompt: str) -> str:
-        return f"        myQueue := {json.dumps(prompt)}"
+        return f"        myQueue := {_escape_string_literal(prompt, CodeAttackConverter.Encoding.GO)}"
 
 
-# Maps each built-in Template to its encoding language.
-# Defined after the class so the Template enum members are in scope.
-_TEMPLATE_LANGUAGE: dict[CodeAttackConverter.Template, str] = {
-    CodeAttackConverter.Template.PYTHON_STACK: "python_stack",
-    CodeAttackConverter.Template.PYTHON_STACK_VERBOSE: "python_stack",
-    CodeAttackConverter.Template.PYTHON_LIST: "python_list",
-    CodeAttackConverter.Template.PYTHON_LIST_VERBOSE: "python_list",
-    CodeAttackConverter.Template.PYTHON_STRING: "python_string",
-    CodeAttackConverter.Template.PYTHON_STRING_VERBOSE: "python_string",
-    CodeAttackConverter.Template.CPP: "cpp",
-    CodeAttackConverter.Template.GO: "go",
+def _escape_string_literal(value: str, encoding: CodeAttackConverter.Encoding) -> str:
+    """
+    Render ``value`` as a double-quoted string literal valid in the target language.
+
+    Non-ASCII characters, including non-BMP characters such as emoji, are emitted
+    as literal UTF-8 rather than escaped. Python, Go and C++ source is UTF-8, so
+    the character survives intact. This avoids ``json.dumps``' default
+    ``ensure_ascii=True`` behaviour, which encodes non-BMP characters as a
+    surrogate pair (``\\ud83d\\ude00``); Go and C++ reject surrogate escapes and
+    Python evaluates them to two lone surrogates rather than the original
+    character.
+
+    Backslash, double quote and control characters are escaped. Control
+    characters without a short escape use a hex escape, except in C++ where hex
+    escapes consume an unbounded run of hex digits and would swallow a following
+    literal digit; C++ uses a three-digit octal escape instead, which is capped
+    by the language.
+
+    Args:
+        value: The raw text to embed.
+        encoding: Selects the target language's escaping rules.
+
+    Returns:
+        str: The quoted literal, including the surrounding double quotes.
+    """
+    pieces: list[str] = []
+    for character in value:
+        codepoint = ord(character)
+        if character == "\\":
+            pieces.append("\\\\")
+        elif character == '"':
+            pieces.append('\\"')
+        elif character == "\n":
+            pieces.append("\\n")
+        elif character == "\r":
+            pieces.append("\\r")
+        elif character == "\t":
+            pieces.append("\\t")
+        elif codepoint < 0x20 or codepoint == 0x7F:
+            if encoding is CodeAttackConverter.Encoding.CPP:
+                pieces.append(f"\\{codepoint:03o}")
+            else:
+                pieces.append(f"\\x{codepoint:02x}")
+        else:
+            pieces.append(character)
+    return '"' + "".join(pieces) + '"'
+
+
+# Maps each built-in Template to the encoding it expects.
+# Defined after the class so the Template and Encoding members are in scope.
+_TEMPLATE_ENCODING: dict[CodeAttackConverter.Template, CodeAttackConverter.Encoding] = {
+    CodeAttackConverter.Template.PYTHON_STACK: CodeAttackConverter.Encoding.PYTHON_STACK,
+    CodeAttackConverter.Template.PYTHON_STACK_VERBOSE: CodeAttackConverter.Encoding.PYTHON_STACK,
+    CodeAttackConverter.Template.PYTHON_LIST: CodeAttackConverter.Encoding.PYTHON_LIST,
+    CodeAttackConverter.Template.PYTHON_LIST_VERBOSE: CodeAttackConverter.Encoding.PYTHON_LIST,
+    CodeAttackConverter.Template.PYTHON_STRING: CodeAttackConverter.Encoding.PYTHON_STRING,
+    CodeAttackConverter.Template.PYTHON_STRING_VERBOSE: CodeAttackConverter.Encoding.PYTHON_STRING,
+    CodeAttackConverter.Template.CPP: CodeAttackConverter.Encoding.CPP,
+    CodeAttackConverter.Template.GO: CodeAttackConverter.Encoding.GO,
 }
