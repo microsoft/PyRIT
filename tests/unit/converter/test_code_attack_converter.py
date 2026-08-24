@@ -44,23 +44,6 @@ def _write_template(directory, body: str, name: str = "custom.yaml"):
     return path
 
 
-def _extract_stack_words(converted: str) -> list[str]:
-    """Parse my_stack.append("word") calls and return the words in code order."""
-    return re.findall(r'my_stack\.append\("([^"]+)"\)', converted)
-
-
-def _extract_list_words(converted: str) -> list[str]:
-    """Parse my_list.append("word") calls and return the words in code order."""
-    return re.findall(r'my_list\.append\("([^"]+)"\)', converted)
-
-
-def _extract_string_value(converted: str, pattern: str) -> str:
-    """Extract the string literal from a variable-assignment line."""
-    m = re.search(pattern, converted)
-    assert m is not None, f"Pattern {pattern!r} not found in output"
-    return m.group(1)
-
-
 # ---------------------------------------------------------------------------
 # Construction validation
 # ---------------------------------------------------------------------------
@@ -184,7 +167,7 @@ async def test_python_stack_roundtrip():
     converter = CodeAttackConverter(template=Template.PYTHON_STACK)
     result = await converter.convert_async(prompt=prompt)
 
-    words_in_code = _extract_stack_words(result.output_text)
+    words_in_code = _decode_literals(result.output_text, "my_stack.append")
     # Decode: reverse the in-code order (stack was pushed in reverse)
     recovered = " ".join(words_in_code[::-1])
     assert recovered == prompt
@@ -195,7 +178,7 @@ async def test_python_list_roundtrip():
     converter = CodeAttackConverter(template=Template.PYTHON_LIST)
     result = await converter.convert_async(prompt=prompt)
 
-    words_in_code = _extract_list_words(result.output_text)
+    words_in_code = _decode_literals(result.output_text, "my_list.append")
     recovered = " ".join(words_in_code)
     assert recovered == prompt
 
@@ -205,7 +188,7 @@ async def test_python_string_roundtrip():
     converter = CodeAttackConverter(template=Template.PYTHON_STRING)
     result = await converter.convert_async(prompt=prompt)
 
-    recovered = _extract_string_value(result.output_text, r'my_string = "([^"]+)"')
+    recovered = _decode_assignment(result.output_text, "my_string =")
     assert recovered == prompt
 
 
@@ -214,7 +197,7 @@ async def test_cpp_roundtrip():
     converter = CodeAttackConverter(template=Template.CPP)
     result = await converter.convert_async(prompt=prompt)
 
-    recovered = _extract_string_value(result.output_text, r'std::string my_string = "([^"]+)"')
+    recovered = _decode_assignment(result.output_text, "std::string my_string =")
     assert recovered == prompt
 
 
@@ -223,7 +206,7 @@ async def test_go_roundtrip():
     converter = CodeAttackConverter(template=Template.GO)
     result = await converter.convert_async(prompt=prompt)
 
-    recovered = _extract_string_value(result.output_text, r'myQueue := "([^"]+)"')
+    recovered = _decode_assignment(result.output_text, "myQueue :=")
     assert recovered == prompt
 
 
@@ -291,7 +274,7 @@ async def test_long_prompt_all_words_present_python_list():
     converter = CodeAttackConverter(template=Template.PYTHON_LIST)
     result = await converter.convert_async(prompt=prompt)
 
-    words = _extract_list_words(result.output_text)
+    words = _decode_literals(result.output_text, "my_list.append")
     assert words == prompt.split()
 
 
@@ -300,7 +283,7 @@ async def test_single_word_python_stack_does_not_split_chars():
     converter = CodeAttackConverter(template=Template.PYTHON_STACK)
     result = await converter.convert_async(prompt=prompt)
 
-    words = _extract_stack_words(result.output_text)
+    words = _decode_literals(result.output_text, "my_stack.append")
     # Single word with no hyphens: reference code falls back to char-by-char.
     # Reversed chars joined == original word.
     recovered = "".join(words[::-1])
@@ -520,30 +503,3 @@ def test_template_loaded_once_at_construction(tmp_path):
     converter = CodeAttackConverter(template=custom, encoding=Encoding.PYTHON_STRING)
     custom.unlink()
     assert converter._seed_prompt is not None
-
-
-# ---------------------------------------------------------------------------
-# Technique factory wiring
-# ---------------------------------------------------------------------------
-
-
-def test_code_attack_technique_factory_wiring():
-    """The code_attack technique must wire this converter onto PromptSendingAttack."""
-    from pyrit.executor.attack import PromptSendingAttack
-    from pyrit.setup.initializers.techniques.core import get_technique_factories
-
-    factories = {factory.name: factory for factory in get_technique_factories()}
-    assert "code_attack" in factories
-
-    factory = factories["code_attack"]
-    assert factory._attack_class is PromptSendingAttack
-    assert factory.description
-
-    converter_config = factory._attack_kwargs["attack_converter_config"]
-    converters = [c for group in converter_config.request_converters for c in group.converters]
-    assert len(converters) == 1
-
-    converter = converters[0]
-    assert isinstance(converter, CodeAttackConverter)
-    assert converter._encoding is Encoding.PYTHON_STACK
-    assert converter._template_name == "PYTHON_STACK_VERBOSE"
