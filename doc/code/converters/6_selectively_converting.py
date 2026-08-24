@@ -227,7 +227,6 @@ await output_attack_async(result)
 # `preserve_tokens` can be used to use the output of one converter as the input for the next. This example converts the second half to an angry tone, translates that outpu to spanish, and then changes that output to emoji (but never touches the first half of the message).
 
 # %%
-
 first_converter = SelectiveTextConverter(
     sub_converter=ToneConverter(converter_target=OpenAIChatTarget(), tone="angry"),
     selection_strategy=WordPositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),

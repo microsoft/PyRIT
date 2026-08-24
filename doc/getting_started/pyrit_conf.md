@@ -98,14 +98,13 @@ Use `pyrit list initializers` in the CLI to see all registered initializers. See
 
 #### Recommended Defaults
 
-Most users should enable the following initializers. These are what the `.pyrit_conf_example` ships with and are required for features like `pyrit_scan` and automated scenarios.
+Most users should enable the following initializers. These are what the `.pyrit_conf_example` ships with and support normal `pyrit_scan` and automated scenario workflows.
 
 | Initializer | What It Registers | When You Need It |
 | --- | --- | --- |
-| `target` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | **Required for `pyrit_scan`** and any registry-based workflows |
-| `scorer` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | **Required for automated scoring** and `pyrit_scan` evaluations |
-| `technique` | Attack techniques into the `AttackTechniqueRegistry` | **Required for `pyrit_scan` scenarios** that select techniques |
-| `load_default_datasets` | Seed datasets for all registered scenarios into memory | **Required for `pyrit_scan` scenarios** — they need data to run |
+| `target` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | Recommended for `pyrit_scan` and registry-based workflows |
+| `scorer` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | Recommended for automated scoring and `pyrit_scan` evaluations |
+| `technique` | Attack techniques into the `AttackTechniqueRegistry` | Recommended for scenarios that select registered techniques |
 
 ```{note}
 **Execution order follows listing order.** Initializers execute in the order they appear in the config. Ensure dependencies are satisfied — for example, list `target` before `scorer` since scorers need targets to be registered first.
@@ -126,12 +125,23 @@ initializers:
         - scorer
   - name: scorer
   - name: technique
+```
+
+#### Optional Full Dataset Preload
+
+`load_default_datasets` is not required for `pyrit_scan`. Scenario `DatasetAttackConfiguration` objects fetch only their requested datasets from registered providers on demand, then add them to memory.
+
+Use `load_default_datasets` only when you intentionally want to preload every registered dataset—for example, to warm a shared cache or prepare an offline environment:
+
+```yaml
+initializers:
+  - name: target
+  - name: scorer
+  - name: technique
   - name: load_default_datasets
 ```
 
-```{note}
-**`load_default_datasets` is optional.** Scenarios fetch their datasets from the registered provider on demand the first time they run, so you no longer need this initializer for everyday runs. Add it only when you want to preload every scenario's datasets up front — for example, to warm memory for repeated runs or to populate a database for offline use.
-```
+Full preload can take several minutes and may require network access, provider credentials, or acceptance of gated dataset licenses. When preloading during local backend startup, increase `server.startup_timeout` if the configured timeout is not long enough.
 
 ### `initialization_scripts`
 
@@ -356,7 +366,10 @@ initializers:
         - scorer
   - name: scorer
   - name: technique
-  - name: load_default_datasets
+  # Optional full preload/cache warming; scenarios fetch requested datasets on demand.
+  # Full preload can take several minutes and may require network access,
+  # provider credentials, accepted dataset licenses, and a larger startup_timeout.
+  # - name: load_default_datasets
 
 # Custom initialization scripts (optional)
 # Omit or set to null for no scripts; [] to explicitly load nothing

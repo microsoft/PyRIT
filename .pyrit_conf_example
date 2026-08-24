@@ -25,7 +25,7 @@ memory_db_type: sqlite
 # - target: Registers available prompt targets into the TargetRegistry
 # - scorer: Registers pre-configured scorers into the ScorerRegistry
 # - technique: Registers attack techniques into the AttackTechniqueRegistry
-# - load_default_datasets: Loads datasets into memory so scenarios can run
+# - load_default_datasets: Optionally preloads all registered datasets into memory
 # - preload_scenario_metadata: Preloads scenario metadata into the registry
 #
 # Each initializer can be specified as:
@@ -51,7 +51,13 @@ initializers:
         - scorer
   - name: scorer
   - name: technique
-  - name: load_default_datasets
+  # Optional full preload/cache warming for offline or shared environments.
+  # This can take several minutes and may require network access,
+  # provider credentials, or accepted dataset licenses. Scenarios fetch only their
+  # requested datasets on demand without this initializer.
+  # If intentional preload exceeds backend startup time, increase
+  # server.startup_timeout below.
+  # - name: load_default_datasets
 
 # Operator and Operation Labels
 # ------------------------------
