@@ -37,6 +37,7 @@
 # JailbreakBench [@chao2024jailbreakbench],
 # JailbreakV-28K [@luo2024jailbreakv],
 # LLM-LAT [@sheshadri2024lat],
+# MASK [@ren2025maskbenchmarkdisentanglinghonesty],
 # MedSafetyBench [@han2024medsafetybench],
 # MM-SafetyBench [@liu2024mmsafetybench],
 # Moral Integrity Corpus [@ziems2022mic],

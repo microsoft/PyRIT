@@ -73,6 +73,10 @@ from pyrit.datasets.seed_datasets.remote.librai_do_not_answer_dataset import _Li
 from pyrit.datasets.seed_datasets.remote.llm_latent_adversarial_training_dataset import (
     _LLMLatentAdversarialTrainingDataset,
 )
+from pyrit.datasets.seed_datasets.remote.mask_dataset import (
+    MaskQuestionArchetype,
+    _MaskDataset,
+)
 from pyrit.datasets.seed_datasets.remote.medsafetybench_dataset import _MedSafetyBenchDataset
 from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import _MLCommonsAILuminateDataset
 from pyrit.datasets.seed_datasets.remote.mm_safetybench_dataset import (
@@ -150,6 +154,7 @@ __all__ = [
     "FigStepCategory",
     "FigStepVariant",
     "HiXSTestLanguage",
+    "MaskQuestionArchetype",
     "MMSafetyBenchCategory",
     "MMSafetyBenchVariant",
     "MossBenchOversensitivityType",
@@ -208,6 +213,7 @@ __all__ = [
     "_JBBBehaviorsDataset",
     "_LibrAIDoNotAnswerDataset",
     "_LLMLatentAdversarialTrainingDataset",
+    "_MaskDataset",
     "_MedSafetyBenchDataset",
     "_MICDataset",
     "_MLCommonsAILuminateDataset",

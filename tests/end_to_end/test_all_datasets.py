@@ -28,6 +28,7 @@ from pyrit.datasets.seed_datasets.remote import (
     _HarmBenchMultimodalDataset,
     _HiXSTestDataset,
     _JailbreakV28KDataset,
+    _MaskDataset,
     _PromptIntelDataset,
     _SGXSTestDataset,
     _SIUODataset,
@@ -67,6 +68,7 @@ _LIMITED_EXAMPLES_PROVIDERS: set[type] = {
 # is present (e.g. when running E2E locally without secrets).
 _HF_GATED_PROVIDERS: set[type] = {
     _HiXSTestDataset,
+    _MaskDataset,
     _SGXSTestDataset,
     _SorryBenchDataset,
     _VLGuardDataset,
