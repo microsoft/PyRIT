@@ -225,7 +225,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Handle post-execution logic after the attack strategy has run.
 
-        Attaches retry events to the result and persists it to memory.
+        Attaches execution metadata to the result and logs its outcome.
 
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
@@ -256,7 +256,15 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
         self._log_attack_outcome(event_data.result)
-        self._memory.add_attack_results_to_memory(attack_results=[event_data.result])
+
+    def _persist_result(self, *, result: AttackStrategyResultT) -> None:
+        """
+        Persist a completed attack result.
+
+        Args:
+            result (AttackStrategyResultT): The completed result to persist.
+        """
+        self._memory.add_attack_results_to_memory(attack_results=[result])
 
     @staticmethod
     def _apply_attribution(
@@ -435,13 +443,13 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
                 a params type that rejects certain fields.
             logger (logging.Logger): Logger instance for logging events.
         """
+        event_handler = _DefaultAttackStrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT](logger=logger)
         super().__init__(
             context_type=context_type,
-            event_handler=_DefaultAttackStrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT](
-                logger=logger
-            ),
+            event_handler=event_handler,
             logger=logger,
         )
+        self._default_event_handler = event_handler
         type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
         self._params_type = params_type
@@ -616,6 +624,20 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             list[Any]: The list of request ConverterConfiguration objects.
         """
         return self._request_converters
+
+    async def execute_with_context_async(self, *, context: AttackStrategyContextT) -> AttackStrategyResultT:
+        """
+        Execute an attack and persist its completed result after teardown.
+
+        Args:
+            context (AttackStrategyContextT): The attack execution context.
+
+        Returns:
+            AttackStrategyResultT: The completed and persisted attack result.
+        """
+        result = await super().execute_with_context_async(context=context)
+        self._default_event_handler._persist_result(result=result)
+        return result
 
     @overload
     async def execute_async(

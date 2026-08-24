@@ -284,10 +284,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             tasks = [
                 asyncio.create_task(handler.on_event_async(event_data)) for handler in self._event_handlers.values()
             ]
-            outcomes = await asyncio.gather(*tasks, return_exceptions=True)
-            for outcome in outcomes:
-                if isinstance(outcome, BaseException):
-                    raise outcome
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     @asynccontextmanager
     async def _execution_context_async(self, context: StrategyContextT) -> AsyncIterator[None]:
