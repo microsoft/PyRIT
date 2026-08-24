@@ -50,6 +50,12 @@ class CodeAttackConverter(Converter):
     In every case the encoded literals are escaped for the target language, so
     quotes, backslashes and control characters cannot break out of the literal.
 
+    **Template and encoding pairing.** Each built-in ``Template`` ships a wrapper
+    that only works with one ``Encoding``, so the enum implies the encoding and
+    passing ``encoding=`` alongside a built-in is rejected. A ``pathlib.Path``
+    demands an explicit ``encoding=``, because the data structure cannot be
+    inferred from a custom file. In short: enum implies, Path demands.
+
     CodeAttack [@ren2024codeattack].
     """
 
@@ -60,6 +66,11 @@ class CodeAttackConverter(Converter):
         """
         The data structure the objective is encoded into, and the language whose
         string-literal escaping rules apply.
+
+        Only supply this alongside a custom ``pathlib.Path`` template, where it is
+        required. A built-in ``Template`` already implies its encoding and rejects
+        this parameter, because pairing a built-in wrapper with a different data
+        structure would populate one structure while the wrapper decodes another.
         """
 
         PYTHON_STACK = "python_stack"
@@ -95,28 +106,41 @@ class CodeAttackConverter(Converter):
             template: The code template to render. Pass a
                 ``CodeAttackConverter.Template`` member to use one of the
                 built-in templates, or a ``pathlib.Path`` to a custom YAML file.
-            encoding: The data structure the objective is encoded into. For a
-                built-in ``Template`` this defaults to the encoding that matches
-                the template and normally does not need to be passed. For a
-                ``pathlib.Path`` it is required, because the data structure
-                cannot be inferred from a custom file.
+            encoding: The data structure the objective is encoded into. A
+                built-in ``Template`` implies its encoding, so passing this
+                alongside one is rejected: each built-in ships a wrapper that
+                only works with its mapped encoding, and pairing it with another
+                would declare one data structure, populate a different one, and
+                decode from the empty original. A ``pathlib.Path`` demands it,
+                because the data structure cannot be inferred from a custom file.
 
         Raises:
             TypeError: If ``template`` is not a ``CodeAttackConverter.Template``
                 or a ``pathlib.Path``, or if ``encoding`` is not a
                 ``CodeAttackConverter.Encoding``.
-            ValueError: If ``template`` is a ``pathlib.Path`` and ``encoding``
-                is not supplied, if the template file is malformed, or if the
-                template does not reference the ``wrapped_input`` parameter.
+            ValueError: If ``encoding`` is passed alongside a built-in
+                ``Template``, if ``template`` is a ``pathlib.Path`` and
+                ``encoding`` is not supplied, if the template file is malformed,
+                if the template does not reference ``wrapped_input``, or if it
+                references any other template variable.
             FileNotFoundError: If the template file does not exist.
         """
         if encoding is not None and not isinstance(encoding, CodeAttackConverter.Encoding):
             raise TypeError("encoding must be a CodeAttackConverter.Encoding.")
 
         if isinstance(template, CodeAttackConverter.Template):
+            mapped_encoding = _TEMPLATE_ENCODING[template]
+            if encoding is not None:
+                raise ValueError(
+                    f"encoding must not be passed with the built-in template Template.{template.name}, "
+                    f"which ships a wrapper that only works with Encoding.{mapped_encoding.name}; got "
+                    f"Encoding.{encoding.name}. Built-in templates imply their encoding. To use a "
+                    "different data structure, pass a pathlib.Path to a matching custom template "
+                    "together with encoding=."
+                )
             self._template_path = pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / f"{template.value}.yaml"
             self._template_name: str = template.name
-            resolved_encoding = encoding if encoding is not None else _TEMPLATE_ENCODING[template]
+            resolved_encoding = mapped_encoding
         elif isinstance(template, pathlib.Path):
             if encoding is None:
                 valid = ", ".join(f"Encoding.{member.name}" for member in CodeAttackConverter.Encoding)
@@ -140,17 +164,22 @@ class CodeAttackConverter(Converter):
     @staticmethod
     def _validate_template(seed_prompt: SeedPrompt, path: pathlib.Path) -> None:
         """
-        Ensure the template actually injects the encoded objective.
+        Ensure the template injects the encoded objective and nothing else.
 
         A template whose value never references ``wrapped_input`` renders to a
-        constant string and silently discards the objective, so reject it.
+        constant string and silently discards the objective. A template that
+        references any other variable cannot render at all, because
+        ``wrapped_input`` is the only value supplied at conversion time; without
+        this check that failure surfaces on the first conversion instead of at
+        construction.
 
         Args:
             seed_prompt: The loaded template.
             path: Path the template was loaded from, used in the error message.
 
         Raises:
-            ValueError: If the template does not reference ``wrapped_input``.
+            ValueError: If the template does not reference ``wrapped_input``, or
+                references any variable other than ``wrapped_input``.
         """
         environment = SandboxedEnvironment()
         referenced = meta.find_undeclared_variables(environment.parse(seed_prompt.value))
@@ -159,6 +188,15 @@ class CodeAttackConverter(Converter):
                 f"CodeAttack template {path} does not reference the '{_WRAPPED_INPUT}' parameter, "
                 "so the objective would be silently discarded. Add "
                 f"'{{{{ {_WRAPPED_INPUT} }}}}' to the template value."
+            )
+
+        unsupported = sorted(referenced - {_WRAPPED_INPUT})
+        if unsupported:
+            raise ValueError(
+                f"CodeAttack template {path} references unsupported template "
+                f"variable(s): {', '.join(unsupported)}. '{_WRAPPED_INPUT}' is the only value "
+                "supplied at conversion time, so rendering would fail. Remove them or replace "
+                "them with literal text."
             )
 
     def _build_identifier(self) -> "ComponentIdentifier":

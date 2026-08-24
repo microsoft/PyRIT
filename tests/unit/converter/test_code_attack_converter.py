@@ -8,6 +8,7 @@ import pytest
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter import CodeAttackConverter, ConverterResult
+from pyrit.converter.code_attack_converter import _TEMPLATE_ENCODING
 
 Template = CodeAttackConverter.Template
 Encoding = CodeAttackConverter.Encoding
@@ -480,10 +481,81 @@ def test_invalid_encoding_type_raises(tmp_path):
         CodeAttackConverter(template=custom, encoding="python_string")  # type: ignore[arg-type]
 
 
-def test_explicit_encoding_overrides_builtin_template_default():
-    """A built-in template may be paired with a different encoding explicitly."""
-    converter = CodeAttackConverter(template=Template.PYTHON_STACK, encoding=Encoding.PYTHON_LIST)
-    assert converter._encoding is Encoding.PYTHON_LIST
+@pytest.mark.parametrize(
+    ("template", "wrong_encoding"),
+    [
+        (Template.PYTHON_STACK, Encoding.PYTHON_LIST),
+        (Template.PYTHON_STACK_VERBOSE, Encoding.PYTHON_STRING),
+        (Template.PYTHON_LIST, Encoding.PYTHON_STACK),
+        (Template.PYTHON_STRING, Encoding.GO),
+        (Template.CPP, Encoding.PYTHON_LIST),
+        (Template.GO, Encoding.CPP),
+    ],
+    ids=lambda v: v.name,
+)
+def test_builtin_template_with_mismatched_encoding_raises(template, wrong_encoding):
+    """A built-in wrapper paired with another encoding would silently lose the objective.
+
+    Template.PYTHON_STACK + Encoding.PYTHON_LIST declares my_stack, writes the
+    objective into my_list, and then decodes from the still-empty my_stack.
+    """
+    with pytest.raises(ValueError, match="must not be passed with the built-in template"):
+        CodeAttackConverter(template=template, encoding=wrong_encoding)
+
+
+@pytest.mark.parametrize("template", list(Template), ids=lambda t: t.name)
+def test_builtin_template_with_its_own_encoding_also_raises(template):
+    """The parameter is rejected outright, not validated, so even a matching pair raises."""
+    matching = _TEMPLATE_ENCODING[template]
+    with pytest.raises(ValueError, match="Built-in templates imply their encoding"):
+        CodeAttackConverter(template=template, encoding=matching)
+
+
+def test_mismatch_error_names_template_mapped_and_passed_encodings():
+    with pytest.raises(ValueError) as excinfo:
+        CodeAttackConverter(template=Template.PYTHON_STACK, encoding=Encoding.GO)
+    message = str(excinfo.value)
+    assert "Template.PYTHON_STACK" in message
+    assert "Encoding.PYTHON_STACK" in message  # the mapped encoding
+    assert "Encoding.GO" in message  # the one passed
+
+
+@pytest.mark.parametrize("template", list(Template), ids=lambda t: t.name)
+def test_builtin_template_without_encoding_still_works(template):
+    """Every built-in must still construct with no encoding= and use its mapped encoding."""
+    converter = CodeAttackConverter(template=template)
+    assert converter._encoding is _TEMPLATE_ENCODING[template]
+
+
+def test_custom_template_with_extra_variable_raises(tmp_path):
+    """An unsupported variable must fail at construction, not on first conversion."""
+    extra = _write_template(tmp_path, "name: custom\nvalue: '{{ wrapped_input }} {{ suffix }}'\ndata_type: text\n")
+    with pytest.raises(ValueError, match="unsupported template") as excinfo:
+        CodeAttackConverter(template=extra, encoding=Encoding.PYTHON_STRING)
+    assert "suffix" in str(excinfo.value)
+
+
+def test_custom_template_names_every_extra_variable(tmp_path):
+    extra = _write_template(
+        tmp_path,
+        "name: custom\nvalue: '{{ wrapped_input }} {{ alpha }} {{ beta }}'\ndata_type: text\n",
+    )
+    with pytest.raises(ValueError) as excinfo:
+        CodeAttackConverter(template=extra, encoding=Encoding.PYTHON_STRING)
+    message = str(excinfo.value)
+    assert "alpha" in message and "beta" in message
+
+
+async def test_custom_template_with_only_wrapped_input_constructs_and_renders(tmp_path):
+    """The supported single-variable case must keep working."""
+    ok = _write_template(tmp_path, "name: custom\nvalue: 'X {{ wrapped_input }} Y'\ndata_type: text\n")
+
+    converter = CodeAttackConverter(template=ok, encoding=Encoding.PYTHON_STRING)
+    result = await converter.convert_async(prompt="hello world")
+
+    assert result.output_text.startswith("X ")
+    assert result.output_text.rstrip().endswith(" Y")
+    assert _decode_assignment(result.output_text, "my_string =") == "hello world"
 
 
 async def test_custom_path_supports_non_python_string_encodings(tmp_path):
