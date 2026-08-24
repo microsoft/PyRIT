@@ -3,7 +3,6 @@
 
 import re
 from collections.abc import Collection
-from typing import Any
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.converter.text_selection_strategy import (
@@ -142,12 +141,13 @@ class SATAMaskingConverter(Converter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        params: dict[str, Any] = {
-            "mask_token": self._mask_token,
-            "selection_strategy": self._selection_strategy.__class__.__name__,
-        }
-        params.update(self._selection_strategy.get_identifier_params())
-        return self._create_identifier(params=params)
+        return self._create_identifier(
+            params={
+                "mask_token": self._mask_token,
+                "selection_strategy": self._selection_strategy.__class__.__name__,
+                "selection_strategy_params": self._selection_strategy.get_identifier_params(),
+            }
+        )
 
     @staticmethod
     def _split_word_affixes(token: str) -> tuple[str, str, str]:

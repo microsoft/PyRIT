@@ -47,6 +47,10 @@ class TestIndexSelectionStrategy:
         result = strategy.select_range(text="Hello World")
         assert result == (0, 5)
 
+    def test_identifier_params_default_to_empty(self):
+        strategy = IndexSelectionStrategy(start=0, end=5)
+        assert strategy.get_identifier_params() == {}
+
     def test_select_range_start_after_end(self):
         strategy = IndexSelectionStrategy(start=10, end=5)
         result = strategy.select_range(text="Hello World")

@@ -141,6 +141,18 @@ class TextSelectionStrategy(abc.ABC):
                 The range is inclusive of start_index and exclusive of end_index.
         """
 
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the parameters that affect which text this strategy selects.
+
+        Values must be JSON-serializable and stored in a stable, order-independent
+        form when the original input was a set-like collection.
+
+        Returns:
+            dict[str, Any]: Behavioral parameters for converter identifiers.
+        """
+        return {}
+
 
 class TokenSelectionStrategy(TextSelectionStrategy):
     """
@@ -200,18 +212,6 @@ class WordSelectionStrategy(TextSelectionStrategy):
         Returns:
             list[int]: A list of indices representing which words should be converted.
         """
-
-    def get_identifier_params(self) -> dict[str, Any]:
-        """
-        Return the parameters that affect which words this strategy selects.
-
-        Values must be JSON-serializable and stored in a stable, order-independent
-        form when the original input was a set-like collection.
-
-        Returns:
-            dict[str, Any]: Behavioral parameters for converter identifiers.
-        """
-        return {}
 
     def select_range(self, *, text: str, word_separator: str = " ") -> tuple[int, int]:
         """

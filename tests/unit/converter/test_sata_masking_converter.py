@@ -13,6 +13,7 @@ from pyrit.converter import (
     SelectiveTextConverter,
     TaskFramingConverter,
     WordIndexSelectionStrategy,
+    WordSelectionStrategy,
 )
 from pyrit.converter.text_selection_strategy import DEFAULT_CONTENT_STOPWORDS
 
@@ -186,14 +187,18 @@ def test_init_rejects_mixed_selection_strategy_and_num_masks():
 def test_identifier_uses_default_strategy_params():
     converter = SATAMaskingConverter(num_masks=3, skip_first=0, mask_token="<unk>")
     params = converter.get_identifier().params
-    assert params["max_words"] == 3
-    assert params["skip_first"] == 0
-    assert params["min_word_length"] == 3
+    strategy_params = params["selection_strategy_params"]
+    assert strategy_params["max_words"] == 3
+    assert strategy_params["skip_first"] == 0
+    assert strategy_params["min_word_length"] == 3
     assert params["mask_token"] == "<unk>"
     assert params["selection_strategy"] == "ContentWordSelectionStrategy"
-    assert params["stopwords"] == sorted(DEFAULT_CONTENT_STOPWORDS)
-    assert "candidate_words" not in params
+    assert strategy_params["stopwords"] == sorted(DEFAULT_CONTENT_STOPWORDS)
+    assert "candidate_words" not in strategy_params
     assert "num_masks" not in params
+    assert "max_words" not in params
+    assert "skip_first" not in params
+    assert "stopwords" not in params
 
 
 def test_identifier_omits_unused_default_params_for_custom_strategy():
@@ -204,8 +209,9 @@ def test_identifier_omits_unused_default_params_for_custom_strategy():
     assert "skip_first" not in params
     assert "stopwords" not in params
     assert "candidate_words" not in params
+    assert "indices" not in params
     assert params["selection_strategy"] == "WordIndexSelectionStrategy"
-    assert params["indices"] == [0]
+    assert params["selection_strategy_params"]["indices"] == [0]
     assert params["mask_token"] == "[MASK]"
 
 
@@ -227,8 +233,8 @@ def test_identifier_is_order_independent_for_selection_sets():
         candidate_words=["bomb", "device"],
     )
     assert left.get_identifier() == right.get_identifier()
-    assert left.get_identifier().params["stopwords"] == ["a", "the"]
-    assert left.get_identifier().params["candidate_words"] == ["bomb", "device"]
+    assert left.get_identifier().params["selection_strategy_params"]["stopwords"] == ["a", "the"]
+    assert left.get_identifier().params["selection_strategy_params"]["candidate_words"] == ["bomb", "device"]
 
 
 def test_identifier_distinguishes_stopwords_and_candidate_words():
@@ -247,6 +253,22 @@ def test_identifier_distinguishes_custom_content_strategy_config():
     other_skip = SATAMaskingConverter(selection_strategy=ContentWordSelectionStrategy(max_words=1, skip_first=1))
     assert left.get_identifier() != right.get_identifier()
     assert left.get_identifier() != other_skip.get_identifier()
+
+
+def test_identifier_nests_strategy_params_so_they_cannot_overwrite_converter_keys():
+    class CollisionStrategy(WordSelectionStrategy):
+        def select_words(self, *, words: list[str]) -> list[int]:
+            return [0] if words else []
+
+        def get_identifier_params(self) -> dict[str, str]:
+            return {"mask_token": "HACKED", "selection_strategy": "Fake"}
+
+    converter = SATAMaskingConverter(selection_strategy=CollisionStrategy(), mask_token="[MASK]")
+    params = converter.get_identifier().params
+    assert params["mask_token"] == "[MASK]"
+    assert params["selection_strategy"] == "CollisionStrategy"
+    assert params["selection_strategy_params"]["mask_token"] == "HACKED"
+    assert params["selection_strategy_params"]["selection_strategy"] == "Fake"
 
 
 def test_input_output_types():
