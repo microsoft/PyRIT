@@ -414,6 +414,39 @@ describe('LabelsBar', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('should not undo a label chosen while another one was still saving', async () => {
+    // The save runs a moment after blur and used to write the labels it saw
+    // then, quietly putting back anything picked in between.
+    const onChange = jest.fn()
+    const { rerender } = render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-operator'))
+    const operatorInput = await screen.findByTestId('edit-label-operator')
+    fireEvent.change(operatorInput, { target: { value: 'dana' } })
+    fireEvent.blur(operatorInput)
+
+    // Something else changes the labels before the save gets its turn.
+    rerender(
+      <TestWrapper>
+        <LabelsBar
+          labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_2026_08_picked' }}
+          onLabelsChange={onChange}
+        />
+      </TestWrapper>
+    )
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    expect(onChange).toHaveBeenCalledWith({
+      operator: 'dana',
+      operation: 'op_2026_08_picked',
+    })
+  })
+
   it('should cancel edit on Escape key', async () => {
     const onChange = jest.fn()
     render(

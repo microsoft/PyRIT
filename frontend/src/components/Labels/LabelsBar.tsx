@@ -185,6 +185,10 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   // different edit, which this has to be able to notice. Counting the edits is
   // what tells them apart: the same label can be picked up again in between.
   const editSession = useRef(0)
+  // That late save also has to write onto the labels as they are by then, not
+  // the ones it was looking at when the blur happened.
+  const labelsRef = useRef(labels)
+  useEffect(() => { labelsRef.current = labels }, [labels])
 
   // Fetch existing label keys/values for suggestions
   useEffect(() => {
@@ -267,7 +271,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       if (editSession.current === session) setError(valueError)
       return
     }
-    onLabelsChange({ ...labels, [key]: editValue })
+    onLabelsChange({ ...labelsRef.current, [key]: editValue })
     endEdit(session)
   }
 
