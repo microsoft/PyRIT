@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import random
+import threading
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -64,7 +66,10 @@ class _RandomExecution:
     context: RandomContext | None
     namespace: str
     owner: object | None
-    generators: dict[tuple[int | None, tuple[str, ...], str, int | None], random.Random] = field(default_factory=dict)
+    generators: dict[
+        tuple[int | None, tuple[str, ...], str, int | None, int, object | None],
+        random.Random,
+    ] = field(default_factory=dict)
 
 
 _configured_context: RandomContext | None = None
@@ -99,7 +104,13 @@ def get_configured_random_seed() -> int | None:
 
 
 @contextlib.contextmanager
-def random_execution(*, namespace: str, seed: int | None = None, owner: object | None = None) -> Iterator[None]:
+def random_execution(
+    *,
+    namespace: str,
+    seed: int | None = None,
+    owner: object | None = None,
+    operation_key: str | None = None,
+) -> Iterator[None]:
     """
     Establish an operation-local random context for a converter invocation.
 
@@ -108,17 +119,23 @@ def random_execution(*, namespace: str, seed: int | None = None, owner: object |
         seed (int | None): Explicit converter seed. Overrides the inherited root.
         owner (object | None): Operation owner used to distinguish nested instances
             of the same component type.
+        operation_key (str | None): Stable input identity for deterministic diversity
+            across distinct operations.
     """
     active = _active_execution.get()
     if active and active.namespace == namespace and (owner is None or active.owner is owner):
         yield
         return
 
+    parent = active.context if active else _configured_context
     if seed is not None:
-        context = RandomContext(seed=seed).child(namespace)
+        context = RandomContext(seed=seed, path=parent.path if parent else ()).child(namespace)
     else:
-        parent = active.context if active else _configured_context
         context = parent.child(namespace) if parent else None
+
+    if context and operation_key is not None:
+        operation_digest = hashlib.sha256(operation_key.encode("utf-8")).hexdigest()
+        context = context.child(f"operation:{operation_digest}")
 
     token = _active_execution.set(_RandomExecution(context=context, namespace=namespace, owner=owner))
     try:
@@ -152,13 +169,29 @@ def get_random_generator(
     """
     active = _active_execution.get()
 
-    context = RandomContext(seed=seed) if seed is not None else active.context if active else _configured_context
+    inherited_context = active.context if active else _configured_context
+    context = (
+        RandomContext(seed=seed, path=inherited_context.path if inherited_context else ())
+        if seed is not None
+        else inherited_context
+    )
 
     if context and namespace:
         context = context.child(namespace)
 
     path = context.path if context else ()
-    key = (context.seed if context else None, path, stream, id(owner) if owner is not None else None)
+    try:
+        task: object | None = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    key = (
+        context.seed if context else None,
+        path,
+        stream,
+        id(owner) if owner is not None else None,
+        threading.get_ident(),
+        task,
+    )
     if active:
         generator = active.generators.get(key)
         if generator is None:
@@ -187,7 +220,12 @@ def get_random_seed(
         int | None: Derived seed, or None when no root seed is configured.
     """
     active = _active_execution.get()
-    context = RandomContext(seed=seed) if seed is not None else active.context if active else _configured_context
+    inherited_context = active.context if active else _configured_context
+    context = (
+        RandomContext(seed=seed, path=inherited_context.path if inherited_context else ())
+        if seed is not None
+        else inherited_context
+    )
 
     if context and namespace:
         context = context.child(namespace)

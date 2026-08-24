@@ -112,7 +112,8 @@ async def initialize_pyrit_async(
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
         seed (int | None): Optional root seed for deterministic converter operations. Converters derive
-            independent named child streams automatically. This does not control remote model output.
+            independent named child streams automatically. Initialize PyRIT before constructing components
+            whose defaults are selected randomly. This does not control remote model output.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:

@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import Any
+
 from pyrit.converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
@@ -48,6 +50,8 @@ class EmojiConverter(WordLevelConverter):
         *,
         seed: int | None = None,
         word_selection_strategy: WordSelectionStrategy | None = None,
+        word_split_separator: str | None = " ",
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the converter.
@@ -56,12 +60,19 @@ class EmojiConverter(WordLevelConverter):
             seed (int | None): Optional seed for reproducible output. Defaults to None.
             word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
+            word_split_separator (str | None): Separator used to split words in the input text.
+            **kwargs: Forwarded to ``WordLevelConverter`` for cooperative multiple inheritance.
         """
-        super().__init__(word_selection_strategy=word_selection_strategy)
+        super().__init__(
+            word_selection_strategy=word_selection_strategy,
+            word_split_separator=word_split_separator,
+            **kwargs,
+        )
         self._seed = seed
 
     def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier(params={"seed": self._seed})
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(params={**base_identifier.params, "seed": self._seed})
 
     async def convert_word_async(self, word: str) -> str:
         """

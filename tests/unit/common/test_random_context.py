@@ -73,3 +73,25 @@ def test_same_type_component_instances_do_not_share_mutable_streams() -> None:
         ).random()
 
     assert second_owner_first_draw == expected_first_draw
+
+
+def test_operation_key_diversifies_deterministic_stream() -> None:
+    configure_random_seed(seed=42)
+
+    with random_execution(namespace="converter", operation_key="first"):
+        first = get_random_generator(stream="values").random()
+    with random_execution(namespace="converter", operation_key="second"):
+        second = get_random_generator(stream="values").random()
+
+    assert first != second
+
+
+def test_explicit_child_seed_preserves_inherited_operation_path() -> None:
+    configure_random_seed(seed=42)
+
+    with random_execution(namespace="converter", operation_key="first"):
+        first = get_random_generator(namespace="selection", stream="words", seed=7).random()
+    with random_execution(namespace="converter", operation_key="second"):
+        second = get_random_generator(namespace="selection", stream="words", seed=7).random()
+
+    assert first != second
