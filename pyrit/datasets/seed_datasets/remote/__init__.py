@@ -17,6 +17,13 @@ from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
     ATRVariationType,
     _AgentThreatRulesDataset,
 )
+from pyrit.datasets.seed_datasets.remote.agentic_prompt_injection_boundary_dataset import (
+    AgenticPromptInjectionBoundaryAttackFamily,
+    AgenticPromptInjectionBoundaryLabel,
+    AgenticPromptInjectionBoundarySourceContext,
+    AgenticPromptInjectionBoundarySplit,
+    _AgenticPromptInjectionBoundaryDataset,
+)
 from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import _AyaRedteamingDataset
 from pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset import _BabelscapeAlertDataset
 from pyrit.datasets.seed_datasets.remote.beaver_tails_dataset import _BeaverTailsDataset
@@ -142,8 +149,15 @@ from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
 )
 from pyrit.datasets.seed_datasets.remote.xstest_dataset import _XSTestDataset
 
+AgenticPromptInjectionBoundaryDataset = _AgenticPromptInjectionBoundaryDataset
+
 __all__ = [
     "AegisHarmCategory",
+    "AgenticPromptInjectionBoundaryAttackFamily",
+    "AgenticPromptInjectionBoundaryDataset",
+    "AgenticPromptInjectionBoundaryLabel",
+    "AgenticPromptInjectionBoundarySourceContext",
+    "AgenticPromptInjectionBoundarySplit",
     "CoCoNotCategory",
     "CoCoNotSplit",
     "DecodingTrustToxicitySubset",
@@ -171,6 +185,7 @@ __all__ = [
     "ATRDetectionField",
     "ATRVariationType",
     "_AgentThreatRulesDataset",
+    "_AgenticPromptInjectionBoundaryDataset",
     "_AyaRedteamingDataset",
     "_BabelscapeAlertDataset",
     "_BeaverTailsDataset",
