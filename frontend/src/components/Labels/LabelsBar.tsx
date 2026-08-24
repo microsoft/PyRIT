@@ -181,10 +181,10 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const [labelsFailed, setLabelsFailed] = useState(false)
   const editInputRef = useRef<HTMLInputElement>(null)
   // Both editors finish their work on blur, one turn later, so that focus lands
-  // first. By then the click that took the focus may already have opened a
-  // different label's editor, which this has to be able to notice.
-  const editingLabelRef = useRef<string | null>(null)
-  useEffect(() => { editingLabelRef.current = editingLabel }, [editingLabel])
+  // first. By then the click that took the focus may already have started a
+  // different edit, which this has to be able to notice. Counting the edits is
+  // what tells them apart: the same label can be picked up again in between.
+  const editSession = useRef(0)
 
   // Fetch existing label keys/values for suggestions
   useEffect(() => {
@@ -235,6 +235,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   }
 
   const handleStartEdit = (key: string) => {
+    editSession.current += 1
     setEditingLabel(key)
     setEditValue(labels[key])
     setError('')
@@ -250,25 +251,29 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     }
   }
 
-  /** Ends an edit, unless the user has already moved on to another label. */
-  const endEdit = (key: string) => {
-    if (editingLabelRef.current !== key) return
+  /** Ends an edit, unless the user has already started a different one. */
+  const endEdit = (session: number) => {
+    if (editSession.current !== session) return
     setEditingLabel(null)
     setEditValue('')
     setError('')
   }
 
-  const handleSaveEdit = () => {
-    if (!editingLabel) return
+  const saveEdit = (key: string, session: number) => {
     const valueError = validateValue(editValue)
-    if (valueError) { setError(valueError); return }
-    onLabelsChange({ ...labels, [editingLabel]: editValue })
-    endEdit(editingLabel)
+    // Only the edit still on screen may speak for itself; a value left behind
+    // is simply not saved rather than complaining next to somebody else.
+    if (valueError) {
+      if (editSession.current === session) setError(valueError)
+      return
+    }
+    onLabelsChange({ ...labels, [key]: editValue })
+    endEdit(session)
   }
 
-  const handleEditKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleSaveEdit()
-    if (e.key === 'Escape') { setEditingLabel(null); setError('') }
+  const handleEditKeyDown = (e: React.KeyboardEvent, key: string, session: number) => {
+    if (e.key === 'Enter') saveEdit(key, session)
+    if (e.key === 'Escape') endEdit(session)
   }
 
   const handleSelectOperation = (operation: string) => {
@@ -373,6 +378,8 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   }, [labelEntries])
 
   const renderValueEditor = (key: string, value: string) => {
+    // Whatever is deferred below belongs to this edit, and only this one.
+    const session = editSession.current
     if (key === 'operation') {
       return (
         <>
@@ -388,7 +395,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             loadFailed={labelsFailed}
             onSelect={handleSelectOperation}
             onSearchChange={() => setError('')}
-            onDismiss={() => endEdit(key)}
+            onDismiss={() => endEdit(session)}
             inputRef={editInputRef}
           />
           {error && <Text size={200} className={styles.errorText}>{error}</Text>}
@@ -407,8 +414,8 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           size="small"
           value={editValue}
           onChange={(_, d) => { setEditValue(d.value.toLowerCase()); setError('') }}
-          onKeyDown={handleEditKeyDown}
-          onBlur={() => { setTimeout(handleSaveEdit, 150) }}
+          onKeyDown={e => handleEditKeyDown(e, key, session)}
+          onBlur={() => { setTimeout(() => saveEdit(key, session), 150) }}
           style={{ width: '120px' }}
           data-testid={`edit-label-${key}`}
         />
@@ -458,15 +465,15 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     }
 
     return (
-      <Tooltip
+      <div
         key={key}
-        content={isDummy ? `Placeholder value — click to change` : `Click to edit`}
-        relationship="description"
+        data-label-idx={idx}
+        className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
+        style={{ flexShrink: 0 }}
       >
-        <div
-          data-label-idx={idx}
-          className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
-          style={{ flexShrink: 0 }}
+        <Tooltip
+          content={isDummy ? `Placeholder value — click to change` : `Click to edit`}
+          relationship="description"
         >
           <div
             className={styles.labelEdit}
@@ -480,19 +487,19 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             <Text size={200} weight="semibold">{key}:</Text>
             <Text size={200} style={{ whiteSpace: 'nowrap' }}>{value}</Text>
           </div>
-          {!isRequired && (
-            <Button
-              className={styles.removeBtn}
-              appearance="transparent"
-              size="small"
-              icon={<DismissRegular fontSize={12} />}
-              onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
-              aria-label={`Remove ${key} label`}
-              data-testid={`remove-label-${key}`}
-            />
-          )}
-        </div>
-      </Tooltip>
+        </Tooltip>
+        {!isRequired && (
+          <Button
+            className={styles.removeBtn}
+            appearance="transparent"
+            size="small"
+            icon={<DismissRegular fontSize={12} />}
+            onClick={(e) => { e.stopPropagation(); handleRemoveLabel(key) }}
+            aria-label={`Remove ${key} label`}
+            data-testid={`remove-label-${key}`}
+          />
+        )}
+      </div>
     )
   }
 

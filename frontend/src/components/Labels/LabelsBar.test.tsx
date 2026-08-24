@@ -88,6 +88,19 @@ describe('LabelsBar', () => {
     })
   })
 
+  it('should describe what clicking a chip does, on the control you focus', async () => {
+    // Fluent hangs the tooltip on whatever it wraps, so it has to wrap the
+    // control that actually takes focus, not the pill around it.
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    expect(screen.getByTestId('label-operation')).toHaveAttribute('aria-describedby')
+  })
+
   it('should keep the remove button out of the edit control', async () => {
     // A control that removes the label cannot sit inside the control that
     // edits it: screen readers flatten the inner one and it loses its name.
@@ -354,6 +367,51 @@ describe('LabelsBar', () => {
     // An editor that opens empty is the same bug wearing a different hat.
     expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
     expect(operatorInput).toHaveValue(DEFAULT_GLOBAL_LABELS.operator)
+  })
+
+  it('should keep an edit you come back to while the last one is finishing', async () => {
+    // Leaving a label and picking it up again is a different edit, even though
+    // it is the same label, so the first one's clean-up must not end it.
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.blur(await screen.findByTestId('edit-label-operator'))
+    fireEvent.click(screen.getByTestId('label-operation'))
+    await screen.findByTestId('edit-label-operation')
+    fireEvent.click(screen.getByTestId('label-operator'))
+    await screen.findByTestId('edit-label-operator')
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-label-operator')).toHaveValue(DEFAULT_GLOBAL_LABELS.operator)
+  })
+
+  it('should not put one label\'s complaint next to another label', async () => {
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-operator'))
+    const operatorInput = await screen.findByTestId('edit-label-operator')
+    fireEvent.change(operatorInput, { target: { value: '' } })
+    fireEvent.blur(operatorInput)
+    fireEvent.click(screen.getByTestId('label-operation'))
+    await screen.findByTestId('edit-label-operation')
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    // The empty operator is simply not saved; the operation is not at fault.
+    expect(screen.queryByText('Value is required')).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('should cancel edit on Escape key', async () => {
