@@ -119,6 +119,12 @@
 # - `--max-retries <int>`: Maximum number of automatic retries if the scenario raises an exception
 # - `--memory-labels <json>`: Additional labels to apply to all attack runs (must be a JSON string with string keys and values)
 #
+# Dataset-backed scenarios can also select a supported dataset:
+#
+# ```shell
+# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
+# ```
+#
 # You can also use custom initialization scripts by passing file paths. It is relative to your current working directory, but to avoid confusion, full paths are always better:
 #
 # ```shell

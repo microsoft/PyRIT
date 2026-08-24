@@ -143,10 +143,6 @@ litellm = [
     "litellm>=1.83.0,<1.92.0",
 ]
 
-atr = [
-    "pyatr>=0.2.6",
-]
-
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
 all = [
     "accelerate>=1.7.0",
@@ -160,7 +156,6 @@ all = [
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
     "pyarrow>=22.0.0; python_version >= '3.14'",
-    "pyatr>=0.2.6",
     "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
     "torch>=2.7.0",
 ]

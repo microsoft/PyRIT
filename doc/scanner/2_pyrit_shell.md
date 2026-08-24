@@ -42,8 +42,8 @@ Once starting the shell, you will see the list of commands you have access to. S
 | `list-targets` | List all available targets from the registry |
 | `list-converters` | List all registered converter instances |
 | `run <scenario> [options]` | Run a scenario with optional parameters |
-| `scenario-history` | List all previous scenario runs in this session |
-| `print-scenario [N]` | Print detailed results for scenario run(s) |
+| `scenario-history [N]` | List recent scenario runs and their IDs |
+| `scenario-results <id> [options]` | Inspect overview or attack-level results for a scenario run |
 | `help [command]` | Show help for a command |
 | `clear` | Clear the screen |
 | `exit` (or `quit`, `q`) | Exit the shell |
@@ -118,14 +118,11 @@ Track and review all scenario runs in your session:
 # Show all runs from this session
 pyrit> scenario-history
 
-# Print details of the most recent run
-pyrit> print-scenario
+# Print an overview for a run using its scenario result ID
+pyrit> scenario-results 2a1f91a0-28bf-4f48-bd54-8f12451cf7af
 
-# Print details of a specific run (by number from history)
-pyrit> print-scenario 1
-
-# Print all runs
-pyrit> print-scenario
+# Inspect attack-level results for that run
+pyrit> scenario-results 2a1f91a0-28bf-4f48-bd54-8f12451cf7af --view attacks
 ```
 
 Example output:
@@ -135,14 +132,12 @@ pyrit> scenario-history
 
 Scenario Run History:
 ================================================================================
-1) foundry.red_team_agent --initializers target --techniques base64
-2) garak.encoding --initializers target --techniques rot13
-3) foundry.red_team_agent --initializers target -t jailbreak
+  1) [COMPLETED] foundry.red_team_agent (id: 2a1f91a0-28bf-4f48-bd54-8f12451cf7af) — 12 attacks, 33.3% success — 2026-08-16T01:15:00+00:00
+  2) [COMPLETED] garak.encoding (id: 9b27f101-1440-4454-9609-b307230f36a9) — 8 attacks, 25.0% success — 2026-08-16T01:10:00+00:00
+  3) [COMPLETED] foundry.red_team_agent (id: 40624391-c9d3-492d-b3e4-2c15202ade62) — 12 attacks, 16.7% success — 2026-08-16T01:05:00+00:00
 ================================================================================
 
 Total runs: 3
-
-Use 'print-scenario <number>' to view detailed results for a specific run.
 ```
 
 ## Interactive Exploration
@@ -161,8 +156,8 @@ pyrit> run garak.encoding --techniques morse_code
 
 # Review and compare
 pyrit> scenario-history
-pyrit> print-scenario 1
-pyrit> print-scenario 2
+pyrit> scenario-results 2a1f91a0-28bf-4f48-bd54-8f12451cf7af
+pyrit> scenario-results 9b27f101-1440-4454-9609-b307230f36a9
 ```
 
 ## Shell Benefits
@@ -190,10 +185,10 @@ pyrit> print-scenario 2
    pyrit> scenario-history
    ```
 
-4. **Print specific results** to compare outcomes:
+4. **Inspect specific results** to compare outcomes:
    ```bash
-   pyrit> print-scenario 1  # baseline run
-   pyrit> print-scenario 3  # modified run
+   pyrit> scenario-results 2a1f91a0-28bf-4f48-bd54-8f12451cf7af  # baseline run
+   pyrit> scenario-results 40624391-c9d3-492d-b3e4-2c15202ade62  # modified run
    ```
 
 ## Exit the Shell

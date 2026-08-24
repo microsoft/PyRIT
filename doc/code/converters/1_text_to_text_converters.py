@@ -228,8 +228,8 @@ print("Template Segment:", await template_converter.convert_async(prompt=prompt)
 task_framing = TaskFramingConverter(strip_characters="'")
 print("Task Framing:", await task_framing.convert_async(prompt=prompt))  # type: ignore
 
-# SATA masking [@dong2025sata] replaces content words with [MASK]. Compose with
-# TaskFramingConverter and SATA_TASK_TEMPLATE for the wiki-infill attack.
+# SATA masking [@dong2025sata] replaces content-word cores with [MASK] and keeps
+# punctuation/whitespace. Compose with TaskFramingConverter + SATA_TASK_TEMPLATE.
 # Typical usage is with HarmBench objectives via SeedDataset.
 sata_mask = SATAMaskingConverter(num_masks=2)
 sata_masked = await sata_mask.convert_async(prompt=prompt)  # type: ignore
