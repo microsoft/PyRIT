@@ -67,6 +67,7 @@ const CAPABILITY_COLUMNS = [
 ] as const
 
 const COLUMN_TOOLTIPS = {
+  registryName: 'Unique name used to identify this configured target',
   type: 'Target class implementation',
   model: 'Configured model name. A dotted underline indicates the deployment alias differs from the underlying model — hover the value to see it.',
   endpoint: 'API endpoint URL the target sends requests to',
@@ -211,6 +212,9 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
           <TableCell>
             <Text size={200} style={{ paddingLeft: '28px' }}>#{idx + 1}</Text>
           </TableCell>
+          <TableCell className={styles.registryNameCell}>
+            <Text size={200} className={styles.registryNameText}>{inner.target_registry_name}</Text>
+          </TableCell>
           <TableCell>
             <Text size={200}>{targetType(inner)}</Text>
           </TableCell>
@@ -286,6 +290,9 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
               <TableCell style={{ width: '120px' }}>
                 <Badge appearance="filled" color="brand" icon={<CheckmarkRegular />}>Active</Badge>
               </TableCell>
+              <TableCell className={styles.registryNameCell} style={{ width: '180px' }}>
+                <Text size={200} className={styles.registryNameText}>{activeTarget.target_registry_name}</Text>
+              </TableCell>
               <TableCell style={{ width: '140px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {hasInnerTargets(activeTarget) && (
@@ -357,6 +364,11 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
         <TableHeader className={styles.stickyHeader}>
           <TableRow>
             <TableHeaderCell style={{ width: '120px' }} />
+            <TableHeaderCell style={{ width: '180px' }}>
+              <Tooltip content={COLUMN_TOOLTIPS.registryName} relationship="description">
+                <span className={styles.helpHeader}>Registry Name</span>
+              </Tooltip>
+            </TableHeaderCell>
             <TableHeaderCell style={{ width: '140px' }}>
               <Tooltip content={COLUMN_TOOLTIPS.type} relationship="description">
                 <span className={styles.helpHeader}>Type</span>
@@ -424,6 +436,9 @@ export default function TargetTable({ targets, activeTarget, onSetActiveTarget }
                         Set Active
                       </Button>
                     )}
+                  </TableCell>
+                  <TableCell className={styles.registryNameCell}>
+                    <Text size={200} className={styles.registryNameText}>{target.target_registry_name}</Text>
                   </TableCell>
                   <TableCell>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>

@@ -26,6 +26,16 @@ export const useTargetTableStyles = makeStyles({
   activeRow: {
     backgroundColor: tokens.colorBrandBackground2,
   },
+  registryNameCell: {
+    minWidth: 0,
+  },
+  registryNameText: {
+    display: 'block',
+    maxWidth: '100%',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+  },
   endpointCell: {
     overflowWrap: 'break-word',
     wordBreak: 'break-all',

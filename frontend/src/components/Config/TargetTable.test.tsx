@@ -79,13 +79,15 @@ describe('TargetTable', () => {
     expect(screen.getAllByText('TextTarget').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('should display Type, Model, Endpoint, Inputs, Outputs, capability columns and Parameters columns', () => {
+  it('should display Registry Name, Type, Model, Endpoint, Inputs, Outputs, capability columns and Parameters columns', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
+    expect(screen.getByText('Registry Name')).toBeInTheDocument()
+    expect(screen.getByText('openai_chat_gpt4')).toBeInTheDocument()
     expect(screen.getByText('Type')).toBeInTheDocument()
     expect(screen.getByText('Model')).toBeInTheDocument()
     expect(screen.getByText('Endpoint')).toBeInTheDocument()
