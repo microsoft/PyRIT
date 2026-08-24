@@ -1436,6 +1436,37 @@ def test_progress_prefers_persisted_logical_seed_group_attribution() -> None:
     assert mapped.seed_group_id == "canonical-seed-id"
 
 
+def test_synthesize_legacy_plan_deduplicates_seed_ids_in_first_seen_order() -> None:
+    delta_units = [
+        ("attack", "eval", "seed-b", "objective b"),
+        ("other attack", "other-eval", "seed-b", "objective b"),
+        ("attack", "eval", "seed-a", "objective a"),
+        ("attack", "eval", "seed-b", "objective b"),
+    ]
+    deltas = [
+        ScenarioAttackResultDelta(
+            attack_result_id=str(uuid.uuid4()),
+            objective=objective,
+            outcome=AttackOutcome.SUCCESS,
+            execution_time_ms=10,
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            attribution_data={
+                "parent_collection": attack_name,
+                "parent_eval_hash": eval_hash,
+                "seed_group_id": seed_group_id,
+            },
+        )
+        for attack_name, eval_hash, seed_group_id, objective in delta_units
+    ]
+
+    plan = ScenarioRunService._synthesize_legacy_plan(deltas=deltas)
+
+    assert [group.atomic_attack_name for group in plan.atomic_groups] == ["attack", "other attack"]
+    assert plan.atomic_groups[0].seed_group_ids == ["seed-b", "seed-a"]
+    assert plan.atomic_groups[1].seed_group_ids == ["seed-b"]
+    assert [seed.id for seed in plan.seed_groups] == ["seed-b", "seed-a"]
+
+
 def test_get_progress_synthesizes_incomplete_legacy_plan(mock_memory) -> None:
     header = make_scenario_result(
         attack_results={},

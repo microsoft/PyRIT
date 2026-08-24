@@ -847,6 +847,7 @@ class ScenarioRunService:
         """
         seeds: dict[str, ScenarioRunPlanSeedGroup] = {}
         groups: dict[str, ScenarioRunPlanAtomicGroup] = {}
+        seen_seed_ids_by_group: dict[str, set[str]] = {}
         empty_plan_lookup = _ScenarioPlanLookup.from_plan(plan=None)
         for delta in deltas:
             mapped = ScenarioRunService._map_progress_delta(
@@ -871,7 +872,9 @@ class ScenarioRunService:
                     seed_group_ids=[],
                 ),
             )
-            if mapped.seed_group_id not in group.seed_group_ids:
+            seen_seed_ids = seen_seed_ids_by_group.setdefault(mapped.atomic_group_id, set())
+            if mapped.seed_group_id not in seen_seed_ids:
+                seen_seed_ids.add(mapped.seed_group_id)
                 group.seed_group_ids.append(mapped.seed_group_id)
         return ScenarioRunPlan(atomic_groups=list(groups.values()), seed_groups=list(seeds.values()))
 
