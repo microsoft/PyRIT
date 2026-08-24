@@ -7,6 +7,7 @@ import logging
 import re
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -42,6 +43,7 @@ class HTTPTarget(PromptTarget):
         max_requests_per_minute: int | None = None,
         client: httpx.AsyncClient | None = None,
         model_name: str = "",
+        follow_redirects: bool = True,
         custom_configuration: TargetConfiguration | None = None,
         **httpx_client_kwargs: Any,
     ) -> None:
@@ -58,6 +60,8 @@ class HTTPTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             client (httpx.AsyncClient, Optional): Pre-configured httpx client.
             model_name (str): The model name. Defaults to empty string.
+            follow_redirects (bool): Whether to follow HTTP redirects. Defaults to True for backward compatibility;
+                set to False when redirects are unnecessary or the destination must remain fixed.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **httpx_client_kwargs: Additional keyword arguments for httpx.AsyncClient.
@@ -72,6 +76,7 @@ class HTTPTarget(PromptTarget):
         # Parse the URL early to use as endpoint identifier
         # This will fail early if the http_request is malformed
         _, _, endpoint, _, _ = self.parse_raw_http_request(http_request)
+        self._destination_origin = self._get_destination_origin(endpoint)
 
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
@@ -82,6 +87,7 @@ class HTTPTarget(PromptTarget):
         self.http_request = http_request
         self.callback_function = callback_function
         self.prompt_regex_string = prompt_regex_string
+        self.follow_redirects = follow_redirects
         self.httpx_client_kwargs = httpx_client_kwargs or {}
 
         if client and httpx_client_kwargs:
@@ -99,6 +105,7 @@ class HTTPTarget(PromptTarget):
                 "use_tls": self.use_tls,
                 "prompt_regex_string": self.prompt_regex_string,
                 "callback_function": getattr(self.callback_function, "__name__", None),
+                "follow_redirects": self.follow_redirects,
             },
         )
 
@@ -110,6 +117,7 @@ class HTTPTarget(PromptTarget):
         prompt_regex_string: str = "{PROMPT}",
         callback_function: Callable[..., Any] | None = None,
         max_requests_per_minute: int | None = None,
+        follow_redirects: bool = True,
     ) -> "HTTPTarget":
         """
         Alternative constructor that accepts a pre-configured httpx client.
@@ -120,6 +128,8 @@ class HTTPTarget(PromptTarget):
             prompt_regex_string: the placeholder for the prompt
             callback_function: function to parse HTTP response
             max_requests_per_minute: Optional rate limiting
+            follow_redirects: Whether to follow HTTP redirects. Defaults to True for backward compatibility; set to
+                False when redirects are unnecessary or the destination must remain fixed.
 
         Returns:
             HTTPTarget: an instance of HTTPTarget
@@ -130,6 +140,7 @@ class HTTPTarget(PromptTarget):
             callback_function=callback_function,
             max_requests_per_minute=max_requests_per_minute,
             client=client,
+            follow_redirects=follow_redirects,
         )
 
     def _inject_prompt_into_request(self, request: MessagePiece) -> str:
@@ -142,8 +153,12 @@ class HTTPTarget(PromptTarget):
 
         Returns:
             str: the http request with the prompt added in
+
+        Raises:
+            ValueError: If a multiline prompt would be substituted into the request line or headers.
         """
         re_pattern = re.compile(self.prompt_regex_string)
+        self._validate_prompt_for_template_context(prompt=request.converted_value, pattern=re_pattern)
         if re.search(self.prompt_regex_string, self.http_request):
             http_request_w_prompt = re_pattern.sub(lambda m: request.converted_value, self.http_request)
         else:
@@ -169,6 +184,7 @@ class HTTPTarget(PromptTarget):
         http_request_w_prompt = self._inject_prompt_into_request(request)
 
         header_dict, http_body, url, http_method, http_version = self.parse_raw_http_request(http_request_w_prompt)
+        self._validate_destination(url)
 
         if "Content-Length" in header_dict:
             header_dict["Content-Length"] = str(len(http_body))
@@ -191,7 +207,7 @@ class HTTPTarget(PromptTarget):
                     url=url,
                     headers=header_dict,
                     data=http_body,
-                    follow_redirects=True,
+                    follow_redirects=self.follow_redirects,
                 )
             else:
                 response = await client.request(
@@ -199,7 +215,7 @@ class HTTPTarget(PromptTarget):
                     url=url,
                     headers=header_dict,
                     content=http_body,
-                    follow_redirects=True,
+                    follow_redirects=self.follow_redirects,
                 )
 
             response_content = response.content
@@ -296,3 +312,27 @@ class HTTPTarget(PromptTarget):
 
         host = headers_dict["host"]
         return f"{http_protocol}{host}{path}"
+
+    def _validate_destination(self, url: str) -> None:
+        destination_origin = self._get_destination_origin(url)
+        if destination_origin != self._destination_origin:
+            raise ValueError("Prompt substitution cannot change the configured HTTP destination.")
+
+    def _validate_prompt_for_template_context(self, *, prompt: str, pattern: re.Pattern[str]) -> None:
+        if "\r" not in prompt and "\n" not in prompt:
+            return
+
+        separator = re.search(r"\r?\n\r?\n", self.http_request)
+        header_end = separator.start() if separator else len(self.http_request)
+
+        if any(match.start() < header_end for match in pattern.finditer(self.http_request)):
+            raise ValueError("Prompts substituted into the HTTP request line or headers cannot contain CR or LF.")
+
+    @staticmethod
+    def _get_destination_origin(url: str) -> tuple[str, str | None, int | None]:
+        parsed_url = urlsplit(url)
+        try:
+            port = parsed_url.port
+        except ValueError as exc:
+            raise ValueError(f"Invalid port in HTTP destination: {url}") from exc
+        return parsed_url.scheme.lower(), parsed_url.hostname, port

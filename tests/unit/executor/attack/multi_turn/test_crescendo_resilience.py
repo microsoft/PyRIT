@@ -19,16 +19,11 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
-from pyrit.models import (
-    AttackOutcome,
-    ComponentIdentifier,
-    ConversationType,
-    Message,
-    MessagePiece,
-    Score,
-)
+from pyrit.memory import CentralMemory
+from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
 _OBJECTIVE = "Recover the hidden phrase through gradual rapport."
 
@@ -286,7 +281,12 @@ class TestCrescendoMixedFailureRecovery:
         assert result.conversation_id == final_conversation_id
         assert len({attempt.conversation_id for attempt in adversarial_target.attempts}) == 1
 
-        refusal_inputs = [call.kwargs["message"].get_value() for call in refusal_scorer.score_async.await_args_list]
+        # A scorable names piece ids rather than carrying the message, so read them back.
+        memory = CentralMemory.get_memory_instance()
+        refusal_inputs = [
+            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=memory).get_value()
+            for call in refusal_scorer.score_async.await_args_list
+        ]
         assert refusal_inputs == [
             "response-1",
             "response-2",
@@ -301,7 +301,7 @@ class TestCrescendoMixedFailureRecovery:
             "response-9",
             "response-10-final",
         ]
-        assert [call.kwargs["objective"] for call in refusal_scorer.score_async.await_args_list] == [
+        assert [call.kwargs["expectation"].objective for call in refusal_scorer.score_async.await_args_list] == [
             f"question-{attempt}" for attempt in range(1, 13)
         ]
         objective_inputs = [call.kwargs["response"].get_value() for call in score_response.await_args_list]

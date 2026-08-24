@@ -428,6 +428,8 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
                 - 'middle': Select from the middle
                 - 'random': Select from a random position
             seed (int | None): Random seed for reproducible random selections. Defaults to None.
+                Scoped to this strategy: it makes this strategy reproducible without affecting
+                the randomness of any other component.
 
         Raises:
             ValueError: If proportion is not between 0.0 and 1.0, or anchor is invalid.
@@ -442,6 +444,9 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
         self._proportion = proportion
         self._anchor = anchor
         self._seed = seed
+        # Own the RNG rather than seeding the global one, so a seeded strategy
+        # does not make every other `random`-based component reproducible.
+        self._rng = random.Random(seed)
 
     def select_range(self, *, text: str) -> tuple[int, int]:
         """
@@ -465,9 +470,9 @@ class ProportionSelectionStrategy(TextSelectionStrategy):
             return (start, start + selection_len)
         # random
         if self._seed is not None:
-            random.seed(self._seed)
+            self._rng.seed(self._seed)
         max_start = max(0, text_len - selection_len)
-        start = random.randint(0, max_start) if max_start > 0 else 0
+        start = self._rng.randint(0, max_start) if max_start > 0 else 0
         return (start, start + selection_len)
 
 
@@ -627,6 +632,8 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
         Args:
             proportion (float): The proportion of words to select (0.0 to 1.0).
             seed (int | None): Random seed for reproducible selections. Defaults to None.
+                Scoped to this strategy: it makes this strategy reproducible without affecting
+                the randomness of any other component.
 
         Raises:
             ValueError: If proportion is not between 0.0 and 1.0.
@@ -636,6 +643,9 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
 
         self._proportion = proportion
         self._seed = seed
+        # Own the RNG rather than seeding the global one, so a seeded strategy
+        # does not make every other `random`-based component reproducible.
+        self._rng = random.Random(seed)
 
     def get_identifier_params(self) -> dict[str, Any]:
         """
@@ -663,10 +673,10 @@ class WordProportionSelectionStrategy(WordSelectionStrategy):
             return []
 
         if self._seed is not None:
-            random.seed(self._seed)
+            self._rng.seed(self._seed)
 
         num_to_select = int(len(words) * self._proportion)
-        return random.sample(range(len(words)), num_to_select) if num_to_select > 0 else []
+        return self._rng.sample(range(len(words)), num_to_select) if num_to_select > 0 else []
 
 
 class WordRegexSelectionStrategy(WordSelectionStrategy):

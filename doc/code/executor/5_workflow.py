@@ -191,7 +191,7 @@ print(f"Response from processing callback: {processing_response}")
 # %%
 import pathlib
 
-from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, DB_DATA_PATH
 from pyrit.converter import PDFConverter
 from pyrit.executor.core import StrategyConverterConfig
 from pyrit.executor.workflow import XPIATestWorkflow
@@ -254,7 +254,12 @@ pdf_converter = PDFConverter(
     injection_items=injection_items,  # Inject hidden text
 )
 
-upload_target = HTTPXAPITarget(http_url=f"http://localhost:8000/upload/", method="POST", timeout=180)
+upload_target = HTTPXAPITarget(
+    http_url="http://localhost:8000/upload/",
+    method="POST",
+    allowed_upload_directory=DB_DATA_PATH,
+    timeout=180,
+)
 
 http_api_processing_target = HTTPXAPITarget(
     http_url=f"http://localhost:8000/search_candidates/", method="POST", timeout=180

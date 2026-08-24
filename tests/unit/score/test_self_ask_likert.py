@@ -74,6 +74,16 @@ def _write_likert_yaml(
     return path
 
 
+def test_likert_harm_scorer_does_not_match_objective(likert_scale: LikertScale):
+    scorer = SelfAskLikertScorer.from_likert_scale(
+        chat_target=_mock_target(),
+        likert_scale=likert_scale,
+    )
+
+    assert scorer.matched_conditions() == frozenset()
+    assert scorer.required_conditions() == frozenset()
+
+
 async def test_likert_scorer_sets_system_prompt_and_scores(
     patch_central_database,
     scorer_likert_response: Message,
