@@ -369,7 +369,7 @@ def _objective_scorer_key(*, result: ScenarioResult) -> tuple[str | None, str | 
     identifier = result.objective_scorer_identifier
     if identifier is None:
         return None, None
-    return getattr(identifier, "hash", None), getattr(identifier, "class_name", None)
+    return identifier.hash, identifier.class_name
 
 
 def _select_objective_score(
