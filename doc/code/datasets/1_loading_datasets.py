@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -53,6 +53,7 @@
 # StrongREJECT [@souly2024strongreject],
 # TDC23 [@mazeika2023tdc],
 # ToxicChat [@lin2023toxicchat],
+# Turkish Conversation Prompt-Injection [@deniz2026turkishpromptinjection],
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
 # WildGuard [@han2024wildguard],
@@ -70,6 +71,47 @@
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
 # `garak_tm_system_prompts`), an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
+
+# %% [markdown]
+# ## Loading Turkish Prompt-Injection and Boundary Examples
+#
+# The `turkish_conversation_prompt_injection` loader defaults to attack examples
+# and preserves each record's attack family, source context, split, and pair ID.
+# It loads the published v1.0.2 data from an immutable Hugging Face revision,
+# validates the complete release composition, and records the versioned Zenodo DOI
+# in each seed's provenance metadata.
+# Attack families describe delivery techniques rather than resulting harms, so
+# they remain in seed metadata instead of PyRIT's harm-category field.
+# Pair IDs also remain metadata: each attack and boundary example is an independent
+# evaluation case, not a multi-prompt group that should be sent together.
+# The examples are synthetic and were curated by one author without an independent
+# annotation or inter-annotator agreement study. Attack labels identify attempted
+# injections; rows do not include model responses or claim a verified bypass.
+# Typed filters can also load legitimate Turkish requests, a specific published
+# split, or selected attack families. For example:
+#
+# ```python
+# from pyrit.datasets.seed_datasets.remote import (
+#     TurkishConversationPromptInjectionAttackFamily,
+#     TurkishConversationPromptInjectionLabel,
+#     TurkishConversationPromptInjectionSplit,
+#     _TurkishConversationPromptInjectionDataset,
+# )
+#
+# test_surface_loader = _TurkishConversationPromptInjectionDataset(
+#     label=TurkishConversationPromptInjectionLabel.ALL,
+#     split=TurkishConversationPromptInjectionSplit.TEST,
+# )
+# test_surface = await test_surface_loader.fetch_dataset_async()
+#
+# obfuscation_loader = _TurkishConversationPromptInjectionDataset(
+#     split=TurkishConversationPromptInjectionSplit.TEST,
+#     attack_families=[
+#         TurkishConversationPromptInjectionAttackFamily.OBFUSCATION_CODE_SWITCHING,
+#     ],
+# )
+# obfuscation_attacks = await obfuscation_loader.fetch_dataset_async()
+# ```
 
 # %%
 from pyrit.datasets import SeedDatasetProvider

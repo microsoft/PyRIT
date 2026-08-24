@@ -113,6 +113,12 @@ from pyrit.datasets.seed_datasets.remote.strong_reject_dataset import _StrongRej
 from pyrit.datasets.seed_datasets.remote.tdc23_redteaming_dataset import _TDC23RedteamingDataset
 from pyrit.datasets.seed_datasets.remote.toxic_chat_dataset import _ToxicChatDataset
 from pyrit.datasets.seed_datasets.remote.transphobia_awareness_dataset import _TransphobiaAwarenessDataset
+from pyrit.datasets.seed_datasets.remote.turkish_conversation_prompt_injection_dataset import (
+    TurkishConversationPromptInjectionAttackFamily,
+    TurkishConversationPromptInjectionLabel,
+    TurkishConversationPromptInjectionSplit,
+    _TurkishConversationPromptInjectionDataset,
+)
 from pyrit.datasets.seed_datasets.remote.visual_leak_bench_dataset import (
     VisualLeakBenchCategory,
     VisualLeakBenchPIIType,
@@ -160,6 +166,9 @@ __all__ = [
     "PromptIntelSeverity",
     "SGXSTestLabel",
     "SIUOCategory",
+    "TurkishConversationPromptInjectionAttackFamily",
+    "TurkishConversationPromptInjectionLabel",
+    "TurkishConversationPromptInjectionSplit",
     "VLGuardCategory",
     "VLGuardSubcategory",
     "VLGuardSubset",
@@ -233,6 +242,7 @@ __all__ = [
     "_TDC23RedteamingDataset",
     "_ToxicChatDataset",
     "_TransphobiaAwarenessDataset",
+    "_TurkishConversationPromptInjectionDataset",
     "_VLGuardDataset",
     "_VLSUMultimodalDataset",
     "_VisualLeakBenchDataset",
