@@ -74,7 +74,7 @@ class PyRITShell(cmd.Cmd):
         add-initializer <file>...  - Register initializer(s) from Python script file(s)
         run <scenario> [opts]      - Run a scenario with optional parameters
         scenario-history [N]       - List the last N (default 10) scenario runs
-        scenario-results [id]      - Inspect a run: --view overview|attacks
+        scenario-results [id]      - Inspect a run: --view overview|attacks|conversations|full
         print-scenario [id]        - Deprecated alias for 'scenario-results'
         start-server               - Start a local backend server
         stop-server                - Stop the owned backend server
@@ -546,14 +546,21 @@ class PyRITShell(cmd.Cmd):
         Inspect the results of a completed scenario run.
 
         Usage:
-            scenario-results <scenario_result_id> [--view overview|attacks]
+            scenario-results <scenario_result_id>
+                [--view overview|attacks|conversations|full]
                 [--attack-result-ids <id> ...] [--limit N]
 
         Views:
-            overview   Scenario-level aggregate: totals and per-group success
-                       rates (the default).
-            attacks    One row per attack result (id, objective, outcome,
-                       turns, score).
+            overview       Scenario-level aggregate: totals and per-group success
+                           rates (the default).
+            attacks        One row per attack result (id, objective, outcome,
+                           turns, score).
+            conversations  The main-conversation transcript for each attack
+                           (messages plus their scores and full rationale).
+            full           The attacks table followed by the transcripts.
+
+        For conversations/full, when neither --attack-result-ids nor --limit is
+        given, at most 5 attacks are shown to avoid dumping a whole run.
         """
         if not self._ensure_client():
             return
@@ -561,8 +568,13 @@ class PyRITShell(cmd.Cmd):
         import shlex
 
         from pyrit.cli._cli_args import ScenarioResultView, build_scenario_results_parser
-        from pyrit.cli._output import print_attacks_table, print_scenario_result_async
-        from pyrit.cli._results import apply_view_limit_policy, build_attacks_table_payload, resolve_view
+        from pyrit.cli._output import print_attacks_table, print_conversations, print_scenario_result_async
+        from pyrit.cli._results import (
+            apply_view_limit_policy,
+            build_attacks_table_payload,
+            build_conversations_payload_async,
+            resolve_view,
+        )
 
         try:
             tokens = shlex.split(arg)
@@ -572,7 +584,7 @@ class PyRITShell(cmd.Cmd):
         if not tokens:
             print(
                 "Usage: scenario-results <scenario_result_id> "
-                "[--view overview|attacks] [--attack-result-ids <id> ...] [--limit N]"
+                "[--view overview|attacks|conversations|full] [--attack-result-ids <id> ...] [--limit N]"
             )
             print("Use 'scenario-history' to see available run IDs.")
             return
@@ -584,7 +596,7 @@ class PyRITShell(cmd.Cmd):
             return
 
         view = resolve_view(view=parsed.view)
-        limit = apply_view_limit_policy(view=view, limit=parsed.limit)
+        limit = apply_view_limit_policy(view=view, limit=parsed.limit, attack_result_ids=parsed.attack_result_ids)
 
         try:
             result = self._run_async(
@@ -598,13 +610,31 @@ class PyRITShell(cmd.Cmd):
             self._run_async(print_scenario_result_async(result=result))
             return
 
-        payload = build_attacks_table_payload(
-            result=result,
-            scenario_result_id=parsed.scenario_result_id,
-            attack_result_ids=parsed.attack_result_ids,
-            limit=limit,
-        )
-        print_attacks_table(payload=payload)
+        if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
+            attacks_payload = build_attacks_table_payload(
+                result=result,
+                scenario_result_id=parsed.scenario_result_id,
+                attack_result_ids=parsed.attack_result_ids,
+                limit=limit,
+            )
+            print_attacks_table(payload=attacks_payload)
+            if view is ScenarioResultView.ATTACKS:
+                return
+
+        try:
+            conversations_payload = self._run_async(
+                build_conversations_payload_async(
+                    result=result,
+                    client=self._api_client,
+                    scenario_result_id=parsed.scenario_result_id,
+                    attack_result_ids=parsed.attack_result_ids,
+                    limit=limit,
+                )
+            )
+        except Exception as exc:
+            print(f"Error: {exc}")
+            return
+        print_conversations(payload=conversations_payload)
 
     def do_print_scenario(self, arg: str) -> None:
         """

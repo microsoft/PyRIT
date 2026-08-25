@@ -98,6 +98,26 @@ def test_global_default_values_no_subclass_when_disabled():
     assert found is False
 
 
+def test_global_default_values_no_subclass_still_applies_to_base():
+    registry = GlobalDefaultValues()
+    registry.set_default_value(class_type=_Base, parameter_name="name", value="no-inherit", include_subclasses=False)
+    found, val = registry.get_default_value(class_type=_Base, parameter_name="name")
+    assert found is True
+    assert val == "no-inherit"
+    child = _Child()
+    assert child.name is None
+
+
+def test_global_default_values_mixed_flags_same_param():
+    registry = GlobalDefaultValues()
+    registry.set_default_value(class_type=_Base, parameter_name="name", value="base-only", include_subclasses=False)
+    registry.set_default_value(class_type=_Child, parameter_name="name", value="child-default")
+    found, val = registry.get_default_value(class_type=_Base, parameter_name="name")
+    assert found is True and val == "base-only"
+    found, val = registry.get_default_value(class_type=_Child, parameter_name="name")
+    assert found is True and val == "child-default"
+
+
 def test_global_default_values_reset():
     registry = GlobalDefaultValues()
     registry.set_default_value(class_type=_Base, parameter_name="name", value="x")

@@ -20,11 +20,42 @@ export interface MessageAttachment {
   metadata?: Record<string, unknown>
 }
 
+export interface MessageTextDisplayPiece {
+  type: 'text'
+  pieceId: string
+  pieceIndex: number
+  content: string
+  scores?: DisplayScore[]
+}
+
+export interface MessageMediaDisplayPiece {
+  type: 'media'
+  pieceId: string
+  pieceIndex: number
+  /**
+   * Renderable media for this piece. Absent when the backend piece carries no
+   * usable media value (e.g. an empty or blocked response) but still has
+   * scores to present — such pieces must never enter copy/download/export
+   * paths, so they deliberately have no attachment.
+   */
+  attachment?: MessageAttachment
+  scores?: DisplayScore[]
+}
+
+export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
+
 export interface Message {
   role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
   content: string
   timestamp: string
+  /**
+   * Legacy scores for messages created directly by the frontend. Backend
+   * messages keep scores on their corresponding `displayPieces` entry.
+   */
+  scores?: DisplayScore[]
   attachments?: MessageAttachment[]
+  /** Converted text and media pieces in backend order, with piece-local scores. */
+  displayPieces?: MessageDisplayPiece[]
   /** If the backend returned an error for this message */
   error?: MessageError
   /** True while waiting for the backend response */
@@ -255,6 +286,7 @@ export interface AttackSummary {
   conversation_id: string
   attack_type: string
   attack_specific_params?: Record<string, unknown> | null
+  objective: string
   target?: TargetInfo | null
   converters: string[]
   outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null
@@ -284,14 +316,24 @@ export interface CreateAttackResponse {
 
 // --- Messages ---
 
+/** ScoreView payload returned by the backend. */
 export interface BackendScore {
   id: string
+  message_piece_id: string
   scorer_type: string
   score_type: string
   score_value: string
+  is_objective_score?: boolean
   score_category?: string[] | null
   score_rationale?: string | null
   timestamp: string
+}
+
+/** Score enriched with message-piece presentation fields for transcript rendering. */
+export interface DisplayScore extends BackendScore {
+  pieceIndex: number
+  pieceType: string
+  sourceLabel: string
 }
 
 export interface BackendMessagePiece {

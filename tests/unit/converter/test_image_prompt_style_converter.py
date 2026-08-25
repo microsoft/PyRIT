@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
+from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import ImagePromptStyleConverter
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
@@ -45,6 +46,17 @@ def test_init_no_filter_picks_random(mock_target) -> None:
     available = ImagePromptStyleConverter.list_available_filters()
     assert converter._filter_name in available
     assert converter._variation is None
+
+
+def test_init_no_filter_uses_configured_root_seed(mock_target) -> None:
+    try:
+        configure_random_seed(seed=42)
+        first = ImagePromptStyleConverter(converter_target=mock_target)
+        second = ImagePromptStyleConverter(converter_target=mock_target)
+
+        assert first._filter_name == second._filter_name
+    finally:
+        configure_random_seed(seed=None)
 
 
 def test_init_filter_path_custom_yaml(mock_target, tmp_path) -> None:

@@ -257,6 +257,43 @@ describe("conversationExport", () => {
       expect(JSON.parse(json).exported_at).toBe(FIXED_NOW.toISOString());
     });
 
+    it("preserves score-only media metadata without exporting an attachment", () => {
+      const json = conversationToJson(
+        [
+          message({
+            content: "",
+            displayPieces: [
+              {
+                type: "media",
+                pieceId: "piece-blocked",
+                pieceIndex: 0,
+                scores: [
+                  {
+                    id: "score-blocked",
+                    message_piece_id: "piece-blocked",
+                    scorer_type: "ImageScorer",
+                    score_type: "true_false",
+                    score_value: "True",
+                    pieceIndex: 0,
+                    pieceType: "image_path",
+                    sourceLabel: "Piece 1 · image_path",
+                    timestamp: "2026-02-15T00:00:00Z",
+                  },
+                ],
+              },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW
+      );
+
+      const exportedMessage = JSON.parse(json).messages[0];
+      expect(exportedMessage).not.toHaveProperty("attachments");
+      expect(exportedMessage.displayPieces[0]).not.toHaveProperty("attachment");
+      expect(exportedMessage.displayPieces[0].scores[0].id).toBe("score-blocked");
+    });
+
     it("defaults the export timestamp to a valid ISO string when omitted", () => {
       const exportedAt = JSON.parse(conversationToJson([message()], "conv-1")).exported_at;
       expect(Number.isNaN(Date.parse(exportedAt))).toBe(false);

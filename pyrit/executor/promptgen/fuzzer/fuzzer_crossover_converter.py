@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import pathlib
-import random
 import uuid
 from typing import Any
 
@@ -86,7 +85,9 @@ class FuzzerCrossOverConverter(FuzzerConverter):
 
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
         formatted_prompt += (
-            f"\n====TEMPLATE 2 BEGINS====\n{random.choice(self.prompt_templates)}\n====TEMPLATE 2 ENDS====\n"
+            "\n====TEMPLATE 2 BEGINS====\n"
+            f"{self._get_random_generator(stream='prompt-template').choice(self.prompt_templates)}"
+            "\n====TEMPLATE 2 ENDS====\n"
         )
 
         prompt_metadata = JsonResponseConfig(enabled=True).to_metadata()

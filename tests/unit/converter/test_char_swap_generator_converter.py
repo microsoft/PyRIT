@@ -26,7 +26,8 @@ async def test_char_swap_converter_word_perturbation():
         max_iterations=1, word_selection_strategy=WordProportionSelectionStrategy(proportion=1.0)
     )
     prompt = "Testing"
-    with patch("random.randint", return_value=1):  # Force swap at position 1
+    with patch.object(converter, "_get_random_generator") as mock_get_rng:
+        mock_get_rng.return_value.randint.return_value = 1  # Force swap at position 1
         result = await converter.convert_async(prompt=prompt)
         output_prompts = result.output_text.strip().split("\n")
         assert output_prompts[0] == "Tseting"  # 'Testing' with 'e' and 's' swapped
@@ -125,7 +126,8 @@ async def test_char_swap_converter_max_iterations_has_effect(prompt, max_iterati
         word_selection_strategy=WordProportionSelectionStrategy(proportion=1.0),
     )
 
-    with patch("random.randint", side_effect=mock_positions):
+    with patch.object(converter, "_get_random_generator") as mock_get_rng:
+        mock_get_rng.return_value.randint.side_effect = mock_positions
         result = await converter.convert_async(prompt=prompt)
 
     assert result.output_text == expected
@@ -139,18 +141,17 @@ async def test_char_swap_converter_proportion_unchanged_with_iterations():
     strategy = WordProportionSelectionStrategy(proportion=0.5)
     converter = CharSwapConverter(max_iterations=10, word_selection_strategy=strategy)
 
-    # Mock the strategy's own RNG to select exactly 2 words (indices 0 and 2).
+    # Mock the strategy's child stream to select exactly 2 words (indices 0 and 2).
     # This simulates the word selection strategy picking "Testing" and "words".
-    # The strategy draws from a private Random instance rather than the global
-    # `random` module, so that a seeded strategy cannot disturb process-wide state.
-    with (
-        patch.object(strategy._rng, "sample", return_value=[0, 2]) as mock_sample,
-        patch("random.randint", return_value=1),
-    ):
-        result = await converter.convert_async(prompt=prompt)
+    # The strategy draws from a hierarchical stream rather than the global RNG.
+    with patch("pyrit.converter.text_selection_strategy.get_random_generator") as mock_strategy_rng:
+        mock_strategy_rng.return_value.sample.return_value = [0, 2]
+        with patch.object(converter, "_get_random_generator") as mock_converter_rng:
+            mock_converter_rng.return_value.randint.return_value = 1
+            result = await converter.convert_async(prompt=prompt)
 
     # Verify sample was called once (word selection happens once, not per iteration)
-    assert mock_sample.call_count == 1
+    assert mock_strategy_rng.return_value.sample.call_count == 1
 
     # "multiple", "here", "today" should be unchanged
     words = result.output_text.split()

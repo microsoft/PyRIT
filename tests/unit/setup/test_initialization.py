@@ -9,6 +9,7 @@ from unittest import mock
 import pytest
 
 from pyrit.common.apply_defaults import reset_default_values
+from pyrit.common.random_context import get_configured_random_seed
 from pyrit.common.singleton import Singleton
 from pyrit.registry import InitializerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -126,6 +127,26 @@ class TestInitializePyrit:
 
         mock_load_environment.assert_awaited_once()
         mock_set_memory.assert_called_once()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
+    async def test_initialize_configures_root_seed(self, mock_load_environment, mock_set_memory):
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, load_defaults=False, seed=42)
+
+        assert get_configured_random_seed() == 42
+
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, load_defaults=False)
+
+        assert get_configured_random_seed() is None
+
+    @pytest.mark.parametrize("invalid_seed", [True, 1.5, "42", []])
+    async def test_initialize_rejects_invalid_seed(self, invalid_seed):
+        with pytest.raises(TypeError, match="seed must be an int or None"):
+            await initialize_pyrit_async(
+                memory_db_type=IN_MEMORY,
+                load_defaults=False,
+                seed=invalid_seed,  # type: ignore[arg-type]
+            )
 
     @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
     @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)

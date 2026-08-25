@@ -115,9 +115,11 @@ Examples:
   pyrit_scan run airt.rapid_response --target openai_chat
     --techniques role_play_movie_script:converter.translation_spanish:converter.leetspeak
 
-  # List recent runs, then inspect one (overview by default; --view attacks for per-attack rows)
+  # List recent runs, then inspect one (overview by default; --view attacks for per-attack rows,
+  # --view conversations/full for message transcripts)
   pyrit_scan scenario-history 20
   pyrit_scan scenario-results 605d715b-7c07-4bde-a8f9-22fea0b50c4f --view attacks
+  pyrit_scan scenario-results 605d715b-7c07-4bde-a8f9-22fea0b50c4f --view conversations --limit 3
 
   # Register a custom initializer from a Python script
   pyrit_scan add-initializer ./my_custom_init.py
@@ -790,11 +792,16 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     """
     from pyrit.cli import _output
     from pyrit.cli._cli_args import ScenarioResultView
-    from pyrit.cli._results import apply_view_limit_policy, build_attacks_table_payload, resolve_view
+    from pyrit.cli._results import (
+        apply_view_limit_policy,
+        build_attacks_table_payload,
+        build_conversations_payload_async,
+        resolve_view,
+    )
 
     scenario_result_id = parsed_args.scenario_result_id
     view = resolve_view(view=parsed_args.view)
-    limit = apply_view_limit_policy(view=view, limit=parsed_args.limit)
+    limit = apply_view_limit_policy(view=view, limit=parsed_args.limit, attack_result_ids=parsed_args.attack_result_ids)
 
     try:
         result = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
@@ -806,13 +813,29 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
         await _output.print_scenario_result_async(result=result)
         return 0
 
-    payload = build_attacks_table_payload(
-        result=result,
-        scenario_result_id=scenario_result_id,
-        attack_result_ids=parsed_args.attack_result_ids,
-        limit=limit,
-    )
-    _output.print_attacks_table(payload=payload)
+    if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
+        attacks_payload = build_attacks_table_payload(
+            result=result,
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=parsed_args.attack_result_ids,
+            limit=limit,
+        )
+        _output.print_attacks_table(payload=attacks_payload)
+        if view is ScenarioResultView.ATTACKS:
+            return 0
+
+    try:
+        conversations_payload = await build_conversations_payload_async(
+            result=result,
+            client=client,
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=parsed_args.attack_result_ids,
+            limit=limit,
+        )
+    except Exception as exc:
+        _print_cli_exception(exc=exc)
+        return 1
+    _output.print_conversations(payload=conversations_payload)
     return 0
 
 

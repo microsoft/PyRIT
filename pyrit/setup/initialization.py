@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pyrit.common.apply_defaults import reset_default_values
+from pyrit.common.random_context import configure_random_seed
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.setup.environment_loading import (
     load_environment_async,
@@ -77,6 +78,7 @@ async def initialize_pyrit_async(
     env_akv_ref: Sequence[str] | None = None,
     env_akv_strict: bool = True,
     silent: bool = False,
+    seed: int | None = None,
     **memory_instance_kwargs: Any,
 ) -> None:
     """
@@ -109,13 +111,17 @@ async def initialize_pyrit_async(
             syntax. If False, warn and skip those entries. Operational Key Vault failures always raise.
         silent (bool): If True, suppresses print statements about environment file loading and
             schema migration. Defaults to False.
+        seed (int | None): Optional root seed for deterministic converter operations. Converters derive
+            independent named child streams automatically. Initialize PyRIT before constructing components
+            whose defaults are selected randomly. This does not control remote model output.
         **memory_instance_kwargs (Any | None): Additional keyword arguments to pass to the memory instance.
 
     Raises:
-        TypeError: If ``env_akv_strict`` is not a bool.
+        TypeError: If ``env_akv_strict`` is not a bool or seed is not an int or None.
         ValueError: If an unsupported memory_db_type is provided or env_files contains non-existent files.
     """
     validate_env_akv_strict(env_akv_strict=env_akv_strict)
+    configure_random_seed(seed=seed)
     await load_environment_async(
         env_akv_ref=env_akv_ref,
         env_files=env_files,

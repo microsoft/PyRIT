@@ -458,12 +458,14 @@ class TestCrescendoAttackInitialization:
         """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
         from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
-        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: (
-            capability != CapabilityName(missing_capability)
-        )
+        missing = {
+            "multi_turn": CapabilityName.MULTI_TURN,
+            "system_prompt": CapabilityName.SYSTEM_PROMPT,
+        }[missing_capability]
+        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: capability != missing
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
 
-        with pytest.raises(ValueError, match=f"CrescendoAttack .*{missing_capability}"):
+        with pytest.raises(ValueError, match=f"supports_{missing_capability}"):
             CrescendoAttack(
                 objective_target=mock_objective_target,
                 attack_adversarial_config=adversarial_config,

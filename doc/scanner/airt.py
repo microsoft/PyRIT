@@ -158,9 +158,11 @@ await output_scenario_async(scenario_result)
 # objective inline into the template as a request converter (target-agnostic), and
 # `jailbreak_system_prompt` sets the template as a native system prompt with the objective sent as
 # the user turn (only for targets that natively support editable history + system prompts — it is
-# skipped for incapable targets). Registry techniques like `role_play_*`, `many_shot`, and `tap` are
-# opt-in. Results are grouped by jailbreak template, and a baseline (the un-jailbroken objective) is
-# included by default so complying with the bare objective is itself visible.
+# skipped for incapable targets). These are the only delivery techniques exposed by Jailbreak.
+# Generic simulated, multi-turn, or non-composable registry techniques are intentionally excluded
+# because they cannot preserve Jailbreak's per-template delivery semantics. Results are grouped by
+# jailbreak template, and a baseline (the un-jailbroken objective) is included by default so
+# complying with the bare objective is itself visible.
 #
 # ```bash
 # pyrit_scan run airt.jailbreak \
@@ -170,10 +172,10 @@ await output_scenario_async(scenario_result)
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, DEFAULT (`prompt_sending` + `jailbreak_system_prompt`), plus registry
-# techniques (`role_play_*`, `many_shot`, `tap`, …). By default a small random sample of jailbreak
-# templates runs; pass `num_jailbreaks` (random count) or `jailbreak_names` (explicit) to widen or
-# pin the selection.
+# **Available technique selectors:** ALL, DEFAULT, and SINGLE_TURN currently select both
+# `prompt_sending` and `jailbreak_system_prompt`; either concrete technique can also be selected
+# directly. By default a small random sample of jailbreak templates runs; pass `num_jailbreaks`
+# (random count) or `jailbreak_names` (explicit) to widen or pin the selection.
 
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique

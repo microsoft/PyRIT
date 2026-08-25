@@ -399,6 +399,14 @@ async def test_list_scenario_runs_async(client, mock_httpx_client):
     mock_httpx_client.get.assert_awaited_once_with("/api/scenarios/runs", params={"limit": 20})
 
 
+async def test_get_conversation_messages_async(client, mock_httpx_client):
+    payload = {"conversation_id": "c1", "messages": []}
+    mock_httpx_client.get.return_value = _make_response(json_data=payload)
+    result = await client.get_conversation_messages_async(attack_result_id="a1", conversation_id="c1")
+    assert result == payload
+    mock_httpx_client.get.assert_awaited_once_with("/api/attacks/a1/messages", params={"conversation_id": "c1"})
+
+
 # ---------------------------------------------------------------------------
 # _get_json_async error path
 # ---------------------------------------------------------------------------

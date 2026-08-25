@@ -7,78 +7,17 @@ import subprocess
 import sys
 from pathlib import Path
 from textwrap import dedent
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _PACKAGE_ROOT = _REPOSITORY_ROOT / "pyrit"
-_MODEL_PACKAGE_NAMES = (
-    "pyrit.models",
-    "pyrit.models.catalog",
-    "pyrit.models.identifiers",
-    "pyrit.models.messages",
-    "pyrit.models.results",
-    "pyrit.models.score",
-    "pyrit.models.seeds",
-    "pyrit.models.target",
-)
-
 # Remove an entry when its package adopts the standard lazy export contract.
 # The inventory test rejects both unlisted eager packages and stale exceptions.
 _EAGER_PACKAGE_EXCEPTIONS = frozenset(
     {
-        "pyrit",
-        "pyrit.analytics",
-        "pyrit.auth",
-        "pyrit.backend.mappers",
-        "pyrit.backend.middleware",
-        "pyrit.backend.models",
-        "pyrit.backend.routes",
-        "pyrit.backend.services",
-        "pyrit.common",
-        "pyrit.converter",
-        "pyrit.converter.token_smuggling",
-        "pyrit.datasets",
-        "pyrit.datasets.seed_datasets.local",
-        "pyrit.datasets.seed_datasets.remote",
-        "pyrit.embedding",
-        "pyrit.exceptions",
-        "pyrit.executor.attack",
-        "pyrit.executor.attack.component",
-        "pyrit.executor.attack.compound",
-        "pyrit.executor.attack.core",
-        "pyrit.executor.attack.multi_turn",
-        "pyrit.executor.attack.single_turn",
-        "pyrit.executor.attack.streaming",
-        "pyrit.executor.benchmark",
-        "pyrit.executor.core",
-        "pyrit.executor.promptgen",
-        "pyrit.executor.promptgen.core",
-        "pyrit.executor.promptgen.fuzzer",
         "pyrit.executor.promptgen.gcg",
-        "pyrit.executor.workflow",
-        "pyrit.executor.workflow.core",
-        "pyrit.memory",
-        "pyrit.memory.storage",
-        "pyrit.message_normalizer",
-        "pyrit.output",
-        "pyrit.prompt_normalizer",
-        "pyrit.prompt_target",
-        "pyrit.registry",
-        "pyrit.registry.components",
-        "pyrit.scenario",
-        "pyrit.scenario.core",
-        "pyrit.scenario.scenarios.adaptive",
-        "pyrit.scenario.scenarios.adaptive.selectors",
-        "pyrit.scenario.scenarios.airt",
-        "pyrit.scenario.scenarios.benchmark",
-        "pyrit.scenario.scenarios.foundry",
-        "pyrit.scenario.scenarios.garak",
-        "pyrit.score",
-        "pyrit.score.true_false.regex",
-        "pyrit.setup",
-        "pyrit.setup.initializers",
-        "pyrit.setup.initializers.techniques",
     }
 )
 
@@ -130,6 +69,42 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "TokenUsage",
         "pyrit.models.target.token_usage",
         "pyrit.models.target.json_schema_definition",
+    ),
+    (
+        "pyrit.converter",
+        "Base64Converter",
+        "pyrit.converter.base64_converter",
+        "pyrit.converter.audio_echo_converter",
+    ),
+    (
+        "pyrit.datasets",
+        "SeedDatasetProvider",
+        "pyrit.datasets.seed_datasets.seed_dataset_provider",
+        "pyrit.datasets.seed_datasets.remote",
+    ),
+    (
+        "pyrit.memory",
+        "CentralMemory",
+        "pyrit.memory.central_memory",
+        "pyrit.memory.sqlite_memory",
+    ),
+    (
+        "pyrit.prompt_target",
+        "OpenAIChatTarget",
+        "pyrit.prompt_target.openai.openai_chat_target",
+        "pyrit.prompt_target.hugging_face.hugging_face_chat_target",
+    ),
+    (
+        "pyrit.scenario",
+        "Scenario",
+        "pyrit.scenario.core.scenario",
+        "pyrit.scenario.scenarios.airt",
+    ),
+    (
+        "pyrit.score",
+        "SubStringScorer",
+        "pyrit.score.true_false.substring_scorer",
+        "pyrit.score.true_false.audio_true_false_scorer",
     ),
 ]
 
@@ -277,8 +252,6 @@ def _non_exempt_public_initializers() -> tuple[Path, ...]:
     """Return public package initializers that must use the lazy contract."""
     paths: list[Path] = []
     for init_path in _initializer_paths():
-        if _package_name(init_path) in _EAGER_PACKAGE_EXCEPTIONS:
-            continue
         tree = ast.parse(init_path.read_text(encoding="utf-8"))
         all_value = _assigned_value(tree=tree, name="__all__")
         lazy_exports_value = _assigned_value(tree=tree, name="_LAZY_EXPORTS")
@@ -353,6 +326,14 @@ def test_lazy_packages_do_not_load_child_modules() -> None:
         for package_name in sorted(package_names, key=lambda name: name.count(".")):
             package = importlib.import_module(package_name)
             descendants = [name for name in sys.modules if name.startswith(f"{{package_name}}.")]
+            if package_name == "pyrit":
+                descendants = [
+                    name
+                    for name in descendants
+                    if name not in {{"pyrit.common", "pyrit.common.lazy_imports"}}
+                ]
+            elif package_name == "pyrit.common":
+                descendants = [name for name in descendants if name != "pyrit.common.lazy_imports"]
 
             assert not descendants, (package_name, descendants)
             assert package.__all__ == list(package._LAZY_EXPORTS)
@@ -361,11 +342,16 @@ def test_lazy_packages_do_not_load_child_modules() -> None:
     )
 
 
-@pytest.mark.parametrize("package_name", _MODEL_PACKAGE_NAMES)
-def test_model_package_dir_includes_lazy_exports_in_process(package_name: str) -> None:
+@pytest.mark.parametrize(
+    "package_name",
+    [_package_name(path) for path in _non_exempt_public_initializers()],
+)
+def test_lazy_package_runtime_contract_in_process(package_name: str) -> None:
     package = importlib.import_module(package_name)
 
     assert set(package.__all__) <= set(dir(package))
+    with pytest.raises(AttributeError, match="has no attribute '_missing_lazy_export'"):
+        package.__getattr__("_missing_lazy_export")
 
 
 @pytest.mark.parametrize(
@@ -418,3 +404,165 @@ def test_lazy_import_spot_check(
         assert {unrelated_module!r} not in sys.modules
         """
     )
+
+
+def test_dataset_catalog_materializes_only_for_complete_discovery() -> None:
+    _assert_subprocess_succeeds(
+        """
+        import sys
+
+        from pyrit.datasets import SeedDatasetProvider
+
+        assert "pyrit.datasets.seed_datasets.local" not in sys.modules
+        assert "pyrit.datasets.seed_datasets.remote" not in sys.modules
+
+        providers = SeedDatasetProvider.get_all_providers()
+
+        assert "_JailbreakTemplatesDataset" in providers
+        assert "_HarmBenchDataset" in providers
+        assert "pyrit.datasets.seed_datasets.local" in sys.modules
+        assert "pyrit.datasets.seed_datasets.remote" in sys.modules
+        """
+    )
+
+
+def test_dataset_catalog_materializes_for_complete_discovery_in_process() -> None:
+    from pyrit.datasets import SeedDatasetProvider
+
+    providers = SeedDatasetProvider.get_all_providers()
+
+    assert "_JailbreakTemplatesDataset" in providers
+    assert "_HarmBenchDataset" in providers
+
+
+@pytest.mark.parametrize("method_name", ["get_all_dataset_names_async", "fetch_datasets_async"])
+async def test_dataset_discovery_entrypoint_materializes_builtin_providers(method_name: str) -> None:
+    from pyrit.datasets import SeedDatasetProvider
+
+    with (
+        patch.object(
+            SeedDatasetProvider,
+            "_materialize_builtin_providers",
+            side_effect=RuntimeError("materialized"),
+        ) as materialize,
+        pytest.raises(RuntimeError, match="materialized"),
+    ):
+        await getattr(SeedDatasetProvider, method_name)()
+
+    materialize.assert_called_once_with()
+
+
+def test_scenario_short_imports_preserve_canonical_identity() -> None:
+    _assert_subprocess_succeeds(
+        """
+        import importlib
+        import sys
+
+        import pyrit.scenario
+
+        assert "pyrit.scenario.scenarios.airt" not in sys.modules
+
+        alias_package = importlib.import_module("pyrit.scenario.airt")
+        canonical_package = importlib.import_module("pyrit.scenario.scenarios.airt")
+        alias_module = importlib.import_module("pyrit.scenario.airt.leakage")
+        canonical_module = importlib.import_module("pyrit.scenario.scenarios.airt.leakage")
+
+        assert alias_package is canonical_package
+        assert alias_module is canonical_module
+        assert alias_package.Leakage is canonical_module.Leakage
+        """
+    )
+
+
+def test_scenario_short_imports_preserve_canonical_identity_in_process() -> None:
+    alias_package = importlib.import_module("pyrit.scenario.airt")
+    canonical_package = importlib.import_module("pyrit.scenario.scenarios.airt")
+
+    assert alias_package is canonical_package
+
+
+def test_missing_scenario_short_import_raises() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("pyrit.scenario.airt.missing_scenario")
+
+
+def test_dynamic_scenario_techniques_reject_unknown_export() -> None:
+    dynamic_techniques = importlib.import_module("pyrit.scenario.scenarios._dynamic_techniques")
+
+    with pytest.raises(AttributeError, match="has no attribute 'UnknownTechnique'"):
+        dynamic_techniques.__getattr__("UnknownTechnique")
+
+
+def test_dynamic_scenario_technique_resolves_and_caches() -> None:
+    dynamic_techniques = importlib.import_module("pyrit.scenario.scenarios._dynamic_techniques")
+    builder = MagicMock(return_value=object())
+    builder_module = MagicMock()
+    builder_module.build = builder
+
+    with (
+        patch.dict(
+            dynamic_techniques._TECHNIQUE_BUILDERS,
+            {"TestTechnique": ("test.builder", "build")},
+        ),
+        patch.object(dynamic_techniques, "import_module", return_value=builder_module),
+    ):
+        technique = dynamic_techniques.__getattr__("TestTechnique")
+
+    assert dynamic_techniques.TestTechnique is technique
+    builder.assert_called_once_with()
+    dynamic_techniques.__dict__.pop("TestTechnique")
+
+
+def test_scenario_registry_materializes_builtin_catalog() -> None:
+    _assert_subprocess_succeeds(
+        """
+        import sys
+
+        from pyrit.registry import ScenarioRegistry
+
+        assert "pyrit.scenario.scenarios.airt.cyber" not in sys.modules
+
+        names = ScenarioRegistry().get_class_names()
+
+        assert "airt.cyber" in names
+        assert "garak.encoding" in names
+        assert "pyrit.scenario.scenarios.airt.cyber" in sys.modules
+        """
+    )
+
+
+def test_scenario_registry_materializes_builtin_catalog_in_process() -> None:
+    from pyrit.registry import ScenarioRegistry
+
+    names = ScenarioRegistry().get_class_names()
+
+    assert "airt.cyber" in names
+    assert "garak.encoding" in names
+
+
+def test_function_exports_override_same_named_child_modules() -> None:
+    _assert_subprocess_succeeds(
+        """
+        import importlib
+
+        import pyrit
+        import pyrit.common
+
+        show_versions_module = importlib.import_module("pyrit.show_versions")
+        apply_defaults_module = importlib.import_module("pyrit.common.apply_defaults")
+
+        assert pyrit.show_versions is show_versions_module.show_versions
+        assert pyrit.common.apply_defaults is apply_defaults_module.apply_defaults
+        """
+    )
+
+
+def test_function_exports_override_same_named_child_modules_in_process() -> None:
+    import pyrit
+    import pyrit.common
+
+    show_versions_module = importlib.import_module("pyrit.show_versions")
+    apply_defaults_module = importlib.import_module("pyrit.common.apply_defaults")
+
+    assert pyrit.show_versions is show_versions_module.show_versions
+    assert pyrit.common.apply_defaults is apply_defaults_module.apply_defaults

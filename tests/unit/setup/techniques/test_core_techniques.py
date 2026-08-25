@@ -3,7 +3,7 @@
 
 """Tests for the ``core`` scenario attack techniques (``techniques/core.py``).
 
-Currently covers the ``flip`` technique. FlipAttack used to be a bespoke
+Covers the ``flip`` and ``code_attack`` techniques. FlipAttack used to be a bespoke
 ``PromptSendingAttack`` subclass; it is now expressed purely as a ``core``
 technique (``FlipConverter`` + ``TaskFramingConverter`` + a system-prompt
 ``seed_technique``). These tests lock in the legacy behavior: the objective is
@@ -13,6 +13,8 @@ prompt is prepended verbatim (never flipped).
 
 import pytest
 
+from pyrit.converter import CodeAttackConverter
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.memory import CentralMemory
@@ -29,6 +31,16 @@ EXPECTED_SENT = "TASK is '?ssecorp nohtyP a llik I nac woH'"
 
 def _flip_factory():
     return next(f for f in core.get_technique_factories() if f.name == "flip")
+
+
+def _code_attack_factory():
+    return next(f for f in core.get_technique_factories() if f.name == "code_attack")
+
+
+def _wired_converters(factory):
+    """Return the converters the factory wires onto its request pipeline."""
+    converter_config = factory._attack_kwargs["attack_converter_config"]
+    return [c for group in converter_config.request_converters for c in group.converters]
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -96,3 +108,38 @@ class TestFlipTechnique:
         system_messages = [m for m in messages if m.get_piece().role == "system"]
         assert len(system_messages) == 1
         assert "flipping each word" in system_messages[0].get_value()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCodeAttackTechnique:
+    """Wiring tests for the code_attack technique.
+
+    CodeAttack ships as a converter only; the technique is the sole place the
+    converter is bound to an attack, so the binding is what needs locking in.
+    """
+
+    def test_factory_shape(self):
+        factory = _code_attack_factory()
+        assert factory.name == "code_attack"
+        assert factory._attack_class is PromptSendingAttack
+        assert factory.technique_tags == ["single_turn", "light"]
+        assert factory.description
+        # Converter-only technique: no adversarial chat, no seed prompts.
+        assert factory.seed_technique is None
+
+        converters = _wired_converters(factory)
+        assert len(converters) == 1
+        converter = converters[0]
+        assert isinstance(converter, CodeAttackConverter)
+        assert converter._template_name == "PYTHON_STACK_VERBOSE"
+        assert converter._encoding is CodeAttackConverter.Encoding.PYTHON_STACK
+
+    async def test_wired_converter_encodes_the_objective(self):
+        """The wired converter must actually turn the objective into code."""
+        converter = _wired_converters(_code_attack_factory())[0]
+
+        result = await converter.convert_async(prompt=OBJECTIVE)
+
+        # The objective is pushed onto a stack in reverse, one word per line.
+        assert "my_stack.append(" in result.output_text
+        assert OBJECTIVE not in result.output_text

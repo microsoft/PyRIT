@@ -323,6 +323,37 @@ class PyRITApiClient:
         return [ScenarioRunSummary.model_validate(item) for item in payload.get("items", [])]
 
     # ------------------------------------------------------------------
+    # Attacks / conversations
+    # ------------------------------------------------------------------
+
+    async def get_conversation_messages_async(
+        self,
+        *,
+        attack_result_id: str,
+        conversation_id: str,
+    ) -> dict[str, Any]:
+        """
+        Get all messages for one conversation belonging to an attack result.
+
+        Returns the raw ``ConversationMessagesResponse`` payload (rather than a
+        typed backend view model) so the thin client stays decoupled from
+        ``pyrit.backend.models``; ``pyrit.cli._results`` maps it into its own
+        view payload.
+
+        Args:
+            attack_result_id (str): The attack result whose conversation to read.
+            conversation_id (str): The conversation whose messages to return.
+
+        Returns:
+            dict[str, Any]: The ``ConversationMessagesResponse`` payload
+                (``conversation_id`` plus an ordered ``messages`` list).
+        """
+        return await self._get_json_async(
+            path=f"/api/attacks/{attack_result_id}/messages",
+            params={"conversation_id": conversation_id},
+        )
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 

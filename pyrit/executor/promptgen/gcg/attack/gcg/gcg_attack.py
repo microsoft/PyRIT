@@ -229,6 +229,34 @@ class GCGMultiPromptAttack(MultiPromptAttack):
         except (AttributeError, TypeError, ValueError):
             return None
 
+    def _select_best_candidate(
+        self,
+        *,
+        control_cands: list[list[str]],
+        losses: torch.Tensor,
+        batch_size: int,
+    ) -> tuple[str, torch.Tensor]:
+        """
+        Return the candidate with the minimal aggregate loss.
+
+        This is the selection phase of a GCG optimization step.
+
+        Candidate batches from multiple worker-model groups are concatenated, so
+        the flat argmin index is decomposed back into group and in-batch slots.
+
+        Args:
+            control_cands (list[list[str]]): Filtered candidate suffixes per worker-model group.
+            losses (torch.Tensor): Aggregate loss per candidate across all groups.
+            batch_size (int): Number of candidates sampled per group.
+
+        Returns:
+            tuple[str, torch.Tensor]: The best candidate suffix and its loss.
+        """
+        min_idx = losses.argmin()
+        model_idx = min_idx // batch_size
+        batch_idx = min_idx % batch_size
+        return control_cands[model_idx][batch_idx], losses[min_idx]
+
     def step(
         self,
         *,
@@ -352,10 +380,9 @@ class GCGMultiPromptAttack(MultiPromptAttack):
                             f"loss={loss[j * batch_size : (j + 1) * batch_size].min().item() / (i + 1):.4f}"
                         )
 
-            min_idx = loss.argmin()
-            model_idx = min_idx // batch_size
-            batch_idx = min_idx % batch_size
-            next_control, cand_loss = control_cands[model_idx][batch_idx], loss[min_idx]
+            next_control, cand_loss = self._select_best_candidate(
+                control_cands=control_cands, losses=loss, batch_size=batch_size
+            )
         del control_cands, loss
 
         current_length = self._get_control_length(control=next_control)

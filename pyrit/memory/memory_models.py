@@ -1251,7 +1251,7 @@ class EmbeddingMessageWithSimilarity(BaseModel):
     """
     Represents an embedding message with its similarity score.
 
-    Parameters:
+    Attributes:
         uuid (uuid.UUID): The UUID of the embedding message.
         metric (str): The metric used to calculate the similarity score.
         score (float): The similarity score (default is 0.0).

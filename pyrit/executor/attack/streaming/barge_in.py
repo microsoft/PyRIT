@@ -28,6 +28,7 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from pyrit.executor.attack.component import PrependedConversationConfig
     from pyrit.prompt_target import PromptTarget, RealtimeTarget
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
         attack_converter_config: AttackConverterConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the streaming barge-in attack.
@@ -82,6 +84,9 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             prompt_normalizer: Normalizer used to apply converters and persist messages.
                 Defaults to a fresh ``PromptNormalizer``.
             params_type: Attack parameter dataclass type.
+            prepended_conversation_config: Configuration for prepended-conversation
+                converter-role selection. Its message formatter is not used by the
+                direct realtime streaming path.
 
         Raises:
             ValueError: If ``objective_target`` does not declare the ``STREAMING_AUDIO``
@@ -91,6 +96,7 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
             objective_target=objective_target,
             context_type=BargeInAttackContext,
             params_type=params_type,
+            prepended_conversation_config=prepended_conversation_config,
             logger=logger,
         )
         self._realtime_target = cast("RealtimeTarget", objective_target)
@@ -126,16 +132,27 @@ class BargeInAttack(AttackStrategy["BargeInAttackContext[Any]", AttackResult]):
 
         Prepended messages are recorded in memory but are NOT pushed into the live realtime
         session beyond the system prompt — the model only conditions on the system message
-        and live audio chunks.
+        and live audio chunks. The direct streaming path does not call
+        ``PromptTarget.send_prompt_async``, so it cannot consume a target-normalization
+        context or a prepended-history formatter.
         """
         if not context.conversation_id:
             context.conversation_id = str(uuid.uuid4())
+        existing_message_ids = {
+            message.get_piece().id for message in self._conversation_manager.get_conversation(context.conversation_id)
+        }
         await self._conversation_manager.initialize_context_async(
             context=context,
             target=self._objective_target,
             conversation_id=context.conversation_id,
             request_converters=self._request_converters,
+            prepended_conversation_config=self._prepended_conversation_config,
         )
+        persisted_messages = self._conversation_manager.get_conversation(context.conversation_id)
+        context.prepended_conversation = [
+            message for message in persisted_messages if message.get_piece().id not in existing_message_ids
+        ]
+        context.prepended_history_send_context = None
 
     async def _teardown_async(self, *, context: BargeInAttackContext[Any]) -> None:
         """No-op teardown — connection / dispatcher are closed inside the session's ``run_async``."""

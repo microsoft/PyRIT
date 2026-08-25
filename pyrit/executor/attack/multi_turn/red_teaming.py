@@ -14,6 +14,7 @@ from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import (
     ConversationManager,
+    PrependedConversationConfig,
     _AdversarialConversationManager,
     get_adversarial_chat_messages,
 )
@@ -93,6 +94,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         attack_converter_config: AttackConverterConfig | None = None,
         attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
         max_turns: int = 10,
         score_last_turn_only: bool = False,
     ) -> None:
@@ -105,6 +107,8 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             attack_converter_config: Configuration for attack converters. Defaults to None.
             attack_scoring_config: Configuration for attack scoring. Defaults to None.
             prompt_normalizer: The prompt normalizer to use for sending prompts. Defaults to None.
+            prepended_conversation_config: Configuration for prepended-conversation
+                converter roles and target-facing formatting. Defaults to None.
             max_turns (int): Maximum number of turns for the attack. Defaults to 10.
             score_last_turn_only (bool): If True, only score the final turn instead of every turn.
                 This reduces LLM calls when intermediate scores are not needed (e.g., for
@@ -115,7 +119,12 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             ValueError: If objective_scorer is not provided in attack_scoring_config.
         """
         # Initialize base class
-        super().__init__(objective_target=objective_target, logger=logger, context_type=MultiTurnAttackContext)
+        super().__init__(
+            objective_target=objective_target,
+            logger=logger,
+            context_type=MultiTurnAttackContext,
+            prepended_conversation_config=prepended_conversation_config,
+        )
         self._memory = CentralMemory.get_memory_instance()
 
         # Initialize converter configuration
@@ -169,7 +178,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         # Initialize utilities
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
 
-        self._conversation_manager = ConversationManager()
+        self._conversation_manager = ConversationManager(prompt_normalizer=self._prompt_normalizer)
 
         # set the maximum number of turns for the attack
         if max_turns <= 0:
@@ -268,6 +277,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             target=self._objective_target,
             conversation_id=context.session.conversation_id,
             request_converters=self._request_converters,
+            prepended_conversation_config=self._prepended_conversation_config,
             max_turns=self._max_turns,
             memory_labels=self._memory_labels,
         )
@@ -468,7 +478,6 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         """
         logger.info(f"Sending prompt to target: {message.get_value()[:50]}...")
 
-        # For single-turn targets, rotate conversation_id so each turn starts fresh
         self._rotate_conversation_for_single_turn_target(context=context)
 
         with execution_context(
@@ -485,6 +494,10 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
                 target=self._objective_target,
+                normalizer_overrides=self._get_prepended_normalizer_overrides(
+                    prepended_history_send_context=context.prepended_history_send_context,
+                ),
+                send_context=context.prepended_history_send_context,
             )
 
         if response is None:

@@ -42,12 +42,20 @@ from pyrit.models import (
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    from pyrit.executor.attack.component.prepended_conversation_config import (
+        PrependedConversationConfig,
+    )
+    from pyrit.executor.attack.component.prepended_history_send_context import (
+        PrependedHistorySendContext,
+    )
     from pyrit.executor.attack.core.attack_config import (
         AttackAdversarialConfig,
         AttackScoringConfig,
     )
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+    from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.prompt_target import PromptTarget
+    from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
@@ -87,6 +95,13 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _next_message_override: Message | None | _NextMessageOverrideState = _NextMessageOverrideState.UNSET
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
+
+    # Per-execution prepended-history boundary and send lifecycle. Never persisted.
+    prepended_history_send_context: PrependedHistorySendContext | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     # Optional attribution from an upstream orchestrator (e.g. Scenario). When
     # set, the persistence path stamps attribution_parent_id + attribution_data
@@ -422,6 +437,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         objective_target: PromptTarget,
         context_type: type[AttackStrategyContextT],
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
+        prepended_conversation_config: PrependedConversationConfig | None = None,
         logger: logging.Logger = logger,
     ) -> None:
         """
@@ -433,6 +449,9 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
                 Defaults to AttackParameters. Use AttackParameters.excluding() to create
                 a params type that rejects certain fields.
+            prepended_conversation_config (PrependedConversationConfig | None): Policy for
+                prepended conversations. Controls converter role scope and target-facing
+                history formatting.
             logger (logging.Logger): Logger instance for logging events.
         """
         super().__init__(
@@ -442,14 +461,39 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             ),
             logger=logger,
         )
+        # Local import avoids the component package's import cycle through attack config.
+        from pyrit.executor.attack.component.prepended_conversation_config import (
+            PrependedConversationConfig,
+        )
+
         type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
         self._params_type = params_type
+        self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         # Guard so subclasses that set converters before calling super() aren't clobbered
         if not hasattr(self, "_request_converters"):
             self._request_converters: list[Any] = []
         if not hasattr(self, "_response_converters"):
             self._response_converters: list[Any] = []
+
+    def _get_prepended_normalizer_overrides(
+        self,
+        *,
+        prepended_history_send_context: PrependedHistorySendContext | None,
+    ) -> dict[CapabilityName, MessageListNormalizer[Message]]:
+        """
+        Resolve prepended-history overrides for one target send.
+
+        Args:
+            prepended_history_send_context: Persisted seed boundary for this execution.
+
+        Returns:
+            Overrides keyed by the capability they adapt.
+        """
+        return self._prepended_conversation_config.get_normalizer_overrides(
+            target=self._objective_target,
+            prepended_history_send_context=prepended_history_send_context,
+        )
 
     def _create_identifier(
         self,
@@ -477,6 +521,13 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         merged_params: dict[str, Any] = dict(params) if params else {}
 
         objective_target = TargetIdentifier.from_component_identifier(self.get_objective_target().get_identifier())
+
+        prepended_config = self._prepended_conversation_config
+        if prepended_config.apply_converters_to_roles != ["user"] or prepended_config.message_normalizer is not None:
+            merged_params["prepended_conversation_converter_roles"] = list(prepended_config.apply_converters_to_roles)
+            all_children["prepended_conversation_formatter"] = (
+                prepended_config.get_message_normalizer().get_identifier()
+            )
 
         # Add scorer if present
         objective_scorer: ScorerIdentifier | None = None

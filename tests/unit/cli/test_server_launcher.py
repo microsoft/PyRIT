@@ -136,15 +136,70 @@ async def test_probe_health_returns_false_when_client_unhealthy():
 
 
 # ---------------------------------------------------------------------------
-# start_async
+# launch planning and start_async
 # ---------------------------------------------------------------------------
 
 
-async def test_spawn_backend_process_async_cancellation_terminates_spawned_process():
+@pytest.mark.parametrize(
+    ("platform_name", "expected_creation_flags", "expected_start_new_session"),
+    [
+        ("posix", 0, True),
+        ("nt", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200), False),
+    ],
+)
+def test_build_server_launch_plan_constructs_platform_settings(
+    platform_name, expected_creation_flags, expected_start_new_session
+):
+    plan = _server_launcher._build_server_launch_plan(
+        host="127.0.0.1",
+        port=8765,
+        config_file=Path("config.yaml"),
+        log_level="DEBUG",
+        startup_timeout=3.5,
+        executable="python",
+        platform_name=platform_name,
+    )
+
+    assert plan.base_url == "http://127.0.0.1:8765"
+    assert plan.command == [
+        "python",
+        "-m",
+        "pyrit.backend.pyrit_backend",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8765",
+        "--config-file",
+        "config.yaml",
+        "--log-level",
+        "DEBUG",
+    ]
+    assert plan.creation_flags == expected_creation_flags
+    assert plan.start_new_session is expected_start_new_session
+    assert plan.startup_timeout == 3.5
+
+
+@pytest.mark.parametrize("startup_timeout", [True, 0, -1, float("inf"), float("nan"), "1"])
+def test_build_server_launch_plan_rejects_invalid_timeout(startup_timeout):
+    with pytest.raises(ValueError, match="finite number greater than 0"):
+        _server_launcher._build_server_launch_plan(
+            host="localhost",
+            port=8000,
+            config_file=None,
+            log_level=None,
+            startup_timeout=startup_timeout,
+            executable="python",
+            platform_name="posix",
+        )
+
+
+async def test_start_async_cancellation_during_spawn_terminates_spawned_process():
     started = threading.Event()
     release = threading.Event()
+    launcher = ServerLauncher()
     fake_proc = MagicMock()
     fake_proc.pid = 4321
+    fake_proc.poll.return_value = None
 
     def delayed_spawn(**_kwargs: object) -> MagicMock:
         started.set()
@@ -152,17 +207,11 @@ async def test_spawn_backend_process_async_cancellation_terminates_spawned_proce
         return fake_proc
 
     with (
+        patch.object(ServerLauncher, "probe_health_async", new=AsyncMock(return_value=False)),
         patch.object(_server_launcher, "_spawn_backend_process", side_effect=delayed_spawn),
         patch.object(_server_launcher, "_terminate_process_tree", return_value=True) as stop_tree_mock,
     ):
-        spawn_task = asyncio.create_task(
-            _server_launcher._spawn_backend_process_async(
-                command=["python"],
-                log_path="backend.log",
-                creation_flags=0,
-                start_new_session=True,
-            )
-        )
+        spawn_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
         assert await asyncio.to_thread(started.wait, 5)
         spawn_task.cancel()
         release.set()
@@ -170,6 +219,8 @@ async def test_spawn_backend_process_async_cancellation_terminates_spawned_proce
             await spawn_task
 
     stop_tree_mock.assert_called_once_with(process=fake_proc)
+    assert launcher.pid is None
+    assert not _server_launcher._pid_file_path(port=8000).exists()
 
 
 async def test_start_async_returns_url_when_already_healthy():
@@ -213,6 +264,33 @@ async def test_start_async_spawns_subprocess_and_waits_for_health():
     assert "INFO" in cmd
     record = json.loads(_server_launcher._pid_file_path(port=8001).read_text(encoding="utf-8"))
     assert record == {"host": "localhost", "port": 8001, "pid": 9876}
+
+
+async def test_start_async_cleans_up_when_ready_message_cannot_be_printed():
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.pid = 4321
+    fake_proc.poll.return_value = None
+    probe = AsyncMock(side_effect=[False, True])
+
+    def fail_ready_message(message: object = "", *_args: object, **_kwargs: object) -> None:
+        if isinstance(message, str) and message.startswith("Server ready"):
+            raise BrokenPipeError("stdout closed")
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=probe),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch.object(_server_launcher, "_find_pid_on_port", return_value=4321),
+        patch.object(_server_launcher, "_terminate_process_tree", return_value=True) as stop_tree_mock,
+        patch("builtins.print", side_effect=fail_ready_message),
+        patch("asyncio.sleep", new=AsyncMock(return_value=None)),
+    ):
+        with pytest.raises(BrokenPipeError, match="stdout closed"):
+            await launcher.start_async(host="localhost", port=8001, startup_timeout=5)
+
+    stop_tree_mock.assert_called_once_with(process=fake_proc)
+    assert launcher.pid is None
+    assert not _server_launcher._pid_file_path(port=8001).exists()
 
 
 def test_start_async_defaults_to_longer_startup_timeout():
@@ -353,6 +431,163 @@ async def test_start_async_repeated_cancellation_waits_for_pid_write_before_clea
     stop_tree_mock.assert_called_once_with(process=fake_proc)
     assert launcher.pid is None
     assert not _server_launcher._pid_file_path(port=8000).exists()
+
+
+async def test_start_async_repeated_cancellation_during_cleanup_stops_process_once():
+    launcher = ServerLauncher()
+    fake_proc = MagicMock(spec=subprocess.Popen)
+    fake_proc.pid = 99
+    fake_proc.poll.return_value = None
+    probe_started = asyncio.Event()
+    cleanup_started = threading.Event()
+    release_cleanup = threading.Event()
+    probe_calls = 0
+
+    async def probe_health_async(*, base_url: str) -> bool:
+        nonlocal probe_calls
+        probe_calls += 1
+        if probe_calls == 1:
+            return False
+        probe_started.set()
+        await asyncio.Event().wait()
+        return False
+
+    def delayed_terminate(*, process: subprocess.Popen[bytes]) -> bool:
+        cleanup_started.set()
+        release_cleanup.wait(timeout=5)
+        return True
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=AsyncMock(side_effect=probe_health_async)),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch.object(_server_launcher, "_terminate_process_tree", side_effect=delayed_terminate) as stop_tree_mock,
+    ):
+        startup_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
+        await probe_started.wait()
+        startup_task.cancel()
+        assert await asyncio.to_thread(cleanup_started.wait, 5)
+        startup_task.cancel()
+        await asyncio.sleep(0)
+        startup_task.cancel()
+        await asyncio.sleep(0)
+        assert not startup_task.done()
+        release_cleanup.set()
+        with pytest.raises(asyncio.CancelledError):
+            await startup_task
+
+    stop_tree_mock.assert_called_once_with(process=fake_proc)
+    assert launcher.pid is None
+    assert not _server_launcher._pid_file_path(port=8000).exists()
+
+
+async def test_start_async_repeated_cancellation_reports_failed_cleanup(caplog):
+    launcher = ServerLauncher()
+    fake_proc = MagicMock(spec=subprocess.Popen)
+    fake_proc.pid = 99
+    fake_proc.poll.return_value = None
+    probe_started = asyncio.Event()
+    cleanup_started = threading.Event()
+    release_cleanup = threading.Event()
+    probe_calls = 0
+
+    async def probe_health_async(*, base_url: str) -> bool:
+        nonlocal probe_calls
+        probe_calls += 1
+        if probe_calls == 1:
+            return False
+        probe_started.set()
+        await asyncio.Event().wait()
+        return False
+
+    def delayed_failed_terminate(*, process: subprocess.Popen[bytes]) -> bool:
+        cleanup_started.set()
+        release_cleanup.wait(timeout=5)
+        return False
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=AsyncMock(side_effect=probe_health_async)),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch.object(_server_launcher, "_terminate_process_tree", side_effect=delayed_failed_terminate),
+    ):
+        startup_task = asyncio.create_task(launcher.start_async(host="localhost", port=8000, startup_timeout=60))
+        await probe_started.wait()
+        startup_task.cancel()
+        assert await asyncio.to_thread(cleanup_started.wait, 5)
+        startup_task.cancel()
+        await asyncio.sleep(0)
+        startup_task.cancel()
+        await asyncio.sleep(0)
+        assert not startup_task.done()
+        release_cleanup.set()
+        with pytest.raises(asyncio.CancelledError):
+            await startup_task
+
+    assert "Failed to stop backend launcher process 99" in caplog.text
+    assert launcher.pid == 99
+
+
+async def test_startup_state_cleanup_without_process_marks_state_cleaned():
+    state = _server_launcher._ServerStartupState(port=8000)
+
+    assert await state.cleanup_async() is True
+    assert state.phase is _server_launcher._StartupPhase.CLEANED_UP
+    assert state.cleanup_succeeded is True
+
+
+async def test_print_startup_diagnostics_is_idempotent():
+    launcher = ServerLauncher()
+    state = _server_launcher._ServerStartupState(port=8000)
+
+    with (
+        patch.object(launcher, "_read_log_tail", return_value="Loading datasets: 42%") as read_log_tail_mock,
+        patch.object(launcher, "_print_log_tail", autospec=True) as print_log_tail_mock,
+    ):
+        await launcher._print_startup_diagnostics_async(startup_state=state)
+        await launcher._print_startup_diagnostics_async(startup_state=state)
+
+    read_log_tail_mock.assert_called_once_with()
+    print_log_tail_mock.assert_called_once_with(tail="Loading datasets: 42%")
+    assert state.diagnostic_tail == "Loading datasets: 42%"
+    assert state.diagnostics_printed is True
+
+
+async def test_wait_for_readiness_requires_recorded_process():
+    launcher = ServerLauncher()
+    plan = _server_launcher._build_server_launch_plan(
+        host="localhost",
+        port=8000,
+        config_file=None,
+        log_level=None,
+        startup_timeout=1,
+        executable="python",
+        platform_name="posix",
+    )
+
+    with pytest.raises(RuntimeError, match="process was not recorded"):
+        await launcher._wait_for_readiness_async(
+            plan=plan,
+            host="localhost",
+            startup_state=_server_launcher._ServerStartupState(port=8000),
+        )
+
+
+async def test_start_async_timeout_retains_state_when_cleanup_fails(caplog):
+    launcher = ServerLauncher()
+    fake_proc = MagicMock()
+    fake_proc.pid = 99
+    fake_proc.poll.return_value = None
+    probe = AsyncMock(return_value=False)
+
+    with (
+        patch.object(ServerLauncher, "probe_health_async", new=probe),
+        patch("subprocess.Popen", return_value=fake_proc),
+        patch.object(_server_launcher, "_terminate_process_tree", return_value=False),
+    ):
+        with pytest.raises(RuntimeError, match="did not become healthy"):
+            await launcher.start_async(host="localhost", port=8000, startup_timeout=0.01)
+
+    assert launcher.pid == 99
+    assert "Failed to stop backend launcher process 99" in caplog.text
 
 
 async def test_start_async_timeout_caps_hanging_health_probe():

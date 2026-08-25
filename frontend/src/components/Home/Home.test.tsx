@@ -31,6 +31,7 @@ function makeAttack(overrides: Partial<AttackSummary> = {}): AttackSummary {
     attack_result_id: "ar-1",
     conversation_id: "conv-1",
     attack_type: "TestAttack",
+    objective: "Test objective",
     converters: [],
     outcome: "success",
     last_message_preview: "preview",

@@ -4,6 +4,7 @@ import { makeTarget } from "./_targets";
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 const MINIMUM_TOUCH_TARGET_SIZE = 44;
+const LONG_SCORE_VALUE = "a".repeat(200);
 
 const TARGETS = [
   makeTarget({
@@ -74,7 +75,20 @@ const MESSAGES = [
         converted_value_data_type: "text",
         original_value: "Deterministic assistant response for touch-target tests.",
         converted_value: "Deterministic assistant response for touch-target tests.",
-        scores: [],
+        scores: Array.from({ length: 9 }, (_unused: unknown, scoreIndex: number) => ({
+          id: `mobile-assistant-score-${scoreIndex}`,
+          message_piece_id: "mobile-assistant-piece",
+          scorer_type: `SelfAskRefusalScorer${scoreIndex}`,
+          score_type: scoreIndex === 0 ? "unknown" : "true_false",
+          score_value:
+            scoreIndex === 0
+              ? LONG_SCORE_VALUE
+              : "false",
+          is_objective_score: scoreIndex === 0,
+          score_category: ["refusal"],
+          score_rationale: `Deterministic rationale ${scoreIndex} for touch-target tests.`,
+          timestamp: `2026-07-22T13:10:0${scoreIndex}.500Z`,
+        })),
         response_error: "none",
       },
     ],
@@ -248,6 +262,8 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
           attack_type: "PromptSendingAttack",
           conversation_id: "mobile-conversation-001",
           related_conversation_ids: [],
+          objective:
+            "Deterministic long objective that does not fit on a single line of the mobile objective header and must be truncated with a disclosure toggle.",
           labels: {
             operator: "mobile_operator",
             operation: "touch_targets",
@@ -446,8 +462,83 @@ test.describe("Mobile touch targets", () => {
   test("keeps Chat message, input, and conversation controls at least 44px", async ({
     page,
   }) => {
-    await page.goto("/");
-    await startChatWithMessages(page);
+    await page.setViewportSize({ width: 320, height: MOBILE_VIEWPORT.height });
+    // Deep-link directly into the attack (rather than creating one through
+    // the chat flow) so the objective is actually hydrated from the backend:
+    // the create-attack flow seeds the objective as "" client-side and never
+    // loads the long mocked objective, so the disclosure toggle would never
+    // render and this test would silently skip checking it.
+    await page.goto("/attacks/mobile-attack-001");
+    await expect(
+      page.getByText("Deterministic assistant response for touch-target tests.")
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("toggle-objective-header-btn")
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Configuration", exact: true }).click();
+    await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
+    await page.getByRole("button", { name: "Set Active" }).first().click();
+    await page.goBack();
+    await expect(
+      page.getByTestId("toggle-objective-header-btn")
+    ).toBeVisible();
+
+    const scoreStack = page.getByTestId("message-score-stack-1");
+    await expect(scoreStack).toBeVisible();
+    await expectMinimumTouchTarget(scoreStack);
+    await scoreStack.click();
+
+    const scoreDetails = page.locator(
+      '[data-testid^="message-score-details-1-"]'
+    );
+    const scoreValue = scoreDetails.getByText(LONG_SCORE_VALUE, { exact: true });
+    await expect(scoreValue).toBeVisible();
+    const scoreGeometry = await scoreDetails.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(scoreGeometry.scrollWidth).toBeLessThanOrEqual(
+      scoreGeometry.clientWidth
+    );
+    const valueGeometry = await scoreValue.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(valueGeometry.scrollWidth).toBeLessThanOrEqual(
+      valueGeometry.clientWidth
+    );
+    await expectNoDocumentOverflow(page);
+
+    const scoreTabs = page.locator('[data-testid^="message-score-tab-1-"]');
+    await expect(scoreTabs).toHaveCount(2);
+    await expectMinimumTouchTargets(scoreTabs);
+    await scoreTabs.nth(1).click();
+
+    const shortScoreValue = scoreDetails.getByText("false", { exact: true });
+    await expect(shortScoreValue).toBeVisible();
+    const shortValueGeometry = await shortScoreValue.evaluate((element) => ({
+      valueWidth: element.getBoundingClientRect().width,
+      rowWidth: element.parentElement?.getBoundingClientRect().width ?? 0,
+    }));
+    expect(shortValueGeometry.valueWidth).toBeLessThan(
+      shortValueGeometry.rowWidth
+    );
+
+    const moreScores = page.getByRole("button", {
+      name: "More scores, 7 hidden",
+    });
+    await expect(moreScores).toBeVisible();
+    await expectMinimumTouchTarget(moreScores);
+    await moreScores.click();
+
+    const scoreMenuItems = page.getByRole("menuitem");
+    await expect(scoreMenuItems).toHaveCount(7);
+    await expectMinimumTouchTargets(scoreMenuItems);
+    await page.keyboard.press("Escape");
+    await expect(scoreMenuItems).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(scoreStack).toHaveAttribute("aria-expanded", "false");
 
     await expectMinimumTouchTargets(
       page.locator(
@@ -458,6 +549,7 @@ test.describe("Mobile touch targets", () => {
           '[data-testid="new-attack-btn"]',
           '[aria-label="Attach files"]',
           '[data-testid="toggle-converter-panel-btn"]',
+          '[data-testid="toggle-objective-header-btn"]',
           '[data-testid="chat-input"]',
           '[data-testid="send-message-btn"]',
           '[data-testid="copy-to-input-btn-1"]',

@@ -39,6 +39,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
     "crescendo_simulated",
     "red_teaming",
     "context_compliance",
+    "code_attack",
     "crescendo_movie_director",
     "crescendo_history_lecture",
     "crescendo_journalist_interview",

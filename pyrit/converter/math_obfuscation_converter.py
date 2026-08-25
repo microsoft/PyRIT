@@ -67,8 +67,8 @@ class MathObfuscationConverter(Converter):
                 Set to empty string "" to disable suffix entirely.
             rng (random.Random | None):
                 Optional random number generator instance used to produce
-                reproducible obfuscation results. If omitted, a new
-                instance of `random.Random()` is created.
+                reproducible obfuscation results. If omitted, the converter
+                uses its operation-local hierarchical stream.
 
         Raises:
             ValueError: If `min_n` is less than 2 or `max_n` is less than
@@ -85,7 +85,7 @@ class MathObfuscationConverter(Converter):
         self._max_n = max_n
         self._hint = hint if hint is not None else self.DEFAULT_HINT
         self._suffix = suffix if suffix is not None else self.DEFAULT_SUFFIX
-        self._rng = rng or random.Random()
+        self._explicit_rng = rng
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -133,6 +133,7 @@ class MathObfuscationConverter(Converter):
 
         logger.info("MathObfuscationConverter: obfuscating prompt %r", prompt)
 
+        rng = self._explicit_rng or self._get_random_generator(stream="coefficients")
         lines: list[str] = []
         first_equation_added = False
 
@@ -145,7 +146,7 @@ class MathObfuscationConverter(Converter):
                 lines.append("")
                 continue
 
-            n = self._rng.randint(self._min_n, self._max_n)
+            n = rng.randint(self._min_n, self._max_n)
             line = f"{ch} = {n}{ch} - {n - 1}{ch}"
 
             # Add hint inline after the first equation

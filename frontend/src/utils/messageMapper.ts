@@ -1,8 +1,11 @@
 import type {
   BackendMessage,
   BackendMessagePiece,
+  BackendScore,
+  DisplayScore,
   Message,
   MessageAttachment,
+  MessageDisplayPiece,
   MessageError,
   MessagePieceRequest,
 } from '../types'
@@ -114,6 +117,29 @@ function decodedBase64ByteCount(value: string): number {
   return Math.floor((stripped.length * 3) / 4)
 }
 
+function scoreWithProvenance(
+  score: BackendScore,
+  {
+    piece,
+    pieceIndex,
+    filename,
+  }: {
+    piece: BackendMessagePiece
+    pieceIndex: number
+    filename?: string
+  },
+): DisplayScore {
+  const pieceType = piece.converted_value_data_type
+  const sourceLabel = [`Piece ${pieceIndex + 1}`, pieceType, filename].filter(Boolean).join(' · ')
+
+  return {
+    ...score,
+    pieceIndex,
+    pieceType,
+    sourceLabel,
+  }
+}
+
 /**
  * Build a frontend MessageAttachment from a backend piece.
  *
@@ -137,19 +163,25 @@ function pieceToAttachment(
   const valueUrl = isOriginal ? piece.original_value_url : piece.converted_value_url
   const mimeField = isOriginal ? piece.original_value_mime_type : piece.converted_value_mime_type
 
-  if (!isMediaDataType(dataType) || !value) return null
+  if (!isMediaDataType(dataType)) return null
+
+  const mediaValue = value || ''
+  // No renderable media: produce no attachment at all. Any scores on the piece
+  // are surfaced by the media display piece instead, so score-only pieces never
+  // leak into copy / download / export paths.
+  if (!valueUrl && !mediaValue) return null
 
   const mime = mimeField || defaultMimeForDataType(dataType)
   // Detect base64-encoded content while excluding file paths and URL schemes.
   // Base64 charset includes '/' so naive regex would match relative paths.
-  const looksLikePathOrScheme = /^[A-Za-z]:\\/.test(value) || // Windows path
-    value.startsWith('/') ||                                   // Unix absolute path
-    /^[a-z][a-z0-9+.-]*:/i.test(value)                        // URI scheme (file:, blob:, etc.)
+  const looksLikePathOrScheme = /^[A-Za-z]:\\/.test(mediaValue) || // Windows path
+    mediaValue.startsWith('/') ||                                   // Unix absolute path
+    /^[a-z][a-z0-9+.-]*:/i.test(mediaValue)                        // URI scheme (file:, blob:, etc.)
   const isBase64 = !looksLikePathOrScheme &&
-    value.length >= 16 && /^[A-Za-z0-9+/=\n]+$/.test(value)
+    mediaValue.length >= 16 && /^[A-Za-z0-9+/=\n]+$/.test(mediaValue)
   // Prefer the mapper-resolved URL when present; fall back to existing logic
   // (base64 inline data URI or raw value-as-URL) for compatibility.
-  const url = valueUrl || (isBase64 ? buildDataUri(value, mime) : value)
+  const url = valueUrl || (isBase64 ? buildDataUri(mediaValue, mime) : mediaValue)
   const prefix = isOriginal ? 'original_' : ''
   const filename = isOriginal ? piece.original_filename : piece.converted_filename
   const fallbackName = `${prefix}${dataType}_${piece.id.slice(0, 8)}`
@@ -157,7 +189,7 @@ function pieceToAttachment(
   // For base64-inlined media, derive the decoded byte count. For path / URL
   // values the string length is meaningless (e.g. /api/media?path=... is a
   // reference, not the payload), so size is omitted and the UI must hide it.
-  const size = isBase64 && !valueUrl ? decodedBase64ByteCount(value) : undefined
+  const size = isBase64 && !valueUrl ? decodedBase64ByteCount(mediaValue) : undefined
 
   return {
     type: dataTypeToAttachmentType(dataType),
@@ -168,6 +200,14 @@ function pieceToAttachment(
     pieceId: piece.id,
     metadata: piece.prompt_metadata || undefined,
   }
+}
+
+/**
+ * Build the display name used to label a media piece's scores, matching the
+ * attachment name so score provenance reads the same with or without media.
+ */
+function mediaPieceScoreFilename(piece: BackendMessagePiece): string {
+  return piece.converted_filename || `${piece.converted_value_data_type}_${piece.id.slice(0, 8)}`
 }
 
 /**
@@ -191,10 +231,11 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
   const originalTextParts: string[] = []
   const attachments: MessageAttachment[] = []
   const originalAttachments: MessageAttachment[] = []
+  const displayPieces: MessageDisplayPiece[] = []
   const reasoningSummaries: string[] = []
   let error: MessageError | undefined
 
-  for (const piece of msg.message_pieces) {
+  for (const [pieceIndex, piece] of msg.message_pieces.entries()) {
     // Check for errors
     const pieceError = pieceToError(piece)
     if (pieceError && !error) {
@@ -213,6 +254,18 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
       if (piece.converted_value) {
         textParts.push(piece.converted_value)
       }
+      const scores = piece.scores
+        .map((score) => scoreWithProvenance(score, { piece, pieceIndex }))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      if (piece.converted_value || scores.length > 0) {
+        displayPieces.push({
+          type: 'text',
+          pieceId: piece.id,
+          pieceIndex,
+          content: piece.converted_value,
+          scores: scores.length > 0 ? scores : undefined,
+        })
+      }
     }
 
     // Extract original text content
@@ -220,10 +273,29 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
       originalTextParts.push(piece.original_value)
     }
 
-    // Extract media attachments (converted)
-    const att = pieceToAttachment(piece)
-    if (att) {
-      attachments.push(att)
+    // Extract media attachments (converted). Scores live on the display piece
+    // so a piece with scores but no renderable media still shows them without
+    // fabricating an attachment.
+    if (isMediaDataType(piece.converted_value_data_type)) {
+      const att = pieceToAttachment(piece)
+      const mediaScores = piece.scores
+        .map((score) =>
+          scoreWithProvenance(score, { piece, pieceIndex, filename: mediaPieceScoreFilename(piece) }),
+        )
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+      if (att) {
+        attachments.push(att)
+      }
+      if (att || mediaScores.length > 0) {
+        displayPieces.push({
+          type: 'media',
+          pieceId: piece.id,
+          pieceIndex,
+          attachment: att || undefined,
+          scores: mediaScores.length > 0 ? mediaScores : undefined,
+        })
+      }
     }
 
     // Extract original media attachments
@@ -250,6 +322,7 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
     content: convertedContent,
     timestamp: msg.created_at,
     attachments: attachments.length > 0 ? attachments : undefined,
+    displayPieces: displayPieces.length > 0 ? displayPieces : undefined,
     error,
     reasoningSummaries: reasoningSummaries.length > 0 ? reasoningSummaries : undefined,
     originalContent: hasTextDiff ? originalContent : undefined,

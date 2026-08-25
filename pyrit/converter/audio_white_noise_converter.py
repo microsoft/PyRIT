@@ -8,6 +8,7 @@ from typing import Any, Literal
 import numpy as np
 from scipy.io import wavfile
 
+from pyrit.common.random_context import get_random_seed
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
@@ -54,12 +55,18 @@ class AudioWhiteNoiseConverter(Converter):
         self._output_format = output_format
         self._noise_scale = noise_scale
 
-    def _add_noise(self, data: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+    def _add_noise(
+        self,
+        *,
+        data: np.ndarray[Any, Any],
+        rng: np.random.Generator,
+    ) -> np.ndarray[Any, Any]:
         """
         Add white noise to a 1-D audio signal.
 
         Args:
             data: 1-D numpy array of audio samples.
+            rng: Operation-local NumPy random generator.
 
         Returns:
             numpy array with white noise added, same length and dtype as input.
@@ -73,7 +80,7 @@ class AudioWhiteNoiseConverter(Converter):
         else:
             max_val = 1.0
 
-        noise = np.random.normal(0, self._noise_scale * max_val, size=data.shape)
+        noise = rng.normal(0, self._noise_scale * max_val, size=data.shape)
         noisy = float_data + noise
 
         # Clip to valid range
@@ -110,12 +117,13 @@ class AudioWhiteNoiseConverter(Converter):
             bytes_io = io.BytesIO(audio_bytes)
             sample_rate, data = wavfile.read(bytes_io)
             original_dtype = data.dtype
+            rng = np.random.default_rng(get_random_seed(stream="white-noise"))
 
             # Apply white noise to each channel
             if data.ndim == 1:
-                noisy_data = self._add_noise(data).astype(original_dtype)
+                noisy_data = self._add_noise(data=data, rng=rng).astype(original_dtype)
             else:
-                channels = [self._add_noise(data[:, ch]) for ch in range(data.shape[1])]
+                channels = [self._add_noise(data=data[:, ch], rng=rng) for ch in range(data.shape[1])]
                 noisy_data = np.column_stack(channels).astype(original_dtype)
 
             # Write the processed data as a new WAV file

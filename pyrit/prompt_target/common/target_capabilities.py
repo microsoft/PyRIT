@@ -39,7 +39,7 @@ class CapabilityHandlingPolicy:
     Design invariants
     -----------------
     * The policy is never consulted if the capability is already supported.
-    * Non-adaptable capabilities (e.g. ``supports_editable_history``) are not
+    * Non-adaptable capabilities (e.g. ``supports_multi_message_pieces``) are not
       represented here; requesting them on a target that lacks them always
       raises immediately.
     """
@@ -64,7 +64,7 @@ class CapabilityHandlingPolicy:
 
         Raises:
             KeyError: If no behavior exists for the capability. This occurs for
-            non-adaptable capabilities (e.g., supports_editable_history).
+            non-adaptable capabilities (e.g., supports_multi_message_pieces).
         """
         try:
             return self.behaviors[capability]

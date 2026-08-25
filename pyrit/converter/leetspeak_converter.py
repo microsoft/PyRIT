@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import random
-
 from pyrit.converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
@@ -85,6 +83,7 @@ class LeetspeakConverter(WordLevelConverter):
             str: The converted word.
         """
         converted_word = []
+        rng = self._get_random_generator(stream="character-substitutions")
         for char in word:
             lower_char = char.lower()
             if lower_char in self._leet_substitutions:
@@ -93,7 +92,7 @@ class LeetspeakConverter(WordLevelConverter):
                     converted_word.append(self._leet_substitutions[lower_char][0])
                 else:
                     # Randomly select a substitution for each character
-                    converted_word.append(random.choice(self._leet_substitutions[lower_char]))
+                    converted_word.append(rng.choice(self._leet_substitutions[lower_char]))
             else:
                 # If character not in substitutions, keep it as is
                 converted_word.append(char)

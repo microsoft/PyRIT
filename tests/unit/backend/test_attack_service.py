@@ -660,6 +660,46 @@ class TestGetConversationMessages:
         assert result.conversation_id == "test-id"
         assert result.messages == []
 
+    async def test_get_conversation_messages_marks_attack_objective_score(self, attack_service, mock_memory) -> None:
+        """The message mapper receives the attack's canonical objective score ID."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = uuid.uuid4()
+        ar.last_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
+
+    async def test_get_conversation_messages_preserves_string_objective_score_id(
+        self, attack_service, mock_memory
+    ) -> None:
+        """The message mapper receives string score IDs without UUID conversion."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = str(uuid.uuid4())
+        ar.last_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
+
     async def test_get_conversation_messages_raises_for_unrelated_conversation(
         self, attack_service, mock_memory
     ) -> None:
@@ -954,7 +994,7 @@ class TestCreateAttack:
             assert stored_ar.labels["source"] == "api-test"
 
     async def test_create_attack_default_name(self, attack_service, mock_memory) -> None:
-        """Test that request.name=None uses default class_name and objective."""
+        """Test that request.name=None uses default class_name and an empty objective."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -969,8 +1009,29 @@ class TestCreateAttack:
 
             call_args = mock_memory.add_attack_results_to_memory.call_args
             stored_ar = call_args[1]["attack_results"][0]
-            assert stored_ar.objective == "Manual attack via GUI"
+            assert stored_ar.objective == ""
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
+            assert "objective_is_placeholder" not in stored_ar.metadata
+
+    async def test_create_attack_with_name_marks_objective_explicit(self, attack_service, mock_memory) -> None:
+        """Test that a user-supplied request.name is persisted directly as the objective."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", name="Extract the secret")
+            )
+
+            stored_ar = mock_memory.add_attack_results_to_memory.call_args[1]["attack_results"][0]
+            assert stored_ar.objective == "Extract the secret"
+            assert "objective_is_placeholder" not in stored_ar.metadata
 
 
 # ============================================================================

@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import random
 from typing import ClassVar
 
 from pyrit.converter.text_selection_strategy import WordSelectionStrategy
@@ -34,22 +33,15 @@ class ZalgoConverter(WordLevelConverter):
 
         Args:
             intensity (int): Number of combining marks per character (higher = more cursed). Default is 10.
-            seed (int | None): Optional seed for this converter's own randomness, i.e. which combining
-                marks are applied and how many. Seeds are component-scoped: they make the seeded
-                component reproducible without touching any other component's randomness. The default
-                word selection strategy selects every word and is deterministic, so a seed alone makes
-                the output reproducible. If you supply a ``word_selection_strategy`` that draws randomly
-                (such as ``WordProportionSelectionStrategy``), seed that strategy as well for
-                end-to-end reproducibility.
+            seed (int | None): Optional root seed for this conversion. Nested components inherit
+                independent child streams unless they provide their own seed. If omitted, the converter
+                inherits the root configured by ``initialize_pyrit_async(seed=...)``.
             word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
         """
         super().__init__(word_selection_strategy=word_selection_strategy)
         self._intensity = self._normalize_intensity(intensity)
         self._seed = seed
-        # Own the RNG rather than seeding the global one, so a seeded converter
-        # does not make every other `random`-based component reproducible.
-        self._rng = random.Random(seed)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -91,16 +83,9 @@ class ZalgoConverter(WordLevelConverter):
         if self._intensity <= 0:
             return word
 
+        rng = self._get_random_generator(stream="combining-marks")
+
         def glitch(char: str) -> str:
-            return char + "".join(
-                self._rng.choice(self.ZALGO_MARKS) for _ in range(self._rng.randint(1, self._intensity))
-            )
+            return char + "".join(rng.choice(self.ZALGO_MARKS) for _ in range(rng.randint(1, self._intensity)))
 
         return "".join(glitch(c) if c.isalnum() else c for c in word)
-
-    def validate_input(self, prompt: str) -> None:
-        """Validate the input prompt before conversion."""
-        # Reset the converter's own RNG before processing any words, so a seeded
-        # converter yields the same output on every call.
-        if self._seed is not None:
-            self._rng.seed(self._seed)
