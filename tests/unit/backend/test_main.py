@@ -32,7 +32,10 @@ class TestLifespan:
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
             patch(
                 "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+                return_value=MagicMock(
+                    register_persisted_custom_initializers_async=AsyncMock(),
+                    run_additional_initializers_async=AsyncMock(),
+                ),
             ),
             patch("pyrit.backend.main.setup_frontend"),
         ):
@@ -44,6 +47,31 @@ class TestLifespan:
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
 
+    async def test_lifespan_registers_custom_initializers_before_running_additional(self) -> None:
+        fake_config = ConfigurationLoader()
+        call_order: list[str] = []
+
+        async def register_custom_async() -> None:
+            call_order.append("custom")
+
+        async def run_additional_async() -> None:
+            call_order.append("additional")
+
+        service = MagicMock(
+            register_persisted_custom_initializers_async=AsyncMock(side_effect=register_custom_async),
+            run_additional_initializers_async=AsyncMock(side_effect=run_additional_async),
+        )
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.get_initializer_service", return_value=service),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        assert call_order == ["custom", "additional"]
+
     async def test_lifespan_warns_when_custom_initializers_allowed(self) -> None:
         """Test that lifespan logs a warning when allow_custom_initializers is enabled."""
         fake_config = ConfigurationLoader(allow_custom_initializers=True)
@@ -52,7 +80,10 @@ class TestLifespan:
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
             patch(
                 "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+                return_value=MagicMock(
+                    register_persisted_custom_initializers_async=AsyncMock(),
+                    run_additional_initializers_async=AsyncMock(),
+                ),
             ),
             patch("pyrit.backend.main.setup_frontend"),
             patch.object(logging.getLogger("pyrit.backend.main"), "warning") as mock_warning,
@@ -70,7 +101,10 @@ class TestLifespan:
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
             patch(
                 "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+                return_value=MagicMock(
+                    register_persisted_custom_initializers_async=AsyncMock(),
+                    run_additional_initializers_async=AsyncMock(),
+                ),
             ),
             patch("pyrit.backend.main.setup_frontend"),
         ):
@@ -88,7 +122,10 @@ class TestLifespan:
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
             patch(
                 "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+                return_value=MagicMock(
+                    register_persisted_custom_initializers_async=AsyncMock(),
+                    run_additional_initializers_async=AsyncMock(),
+                ),
             ),
             patch("pyrit.backend.main.setup_frontend"),
         ):

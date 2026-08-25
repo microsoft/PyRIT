@@ -32,7 +32,7 @@ from pyrit.backend.models.initializers import (
     UpdateAdditionalInitializerRequest,
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
-from pyrit.models import AdditionalInitializer
+from pyrit.models import AdditionalInitializer, CustomInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
 
 router = APIRouter(prefix="/initializers", tags=["initializers"])
@@ -247,6 +247,21 @@ async def apply_initializer(  # pyrit-async-suffix-exempt
         ) from None
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+
+
+@router.get(
+    "/custom",
+    response_model=list[CustomInitializer],
+)
+async def list_custom_initializers() -> list[CustomInitializer]:  # pyrit-async-suffix-exempt
+    """
+    List user-defined initializer source persisted in Central Memory.
+
+    Returns:
+        list[CustomInitializer]: Persisted custom initializer definitions.
+    """
+    service = get_initializer_service()
+    return list(await service.list_custom_initializers_async())
 
 
 @router.get(

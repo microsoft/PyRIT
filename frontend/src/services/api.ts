@@ -14,6 +14,9 @@ import type {
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
+  RegisterInitializerRequest,
+  RegisteredInitializer,
+  CustomInitializer,
   AdditionalInitializer,
   CreateAdditionalInitializerRequest,
   UpdateAdditionalInitializerRequest,
@@ -208,6 +211,20 @@ export const initializersApi = {
   listRegistered: async (): Promise<ListRegisteredInitializersResponse> => {
     const response = await apiClient.get('/initializers', { params: { limit: 200 } })
     return response.data
+  },
+
+  register: async (request: RegisterInitializerRequest): Promise<RegisteredInitializer> => {
+    const response = await apiClient.post('/initializers', request)
+    return response.data
+  },
+
+  listCustom: async (): Promise<CustomInitializer[]> => {
+    const response = await apiClient.get('/initializers/custom')
+    return response.data
+  },
+
+  unregister: async (initializerName: string): Promise<void> => {
+    await apiClient.delete(`/initializers/${encodeURIComponent(initializerName)}`)
   },
 
   createAdditional: async (

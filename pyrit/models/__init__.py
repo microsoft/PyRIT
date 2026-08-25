@@ -18,6 +18,7 @@ ComponentIdentifier``).
 
 from pyrit.models.additional_initializer import AdditionalInitializer
 from pyrit.models.conversation_stats import ConversationStats
+from pyrit.models.custom_initializer import CustomInitializer
 from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
 from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
 from pyrit.models.identifiers import (
@@ -143,6 +144,7 @@ __all__ = [
     "ComponentIdentifier",
     "ComponentType",
     "compute_eval_hash",
+    "CustomInitializer",
     "config_hash",
     "ConverterIdentifier",
     "Conversation",

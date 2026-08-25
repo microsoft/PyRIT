@@ -21,8 +21,10 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
     TypeDecorator,
     Unicode,
+    UnicodeText,
 )
 from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
@@ -52,6 +54,7 @@ from pyrit.models import (
     ConversationRetry,
     ConversationType,
     ConverterIdentifier,
+    CustomInitializer,
     EvaluationIdentifier,
     MessagePiece,
     PromptDataType,
@@ -461,6 +464,44 @@ class AdditionalInitializerEntry(DomainBackedEntry[AdditionalInitializer]):
             initializer_name=self.initializer_name,
             parameters=self.parameters,
             order_index=self.order_index,
+        )
+
+
+class CustomInitializerEntry(DomainBackedEntry[CustomInitializer]):
+    """Persistence row for a ``CustomInitializer`` source definition."""
+
+    __tablename__ = "CustomInitializers"
+    __table_args__ = {"extend_existing": True}
+
+    initializer_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    script_content: Mapped[str] = mapped_column(
+        UnicodeText().with_variant(Text(), "sqlite"),
+        nullable=False,
+    )
+
+    @classmethod
+    def from_domain_model(cls, domain_model: CustomInitializer) -> Self:
+        """
+        Build an unsaved row from a custom initializer domain model.
+
+        Returns:
+            Self: The unsaved persistence row.
+        """
+        return cls(
+            initializer_name=domain_model.initializer_name,
+            script_content=domain_model.script_content,
+        )
+
+    def to_domain_model(self) -> CustomInitializer:
+        """
+        Convert this row back into its custom initializer domain model.
+
+        Returns:
+            CustomInitializer: The reconstructed custom initializer.
+        """
+        return CustomInitializer(
+            initializer_name=self.initializer_name,
+            script_content=self.script_content,
         )
 
 

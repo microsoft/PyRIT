@@ -164,6 +164,16 @@ export interface ListRegisteredInitializersResponse {
   pagination: PaginationInfo
 }
 
+export interface RegisterInitializerRequest {
+  name: string
+  script_content: string
+}
+
+export interface CustomInitializer {
+  initializer_name: string
+  script_content: string
+}
+
 export interface ApplyInitializerRequest {
   parameters?: Record<string, unknown> | null
 }

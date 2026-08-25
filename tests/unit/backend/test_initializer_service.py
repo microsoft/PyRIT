@@ -22,7 +22,7 @@ from pyrit.backend.models.initializers import (
     RegisteredInitializer,
 )
 from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
-from pyrit.models import AdditionalInitializer, Parameter
+from pyrit.models import AdditionalInitializer, CustomInitializer, Parameter
 from pyrit.registry import InitializerMetadata
 
 
@@ -850,10 +850,14 @@ class TestInitializerServiceRegister:
                 _make_initializer_metadata(registry_name="my_custom", class_name="MyCustomInitializer")
             ]
             service._registry = mock_registry
+            service._memory = MagicMock()
 
             result = await service.register_initializer_async(name="my_custom", script_content=_SAMPLE_SCRIPT)
 
             mock_registry.register_from_content.assert_called_once_with(name="my_custom", script_content=_SAMPLE_SCRIPT)
+            service._memory.add_custom_initializer.assert_called_once_with(
+                initializer=CustomInitializer(initializer_name="my_custom", script_content=_SAMPLE_SCRIPT)
+            )
             assert result.initializer_name == "my_custom"
 
     async def test_register_initializer_propagates_value_error(self) -> None:
@@ -862,9 +866,62 @@ class TestInitializerServiceRegister:
             mock_registry = MagicMock()
             mock_registry.register_from_content.side_effect = ValueError("no classes found")
             service._registry = mock_registry
+            service._memory = MagicMock()
 
             with pytest.raises(ValueError):
                 await service.register_initializer_async(name="bad", script_content="x = 1")
+
+    async def test_register_initializer_rolls_back_registry_when_persistence_fails(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.add_custom_initializer.side_effect = RuntimeError("database unavailable")
+
+            with pytest.raises(RuntimeError, match="database unavailable"):
+                await service.register_initializer_async(name="my_custom", script_content=_SAMPLE_SCRIPT)
+
+            service._registry.unregister_and_cleanup.assert_called_once_with("my_custom")
+
+    async def test_list_custom_initializers_returns_persisted_sources(self) -> None:
+        custom = CustomInitializer(initializer_name="my_custom", script_content=_SAMPLE_SCRIPT)
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._memory = MagicMock()
+            service._memory.get_custom_initializers.return_value = [custom]
+
+            result = await service.list_custom_initializers_async()
+
+            assert result == [custom]
+
+    async def test_register_persisted_custom_initializers_restores_all_sources(self) -> None:
+        first = CustomInitializer(initializer_name="first", script_content="first source")
+        second = CustomInitializer(initializer_name="second", script_content="second source")
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_custom_initializers.return_value = [first, second]
+
+            await service.register_persisted_custom_initializers_async()
+
+            calls = service._registry.register_from_content.call_args_list
+            assert calls[0].kwargs == {"name": "first", "script_content": "first source"}
+            assert calls[1].kwargs == {"name": "second", "script_content": "second source"}
+
+    async def test_register_persisted_custom_initializers_isolates_failures(self) -> None:
+        first = CustomInitializer(initializer_name="first", script_content="bad source")
+        second = CustomInitializer(initializer_name="second", script_content="good source")
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.register_from_content.side_effect = [ValueError("bad source"), "second"]
+            service._memory = MagicMock()
+            service._memory.get_custom_initializers.return_value = [first, second]
+
+            await service.register_persisted_custom_initializers_async()
+
+            assert service._registry.register_from_content.call_count == 2
 
 
 class TestInitializerServiceUnregister:
@@ -875,10 +932,12 @@ class TestInitializerServiceUnregister:
             service = InitializerService()
             mock_registry = MagicMock()
             service._registry = mock_registry
+            service._memory = MagicMock()
 
             await service.unregister_initializer_async(initializer_name="target")
 
             mock_registry.unregister_and_cleanup.assert_called_once_with("target")
+            service._memory.delete_custom_initializer.assert_called_once_with(initializer_name="target")
 
     async def test_unregister_initializer_propagates_key_error(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
@@ -886,6 +945,7 @@ class TestInitializerServiceUnregister:
             mock_registry = MagicMock()
             mock_registry.unregister_and_cleanup.side_effect = KeyError("not found")
             service._registry = mock_registry
+            service._memory = MagicMock()
 
             with pytest.raises(KeyError):
                 await service.unregister_initializer_async(initializer_name="nonexistent")
@@ -896,9 +956,25 @@ class TestInitializerServiceUnregister:
             mock_registry = MagicMock()
             mock_registry.unregister_and_cleanup.side_effect = ValueError("Cannot remove built-in")
             service._registry = mock_registry
+            service._memory = MagicMock()
 
             with pytest.raises(ValueError, match="Cannot remove built-in"):
                 await service.unregister_initializer_async(initializer_name="simple")
+
+    async def test_unregister_initializer_rejects_additional_initializer_reference(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = [
+                AdditionalInitializer(initializer_name="custom", order_index=0)
+            ]
+
+            with pytest.raises(ValueError, match="additional initializer settings reference it"):
+                await service.unregister_initializer_async(initializer_name="custom")
+
+            service._registry.unregister_and_cleanup.assert_not_called()
+            service._memory.delete_custom_initializer.assert_not_called()
 
 
 # ============================================================================
@@ -908,6 +984,18 @@ class TestInitializerServiceUnregister:
 
 class TestRegisterInitializerRoute:
     """Tests for POST /api/initializers route."""
+
+    def test_get_custom_initializers_returns_persisted_sources(self, client: TestClient) -> None:
+        custom = CustomInitializer(initializer_name="my_custom", script_content=_SAMPLE_SCRIPT)
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_custom_initializers_async = AsyncMock(return_value=[custom])
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/initializers/custom")
+
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json() == [custom.model_dump()]
 
     def test_post_returns_403_when_custom_initializers_disabled(self, client: TestClient) -> None:
         app.state.allow_custom_initializers = False
@@ -1033,3 +1121,20 @@ class TestUnregisterInitializerRoute:
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
             assert "built-in" in response.json()["detail"].lower()
+
+    def test_delete_returns_400_when_additional_initializer_references_name(
+        self, client_with_custom_initializers_enabled: TestClient
+    ) -> None:
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.unregister_initializer_async = AsyncMock(
+                side_effect=ValueError(
+                    "Cannot remove initializer 'custom' while additional initializer settings reference it."
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client_with_custom_initializers_enabled.delete("/api/initializers/custom")
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "additional initializer settings reference it" in response.json()["detail"]

@@ -115,6 +115,7 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
           aria-current={currentView === 'initializers' ? 'page' : undefined}
           onClick={() => onNavigate('initializers')}
         />
+
       </nav>
 
       <div className={styles.spacer} />

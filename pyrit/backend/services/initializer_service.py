@@ -25,7 +25,7 @@ from pyrit.backend.models.initializers import (
     ListRegisteredInitializersResponse,
 )
 from pyrit.memory import CentralMemory
-from pyrit.models import AdditionalInitializer
+from pyrit.models import AdditionalInitializer, CustomInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
 from pyrit.registry import InitializerMetadata, InitializerRegistry
 from pyrit.setup.pyrit_initializer import PyRITInitializer
@@ -298,12 +298,45 @@ class InitializerService:
         Returns:
             RegisteredInitializer: The newly registered initializer summary.
         """
-        self._registry.register_from_content(name=name, script_content=script_content)
+        await asyncio.to_thread(
+            self._register_and_persist_initializer,
+            name=name,
+            script_content=script_content,
+        )
 
         initializer = await self.get_initializer_async(initializer_name=name)
         if not initializer:
             raise ValueError(f"Initializer '{name}' was registered but metadata could not be retrieved.")
         return initializer
+
+    async def list_custom_initializers_async(self) -> Sequence[CustomInitializer]:
+        """
+        List persisted custom initializer source definitions.
+
+        Returns:
+            Sequence[CustomInitializer]: Persisted custom initializer definitions.
+        """
+        return await asyncio.to_thread(self._memory.get_custom_initializers)
+
+    async def register_persisted_custom_initializers_async(self) -> None:
+        """Restore persisted custom initializer definitions into the runtime registry."""
+        custom_initializers = await asyncio.to_thread(self._memory.get_custom_initializers)
+        if not custom_initializers:
+            return
+
+        logger.info("Registering %d persisted custom initializer(s)...", len(custom_initializers))
+        for initializer in custom_initializers:
+            try:
+                await asyncio.to_thread(
+                    self._registry.register_from_content,
+                    name=initializer.initializer_name,
+                    script_content=initializer.script_content,
+                )
+            except Exception:
+                logger.exception(
+                    "Skipping persisted custom initializer '%s': registration failed.",
+                    initializer.initializer_name,
+                )
 
     async def unregister_initializer_async(self, *, initializer_name: str) -> None:
         """
@@ -312,8 +345,29 @@ class InitializerService:
         Args:
             initializer_name: The registry name to remove.
         """
-        self._registry.unregister_and_cleanup(initializer_name)
+        additional_initializers = await asyncio.to_thread(self._memory.get_additional_initializers)
+        if any(initializer.initializer_name == initializer_name for initializer in additional_initializers):
+            raise ValueError(
+                f"Cannot remove initializer '{initializer_name}' while additional initializer settings reference it."
+            )
+
+        await asyncio.to_thread(self._registry.unregister_and_cleanup, initializer_name)
+        await asyncio.to_thread(
+            self._memory.delete_custom_initializer,
+            initializer_name=initializer_name,
+        )
         logger.info("Unregistered initializer: %s", initializer_name)
+
+    def _register_and_persist_initializer(self, *, name: str, script_content: str) -> None:
+        """Register custom source and persist it, rolling back runtime state on DB failure."""
+        self._registry.register_from_content(name=name, script_content=script_content)
+        try:
+            self._memory.add_custom_initializer(
+                initializer=CustomInitializer(initializer_name=name, script_content=script_content)
+            )
+        except Exception:
+            self._registry.unregister_and_cleanup(name)
+            raise
 
     def _build_and_run_initializer(
         self,

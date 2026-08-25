@@ -34,6 +34,7 @@ from pyrit.memory.memory_models import (
     ComponentIdentifierEntry,
     ConversationEntry,
     ConverterIdentifierEntry,
+    CustomInitializerEntry,
     EmbeddingDataEntry,
     PromptConverterIdentifierEntry,
     PromptMemoryEntry,
@@ -63,6 +64,7 @@ from pyrit.models import (
     ConversationRetryReason,
     ConversationStats,
     ConverterIdentifier,
+    CustomInitializer,
     IdentifierFilter,
     IdentifierType,
     Message,
@@ -490,6 +492,41 @@ class MemoryInterface(abc.ABC):
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error deleting additional initializer '{initializer_id}': {e}")
+                raise
+
+    def add_custom_initializer(self, *, initializer: CustomInitializer) -> None:
+        """Insert or replace custom initializer source, keyed by registry name."""
+        self._update_entry(CustomInitializerEntry.from_domain_model(initializer))
+
+    def get_custom_initializers(self) -> Sequence[CustomInitializer]:
+        """
+        Load persisted custom initializer definitions in registry-name order.
+
+        Returns:
+            Sequence[CustomInitializer]: Persisted custom initializer definitions.
+        """
+        entries = self._query_entries(
+            CustomInitializerEntry,
+            order_by=CustomInitializerEntry.initializer_name.asc(),
+        )
+        return [entry.to_domain_model() for entry in entries]
+
+    def delete_custom_initializer(self, *, initializer_name: str) -> None:
+        """
+        Delete persisted custom initializer source when it exists.
+
+        Raises:
+            SQLAlchemyError: If the delete operation fails.
+        """
+        with closing(self.get_session()) as session:
+            try:
+                session.query(CustomInitializerEntry).filter(
+                    CustomInitializerEntry.initializer_name == initializer_name
+                ).delete(synchronize_session=False)
+                session.commit()
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Error deleting custom initializer '{initializer_name}': {e}")
                 raise
 
     @abc.abstractmethod
