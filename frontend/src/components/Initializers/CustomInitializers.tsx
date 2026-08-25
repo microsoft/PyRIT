@@ -21,6 +21,7 @@ import {
 } from '@fluentui/react-components'
 import { AddRegular, DeleteRegular, EyeRegular } from '@fluentui/react-icons'
 
+import ConfirmDialog from '@/components/ConfirmDialog'
 import type { CustomInitializer } from '@/types'
 
 import { useCustomInitializersStyles } from './CustomInitializers.styles'
@@ -46,6 +47,7 @@ export default function CustomInitializers({
   const [name, setName] = useState('')
   const [scriptContent, setScriptContent] = useState('')
   const [viewingInitializer, setViewingInitializer] = useState<CustomInitializer | null>(null)
+  const [initializerToDelete, setInitializerToDelete] = useState<CustomInitializer | null>(null)
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
@@ -139,7 +141,7 @@ export default function CustomInitializers({
                       disabled={deletingName !== null}
                       onClick={(event) => {
                         event.stopPropagation()
-                        void onDelete(item.initializer_name)
+                        setInitializerToDelete(item)
                       }}
                     >
                       {deletingName === item.initializer_name ? 'Removing...' : 'Remove'}
@@ -151,6 +153,23 @@ export default function CustomInitializers({
           </Table>
         </div>
       )}
+
+      <ConfirmDialog
+        open={initializerToDelete !== null}
+        title="Remove custom initializer"
+        confirmLabel="Remove"
+        onConfirm={() => {
+          const initializerName = initializerToDelete?.initializer_name
+          setInitializerToDelete(null)
+          if (initializerName) {
+            void onDelete(initializerName)
+          }
+        }}
+        onCancel={() => setInitializerToDelete(null)}
+      >
+        Are you sure you want to remove the <Text weight="semibold">{initializerToDelete?.initializer_name}</Text>{' '}
+        custom initializer? Its stored Python source will be permanently deleted.
+      </ConfirmDialog>
 
       <Dialog
         open={viewingInitializer !== null}
