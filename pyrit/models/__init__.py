@@ -93,7 +93,6 @@ from pyrit.models.score import (
     UndeterminedScoreError,
     UnvalidatedScore,
     scorable_from_dict,
-    storable_scorable,
 )
 
 # Seeds - import from new seeds submodule for forward compatibility
@@ -246,6 +245,5 @@ __all__ = [
     "read_usage_value",
     "validate_registry_name",
     "scorable_from_dict",
-    "storable_scorable",
     "RetryEvent",
 ]

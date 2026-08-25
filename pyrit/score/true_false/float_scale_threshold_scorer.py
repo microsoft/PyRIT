@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -15,7 +15,6 @@ from pyrit.models import (
     Score,
     ScoreStatus,
     ScoringExpectation,
-    storable_scorable,
 )
 from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
@@ -124,7 +123,8 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         return self._apply_threshold(
             scores=scores,
             expectation=expectation,
-            scorable=storable_scorable(scorable),
+            # Score rejects a kind outside the union when it is constructed below.
+            scorable=cast("ScorableUnion | None", scorable),
             message_piece_id=self._piece_id_from_scorable(scorable),
         )
 

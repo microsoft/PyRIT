@@ -217,6 +217,17 @@ class TestScorableResolution:
         with pytest.raises(TypeError, match="cannot score UnsupportedScorable"):
             await scorer.score_async(scorable=UnsupportedScorable(uri="/tmp/out.txt"))  # type: ignore[arg-type]
 
+    def test_stamping_an_unknown_anchor_raises_type_error(self):
+        score = MagicMock(spec=Score)
+        score.scorable = None
+
+        with pytest.raises(TypeError, match="cannot anchor a score"):
+            MessageScorer._stamp_scorable(
+                message=_assistant_message(),
+                scores=[score],
+                anchor=UnsupportedScorable(uri="/tmp/out.txt"),
+            )
+
 
 class TestScorerBaseIsScorableAgnostic:
     """The base extension contract contains no message-processing requirements."""

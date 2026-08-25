@@ -18,7 +18,6 @@ from pyrit.models.score.scorable import (
     Scorable,
     ScorableUnion,
     scorable_from_dict,
-    storable_scorable,
 )
 from pyrit.models.score.score import (
     ComponentIdentifierField,
@@ -45,5 +44,4 @@ __all__ = [
     "UndeterminedScoreError",
     "UnvalidatedScore",
     "scorable_from_dict",
-    "storable_scorable",
 ]

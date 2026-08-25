@@ -24,8 +24,8 @@ from pyrit.models import (
     ScorableUnion,
     Score,
     ScoringExpectation,
-    storable_scorable,
 )
+from pyrit.models.score.scorable import SCORABLE_TYPES
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
@@ -665,13 +665,24 @@ class MessageScorer(Scorer):
         stored content keeps pointing at the row it already has instead of copying it into a
         new one. Only a message handed over directly has nothing to keep, and its content
         becomes the anchor so a dropped piece link still leaves provenance behind.
+
+        Raises:
+            TypeError: If the anchor is not one of the kinds a ``Score`` can carry.
         """
-        stamped = storable_scorable(anchor) if anchor is not None else cls._scorable_from_message(message)
+        stamped = anchor if anchor is not None else cls._scorable_from_message(message)
         if stamped is None:
             return
+        # Score sets validate_assignment=False, so nothing downstream checks what we attach here.
+        if not isinstance(stamped, SCORABLE_TYPES):
+            known = ", ".join(sorted(kind.__name__ for kind in SCORABLE_TYPES))
+            raise TypeError(
+                f"{type(stamped).__name__} cannot anchor a score. Add it to ScorableUnion with its own "
+                f"'scorable_type' tag. Known scorables: {known}."
+            )
+        anchor_scorable = cast("ScorableUnion", stamped)
         for score in scores:
             if score.scorable is None:
-                score.scorable = stamped
+                score.scorable = anchor_scorable
 
     @staticmethod
     def _drop_ephemeral_score_links(*, message: Message, scores: list[Score]) -> None:

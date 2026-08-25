@@ -15,7 +15,6 @@ from pyrit.models import (
     Scorable,
     Score,
     scorable_from_dict,
-    storable_scorable,
 )
 from pyrit.models.score.scorable import SCORABLE_TYPES
 
@@ -161,18 +160,6 @@ def test_every_union_member_round_trips_to_its_own_type():
 def test_scorable_from_dict_rejects_an_untagged_shape():
     with pytest.raises(ValidationError):
         scorable_from_dict({"message_piece_ids": [str(uuid.uuid4())]})
-
-
-def test_storable_scorable_rejects_an_unsupported_kind():
-    class TraceScorable(Scorable):
-        trace_id: str
-
-    with pytest.raises(TypeError, match="cannot anchor a stored score"):
-        storable_scorable(TraceScorable(trace_id="abc"))
-
-
-def test_storable_scorable_passes_through_none():
-    assert storable_scorable(None) is None
 
 
 def test_unknown_stored_shape_fails_loudly():

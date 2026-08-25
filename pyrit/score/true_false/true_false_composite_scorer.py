@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import uuid
@@ -17,7 +17,6 @@ from pyrit.models import (
     Score,
     ScoreStatus,
     ScoringExpectation,
-    storable_scorable,
 )
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -131,7 +130,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             self._build_aggregate_score(
                 score_list_results=list(score_list_results),
                 expectation=expectation,
-                scorable=storable_scorable(scorable),
+                # Score rejects a kind outside the union when it is constructed below.
+                scorable=cast("ScorableUnion | None", scorable),
                 message_piece_id=self._piece_id_from_scorable(scorable),
             )
         ]

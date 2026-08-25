@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003  (runtime-required by Pydantic field annotations)
 from abc import ABC
-from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
@@ -132,8 +132,8 @@ ScorableUnion = Annotated[
     Field(discriminator="scorable_type"),
 ]
 
-# Single source of truth for what a stored score can be anchored on, read back off the union
-# so adding a member does not require a second edit here.
+# The known scorable kinds, read back off the union so adding a member does not require a
+# second edit here.
 SCORABLE_TYPES: tuple[type[Scorable], ...] = get_args(get_args(ScorableUnion)[0])
 
 _SCORABLE_ADAPTER: TypeAdapter[ScorableUnion] = TypeAdapter(ScorableUnion)
@@ -153,29 +153,3 @@ def scorable_from_dict(value: dict[str, Any]) -> ScorableUnion:
         ValidationError: If the stored value names no known scorable.
     """
     return _SCORABLE_ADAPTER.validate_python(value)
-
-
-def storable_scorable(scorable: Scorable | None) -> ScorableUnion | None:
-    """
-    Narrow a scorable to one a ``Score`` can be anchored on.
-
-    Args:
-        scorable (Scorable | None): The scorable to narrow.
-
-    Returns:
-        ScorableUnion | None: The scorable, or None when there was none to narrow.
-
-    Raises:
-        TypeError: If the scorable's kind has no storage shape. A stored score that silently
-            dropped its anchor could not be audited, so an unsupported kind is refused rather
-            than persisted without provenance.
-    """
-    if scorable is None:
-        return None
-    if isinstance(scorable, SCORABLE_TYPES):
-        return cast("ScorableUnion", scorable)
-    supported = ", ".join(sorted(kind.__name__ for kind in SCORABLE_TYPES))
-    raise TypeError(
-        f"{type(scorable).__name__} cannot anchor a stored score. Add it to ScorableUnion with its own "
-        f"'scorable_type' tag. Storable scorables: {supported}."
-    )
