@@ -156,7 +156,12 @@ def _backfill_message_scorables() -> None:
             except (ValueError, AttributeError, TypeError):
                 logger.warning("Skipping scorable backfill for score %s: unparsable piece id %r.", score_id, piece_id)
                 continue
-            updates.append({"score_id": score_id, "scorable": json.dumps({"message_piece_ids": [normalized]})})
+            updates.append(
+                {
+                    "score_id": score_id,
+                    "scorable": json.dumps({"scorable_type": "message", "message_piece_ids": [normalized]}),
+                }
+            )
 
         if updates:
             connection.execute(statement, updates)

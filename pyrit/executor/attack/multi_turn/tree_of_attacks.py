@@ -773,7 +773,7 @@ class _TreeOfAttacksNode:
             scorer_identifier = score.scorer_class_identifier
             scorer_name = scorer_identifier.class_name if scorer_identifier else "unknown"
             self.auxiliary_scores[scorer_name] = score
-            logger.debug(f"Node {self.node_id}: {scorer_name} score: {score.get_value()}")
+            logger.debug(f"Node {self.node_id}: {scorer_name} score: {normalize_score_to_float(score)}")
 
     def _mark_execution_complete(self) -> None:
         """
@@ -2371,11 +2371,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Returns:
             dict[str, float]: A dictionary mapping auxiliary score names to their
                 float values, or an empty dictionary if no auxiliary scores are available.
+                An undetermined auxiliary score summarizes as 0.0.
         """
         if not nodes or not nodes[0].auxiliary_scores:
             return {}
 
-        return {name: float(score.get_value()) for name, score in nodes[0].auxiliary_scores.items()}
+        return {name: normalize_score_to_float(score) for name, score in nodes[0].auxiliary_scores.items()}
 
     def _calculate_tree_statistics(self, tree_visualization: Tree) -> dict[str, int]:
         """

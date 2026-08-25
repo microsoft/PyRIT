@@ -134,10 +134,6 @@ class Scorer(Identifiable, abc.ABC):
     #: legacy path remains valid during the transition to typed expectations.
     REQUIRED_CONDITIONS: ClassVar[frozenset[type[Condition]]] = frozenset()
 
-    #: When True, blocked responses that contain partial content are scored using that
-    #: content instead of being filtered out or short-circuited.
-    score_blocked_content: bool = False
-
     _identifier: ComponentIdentifier | None = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -456,32 +452,6 @@ class Scorer(Identifiable, abc.ABC):
             return scorable.message_piece_ids[0]
         return None
 
-    def _should_skip_on_error(self, message: Message) -> bool:
-        """
-        Return whether an errored message should be skipped rather than scored.
-
-        Returns:
-            bool: True when the message should not be scored.
-        """
-        if not message.is_error():
-            return False
-
-        error_pieces = [
-            piece for piece in message.message_pieces if piece.has_error() or piece.converted_value_data_type == "error"
-        ]
-        # SDK-provided structured refusals stay scoreable: the refusal text is the evidence.
-        only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
-        # When score_blocked_content is enabled and the message has partial content,
-        # don't skip — let the scorer handle the substitution.
-        all_errors_have_partial_content = all(
-            piece.is_blocked() and piece.prompt_metadata.get("partial_content") for piece in error_pieces
-        )
-        if only_structured_refusals or (self.score_blocked_content and all_errors_have_partial_content):
-            return False
-
-        logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
-        return True
-
     @abstractmethod
     async def _score_scorable_async(
         self,
@@ -790,10 +760,16 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             list[Score]: Scores from the scorer, or an empty list when policy skips the response.
         """
+        # Local import: the message family builds on Scorer, so it cannot be imported at module level.
+        from pyrit.score.message_scorer import MessageScorer, message_should_skip_on_error
+
         if response.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
-        if skip_on_error_result and scorer._should_skip_on_error(response):
+        if skip_on_error_result and message_should_skip_on_error(
+            message=response,
+            score_blocked_content=isinstance(scorer, MessageScorer) and scorer.score_blocked_content,
+        ):
             return []
         return await scorer.score_async(
             scorable=MessageScorable.from_message(response),

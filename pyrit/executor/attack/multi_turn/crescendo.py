@@ -719,7 +719,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             raise RuntimeError("No objective scores returned from scoring process.")
 
         score = objective_score[0]
-        self._logger.debug(f"Objective score: {score.get_value():.2f} - {score.score_rationale}")
+        self._logger.debug(f"Objective score: {normalize_score_to_float(score):.2f} - {score.score_rationale}")
         return score
 
     async def _backtrack_memory_async(self, *, conversation_id: str) -> str:
@@ -795,10 +795,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         """
         # Check for refusal using the scorer (handles blocked/error responses internally)
         refusal_score = await self._check_refusal_async(context, prompt_sent)
-        self._logger.debug(
-            f"Refusal check: {refusal_score.get_value()} - {(refusal_score.score_rationale or '')[:100]}..."
-        )
         is_refusal = score_is_true(refusal_score)
+        self._logger.debug(f"Refusal check: {is_refusal} - {(refusal_score.score_rationale or '')[:100]}...")
         context.last_response_was_refusal = is_refusal
 
         if not is_refusal:

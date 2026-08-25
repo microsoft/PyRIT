@@ -76,12 +76,12 @@ def _create_aggregator(
     """
 
     def aggregator(scores: Iterable[Score]) -> list[ScoreAggregatorResult]:
-        # Validate types and normalize input
-        for s in scores:
+        # Materialize before validating: scores may be a generator, and validating would drain it.
+        scores_list = list(scores)
+        for s in scores_list:
             if s.score_type != "float_scale":
                 raise ValueError("All scores must be of type 'float_scale'.")
 
-        scores_list = list(scores)
         if not scores_list:
             if raise_on_empty:
                 raise ValueError("No scores available for aggregation")
@@ -208,12 +208,12 @@ def _create_aggregator_by_category(
     """
 
     def aggregator(scores: Iterable[Score]) -> list[ScoreAggregatorResult]:
-        # Validate types and normalize input
-        for s in scores:
+        # Materialize before validating: scores may be a generator, and validating would drain it.
+        scores_list = list(scores)
+        for s in scores_list:
             if s.score_type != "float_scale":
                 raise ValueError("All scores must be of type 'float_scale'.")
 
-        scores_list = list(scores)
         if not scores_list:
             # No scores; return a neutral result
             return [

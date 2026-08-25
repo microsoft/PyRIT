@@ -24,6 +24,7 @@ from pyrit.models import (
     ScorableUnion,
     Score,
     ScoringExpectation,
+    storable_scorable,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
@@ -87,6 +88,39 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     )
 
 
+def message_should_skip_on_error(*, message: Message, score_blocked_content: bool) -> bool:
+    """
+    Decide whether an errored message is evidence or noise.
+
+    Message error state is message-family policy, so it is stated here rather than on the
+    generic scorer base. A structured refusal is evidence, and so is partial content when the
+    caller opted into scoring it; anything else is a target failure with nothing to read.
+
+    Args:
+        message (Message): The message to judge.
+        score_blocked_content (bool): Whether partial content behind a block counts as evidence.
+
+    Returns:
+        bool: True when the message should not be scored.
+    """
+    if not message.is_error():
+        return False
+
+    error_pieces = [
+        piece for piece in message.message_pieces if piece.has_error() or piece.converted_value_data_type == "error"
+    ]
+    # SDK-provided structured refusals stay scoreable: the refusal text is the evidence.
+    only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
+    all_errors_have_partial_content = all(
+        piece.is_blocked() and piece.prompt_metadata.get("partial_content") for piece in error_pieces
+    )
+    if only_structured_refusals or (score_blocked_content and all_errors_have_partial_content):
+        return False
+
+    logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
+    return True
+
+
 class MessageScorer(Scorer):
     """
     Base class for scorers whose evidence is a single message.
@@ -103,6 +137,10 @@ class MessageScorer(Scorer):
     #: When False, a blocked response from the scorer's own LLM produces the scorer
     #: family's neutral fallback score instead of raising.
     raise_if_scorer_blocks: bool = True
+
+    #: When True, blocked responses that contain partial content are scored using that
+    #: content instead of being filtered out or short-circuited.
+    score_blocked_content: bool = False
 
     def __init__(
         self,
@@ -390,6 +428,7 @@ class MessageScorer(Scorer):
             expectation=expectation,
             options=options,
             infer_objective_from_request=infer_objective_from_request,
+            anchor=scorable,
         )
 
     async def _score_resolved_message_async(
@@ -399,6 +438,7 @@ class MessageScorer(Scorer):
         expectation: ScoringExpectation | None,
         options: MessageScoringOptions,
         infer_objective_from_request: bool,
+        anchor: Scorable | None = None,
     ) -> list[Score]:
         """
         Run the message-scoring pipeline over an acquired message.
@@ -409,6 +449,8 @@ class MessageScorer(Scorer):
             options (MessageScoringOptions): Message-only scoring policy.
             infer_objective_from_request (bool): Deprecated; read the objective from the
                 previous turn when the expectation carries none.
+            anchor (Scorable | None): The scorable the caller named, when the message was
+                acquired from one. Scores anchor on it rather than on the acquired message.
 
         Returns:
             list[Score]: The scores, or an empty list when a filter skipped the message.
@@ -437,7 +479,9 @@ class MessageScorer(Scorer):
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
 
-        if options.skip_on_error_result and self._should_skip_on_error(message):
+        if options.skip_on_error_result and message_should_skip_on_error(
+            message=message, score_blocked_content=self.score_blocked_content
+        ):
             return []
 
         if infer_objective_from_request and (not objective):
@@ -496,7 +540,7 @@ class MessageScorer(Scorer):
             scores = self._build_fallback_score(message=scoring_message, objective=objective)
 
         self._drop_ephemeral_score_links(message=scoring_message, scores=scores)
-        self._stamp_scorable(message=scoring_message, scores=scores)
+        self._stamp_scorable(message=scoring_message, scores=scores, anchor=anchor)
 
         return scores
 
@@ -588,19 +632,21 @@ class MessageScorer(Scorer):
         return None
 
     @classmethod
-    def _stamp_scorable(cls, *, message: Message, scores: list[Score]) -> None:
+    def _stamp_scorable(cls, *, message: Message, scores: list[Score], anchor: Scorable | None) -> None:
         """
         Anchor scores on the evidence they were taken over, when the scorer left it unset.
 
-        A score whose piece link was dropped because the piece was never persisted still has
-        provenance this way: the anchor carries the content itself.
+        The scorable the caller named is that evidence whenever there is one, so re-scoring
+        stored content keeps pointing at the row it already has instead of copying it into a
+        new one. Only a message handed over directly has nothing to keep, and its content
+        becomes the anchor so a dropped piece link still leaves provenance behind.
         """
-        anchor = cls._scorable_from_message(message)
-        if anchor is None:
+        stamped = storable_scorable(anchor) if anchor is not None else cls._scorable_from_message(message)
+        if stamped is None:
             return
         for score in scores:
             if score.scorable is None:
-                score.scorable = anchor
+                score.scorable = stamped
 
     @staticmethod
     def _drop_ephemeral_score_links(*, message: Message, scores: list[Score]) -> None:

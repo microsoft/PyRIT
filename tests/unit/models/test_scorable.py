@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -14,10 +13,11 @@ from pyrit.models import (
     MessagePiece,
     MessageScorable,
     Scorable,
-    ScorableUnion,
     Score,
     scorable_from_dict,
+    storable_scorable,
 )
+from pyrit.models.score.scorable import SCORABLE_TYPES
 
 
 def _message(value: str = "response") -> Message:
@@ -133,19 +133,18 @@ def test_scorable_round_trips_through_score(scorable: Scorable):
     assert type(restored.scorable) is type(scorable)
 
 
-def test_stored_scorable_carries_no_type_tag():
+def test_stored_scorable_carries_its_type_tag():
     piece_id = uuid.uuid4()
 
     dumped = MessageScorable(message_piece_ids=(piece_id,)).model_dump(mode="json")
 
-    assert dumped == {"message_piece_ids": [str(piece_id)]}
+    assert dumped == {"scorable_type": "message", "message_piece_ids": [str(piece_id)]}
 
 
 def test_every_union_member_round_trips_to_its_own_type():
-    """Pydantic dispatches on field shape, so members must stay distinguishable.
+    """Storage dispatches on the ``scorable_type`` tag, so every member must declare one.
 
-    A new scorable whose required fields overlap an existing one would silently load as
-    the wrong type. Adding a member without a case here fails on the coverage assert.
+    Adding a member without a case here fails on the coverage assert.
     """
     cases: list[Scorable] = [
         MessageScorable(message_piece_ids=(uuid.uuid4(),)),
@@ -153,10 +152,27 @@ def test_every_union_member_round_trips_to_its_own_type():
         ContentEntryScorable(content_id=uuid.uuid4()),
     ]
 
-    assert {type(case) for case in cases} == set(get_args(ScorableUnion))
+    assert {type(case) for case in cases} == set(SCORABLE_TYPES)
 
     for case in cases:
         assert type(scorable_from_dict(case.model_dump(mode="json"))) is type(case)
+
+
+def test_scorable_from_dict_rejects_an_untagged_shape():
+    with pytest.raises(ValidationError):
+        scorable_from_dict({"message_piece_ids": [str(uuid.uuid4())]})
+
+
+def test_storable_scorable_rejects_an_unsupported_kind():
+    class TraceScorable(Scorable):
+        trace_id: str
+
+    with pytest.raises(TypeError, match="cannot anchor a stored score"):
+        storable_scorable(TraceScorable(trace_id="abc"))
+
+
+def test_storable_scorable_passes_through_none():
+    assert storable_scorable(None) is None
 
 
 def test_unknown_stored_shape_fails_loudly():

@@ -9,10 +9,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory.memory_models import ScorableContentEntry
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
     Condition,
+    ContentEntryScorable,
     MatchesObjective,
     Message,
     MessagePiece,
@@ -186,6 +188,18 @@ class TestScorableResolution:
         assert scored_piece.not_in_memory is True
         # Memory cannot link a score to a piece it never stored.
         assert scores[0].message_piece_id is None
+
+    async def test_rescoring_stored_content_keeps_its_anchor(self, sqlite_instance: MemoryInterface):
+        """Re-scoring must point at the row the content already has, not copy it into a new one."""
+        scorer = RecordingScorer()
+        first = (await scorer.score_async(scorable=ContentScorable(value="loose text")))[0]
+        anchor = first.scorable
+        assert isinstance(anchor, ContentEntryScorable)
+
+        second = (await scorer.score_async(scorable=anchor))[0]
+
+        assert second.scorable == anchor
+        assert len(sqlite_instance._query_entries(ScorableContentEntry)) == 1
 
     async def test_message_scorer_uses_injected_resolver(self):
         message = _assistant_message()
