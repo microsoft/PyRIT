@@ -173,6 +173,8 @@ az containerapp revision restart \
 
 Do **not** rely solely on `/api/health` — it can pass on an old revision while the new one is crashing. Run through this checklist:
 
+> **Known lifecycle limitation:** `deploy_instance.py` cannot currently declare the instance ready because SQL contained-user creation and the resulting revision restart are manual. Until revision-bound finalization is implemented, keep this manual gate. The required future behavior is to bind deployment success to the immutable image digest and exact ACA revision produced by the deployment, then fail unless that revision is healthy; a generic FQDN health response is insufficient.
+
 - [ ] Latest ACA revision is `Healthy`:
   ```bash
   az containerapp revision list \
