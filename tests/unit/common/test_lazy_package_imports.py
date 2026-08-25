@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 from textwrap import dedent
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -425,6 +426,32 @@ def test_dataset_catalog_materializes_only_for_complete_discovery() -> None:
     )
 
 
+def test_dataset_catalog_materializes_for_complete_discovery_in_process() -> None:
+    from pyrit.datasets import SeedDatasetProvider
+
+    providers = SeedDatasetProvider.get_all_providers()
+
+    assert "_JailbreakTemplatesDataset" in providers
+    assert "_HarmBenchDataset" in providers
+
+
+@pytest.mark.parametrize("method_name", ["get_all_dataset_names_async", "fetch_datasets_async"])
+async def test_dataset_discovery_entrypoint_materializes_builtin_providers(method_name: str) -> None:
+    from pyrit.datasets import SeedDatasetProvider
+
+    with (
+        patch.object(
+            SeedDatasetProvider,
+            "_materialize_builtin_providers",
+            side_effect=RuntimeError("materialized"),
+        ) as materialize,
+        pytest.raises(RuntimeError, match="materialized"),
+    ):
+        await getattr(SeedDatasetProvider, method_name)()
+
+    materialize.assert_called_once_with()
+
+
 def test_scenario_short_imports_preserve_canonical_identity() -> None:
     _assert_subprocess_succeeds(
         """
@@ -454,11 +481,36 @@ def test_scenario_short_imports_preserve_canonical_identity_in_process() -> None
     assert alias_package is canonical_package
 
 
+def test_missing_scenario_short_import_raises() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("pyrit.scenario.airt.missing_scenario")
+
+
 def test_dynamic_scenario_techniques_reject_unknown_export() -> None:
     dynamic_techniques = importlib.import_module("pyrit.scenario.scenarios._dynamic_techniques")
 
     with pytest.raises(AttributeError, match="has no attribute 'UnknownTechnique'"):
         dynamic_techniques.__getattr__("UnknownTechnique")
+
+
+def test_dynamic_scenario_technique_resolves_and_caches() -> None:
+    dynamic_techniques = importlib.import_module("pyrit.scenario.scenarios._dynamic_techniques")
+    builder = MagicMock(return_value=object())
+    builder_module = MagicMock()
+    builder_module.build = builder
+
+    with (
+        patch.dict(
+            dynamic_techniques._TECHNIQUE_BUILDERS,
+            {"TestTechnique": ("test.builder", "build")},
+        ),
+        patch.object(dynamic_techniques, "import_module", return_value=builder_module),
+    ):
+        technique = dynamic_techniques.__getattr__("TestTechnique")
+
+    assert dynamic_techniques.TestTechnique is technique
+    builder.assert_called_once_with()
+    dynamic_techniques.__dict__.pop("TestTechnique")
 
 
 def test_scenario_registry_materializes_builtin_catalog() -> None:
@@ -479,6 +531,15 @@ def test_scenario_registry_materializes_builtin_catalog() -> None:
     )
 
 
+def test_scenario_registry_materializes_builtin_catalog_in_process() -> None:
+    from pyrit.registry import ScenarioRegistry
+
+    names = ScenarioRegistry().get_class_names()
+
+    assert "airt.cyber" in names
+    assert "garak.encoding" in names
+
+
 def test_function_exports_override_same_named_child_modules() -> None:
     _assert_subprocess_succeeds(
         """
@@ -494,3 +555,14 @@ def test_function_exports_override_same_named_child_modules() -> None:
         assert pyrit.common.apply_defaults is apply_defaults_module.apply_defaults
         """
     )
+
+
+def test_function_exports_override_same_named_child_modules_in_process() -> None:
+    import pyrit
+    import pyrit.common
+
+    show_versions_module = importlib.import_module("pyrit.show_versions")
+    apply_defaults_module = importlib.import_module("pyrit.common.apply_defaults")
+
+    assert pyrit.show_versions is show_versions_module.show_versions
+    assert pyrit.common.apply_defaults is apply_defaults_module.apply_defaults
