@@ -4,17 +4,22 @@
 """
 Integration test for the LoadDefaultDatasets initializer.
 
-Runs the full pipeline: discovers scenario default datasets, fetches them
-from real remote sources, and stores them in in-memory CentralMemory.
+Runs the full pipeline with a bounded representative selection and stores the
+datasets in in-memory CentralMemory.
 """
 
 import logging
 
 from pyrit.memory import CentralMemory
 from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
-from pyrit.setup.initializers.techniques import TechniqueInitializer
 
 logger = logging.getLogger(__name__)
+
+BOUNDED_DATASET_NAMES = [
+    "garak_package_hallucination_real_tasks",
+    "garak_package_hallucination_stubs",
+    "garak_package_hallucination_unreal_tasks",
+]
 
 
 class TestLoadDefaultDatasetsIntegration:
@@ -26,11 +31,11 @@ class TestLoadDefaultDatasetsIntegration:
         real datasets and stores them in CentralMemory.
         """
         initializer = LoadDefaultDatasets()
-        await TechniqueInitializer().initialize_async()
+        initializer.params = {"dataset_names": BOUNDED_DATASET_NAMES}
         await initializer.initialize_async()
 
         memory = CentralMemory.get_memory_instance()
-        dataset_names = memory.get_seed_dataset_names()
+        dataset_names = set(memory.get_seed_dataset_names())
 
-        assert len(dataset_names) > 0, "No datasets were loaded into memory"
+        assert dataset_names == set(BOUNDED_DATASET_NAMES)
         logger.info(f"LoadDefaultDatasets loaded {len(dataset_names)} datasets into memory")

@@ -16,7 +16,7 @@ from pyrit.models import SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry, TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
+from pyrit.setup.initializers.load_default_datasets import OPT_IN_DATASET_NAMES, LoadDefaultDatasets
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -128,6 +128,36 @@ class TestLoadDefaultDatasets:
                     assert set(call_kwargs["dataset_names"]) == {"dataset1", "dataset2", "dataset3"}
                     assert len(call_kwargs["dataset_names"]) == 3
 
+    async def test_initialize_async_excludes_opt_in_datasets_from_scenario_defaults(self) -> None:
+        """Test that implicit loading excludes datasets that must be selected explicitly."""
+        initializer = LoadDefaultDatasets()
+        metadata = [
+            _FakeMetadata(
+                registry_name="package_hallucination",
+                default_datasets=("bounded_dataset", *sorted(OPT_IN_DATASET_NAMES)),
+            )
+        ]
+
+        with (
+            patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=metadata),
+            patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch,
+            patch.object(CentralMemory, "get_memory_instance") as mock_memory,
+        ):
+            mock_fetch.return_value = []
+            mock_memory_instance = MagicMock()
+            mock_memory_instance.add_seed_datasets_to_memory_async = AsyncMock()
+            mock_memory.return_value = mock_memory_instance
+
+            await initializer.initialize_async()
+
+            assert mock_fetch.call_args.kwargs["dataset_names"] == ["bounded_dataset"]
+
+    async def test_opt_in_datasets_are_registered_without_fetching(self) -> None:
+        """Test that opt-in package registries remain discoverable for explicit loading."""
+        available_datasets = set(await SeedDatasetProvider.get_all_dataset_names_async())
+
+        assert available_datasets >= OPT_IN_DATASET_NAMES
+
     async def test_all_required_datasets_available_in_seed_provider(self, populated_technique_registry) -> None:
         """
         Test that all datasets required by scenarios are available in SeedDatasetProvider.
@@ -201,7 +231,8 @@ class TestLoadDefaultDatasetsParameters:
 
     async def test_dataset_names_loads_exact_names(self) -> None:
         initializer = LoadDefaultDatasets()
-        initializer.params = {"dataset_names": ["alpha", "beta"]}
+        requested_names = ["alpha", "garak_npm_packages"]
+        initializer.params = {"dataset_names": requested_names}
 
         with (
             patch.object(ScenarioRegistry, "get_all_registered_class_metadata") as mock_list_metadata,
@@ -218,7 +249,7 @@ class TestLoadDefaultDatasetsParameters:
 
             mock_list_metadata.assert_not_called()
             mock_names.assert_not_called()
-            assert mock_fetch.call_args.kwargs["dataset_names"] == ["alpha", "beta"]
+            assert mock_fetch.call_args.kwargs["dataset_names"] == requested_names
 
     async def test_tags_selects_via_metadata_filter(self) -> None:
         initializer = LoadDefaultDatasets()

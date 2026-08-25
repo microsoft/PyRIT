@@ -20,14 +20,23 @@ from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
+OPT_IN_DATASET_NAMES: frozenset[str] = frozenset(
+    {
+        "garak_crates_packages",
+        "garak_npm_packages",
+        "garak_pypi_packages",
+        "garak_rubygems_packages",
+    }
+)
+
 
 class LoadDefaultDatasets(PyRITInitializer):
     """
     Load datasets into memory so scenarios can run.
 
-    By default this loads the datasets required by all registered scenarios.
-    Pass ``dataset_names`` to load specific datasets by name, or ``tags`` to
-    select datasets by metadata.
+    By default this loads the bounded datasets required by all registered
+    scenarios. Large opt-in datasets are only loaded when selected through
+    ``dataset_names`` or ``tags``.
     """
 
     @property
@@ -36,8 +45,8 @@ class LoadDefaultDatasets(PyRITInitializer):
         return textwrap.dedent(
             """
                 Loads datasets into memory so scenarios can run. By default loads the datasets
-                required by all registered scenarios; use the dataset_names or tags parameters to
-                select datasets explicitly.
+                required by all registered scenarios except large opt-in datasets; use the
+                dataset_names or tags parameters to select datasets explicitly.
 
                 Note: if you are using persistent memory, avoid calling this every time as datasets
                 can take time to load.
@@ -81,7 +90,7 @@ class LoadDefaultDatasets(PyRITInitializer):
             logger.info(f"Loading {len(unique_datasets)} dataset(s) matching tags: {sorted(tags)}")
         else:
             unique_datasets = self._scenario_default_dataset_names()
-            logger.info(f"Loading {len(unique_datasets)} unique datasets required by all scenarios")
+            logger.info(f"Loading {len(unique_datasets)} bounded datasets required by all scenarios")
 
         if not unique_datasets:
             logger.warning("No datasets matched the requested selection")
@@ -112,4 +121,11 @@ class LoadDefaultDatasets(PyRITInitializer):
             all_default_datasets.extend(datasets)
             logger.info(f"Scenario '{metadata.registry_name}' uses datasets: {datasets}")
 
-        return list(dict.fromkeys(all_default_datasets))
+        selected = list(dict.fromkeys(name for name in all_default_datasets if name not in OPT_IN_DATASET_NAMES))
+        skipped = sorted(set(all_default_datasets) & OPT_IN_DATASET_NAMES)
+        if skipped:
+            logger.info(
+                f"Skipping opt-in datasets from automatic loading: {skipped}. "
+                "Select them explicitly with dataset_names or tags."
+            )
+        return selected
