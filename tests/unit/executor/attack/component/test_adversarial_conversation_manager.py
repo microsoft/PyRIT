@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pyrit.exceptions import BadRequestException, InvalidJsonException
+from pyrit.exceptions import BadRequestException, EmptyResponseException, InvalidJsonException, PyritException
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _BLOCKED_FEEDBACK_TEXT,
     _DEFAULT_ADVERSARIAL_SCHEMA_NAME,
@@ -563,14 +563,70 @@ class TestGetNextMessageAsync:
             await manager.get_next_message_async(turn_index=1, last_response=_response_message())
 
     async def test_blocked_reply_does_not_retry_json_parsing(self) -> None:
+        refusal = "I cannot assist with that request."
         normalizer = _normalizer(None)
-        normalizer.send_prompt_async.return_value = _blocked_adversarial_response()
+        normalizer.send_prompt_async.return_value = _blocked_adversarial_response(refusal)
         manager = _manager(
             adversarial_system_prompt=_system_prompt(schema=SCHEMA),
             prompt_normalizer=normalizer,
         )
 
-        with pytest.raises(BadRequestException, match="blocked or errored response"):
+        with pytest.raises(BadRequestException) as exc_info:
+            await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+        assert exc_info.value.status_code == 200
+        assert exc_info.value.message == refusal
+        normalizer.send_prompt_async.assert_awaited_once()
+
+    @pytest.mark.parametrize("response_error", ["processing", "unknown"])
+    async def test_non_blocked_error_preserves_category_without_retry(self, response_error: str) -> None:
+        normalizer = _normalizer(None)
+        normalizer.send_prompt_async.return_value = _response_message(
+            "provider failed",
+            data_type="error",
+            error=response_error,
+        )
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+        )
+
+        with pytest.raises(PyritException) as exc_info:
+            await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+        assert type(exc_info.value) is PyritException
+        assert response_error in exc_info.value.message
+        assert "provider failed" in exc_info.value.message
+        normalizer.send_prompt_async.assert_awaited_once()
+
+    async def test_blocked_reply_uses_error_piece_when_clean_piece_precedes_it(self) -> None:
+        refusal = "I cannot assist with that request."
+        blocked_piece = _blocked_adversarial_response(refusal).get_piece()
+        response = Message.from_prompt(prompt="partial content", role="assistant")
+        response.message_pieces.append(blocked_piece)
+        normalizer = _normalizer(None)
+        normalizer.send_prompt_async.return_value = response
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+        )
+
+        with pytest.raises(BadRequestException) as exc_info:
+            await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+        assert exc_info.value.status_code == 200
+        assert exc_info.value.message == refusal
+        normalizer.send_prompt_async.assert_awaited_once()
+
+    async def test_empty_error_preserves_category_without_retry(self) -> None:
+        normalizer = _normalizer(None)
+        normalizer.send_prompt_async.return_value = _response_message("", error="empty")
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+        )
+
+        with pytest.raises(EmptyResponseException):
             await manager.get_next_message_async(turn_index=1, last_response=_response_message())
 
         normalizer.send_prompt_async.assert_awaited_once()
