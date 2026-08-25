@@ -3,7 +3,6 @@
 
 """Tests for the Jailbreak class."""
 
-import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 

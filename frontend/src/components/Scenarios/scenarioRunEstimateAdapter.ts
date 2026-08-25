@@ -105,7 +105,7 @@ export function mapScenarioRunEstimate(
     total,
     minimum: response.minimum_attack_count ?? null,
     maximum: response.maximum_attack_count ?? null,
-    condition: isRichEstimate ? response.condition : null,
+    condition: isRichEstimate ? response.condition ?? null : null,
     components: response.components.map((component) => {
       const id = nextStableId('component', component.label, componentOccurrences)
       return {
@@ -114,7 +114,7 @@ export function mapScenarioRunEstimate(
         count: component.count,
         factors: mapFactors(id, component.factors ?? []),
         isBaseline: component.is_baseline,
-        condition: component.condition,
+        condition: component.condition ?? null,
         note: component.note,
       }
     }),
