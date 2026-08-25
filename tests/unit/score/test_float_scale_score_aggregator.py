@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 
+import pytest
+
 from pyrit.models import ComponentIdentifier, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScoreAggregator,
@@ -365,3 +367,48 @@ def test_average_raise_on_empty_with_no_scores():
 
     with pytest.raises(ValueError, match="No scores available for aggregation"):
         FloatScaleScoreAggregator.AVERAGE_RAISE_ON_EMPTY([])
+
+
+def test_aggregators_accept_generators():
+    """
+    Aggregators are typed to take an Iterable, so a generator must aggregate the same
+    as the equivalent list. Validating by iterating before materializing exhausted the
+    generator and silently produced the empty-input result (0.0).
+    """
+    values = [0.3, 0.9, 0.5]
+
+    aggregators = [
+        FloatScaleScoreAggregator.MAX,
+        FloatScaleScoreAggregator.MIN,
+        FloatScaleScoreAggregator.AVERAGE,
+        FloatScaleScorerByCategory.MAX,
+        FloatScaleScorerAllCategories.MAX,
+    ]
+    for aggregator in aggregators:
+        from_list = aggregator([_mk_score(v, category=["harm"]) for v in values])
+        from_generator = aggregator(_mk_score(v, category=["harm"]) for v in values)
+        assert [r.value for r in from_generator] == [r.value for r in from_list]
+
+
+def test_raise_on_empty_aggregator_accepts_generators():
+    """A generator with scores must not trip the empty-input guard."""
+    values = [0.3, 0.9, 0.5]
+    results = FloatScaleScoreAggregator.MAX_RAISE_ON_EMPTY(_mk_score(v) for v in values)
+    assert results[0].value == 0.9
+
+
+def test_generator_of_wrong_type_still_raises():
+    """Materializing first must not weaken type validation."""
+    bad = Score(
+        score_value="true",
+        score_value_description="",
+        score_type="true_false",
+        score_category=["test"],
+        score_rationale="",
+        score_metadata=None,
+        message_piece_id="1",
+        scorer_class_identifier=_TEST_SCORER_ID,
+        objective=None,
+    )
+    with pytest.raises(ValueError, match="must be of type 'float_scale'"):
+        FloatScaleScoreAggregator.MAX(s for s in [bad])

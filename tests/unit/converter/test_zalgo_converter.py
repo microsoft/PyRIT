@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import random
+
 import pytest
 
 from pyrit.converter import ZalgoConverter
+from pyrit.converter.text_selection_strategy import WordProportionSelectionStrategy
 
 
 async def test_zalgo_output_changes_text():
@@ -21,6 +24,66 @@ async def test_zalgo_reproducible_seed():
     result1 = await converter1.convert_async(prompt=prompt)
     result2 = await converter2.convert_async(prompt=prompt)
     assert result1.output_text == result2.output_text
+
+
+async def test_zalgo_seed_does_not_disturb_global_rng():
+    """A seeded converter must not reseed the process-wide RNG."""
+    original_state = random.getstate()
+    try:
+        # Seed to a value distinct from the converter's own seed. Without this the
+        # assertion can pass vacuously: a leaking component that reseeds to the same
+        # value the previous test used lands back on the captured state.
+        random.seed(0)
+        state_before = random.getstate()
+
+        converter = ZalgoConverter(intensity=5, seed=42)
+        await converter.convert_async(prompt="seed test")
+
+        assert random.getstate() == state_before
+    finally:
+        # Leave process-wide RNG exactly as found so test order stays irrelevant.
+        random.setstate(original_state)
+
+
+async def test_zalgo_seed_is_repeatable_on_same_instance():
+    prompt = "seed test"
+    converter = ZalgoConverter(intensity=5, seed=123)
+    first = await converter.convert_async(prompt=prompt)
+    second = await converter.convert_async(prompt=prompt)
+    assert first.output_text == second.output_text
+
+
+async def test_zalgo_unseeded_converters_stay_independent():
+    """An unseeded converter must keep producing varied output."""
+    converter = ZalgoConverter(intensity=5)
+    outputs = {(await converter.convert_async(prompt="seed test")).output_text for _ in range(5)}
+    assert len(outputs) > 1
+
+
+async def test_zalgo_seed_is_component_scoped_when_composed_with_random_selection():
+    """
+    Seeds are component-scoped: seeding the converter alone does not seed a randomized
+    word selection strategy, but seeding both makes the composition reproducible.
+    """
+    # Eight words at proportion 0.5 gives C(8,4)=70 possible selections, so five draws
+    # collapsing to one output by chance is ~4e-8 -- not a realistic flake.
+    prompt = "alpha bravo charlie delta echo foxtrot golf hotel"
+
+    unseeded_selection = ZalgoConverter(
+        intensity=3,
+        seed=42,
+        word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5),
+    )
+    varied = {(await unseeded_selection.convert_async(prompt=prompt)).output_text for _ in range(5)}
+    assert len(varied) > 1
+
+    seeded_selection = ZalgoConverter(
+        intensity=3,
+        seed=42,
+        word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5, seed=7),
+    )
+    repeated = {(await seeded_selection.convert_async(prompt=prompt)).output_text for _ in range(5)}
+    assert len(repeated) == 1
 
 
 async def test_zalgo_zero_intensity_returns_original():

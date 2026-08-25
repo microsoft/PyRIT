@@ -1359,6 +1359,24 @@ class TestMainExtraPaths:
         assert "Registered initializer 'myinit'" in capsys.readouterr().out
         mock_client.register_initializer_async.assert_awaited_once()
 
+    async def test_handle_add_initializer_reads_with_aiofiles(self, tmp_path):
+        script = tmp_path / "myinit.py"
+        script.write_text("content read outside the event loop")
+        parsed_args = Namespace(files=[str(script)])
+        client = AsyncMock()
+        async_file = MagicMock()
+        async_file.__aenter__ = AsyncMock(return_value=async_file)
+        async_file.__aexit__ = AsyncMock(return_value=None)
+        async_file.read = AsyncMock(return_value="# stub initializer\n")
+
+        with patch("pyrit.cli.pyrit_scan.aiofiles.open", return_value=async_file) as open_mock:
+            result = await pyrit_scan._handle_add_initializer_async(client=client, parsed_args=parsed_args)
+
+        assert result == 0
+        open_mock.assert_called_once_with(script.resolve())
+        async_file.read.assert_awaited_once()
+        assert client.register_initializer_async.await_args.kwargs["script_content"] == "# stub initializer\n"
+
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
         new_callable=AsyncMock,
@@ -1414,6 +1432,49 @@ class TestScenarioResults:
         rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
         assert rc == 0
         assert "extract data" in capsys.readouterr().out
+
+    def test_handle_results_conversations_fetches_and_prints(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {
+            "messages": [
+                {"role": "user", "turn_number": 0, "message_pieces": [{"converted_value": "give me data"}]},
+            ]
+        }
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "conversations"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        client.get_conversation_messages_async.assert_awaited_once()
+        assert client.get_conversation_messages_async.await_args.kwargs["conversation_id"] == "conv-1"
+        out = capsys.readouterr().out
+        assert "give me data" in out
+        assert "Conversations" in out
+
+    def test_handle_results_full_prints_table_then_transcripts(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {"messages": []}
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "full"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Attack Results" in out
+        assert "Conversations" in out
+
+    def test_handle_results_conversations_reports_fetch_error(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.side_effect = RuntimeError("boom")
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "conversations"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "boom" in capsys.readouterr().out
 
     def test_handle_results_reports_fetch_error(self, capsys):
         import asyncio

@@ -526,9 +526,8 @@ class WebSocketCopilotTarget(PromptTarget):
         ) as websocket:
             for input_msg in inputs:
                 payload = self._dict_to_websocket(input_msg)
-                await websocket.send(payload)
-
                 is_user_input = input_msg.get("type") == CopilotMessageType.USER_PROMPT
+                await websocket.send(payload)
 
                 max_message_iterations = 1000
                 iteration_count = 0
