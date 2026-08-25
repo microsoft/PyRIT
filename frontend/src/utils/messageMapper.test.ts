@@ -236,7 +236,7 @@ describe("messageMapper", () => {
 
       expect(result.scores).toBeUndefined();
       expect(result.attachments).toHaveLength(1);
-      expect(result.attachments![0].scores).toBeUndefined();
+      expect(result.attachments![0]).not.toHaveProperty("scores");
       expect(result.displayPieces).toEqual([
         expect.objectContaining({
           type: "media",
