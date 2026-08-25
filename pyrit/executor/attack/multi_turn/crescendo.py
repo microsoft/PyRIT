@@ -130,14 +130,10 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     You can learn more about the Crescendo attack [@russinovich2024crescendo].
     """
 
-    # Crescendo fundamentally relies on multi-turn conversation history to
-    # gradually escalate prompts; history-squash adaptation would collapse the
-    # conversation into a single prompt and silently break the attack's
-    # semantics. Declare MULTI_TURN as native_required so adaptation is
-    # rejected at construction time.
+    # Crescendo relies on native live history for both gradual escalation and
+    # backtracking. Squashed or non-editable history changes those semantics.
     TARGET_REQUIREMENTS = TargetRequirements(
-        required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN}),
-        native_required=frozenset({CapabilityName.MULTI_TURN}),
+        native_required=frozenset({CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN}),
     )
 
     # Default system prompt template path for Crescendo attack
@@ -174,13 +170,19 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             max_turns (int): Maximum number of turns allowed.
             prepended_conversation_config (PrependedConversationConfiguration | None):
                 Configuration for how to process prepended conversations. Controls converter
-                application by role, message normalization, and non-chat target behavior.
+                application by role and request formatting for targets without editable history.
 
         Raises:
-            ValueError: If objective_target does not natively support editable history.
+            ValueError: If the objective target does not natively support multi-turn conversations
+                and editable history.
         """
         # Initialize base class
-        super().__init__(objective_target=objective_target, logger=logger, context_type=CrescendoAttackContext)
+        super().__init__(
+            objective_target=objective_target,
+            logger=logger,
+            context_type=CrescendoAttackContext,
+            prepended_conversation_config=prepended_conversation_config,
+        )
 
         self._memory = CentralMemory.get_memory_instance()
 
@@ -263,9 +265,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         self._max_backtracks = max_backtracks
         self._max_turns = max_turns
-
-        # Store the prepended conversation configuration
-        self._prepended_conversation_config = prepended_conversation_config
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
@@ -642,6 +641,10 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                 conversation_id=context.session.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
+                normalizer_overrides=self._get_prepended_normalizer_overrides(
+                    prepended_history_send_context=context.prepended_history_send_context,
+                ),
+                send_context=context.prepended_history_send_context,
             )
 
         if not response:

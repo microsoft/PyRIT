@@ -21,6 +21,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass, field
+from enum import Enum, auto
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -32,6 +34,178 @@ _HEALTH_PROBE_TIMEOUT = 5.0
 _PROCESS_STOP_TIMEOUT = 10.0
 _STARTUP_POLL_INTERVAL = 0.5
 _PID_DIRECTORY = Path.home() / ".pyrit" / "run"
+
+
+@dataclass(frozen=True)
+class _ServerLaunchPlan:
+    """Validated command and platform settings for one backend launch."""
+
+    base_url: str
+    command: list[str]
+    creation_flags: int
+    start_new_session: bool
+    startup_timeout: float
+
+
+def _build_server_launch_plan(
+    *,
+    host: str,
+    port: int,
+    config_file: Path | None,
+    log_level: str | None,
+    startup_timeout: float,
+    executable: str,
+    platform_name: str,
+) -> _ServerLaunchPlan:
+    """
+    Validate launch parameters and build platform-specific process settings.
+
+    Args:
+        host: Backend bind address.
+        port: Backend bind port.
+        config_file: Optional backend configuration path.
+        log_level: Optional backend log level.
+        startup_timeout: Seconds to wait for readiness.
+        executable: Python executable used to launch the backend module.
+        platform_name: Operating-system family, such as ``posix`` or ``nt``.
+
+    Returns:
+        _ServerLaunchPlan: Validated command and process settings.
+
+    Raises:
+        ValueError: If ``startup_timeout`` is not finite and greater than zero.
+    """
+    if (
+        isinstance(startup_timeout, bool)
+        or not isinstance(startup_timeout, int | float)
+        or not math.isfinite(startup_timeout)
+        or startup_timeout <= 0
+    ):
+        raise ValueError("startup_timeout must be a finite number greater than 0.")
+
+    command = [
+        executable,
+        "-m",
+        "pyrit.backend.pyrit_backend",
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    if config_file is not None:
+        command.extend(["--config-file", str(config_file)])
+    if log_level is not None:
+        command.extend(["--log-level", log_level])
+
+    is_windows = platform_name == "nt"
+    return _ServerLaunchPlan(
+        base_url=f"http://{host}:{port}",
+        command=command,
+        creation_flags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) if is_windows else 0,
+        start_new_session=not is_windows,
+        startup_timeout=startup_timeout,
+    )
+
+
+class _StartupPhase(Enum):
+    """Lifecycle phases for a backend process owned by one startup attempt."""
+
+    CREATED = auto()
+    PROCESS_STARTED = auto()
+    PID_PERSISTED = auto()
+    CHECKING_HEALTH = auto()
+    READY = auto()
+    TIMED_OUT = auto()
+    FAILED = auto()
+    CLEANED_UP = auto()
+
+
+@dataclass
+class _ServerStartupState:
+    """Explicit state and cleanup ownership for one backend startup attempt."""
+
+    port: int
+    phase: _StartupPhase = _StartupPhase.CREATED
+    process: subprocess.Popen[bytes] | None = None
+    pid_record_written: bool = False
+    health_check_count: int = 0
+    healthy: bool = False
+    timed_out: bool = False
+    diagnostics_printed: bool = False
+    cleanup_attempted: bool = False
+    cleanup_succeeded: bool | None = None
+    diagnostic_tail: str = ""
+    _cleanup_task: asyncio.Task[bool] | None = field(default=None, repr=False)
+
+    def record_process(self, *, process: subprocess.Popen[bytes]) -> None:
+        """Record ownership of the spawned process."""
+        self.process = process
+        self.phase = _StartupPhase.PROCESS_STARTED
+
+    def record_pid_write(self) -> None:
+        """Record that the startup attempt persisted a PID record."""
+        self.pid_record_written = True
+        if self.phase is _StartupPhase.PROCESS_STARTED:
+            self.phase = _StartupPhase.PID_PERSISTED
+
+    def record_health_check(self, *, healthy: bool) -> None:
+        """Record one bounded readiness probe result."""
+        self.health_check_count += 1
+        self.healthy = healthy
+        self.phase = _StartupPhase.CHECKING_HEALTH
+
+    def record_ready(self) -> None:
+        """Record that the backend completed startup."""
+        self.phase = _StartupPhase.READY
+
+    def record_timeout(self) -> None:
+        """Record that the readiness deadline elapsed."""
+        self.timed_out = True
+        self.phase = _StartupPhase.TIMED_OUT
+
+    def record_failure(self) -> None:
+        """Record that the backend exited before becoming ready."""
+        self.phase = _StartupPhase.FAILED
+
+    async def cleanup_async(self) -> bool:
+        """
+        Stop the owned process exactly once, even under repeated cancellation.
+
+        Returns:
+            bool: ``True`` when the process stopped, otherwise ``False``.
+
+        Raises:
+            asyncio.CancelledError: After in-flight cleanup completes if the caller was cancelled.
+        """
+        if self.process is None:
+            self.cleanup_succeeded = True
+            self.phase = _StartupPhase.CLEANED_UP
+            return True
+
+        if self._cleanup_task is None:
+            self.cleanup_attempted = True
+            self._cleanup_task = asyncio.create_task(
+                asyncio.to_thread(
+                    _cleanup_owned_process,
+                    process=self.process,
+                    port=self.port,
+                    remove_pid_record=self.pid_record_written,
+                )
+            )
+
+        cancellation: asyncio.CancelledError | None = None
+        while not self._cleanup_task.done():
+            try:
+                await asyncio.shield(self._cleanup_task)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+
+        self.cleanup_succeeded = self._cleanup_task.result()
+        if self.cleanup_succeeded:
+            self.phase = _StartupPhase.CLEANED_UP
+        if cancellation is not None:
+            raise cancellation
+        return self.cleanup_succeeded
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +479,30 @@ def _terminate_process_tree(*, process: subprocess.Popen[bytes]) -> bool:
         return True
 
 
+def _cleanup_owned_process(
+    *,
+    process: subprocess.Popen[bytes],
+    port: int | None,
+    remove_pid_record: bool,
+) -> bool:
+    """
+    Stop an owned backend process and discard its PID record after it exits.
+
+    Args:
+        process: Backend process owned by the launcher.
+        port: Backend bind port, when known.
+        remove_pid_record: Whether this startup attempt wrote the PID record.
+
+    Returns:
+        bool: ``True`` when no owned process remains, otherwise ``False``.
+    """
+    if process.poll() is None and not _terminate_process_tree(process=process):
+        return False
+    if remove_pid_record and port is not None:
+        _remove_pid_record(port=port)
+    return True
+
+
 def stop_server_on_port(*, port: int, shutdown_timeout: float = _PROCESS_STOP_TIMEOUT) -> bool:
     """
     Find and terminate the process listening on *port*.
@@ -366,6 +564,7 @@ async def _spawn_backend_process_async(
     log_path: str,
     creation_flags: int,
     start_new_session: bool,
+    startup_state: _ServerStartupState,
 ) -> subprocess.Popen[bytes]:
     """
     Spawn the detached backend without leaking it if startup is cancelled.
@@ -375,6 +574,7 @@ async def _spawn_backend_process_async(
         log_path: File path for backend output.
         creation_flags: Platform-specific subprocess creation flags.
         start_new_session: Whether to detach into a new process session.
+        startup_state: State that assumes process ownership before cancellation propagates.
 
     Returns:
         subprocess.Popen[bytes]: The spawned launcher process.
@@ -391,16 +591,21 @@ async def _spawn_backend_process_async(
             start_new_session=start_new_session,
         )
     )
-    try:
-        return await asyncio.shield(spawn_task)
-    except asyncio.CancelledError:
-        process = await spawn_task
-        if not await asyncio.to_thread(_terminate_process_tree, process=process):
-            _logger.warning("Failed to stop cancelled backend launcher process %d", process.pid)
-        raise
+    cancellation: asyncio.CancelledError | None = None
+    while not spawn_task.done():
+        try:
+            await asyncio.shield(spawn_task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+
+    process = spawn_task.result()
+    startup_state.record_process(process=process)
+    if cancellation is not None:
+        raise cancellation
+    return process
 
 
-async def _write_pid_record_async(*, host: str, port: int, pid: int) -> None:
+async def _write_pid_record_async(*, host: str, port: int, pid: int, startup_state: _ServerStartupState) -> None:
     """
     Persist process state before allowing cancellation to unwind startup.
 
@@ -423,6 +628,7 @@ async def _write_pid_record_async(*, host: str, port: int, pid: int) -> None:
             cancellation = exc
 
     write_task.result()
+    startup_state.record_pid_write()
     if cancellation is not None:
         raise cancellation
 
@@ -460,6 +666,84 @@ class ServerLauncher:
         async with PyRITApiClient(base_url=base_url) as client:
             return await client.health_check_async()
 
+    async def _probe_health_with_timeout_async(self, *, base_url: str, timeout: float) -> bool:
+        """
+        Probe backend health while bounding an individual request.
+
+        Returns:
+            bool: ``True`` when the backend reports healthy, otherwise ``False``.
+        """
+        try:
+            return await asyncio.wait_for(
+                self.probe_health_async(base_url=base_url),
+                timeout=min(_HEALTH_PROBE_TIMEOUT, timeout),
+            )
+        except asyncio.TimeoutError:
+            return False
+
+    async def _print_startup_diagnostics_async(self, *, startup_state: _ServerStartupState) -> None:
+        """Print the backend log tail once for a failed startup attempt."""
+        if startup_state.diagnostics_printed:
+            return
+        startup_state.diagnostic_tail = await asyncio.to_thread(self._read_log_tail)
+        await asyncio.to_thread(self._print_log_tail, tail=startup_state.diagnostic_tail)
+        startup_state.diagnostics_printed = True
+
+    async def _wait_for_readiness_async(
+        self,
+        *,
+        plan: _ServerLaunchPlan,
+        host: str,
+        startup_state: _ServerStartupState,
+    ) -> None:
+        """
+        Advance a launched process until it becomes ready, exits, or times out.
+
+        Raises:
+            RuntimeError: If no process was recorded or the process exits before readiness.
+        """
+        process = startup_state.process
+        if process is None:
+            raise RuntimeError("Backend process was not recorded after launch.")
+
+        deadline = time.monotonic() + plan.startup_timeout
+        while True:
+            exit_code = process.poll()
+            if exit_code is not None:
+                startup_state.record_failure()
+                await self._print_startup_diagnostics_async(startup_state=startup_state)
+                raise RuntimeError(
+                    f"Server process exited with code {exit_code} during startup. See logs: {self._log_path}"
+                )
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+
+            healthy = await self._probe_health_with_timeout_async(base_url=plan.base_url, timeout=remaining)
+            startup_state.record_health_check(healthy=healthy)
+            if healthy:
+                listener_pid = await asyncio.to_thread(_find_pid_on_port, port=startup_state.port)
+                if listener_pid is not None:
+                    self._listener_pid = listener_pid
+                    await _write_pid_record_async(
+                        host=host,
+                        port=startup_state.port,
+                        pid=listener_pid,
+                        startup_state=startup_state,
+                    )
+                print(f"Server ready (PID {self._listener_pid}). Logs: {self._log_path}")
+                startup_state.record_ready()
+                return
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(_STARTUP_POLL_INTERVAL, remaining))
+
+        startup_state.record_timeout()
+        await self._print_startup_diagnostics_async(startup_state=startup_state)
+
     # ------------------------------------------------------------------
     # Start
     # ------------------------------------------------------------------
@@ -490,52 +774,28 @@ class ServerLauncher:
             RuntimeError: If the server did not become healthy within the timeout.
             ValueError: If ``startup_timeout`` is not finite and greater than zero.
         """
-        if (
-            isinstance(startup_timeout, bool)
-            or not isinstance(startup_timeout, int | float)
-            or not math.isfinite(startup_timeout)
-            or startup_timeout <= 0
-        ):
-            raise ValueError("startup_timeout must be a finite number greater than 0.")
-
-        base_url = f"http://{host}:{port}"
+        plan = _build_server_launch_plan(
+            host=host,
+            port=port,
+            config_file=config_file,
+            log_level=log_level,
+            startup_timeout=startup_timeout,
+            executable=sys.executable,
+            platform_name=os.name,
+        )
 
         # Already running?
-        try:
-            already_running = await asyncio.wait_for(
-                self.probe_health_async(base_url=base_url),
-                timeout=min(_HEALTH_PROBE_TIMEOUT, startup_timeout),
-            )
-        except asyncio.TimeoutError:
-            already_running = False
+        already_running = await self._probe_health_with_timeout_async(
+            base_url=plan.base_url,
+            timeout=plan.startup_timeout,
+        )
         if already_running:
-            _logger.info("Server already running at %s", base_url)
-            return base_url
+            _logger.info("Server already running at %s", plan.base_url)
+            return plan.base_url
 
-        cmd: list[str] = [
-            sys.executable,
-            "-m",
-            "pyrit.backend.pyrit_backend",
-            "--host",
-            host,
-            "--port",
-            str(port),
-        ]
-        if config_file is not None:
-            cmd.extend(["--config-file", str(config_file)])
-        if log_level is not None:
-            cmd.extend(["--log-level", log_level])
+        _logger.info("Launching pyrit_backend: %s", " ".join(plan.command))
 
-        _logger.info("Launching pyrit_backend: %s", " ".join(cmd))
-
-        creation_flags = 0
-        start_new_session = False
-        if os.name == "nt":
-            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
-        else:
-            start_new_session = True
-
-        print(f"Starting server at {base_url}...")
+        print(f"Starting server at {plan.base_url}...")
         sys.stdout.flush()
 
         # The backend is detached and outlives this process, so it must not inherit
@@ -544,76 +804,57 @@ class ServerLauncher:
         # inherited handle to close. Send the child's output to a log file so
         # startup diagnostics are still available.
         self._log_path = os.path.join(tempfile.gettempdir(), "pyrit_backend.log")
-        self._process = await _spawn_backend_process_async(
-            command=cmd,
-            log_path=self._log_path,
-            creation_flags=creation_flags,
-            start_new_session=start_new_session,
-        )
-        launcher_pid = self._process.pid
-        self._listener_pid = launcher_pid
-        self._port = port
-
-        startup_succeeded = False
-        cleanup_attempted = False
+        startup_state = _ServerStartupState(port=port)
         try:
-            await _write_pid_record_async(host=host, port=port, pid=launcher_pid)
-            _logger.info("Backend launcher PID: %d (logs: %s)", launcher_pid, self._log_path)
-            deadline = time.monotonic() + startup_timeout
-            while True:
-                exit_code = self._process.poll()
-                if exit_code is not None:
-                    await asyncio.to_thread(self._print_log_tail)
-                    await asyncio.to_thread(_remove_pid_record, port=port)
-                    self._clear_process_state()
-                    raise RuntimeError(
-                        f"Server process exited with code {exit_code} during startup. See logs: {self._log_path}"
-                    )
-
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
+            process = await _spawn_backend_process_async(
+                command=plan.command,
+                log_path=self._log_path,
+                creation_flags=plan.creation_flags,
+                start_new_session=plan.start_new_session,
+                startup_state=startup_state,
+            )
+            self._process = process
+            self._listener_pid = process.pid
+            self._port = port
+            await _write_pid_record_async(
+                host=host,
+                port=port,
+                pid=process.pid,
+                startup_state=startup_state,
+            )
+            _logger.info("Backend launcher PID: %d (logs: %s)", process.pid, self._log_path)
+            await self._wait_for_readiness_async(plan=plan, host=host, startup_state=startup_state)
+        finally:
+            if startup_state.phase is not _StartupPhase.READY and startup_state.process is not None:
+                if self._process is None:
+                    self._process = startup_state.process
+                    self._listener_pid = startup_state.process.pid
+                    self._port = port if startup_state.pid_record_written else None
                 try:
-                    healthy = await asyncio.wait_for(
-                        self.probe_health_async(base_url=base_url),
-                        timeout=min(_HEALTH_PROBE_TIMEOUT, remaining),
-                    )
-                except asyncio.TimeoutError:
-                    healthy = False
-                if healthy:
-                    listener_pid = await asyncio.to_thread(_find_pid_on_port, port=port)
-                    if listener_pid is not None:
-                        self._listener_pid = listener_pid
-                        await _write_pid_record_async(host=host, port=port, pid=listener_pid)
-                    print(f"Server ready (PID {self._listener_pid}). Logs: {self._log_path}")
-                    startup_succeeded = True
-                    return base_url
+                    await startup_state.cleanup_async()
+                finally:
+                    if startup_state.cleanup_succeeded:
+                        self._clear_process_state()
+                    elif startup_state.cleanup_succeeded is False:
+                        _logger.warning("Failed to stop backend launcher process %d", startup_state.process.pid)
 
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                await asyncio.sleep(min(_STARTUP_POLL_INTERVAL, remaining))
-
-            log_tail = await asyncio.to_thread(self._read_log_tail)
-            await asyncio.to_thread(self._print_log_tail, tail=log_tail)
-            process_stopped = await asyncio.to_thread(self.stop)
-            cleanup_attempted = True
-            cleanup_message = "" if process_stopped else " The spawned backend process could not be stopped."
+        if startup_state.timed_out:
+            cleanup_message = (
+                "" if startup_state.cleanup_succeeded else " The spawned backend process could not be stopped."
+            )
             preload_message = ""
-            if "loading datasets" in log_tail.casefold():
+            if "loading datasets" in startup_state.diagnostic_tail.casefold():
                 preload_message = (
                     " Recent logs include dataset preload activity, which can extend startup. Check the complete log "
                     "to see what the backend was doing when the timeout occurred. For normal on-demand fetching, "
                     "remove load_default_datasets. For intentional preload, retry with a larger server.startup_timeout."
                 )
             raise RuntimeError(
-                f"pyrit_backend did not become healthy within {startup_timeout}s. "
+                f"pyrit_backend did not become healthy within {plan.startup_timeout}s. "
                 f"Check the server logs ({self._log_path}) or start it manually with: pyrit_backend."
                 f"{preload_message}{cleanup_message}"
             )
-        finally:
-            if not startup_succeeded and not cleanup_attempted and self._process is not None:
-                await asyncio.to_thread(self.stop)
+        return plan.base_url
 
     def _clear_process_state(self) -> None:
         """Clear process state after the owned backend exits."""
@@ -661,13 +902,12 @@ class ServerLauncher:
             return True
 
         process = self._process
-        if process.poll() is not None:
-            if self._port is not None:
-                _remove_pid_record(port=self._port)
-            self._clear_process_state()
-            return True
-
-        if not _terminate_process_tree(process=process):
+        process_was_running = process.poll() is None
+        if not _cleanup_owned_process(
+            process=process,
+            port=self._port,
+            remove_pid_record=self._port is not None,
+        ):
             _logger.warning(
                 "Failed to stop server (listener PID %s, launcher PID %d)",
                 self._listener_pid,
@@ -675,13 +915,12 @@ class ServerLauncher:
             )
             return False
 
-        _logger.info(
-            "Stopped server (listener PID %s, launcher PID %d)",
-            self._listener_pid,
-            process.pid,
-        )
-        if self._port is not None:
-            _remove_pid_record(port=self._port)
+        if process_was_running:
+            _logger.info(
+                "Stopped server (listener PID %s, launcher PID %d)",
+                self._listener_pid,
+                process.pid,
+            )
         self._clear_process_state()
         return True
 

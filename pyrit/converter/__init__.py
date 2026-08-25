@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from pyrit.converter.caesar_converter import CaesarConverter
     from pyrit.converter.character_space_converter import CharacterSpaceConverter
     from pyrit.converter.charswap_attack_converter import CharSwapConverter
+    from pyrit.converter.code_attack_converter import CodeAttackConverter
     from pyrit.converter.codechameleon_converter import CodeChameleonConverter
     from pyrit.converter.colloquial_wordswap_converter import ColloquialWordswapConverter
     from pyrit.converter.converter import Converter, ConverterResult, get_converter_modalities
@@ -79,6 +80,7 @@ if TYPE_CHECKING:
     from pyrit.converter.random_translation_converter import RandomTranslationConverter
     from pyrit.converter.repeat_token_converter import RepeatTokenConverter
     from pyrit.converter.rot13_converter import ROT13Converter
+    from pyrit.converter.sata_masking_converter import SATA_TASK_TEMPLATE, SATAMaskingConverter
     from pyrit.converter.scientific_translation_converter import ScientificTranslationConverter
     from pyrit.converter.search_replace_converter import SearchReplaceConverter
     from pyrit.converter.selective_text_converter import SelectiveTextConverter
@@ -92,6 +94,7 @@ if TYPE_CHECKING:
     from pyrit.converter.text_jailbreak_converter import TextJailbreakConverter
     from pyrit.converter.text_selection_strategy import (
         AllWordsSelectionStrategy,
+        ContentWordSelectionStrategy,
         IndexSelectionStrategy,
         KeywordSelectionStrategy,
         PositionSelectionStrategy,
@@ -155,8 +158,10 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CaesarConverter": "pyrit.converter.caesar_converter",
     "CharSwapConverter": "pyrit.converter.charswap_attack_converter",
     "CharacterSpaceConverter": "pyrit.converter.character_space_converter",
+    "CodeAttackConverter": "pyrit.converter.code_attack_converter",
     "CodeChameleonConverter": "pyrit.converter.codechameleon_converter",
     "ColloquialWordswapConverter": "pyrit.converter.colloquial_wordswap_converter",
+    "ContentWordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "ConverterResult": "pyrit.converter.converter",
     "DecompositionConverter": "pyrit.converter.decomposition_converter",
     "DenylistConverter": "pyrit.converter.denylist_converter",
@@ -199,6 +204,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RangeSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "RegexSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "RepeatTokenConverter": "pyrit.converter.repeat_token_converter",
+    "SATA_TASK_TEMPLATE": "pyrit.converter.sata_masking_converter",
+    "SATAMaskingConverter": "pyrit.converter.sata_masking_converter",
     "ScientificTranslationConverter": "pyrit.converter.scientific_translation_converter",
     "SearchReplaceConverter": "pyrit.converter.search_replace_converter",
     "SelectiveTextConverter": "pyrit.converter.selective_text_converter",

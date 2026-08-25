@@ -147,18 +147,26 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             score = scores[0]
             score.score_type = "true_false"
             score.score_value = str(threshold_result)
+            # Carry the aggregate's category, metadata and rationale rather than the first
+            # constituent score's. The threshold decision is made on the aggregate, so
+            # describing it with scores[0] mislabels the result whenever the wrapped scorer
+            # returns more than one score (e.g. AzureContentFilterScorer, one per harm
+            # category): the value would say True while the category, rationale and metadata
+            # described a different, possibly zero-valued, category.
             score.score_rationale = (
                 f"based on {scorer_type}\n"
                 f"Normalized scale score: {aggregate_value} {comparison_symbol} threshold {self._threshold}\n"
-                f"Rationale for scale score: {score.score_rationale}"
+                f"Rationale for scale score: {aggregate_score.rationale}"
             )
             score.score_value_description = aggregate_score.description
+            score.score_category = aggregate_score.category
             score.id = uuid.uuid4()
             score.scorer_class_identifier = self.get_identifier()
             # Store the original float value in metadata for granular comparison
-            if score.score_metadata is None:
-                score.score_metadata = {}
-            score.score_metadata[ORIGINAL_FLOAT_VALUE_KEY] = aggregate_value
+            score.score_metadata = {
+                **aggregate_score.metadata,
+                ORIGINAL_FLOAT_VALUE_KEY: aggregate_value,
+            }
         else:
             # Create new score from aggregator result (all pieces were filtered out)
             # Use the first message piece's id if available, otherwise generate a new UUID

@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import pathlib
-import random
 import re
 
 import yaml
@@ -122,6 +121,7 @@ class ColloquialWordswapConverter(Converter):
         # Tokenize the prompt into words and non-words
         words = re.findall(r"\w+|\S+", prompt)
         converted_prompt = []
+        rng = self._get_random_generator(stream="word-substitutions")
 
         for word in words:
             lower_word = word.lower()
@@ -131,7 +131,7 @@ class ColloquialWordswapConverter(Converter):
                     converted_prompt.append(self._colloquial_substitutions[lower_word][0])
                 else:
                     # Randomly select a substitution for each wordswap
-                    converted_prompt.append(random.choice(self._colloquial_substitutions[lower_word]))
+                    converted_prompt.append(rng.choice(self._colloquial_substitutions[lower_word]))
             else:
                 # If word not in substitutions, keep it as is
                 converted_prompt.append(word)

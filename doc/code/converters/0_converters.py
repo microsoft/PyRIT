@@ -29,7 +29,7 @@ from pyrit.converter import get_converter_modalities
 from pyrit.output import output_attack_async
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+await initialize_pyrit_async(memory_db_type=IN_MEMORY, seed=42)  # type: ignore
 
 # Get all converters with their modalities
 converter_list = get_converter_modalities()

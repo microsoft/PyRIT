@@ -12,17 +12,6 @@ import pytest
 
 _REPOSITORY_ROOT = Path(__file__).parents[3]
 _PACKAGE_ROOT = _REPOSITORY_ROOT / "pyrit"
-_MODEL_PACKAGE_NAMES = (
-    "pyrit.models",
-    "pyrit.models.catalog",
-    "pyrit.models.identifiers",
-    "pyrit.models.messages",
-    "pyrit.models.results",
-    "pyrit.models.score",
-    "pyrit.models.seeds",
-    "pyrit.models.target",
-)
-
 # Remove an entry when its package adopts the standard lazy export contract.
 # The inventory test rejects both unlisted eager packages and stale exceptions.
 _EAGER_PACKAGE_EXCEPTIONS = frozenset(
@@ -352,11 +341,16 @@ def test_lazy_packages_do_not_load_child_modules() -> None:
     )
 
 
-@pytest.mark.parametrize("package_name", _MODEL_PACKAGE_NAMES)
-def test_model_package_dir_includes_lazy_exports_in_process(package_name: str) -> None:
+@pytest.mark.parametrize(
+    "package_name",
+    [_package_name(path) for path in _non_exempt_public_initializers()],
+)
+def test_lazy_package_runtime_contract_in_process(package_name: str) -> None:
     package = importlib.import_module(package_name)
 
     assert set(package.__all__) <= set(dir(package))
+    with pytest.raises(AttributeError, match="has no attribute '_missing_lazy_export'"):
+        package.__getattr__("_missing_lazy_export")
 
 
 @pytest.mark.parametrize(
@@ -451,6 +445,20 @@ def test_scenario_short_imports_preserve_canonical_identity() -> None:
         assert alias_package.Leakage is canonical_module.Leakage
         """
     )
+
+
+def test_scenario_short_imports_preserve_canonical_identity_in_process() -> None:
+    alias_package = importlib.import_module("pyrit.scenario.airt")
+    canonical_package = importlib.import_module("pyrit.scenario.scenarios.airt")
+
+    assert alias_package is canonical_package
+
+
+def test_dynamic_scenario_techniques_reject_unknown_export() -> None:
+    dynamic_techniques = importlib.import_module("pyrit.scenario.scenarios._dynamic_techniques")
+
+    with pytest.raises(AttributeError, match="has no attribute 'UnknownTechnique'"):
+        dynamic_techniques.__getattr__("UnknownTechnique")
 
 
 def test_scenario_registry_materializes_builtin_catalog() -> None:

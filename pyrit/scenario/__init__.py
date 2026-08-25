@@ -5,6 +5,7 @@
 """High-level scenario classes for running attack configurations."""
 
 import importlib.abc
+import importlib.machinery
 import importlib.util
 import sys
 from types import ModuleType

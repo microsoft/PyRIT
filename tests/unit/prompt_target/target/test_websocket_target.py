@@ -14,6 +14,9 @@ from websockets.frames import Close
 from websockets.protocol import State
 
 from pyrit.exceptions import EmptyResponseException
+from pyrit.executor.attack.component.prepended_history_send_context import (
+    PrependedHistorySendContext,
+)
 from pyrit.memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import WebsocketTarget
@@ -250,6 +253,45 @@ async def test_send_prompt_async_failure_discards_connection(websocket_target: W
     assert "conversation" not in websocket_target._existing_conversation
 
 
+async def test_cancellation_during_websocket_setup_occurs_after_target_invocation(
+    websocket_target: WebsocketTarget,
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    seed = create_message(value="Seed")
+    sqlite_instance.add_message_to_memory(request=seed)
+    send_context = PrependedHistorySendContext(
+        conversation_id="conversation",
+        seed_message_ids=(seed.get_piece().id,),
+        replay_seed_each_send=False,
+    )
+    connection_started = asyncio.Event()
+    connection_release = asyncio.Event()
+
+    async def wait_for_connection(
+        *,
+        conversation_id: str,
+        conversation_history: list[Message],
+    ) -> ClientConnection:
+        connection_started.set()
+        await connection_release.wait()
+        return AsyncMock(spec=ClientConnection)
+
+    with patch.object(websocket_target, "_get_or_create_connection_async", side_effect=wait_for_connection):
+        send_task = asyncio.create_task(
+            websocket_target.send_prompt_async(
+                message=create_message(value="Current"),
+                send_context=send_context,
+            )
+        )
+        await connection_started.wait()
+        send_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await send_task
+
+    assert send_context.target_invocation_count == 1
+    assert not send_context.is_seed_consumed
+
+
 async def test_get_or_create_connection_async_restores_history_on_reconnect(
     response_parser: Callable[[str | bytes], str | None],
     message_builder: Callable[[str], str | bytes],
@@ -288,6 +330,75 @@ async def test_get_or_create_connection_async_restores_history_on_reconnect(
     connect.assert_awaited_once()
     restore_callback.assert_awaited_once_with(replacement_connection, history)
     assert target._existing_conversation == {"conversation": replacement_connection}
+
+
+async def test_consumed_context_retains_history_for_reconnect(
+    response_parser: Callable[[str | bytes], str | None],
+    message_builder: Callable[[str], str | bytes],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    stale_connection = AsyncMock(spec=ClientConnection)
+    stale_connection.state = State.CLOSED
+    replacement_connection = AsyncMock(spec=ClientConnection)
+    replacement_connection.state = State.OPEN
+    restore_callback = AsyncMock()
+    target = WebsocketTarget(
+        endpoint="wss://example.com",
+        protocol_identifier="test-protocol",
+        initialization_strings=[],
+        response_parser=response_parser,
+        message_builder=message_builder,
+        conversation_restore_callback=restore_callback,
+        discard_initial_messages=0,
+        existing_convo={"conversation": stale_connection},
+    )
+    seed = create_message(value="Seed")
+    first_request = create_message(value="First request")
+    first_response = MessagePiece(
+        role="assistant",
+        original_value="First response",
+        converted_value="First response",
+        conversation_id="conversation",
+    ).to_message()
+    for sequence, message in enumerate([seed, first_request, first_response]):
+        for piece in message.message_pieces:
+            piece.sequence = sequence
+        sqlite_instance.add_message_to_memory(request=message)
+
+    send_context = PrependedHistorySendContext(
+        conversation_id="conversation",
+        seed_message_ids=(seed.get_piece().id,),
+        replay_seed_each_send=False,
+    )
+    send_context.begin_send()
+    send_context.mark_target_invoked()
+    send_context.finish_send(succeeded=True)
+
+    with (
+        patch.object(
+            target,
+            "_connect_async",
+            new_callable=AsyncMock,
+            return_value=replacement_connection,
+        ),
+        patch.object(
+            target,
+            "_send_text_async",
+            new_callable=AsyncMock,
+            return_value="Second response",
+        ),
+    ):
+        await target.send_prompt_async(
+            message=create_message(value="Second request"),
+            send_context=send_context,
+        )
+
+    restored_history = restore_callback.await_args.args[1]
+    assert [message.get_value() for message in restored_history] == [
+        "Seed",
+        "First request",
+        "First response",
+    ]
 
 
 async def test_get_or_create_connection_async_fails_when_history_cannot_be_restored(
