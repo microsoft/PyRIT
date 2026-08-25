@@ -13,6 +13,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
+try:
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
+except ImportError:  # pragma: no cover - exercised only on 3.10
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
+
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
     get_retry_collector,
@@ -87,6 +92,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _next_message_override: Message | None | _NextMessageOverrideState = _NextMessageOverrideState.UNSET
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
+    _error_result_persistence_error: Exception | None = field(default=None, init=False, repr=False)
 
     # Optional attribution from an upstream orchestrator (e.g. Scenario). When
     # set, the persistence path stamps attribution_parent_id + attribution_data
@@ -392,7 +398,10 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_attribution(context=context, result=error_result)
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
-        self._memory.add_attack_results_to_memory(attack_results=[error_result])
+        try:
+            self._memory.add_attack_results_to_memory(attack_results=[error_result])
+        except Exception as persistence_error:
+            context._error_result_persistence_error = persistence_error
 
         self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 
@@ -634,8 +643,22 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
         Returns:
             AttackStrategyResultT: The completed and persisted attack result.
+
+        Raises:
+            ExceptionGroup: If attack execution and recording its error result both fail.
         """
-        result = await super().execute_with_context_async(context=context)
+        context._error_result_persistence_error = None
+        try:
+            result = await super().execute_with_context_async(context=context)
+        except Exception as attack_error:
+            persistence_error = context._error_result_persistence_error
+            if persistence_error is not None:
+                raise ExceptionGroup(
+                    "Attack execution and error result persistence failed",
+                    [attack_error, persistence_error],
+                ) from None
+            raise
+
         self._default_event_handler._persist_result(result=result)
         return result
 

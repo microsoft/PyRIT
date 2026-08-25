@@ -8,6 +8,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+try:
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
+except ImportError:  # pragma: no cover - exercised only on 3.10
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
+
 from pyrit.exceptions.retry_collector import RetryCollector, get_retry_collector
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
@@ -1015,6 +1020,76 @@ class TestAttackStrategyIntegration:
         [stored_result] = memory.get_attack_results(objective="Test objective")
         assert stored_result.outcome is AttackOutcome.ERROR
         assert stored_result.error_message == "teardown failed"
+
+    async def test_attack_and_error_result_persistence_failures_are_both_propagated(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
+        attack_cause = ValueError("attack failed")
+        persistence_error = RuntimeError("database unavailable")
+
+        class TestStrategy(AttackStrategy):
+            def _validate_context(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _setup_async(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _perform_async(self, *, context: AttackContext) -> AttackResult:
+                raise attack_cause
+
+            async def _teardown_async(self, *, context: AttackContext) -> None:
+                pass
+
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+
+        with (
+            patch.object(memory, "add_attack_results_to_memory", side_effect=persistence_error) as persist,
+            pytest.raises(ExceptionGroup, match="Attack execution and error result persistence failed") as exc_info,
+        ):
+            await strategy.execute_async(objective="Test objective")
+
+        persist.assert_called_once()
+        attack_error, recorded_persistence_error = exc_info.value.exceptions
+        assert attack_error.__cause__ is attack_cause
+        assert recorded_persistence_error is persistence_error
+        assert memory.get_attack_results(objective="Test objective") == []
+
+    async def test_partial_error_result_persistence_failure_does_not_retry(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
+        class TestStrategy(AttackStrategy):
+            def _validate_context(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _setup_async(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _perform_async(self, *, context: AttackContext) -> AttackResult:
+                raise ValueError("attack failed")
+
+            async def _teardown_async(self, *, context: AttackContext) -> None:
+                pass
+
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+        persist = memory.add_attack_results_to_memory
+
+        def persist_then_fail(*, attack_results: list[AttackResult]) -> None:
+            persist(attack_results=attack_results)
+            raise RuntimeError("commit acknowledgement lost")
+
+        with (
+            patch.object(memory, "add_attack_results_to_memory", side_effect=persist_then_fail) as persist_mock,
+            pytest.raises(ExceptionGroup) as exc_info,
+        ):
+            await strategy.execute_async(objective="Test objective")
+
+        persist_mock.assert_called_once()
+        assert str(exc_info.value.exceptions[1]) == "commit acknowledgement lost"
+        [stored_result] = memory.get_attack_results(objective="Test objective")
+        assert stored_result.outcome is AttackOutcome.ERROR
+        assert stored_result.error_message == "attack failed"
 
     async def test_cancellation_clears_retry_collector(self, mock_objective_target):
         teardown_calls = 0
