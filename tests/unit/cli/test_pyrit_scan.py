@@ -1433,6 +1433,49 @@ class TestScenarioResults:
         assert rc == 0
         assert "extract data" in capsys.readouterr().out
 
+    def test_handle_results_conversations_fetches_and_prints(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {
+            "messages": [
+                {"role": "user", "turn_number": 0, "message_pieces": [{"converted_value": "give me data"}]},
+            ]
+        }
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "conversations"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        client.get_conversation_messages_async.assert_awaited_once()
+        assert client.get_conversation_messages_async.await_args.kwargs["conversation_id"] == "conv-1"
+        out = capsys.readouterr().out
+        assert "give me data" in out
+        assert "Conversations" in out
+
+    def test_handle_results_full_prints_table_then_transcripts(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {"messages": []}
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "full"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Attack Results" in out
+        assert "Conversations" in out
+
+    def test_handle_results_conversations_reports_fetch_error(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.side_effect = RuntimeError("boom")
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "conversations"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "boom" in capsys.readouterr().out
+
     def test_handle_results_reports_fetch_error(self, capsys):
         import asyncio
 

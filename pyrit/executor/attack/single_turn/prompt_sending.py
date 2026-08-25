@@ -76,7 +76,9 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 a params type that rejects certain fields.
             prepended_conversation_config (PrependedConversationConfiguration | None):
                 Configuration for how to process prepended conversations. Controls converter
-                application by role, message normalization, and non-chat target behavior.
+                application by role and request formatting for targets without editable history.
+                Request converters apply to prepended user messages by default; include
+                ``"assistant"`` explicitly to transform simulated assistant history.
 
         Raises:
             ValueError: If the objective scorer is not a true/false scorer.
@@ -87,6 +89,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             logger=logger,
             context_type=SingleTurnAttackContext,
             params_type=params_type,
+            prepended_conversation_config=prepended_conversation_config,
         )
 
         # Initialize the converter configuration
@@ -114,9 +117,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             raise ValueError("max_attempts_on_failure must be a non-negative integer")
 
         self._max_attempts_on_failure = max_attempts_on_failure
-
-        # Store the prepended conversation configuration
-        self._prepended_conversation_config = prepended_conversation_config
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
@@ -323,6 +323,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 conversation_id=context.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
+                normalizer_overrides=self._get_prepended_normalizer_overrides(
+                    prepended_history_send_context=context.prepended_history_send_context,
+                ),
+                send_context=context.prepended_history_send_context,
             )
 
     async def _evaluate_response_async(

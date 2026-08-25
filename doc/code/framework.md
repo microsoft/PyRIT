@@ -233,6 +233,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - This is often an LLM, but it doesn't have to be. For Cross-Domain Prompt Injection Attacks, the target might be a storage account that a later target has a reference to. Message and conversation should be generic enough to handle this extra data.
 - Target capabilities should be used to see if a target is compatible with the capabilities that the other components want to use.
 - Targets should use message_normalizer along with TargetConfiguration to transform `Messages` into formats that target supports.
+- A target may observe an internal, caller-owned send context at the provider-invocation boundary,
+  after target-side waits and immediately before irreversible provider I/O, but the caller owns any
+  bootstrap-history identity, replay, or branching state.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
@@ -314,10 +317,14 @@ The below talks about responsibilities of most modules in the PyRIT library
 
 ## [Normalizers](./targets/11_message_normalizer)
 
-**Responsibility**: Reshape prompts and conversations so components and targets can interoperate. There are two distinct modules:
+**Responsibility**: Reshape prompts and conversations so components and targets can interoperate.
 
-- **`prompt_normalizer`** applies converters and dispatches individual prompts to a `PromptTarget` (handling batching and memory persistence). It is the single component that writes each request and response to memory; targets never persist on their own. `NormalizerRequest` and `ConverterConfiguration` describe what to send and which converters to apply.
-- **`message_normalizer`** reshapes multi-message conversation payloads into the structure a given model expects — for example, handling system-message behavior (keep / squash / ignore), history squashing, and tokenizer chat templates.
+- **`prompt_normalizer`** applies converters, persists requests and responses, and dispatches prompts to a `PromptTarget`. Targets do not persist messages.
+- **`message_normalizer`** reshapes conversations into target-compatible payloads. It owns target-facing representation, not attack policy or conversation state.
+- Prepended-history identity and delivery state belong to the attack execution context. Targets and normalizers consume only the narrow send-time view needed for provider adaptation.
+- **Does not own**: the conversation of record. Memory is canonical; a normalized payload is an ephemeral target-facing view that is never written back.
+
+See [message normalizers](./targets/11_message_normalizer) for capability behavior, processing order, and prepended-history lifecycle details.
 
 ## [Output](./output/0_output)
 
