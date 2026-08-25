@@ -14,13 +14,18 @@ import websockets
 from websockets.exceptions import InvalidStatus
 
 from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
-from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
+from pyrit.common import get_mime_type
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.memory import DataTypeSerializer
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, construct_response_from_request
+from pyrit.memory.storage import convert_local_image_to_data_url_async
+from pyrit.models import (
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    construct_response_from_request,
+)
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -521,9 +526,8 @@ class WebSocketCopilotTarget(PromptTarget):
         ) as websocket:
             for input_msg in inputs:
                 payload = self._dict_to_websocket(input_msg)
-                await websocket.send(payload)
-
                 is_user_input = input_msg.get("type") == CopilotMessageType.USER_PROMPT
+                await websocket.send(payload)
 
                 max_message_iterations = 1000
                 iteration_count = 0
@@ -596,7 +600,7 @@ class WebSocketCopilotTarget(PromptTarget):
             piece_type = piece.converted_value_data_type
 
             if piece_type == "image_path":
-                mime_type = DataTypeSerializer.get_mime_type(piece.converted_value)
+                mime_type = get_mime_type(piece.converted_value)
                 if not mime_type or not mime_type.startswith("image/"):
                     raise ValueError(
                         f"Invalid image format for image_path: {piece.converted_value}. "
@@ -616,7 +620,7 @@ class WebSocketCopilotTarget(PromptTarget):
         Returns:
             bool: True if no prior messages exist in this conversation, False otherwise.
         """
-        conversation_history = self._memory.get_conversation(conversation_id=conversation_id)
+        conversation_history = self._memory.get_conversation_messages(conversation_id=conversation_id)
         return len(conversation_history) == 0
 
     def _generate_consistent_copilot_ids(self, *, pyrit_conversation_id: str) -> tuple[str, str]:
@@ -658,6 +662,7 @@ class WebSocketCopilotTarget(PromptTarget):
             list[Message]: A list containing the response from Copilot.
 
         Raises:
+            ValueError: If the message being sent has no conversation_id.
             EmptyResponseException: If the response from Copilot is empty.
             InvalidStatus: If the WebSocket handshake fails with an HTTP status error.
             RuntimeError: If any other error occurs during WebSocket communication.
@@ -665,6 +670,8 @@ class WebSocketCopilotTarget(PromptTarget):
         message = normalized_conversation[-1]
 
         pyrit_conversation_id = message.message_pieces[0].conversation_id
+        if not pyrit_conversation_id:
+            raise ValueError("WebSocketCopilotTarget requires a conversation_id on the message being sent.")
         is_start_of_session = self._is_start_of_session(conversation_id=pyrit_conversation_id)
 
         session_id, copilot_conversation_id = self._generate_consistent_copilot_ids(

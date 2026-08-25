@@ -12,6 +12,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai.types.responses import ResponseOutputText
 
 from pyrit.memory import CentralMemory
 from pyrit.models import Message, MessagePiece
@@ -57,7 +58,13 @@ def create_mock_text_response(text: str) -> MagicMock:
 
     mock_msg_section = MagicMock()
     mock_msg_section.type = "message"
-    mock_msg_section.content = [MagicMock(text=text)]
+    mock_msg_section.content = [
+        ResponseOutputText(
+            annotations=[],
+            text=text,
+            type="output_text",
+        )
+    ]
     mock_response.output = [mock_msg_section]
     return mock_response
 
@@ -245,7 +252,7 @@ async def test_function_call_memory_persistence(response_target, patch_central_d
         # Verify memory does NOT contain intermediate messages
         # (targets no longer persist intermediate messages - normalizer handles that)
         memory = CentralMemory.get_memory_instance()
-        conversation = memory.get_conversation(conversation_id=conversation_id)
+        conversation = memory.get_conversation_messages(conversation_id=conversation_id)
 
         # Target doesn't persist messages anymore - all returned messages will be persisted by normalizer
         assert len(conversation) == 0

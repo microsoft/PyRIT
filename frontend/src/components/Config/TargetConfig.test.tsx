@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import TargetConfig from "./TargetConfig";
 import { targetsApi } from "../../services/api";
 import type { TargetInstance } from "../../types";
@@ -48,18 +49,18 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
 }) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
 
 const sampleTargets: TargetInstance[] = [
-  {
+  makeTarget({
     target_registry_name: "openai_chat_gpt4",
     target_type: "OpenAIChatTarget",
     endpoint: "https://api.openai.com",
     model_name: "gpt-4",
-  },
-  {
+  }),
+  makeTarget({
     target_registry_name: "openai_image_dalle",
     target_type: "OpenAIImageTarget",
     endpoint: "https://api.openai.com",
     model_name: "dall-e-3",
-  },
+  }),
 ];
 
 describe("TargetConfig", () => {
@@ -81,6 +82,9 @@ describe("TargetConfig", () => {
       </TestWrapper>
     );
 
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Target Configuration" })
+    ).toBeInTheDocument();
     expect(screen.getByText("Loading targets...")).toBeInTheDocument();
   });
 
@@ -117,6 +121,16 @@ describe("TargetConfig", () => {
     await waitFor(() => {
       expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
     });
+    expect(screen.getByText("target", { selector: "code" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/register available prompt targets automatically/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("airt", { selector: "code" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: ".pyrit_conf_example" })
+    ).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it(
@@ -281,7 +295,7 @@ describe("TargetConfig", () => {
 
   it("should display target_specific_params like reasoning_effort", async () => {
     const targetsWithParams: TargetInstance[] = [
-      {
+      makeTarget({
         target_registry_name: "azure_responses",
         target_type: "OpenAIResponseTarget",
         endpoint: "https://api.openai.com",
@@ -291,7 +305,7 @@ describe("TargetConfig", () => {
           reasoning_summary: "auto",
           max_output_tokens: 4096,
         },
-      },
+      }),
     ];
 
     mockedTargetsApi.listTargets.mockResolvedValue({
@@ -316,12 +330,12 @@ describe("TargetConfig", () => {
 
   it("should show dash when no target_specific_params", async () => {
     const targetsNoParams: TargetInstance[] = [
-      {
+      makeTarget({
         target_registry_name: "simple_target",
         target_type: "TextTarget",
         endpoint: "http://localhost",
         model_name: "text",
-      },
+      }),
     ];
 
     mockedTargetsApi.listTargets.mockResolvedValue({
@@ -389,4 +403,5 @@ describe("TargetConfig", () => {
     await userEvent.click(screen.getByTestId("dialog-close"));
     expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
   });
+
 });

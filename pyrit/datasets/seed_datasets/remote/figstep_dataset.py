@@ -6,15 +6,16 @@ import io
 import logging
 import re
 import uuid
-import zipfile
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
 
+import aiofiles
 from typing_extensions import override
 
 from pyrit.common.net_utility import make_request_and_raise_if_error_async
 from pyrit.common.path import DB_DATA_PATH
+from pyrit.common.safe_extract import safe_extract_zip
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
@@ -22,11 +23,25 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models.harm_category import HarmCategory
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
+
+
+def _directory_has_entries(path: Path) -> bool:
+    """
+    Check whether a directory exists and contains at least one entry.
+
+    Args:
+        path: Directory path to inspect.
+
+    Returns:
+        bool: True when the directory exists and is non-empty.
+    """
+    return path.exists() and any(path.iterdir())
 
 
 class FigStepCategory(Enum):
@@ -112,7 +127,14 @@ class _FigStepDataset(_RemoteDatasetLoader):
         "Xiaoyun Wang",
     )
 
-    _GROUPS: ClassVar[tuple[str, ...]] = ("Tsinghua University",)
+    _GROUPS: ClassVar[tuple[str, ...]] = (
+        "Tsinghua University",
+        "Carnegie Mellon University",
+        "Zhongguancun Laboratory",
+        "National Financial Cryptography Research Center",
+        "Shandong Institute of Blockchain",
+        "Shandong University",
+    )
 
     COMMIT_SHA: str = "0861b17b3d67887c06ee3534ec65b3012f9becb7"
     RAW_BASE_URL: str = f"https://raw.githubusercontent.com/ThuCCSLab/FigStep/{COMMIT_SHA}/"
@@ -167,6 +189,16 @@ class _FigStepDataset(_RemoteDatasetLoader):
     modalities: tuple[str, ...] = ("text", "image")
     size: str = "small"
     tags: frozenset[str] = frozenset({"default", "safety", "multimodal"})
+    HARM_CATEGORY_ALIAS_OVERRIDES: dict[str, list[HarmCategory]] = {
+        "illegal activity": [HarmCategory.COORDINATION_HARM],
+        "malware generation": [HarmCategory.MALWARE],
+        "physical harm": [HarmCategory.VIOLENT_CONTENT, HarmCategory.COORDINATION_HARM],
+        "adult content": [HarmCategory.SEXUAL_CONTENT],
+        "privacy violation": [HarmCategory.PPI],
+        "legal opinion": [HarmCategory.LEGAL_ADVICE],
+        "health consultation": [HarmCategory.PUBLIC_HEALTH, HarmCategory.HEALTH_DIAGNOSIS],
+        "fraud": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
+    }
 
     def __init__(
         self,
@@ -202,6 +234,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
         """
         self._validate_enum(variant, FigStepVariant, "variant")
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, FigStepCategory, "category")
 
         if variant == FigStepVariant.FIGSTEP_PRO and not use_tiny:
@@ -219,8 +253,8 @@ class _FigStepDataset(_RemoteDatasetLoader):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
-        return "figstep"
+        """The dataset name."""
+        return self.variant.value
 
     @override
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -247,7 +281,12 @@ class _FigStepDataset(_RemoteDatasetLoader):
         )
 
         required_keys = {"dataset", "category_id", "task_id", "category_name", "question", "instruction"}
-        rows = self._fetch_from_url(source=self.source, source_type=self.source_type, cache=cache)
+        rows = await asyncio.to_thread(
+            self._fetch_from_url,
+            source=self.source,
+            source_type=self.source_type,
+            cache=cache,
+        )
 
         pro_extract_dir: Path | None = None
         pro_benign_sentences: list[str] | None = None
@@ -325,12 +364,16 @@ class _FigStepDataset(_RemoteDatasetLoader):
 
         group_id = uuid.uuid4()
         common_metadata = self._build_row_metadata(row=row)
+        standardized_categories = self._standardize_harm_categories(
+            row["category_name"],
+            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
 
         objective = SeedObjective(
             value=row["question"],
             name=f"FigStep Objective - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[row["category_name"]],
+            harm_categories=standardized_categories,
             description=self._DESCRIPTION,
             authors=list(self._AUTHORS),
             groups=list(self._GROUPS),
@@ -343,7 +386,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             data_type="image_path",
             name=f"FigStep Image - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[row["category_name"]],
+            harm_categories=standardized_categories,
             description=self._DESCRIPTION,
             authors=list(self._AUTHORS),
             groups=list(self._GROUPS),
@@ -358,7 +401,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             data_type="text",
             name=f"FigStep Text - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[row["category_name"]],
+            harm_categories=standardized_categories,
             description=self._DESCRIPTION,
             authors=list(self._AUTHORS),
             groups=list(self._GROUPS),
@@ -414,12 +457,16 @@ class _FigStepDataset(_RemoteDatasetLoader):
         group_id = uuid.uuid4()
         common_metadata = self._build_row_metadata(row=row)
         common_metadata["benign_sentence"] = benign_sentence
+        standardized_categories = self._standardize_harm_categories(
+            row["category_name"],
+            alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+        )
 
         objective = SeedObjective(
             value=row["question"],
             name=f"FigStep-Pro Objective - {category_id}_{task_id}",
             dataset_name=self.dataset_name,
-            harm_categories=[row["category_name"]],
+            harm_categories=standardized_categories,
             description=self._DESCRIPTION,
             authors=list(self._AUTHORS),
             groups=list(self._GROUPS),
@@ -435,7 +482,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
                     data_type="image_path",
                     name=f"FigStep-Pro Image - {category_id}_{task_id}_split_{split_idx}",
                     dataset_name=self.dataset_name,
-                    harm_categories=[row["category_name"]],
+                    harm_categories=standardized_categories,
                     description=self._DESCRIPTION,
                     authors=list(self._AUTHORS),
                     groups=list(self._GROUPS),
@@ -453,7 +500,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
                 data_type="text",
                 name=f"FigStep-Pro Text - {category_id}_{task_id}",
                 dataset_name=self.dataset_name,
-                harm_categories=[row["category_name"]],
+                harm_categories=standardized_categories,
                 description=self._DESCRIPTION,
                 authors=list(self._AUTHORS),
                 groups=list(self._GROUPS),
@@ -551,7 +598,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
             Path: Local directory containing the extracted sub-figures.
         """
         extract_dir = DB_DATA_PATH / "seed-prompt-entries" / f"figstep_pro_subfigures_{self.COMMIT_SHA}"
-        if cache and extract_dir.exists() and any(extract_dir.iterdir()):
+        if cache and await asyncio.to_thread(_directory_has_entries, extract_dir):
             return extract_dir
 
         logger.info(f"[FigStep] Downloading FigStep-Pro sub-figures from {self.FIGSTEP_PRO_ZIP_URL}")
@@ -563,9 +610,7 @@ class _FigStepDataset(_RemoteDatasetLoader):
         zip_bytes = response.content
 
         def _extract() -> None:
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-                zf.extractall(extract_dir)
+            safe_extract_zip(source=io.BytesIO(zip_bytes), dest_dir=extract_dir)
 
         await asyncio.to_thread(_extract)
         return extract_dir
@@ -587,8 +632,9 @@ class _FigStepDataset(_RemoteDatasetLoader):
         """
         cache_path = DB_DATA_PATH / "seed-prompt-entries" / f"figstep_benign_sentences_{self.COMMIT_SHA}.txt"
 
-        if cache and cache_path.exists():
-            text = cache_path.read_text(encoding="utf-8")
+        if cache and await asyncio.to_thread(cache_path.exists):
+            async with aiofiles.open(cache_path, encoding="utf-8") as cache_file:
+                text = await cache_file.read()
         else:
             logger.info(f"[FigStep] Fetching benign sentences from {self.BENIGN_SENTENCES_URL}")
             response = await make_request_and_raise_if_error_async(
@@ -597,8 +643,9 @@ class _FigStepDataset(_RemoteDatasetLoader):
                 follow_redirects=True,
             )
             text = response.text
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(text, encoding="utf-8")
+            await asyncio.to_thread(cache_path.parent.mkdir, parents=True, exist_ok=True)
+            async with aiofiles.open(cache_path, "w", encoding="utf-8") as cache_file:
+                await cache_file.write(text)
 
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if lines and lines[0].lower() == "sentence":
@@ -621,6 +668,23 @@ class _FigStepDataset(_RemoteDatasetLoader):
         Returns:
             list[str]: Sub-image paths sorted by split index. Empty if none exist.
         """
+        return await asyncio.to_thread(
+            self._find_figstep_pro_sub_images,
+            row_idx=row_idx,
+            extract_dir=extract_dir,
+        )
+
+    def _find_figstep_pro_sub_images(self, *, row_idx: int, extract_dir: Path) -> list[str]:
+        """
+        Find and sort the extracted sub-images for one FigStep-Pro row.
+
+        Args:
+            row_idx: Zero-based row index.
+            extract_dir: Root directory containing the extracted images.
+
+        Returns:
+            list[str]: Sub-image paths sorted by split index.
+        """
         splits_dir = extract_dir / f"image_{row_idx}_splits"
         if not splits_dir.is_dir():
             return []
@@ -634,3 +698,30 @@ class _FigStepDataset(_RemoteDatasetLoader):
 
         indexed_paths.sort(key=lambda item: item[0])
         return [path for _, path in indexed_paths]
+
+
+class _FigStepProDataset(_FigStepDataset):
+    """Provider entry for the FigStep-Pro SafeBench-Tiny variant."""
+
+    def __init__(
+        self,
+        *,
+        categories: list[FigStepCategory] | None = None,
+        source: str | None = None,
+        source_type: Literal["public_url", "file"] = "public_url",
+    ) -> None:
+        """
+        Initialize the FigStep-Pro provider.
+
+        Args:
+            categories (list[FigStepCategory] | None): Optional harmful-topic filter.
+            source (str | None): Optional question CSV URL or local path override.
+            source_type (Literal["public_url", "file"]): How to interpret ``source``.
+        """
+        super().__init__(
+            use_tiny=True,
+            variant=FigStepVariant.FIGSTEP_PRO,
+            categories=categories,
+            source=source,
+            source_type=source_type,
+        )

@@ -21,6 +21,7 @@ import LabelsBar from '../Labels/LabelsBar'
 import { attacksApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, TargetInstance } from '../../types'
+import { targetEndpoint, targetModelName, targetType } from '../../utils/targetIdentity'
 import type { ViewName } from '../Sidebar/Navigation'
 import { useHomeStyles } from './Home.styles'
 
@@ -95,7 +96,7 @@ function formatRelativeTime(iso: string): string {
 }
 
 function targetDisplayName(target: TargetInstance): string {
-  return target.model_name || target.target_registry_name || target.target_type
+  return targetModelName(target) || target.target_registry_name || targetType(target)
 }
 
 export default function Home({
@@ -112,13 +113,12 @@ export default function Home({
 
   useEffect(() => {
     let ignore = false
-    setLoading(true)
-    setError(null)
     attacksApi
       .listAttacks({ limit: RECENT_ATTACKS_LIMIT })
       .then(resp => {
         if (ignore) return
         setAttacks(resp.items.map(item => ({ ...item, labels: item.labels ?? {} })))
+        setError(null)
       })
       .catch(err => {
         if (ignore) return
@@ -140,7 +140,7 @@ export default function Home({
     <div className={styles.root} data-testid="home-view">
       <div className={styles.container}>
         <div className={styles.hero}>
-          <Text size={700} weight="semibold" className={styles.heroTitle}>
+          <Text as="h1" size={700} weight="semibold" className={styles.heroTitle}>
             Welcome to Co-PyRIT
           </Text>
           <Text size={300} className={styles.heroSubtitle}>
@@ -149,10 +149,10 @@ export default function Home({
         </div>
 
         <div className={styles.setupGrid}>
-          <section className={styles.card} data-testid="home-labels-card">
+          <section className={styles.card} data-testid="home-labels-card" data-tour="labels-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TagMultipleRegular /></span>
-              <Text size={500} weight="semibold">Labels</Text>
+              <Text as="h2" size={500} weight="semibold">Labels</Text>
             </div>
             <div className={styles.cardBody}>
               <Text size={200} className={styles.heroSubtitle}>
@@ -165,18 +165,18 @@ export default function Home({
             </div>
           </section>
 
-          <section className={styles.card} data-testid="home-target-card">
+          <section className={styles.card} data-testid="home-target-card" data-tour="target-card">
             <div className={styles.cardHeader}>
               <span className={styles.cardIcon}><TargetRegular /></span>
-              <Text size={500} weight="semibold">Target</Text>
+              <Text as="h2" size={500} weight="semibold">Target</Text>
             </div>
             <div className={styles.cardBody}>
               {activeTarget ? (
                 <div className={styles.targetSummary} data-testid="home-target-active">
                   <Text className={styles.targetName}>{targetDisplayName(activeTarget)}</Text>
                   <Text size={200} className={styles.targetMeta}>
-                    {activeTarget.target_type}
-                    {activeTarget.endpoint ? ` · ${activeTarget.endpoint}` : ''}
+                    {targetType(activeTarget)}
+                    {targetEndpoint(activeTarget) ? ` · ${targetEndpoint(activeTarget)}` : ''}
                   </Text>
                 </div>
               ) : (
@@ -187,6 +187,7 @@ export default function Home({
             </div>
             <div className={styles.cardFooter}>
               <Button
+                className={styles.touchTarget}
                 appearance="primary"
                 icon={<ArrowRightRegular />}
                 iconPosition="after"
@@ -201,8 +202,9 @@ export default function Home({
 
         <section data-testid="home-recent-operations">
           <div className={styles.sectionHeader}>
-            <Text size={500} weight="semibold">Recent operations</Text>
+            <Text as="h2" size={500} weight="semibold">Recent operations</Text>
             <Button
+              className={styles.touchTarget}
               appearance="subtle"
               icon={<ArrowRightRegular />}
               iconPosition="after"
@@ -228,6 +230,7 @@ export default function Home({
                 Configure a target and start a new attack from the Chat tab.
               </Text>
               <Button
+                className={styles.touchTarget}
                 appearance="primary"
                 onClick={() => onNavigate('chat')}
                 data-testid="home-start-attack-btn"
@@ -248,7 +251,7 @@ export default function Home({
                     data-testid={`home-operation-${op.isUnlabeled ? 'unlabeled' : op.name}`}
                   >
                     <div className={styles.operationHeader}>
-                      <Text size={400} className={styles.operationName} title={op.name}>
+                      <Text as="h3" size={400} className={styles.operationName} title={op.name}>
                         {op.name}
                       </Text>
                       <Badge appearance="tint" size="small">

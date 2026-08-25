@@ -1,6 +1,6 @@
 # Prompt Targets
 
-Prompt Targets are endpoints for where to send prompts. For example, a target could be a GPT-4 or Llama endpoint. Targets are typically used with other components like [attacks](../executor/attack/0_attack.md), [scorers](../scoring/0_scoring.ipynb), and [converters](../converters/0_converters.ipynb).
+Prompt Targets are endpoints for where to send prompts. For example, a target could be a GPT-4 or Llama endpoint. Targets are typically used with other components like [attacks](../executor/0_executor.md), [scorers](../scoring/0_scoring.ipynb), and [converters](../converters/0_converters.ipynb).
 
 - An attack's main job is to change prompts to a given format, apply any converters, and then send them off to prompt targets (sometimes using various strategies). Within an attack, prompt targets are (mostly) swappable, meaning you can use the same logic with different target endpoints.
 - A scorer's main job is to score a prompt. Often, these use LLMs, in which case, a given scorer can often use different configured targets.
@@ -9,15 +9,53 @@ Prompt Targets are endpoints for where to send prompts. For example, a target co
 Prompt targets are found [here](https://github.com/microsoft/PyRIT/tree/main/pyrit/prompt_target/) in code.
 
 
-## Send_Prompt_Async
+## `send_prompt_async`
 
-The main entry method follow the following signature:
+The main entry method has the following signature:
 
+```python
+async def send_prompt_async(
+    self,
+    *,
+    message: Message,
+    send_context: TargetSendContext | None = None,
+) -> list[Message]:
 ```
-async def send_prompt_async(self, *, message: Message) -> Message:
-```
 
-A `Message` object is a normalized object with all the information a target will need to send a prompt, including a way to get a history for that prompt (in the cases that also needs to be sent). This is discussed in more depth [here](../memory/3_memory_data_types.md).
+A `Message` object contains the current request and the identifiers needed to load its conversation
+history. This is discussed in more depth [here](../memory/3_memory_data_types.md).
+
+`send_context` is an internal protocol that lets caller-owned execution state select persisted history
+and observe when target-specific execution begins. Attacks with prepended history own the concrete
+`PrependedHistorySendContext`; targets do not construct it, clone it, or decide whether its seed should
+be replayed. Before target-specific execution, `PromptTarget` loads memory history, asks the protocol for the
+caller-approved target view, and then runs the target's capability-normalization pipeline. Request
+converters have already run by this point, so role-specific converter choices remain intact even when
+the target must receive one flattened request. The context is ephemeral and does not replace the
+structured messages stored in memory.
+
+Prepended request converters apply only to `user` messages by default. Every other role, including
+`system`, `developer`, `tool`, and `assistant` / `simulated_assistant`, requires explicit opt-in.
+
+For a stateful target without editable history, the initial bootstrap is flattened once. Later sends
+retain replayable memory history in the normalized view so a target such as `WebsocketTarget` can
+restore a replaced provider session, while the existing provider session still receives only the
+current request. A stateful TAP clone bootstraps its new provider session with the complete replayable
+duplicated branch, even when the attack started without an explicit prepended seed. Stateless targets
+continue to receive only the explicit prepended seed plus each current request, never prior live branch
+turns. A stateful TAP target without editable history can flatten only text converter output when
+branching; non-text converter output requires an editable-history target, a stateless target, or
+`branching_factor=1` so copied media is never replayed under a different role.
+
+`PromptTarget` records one target invocation immediately before calling
+`_send_prompt_to_target_async`. This framework-owned boundary is not a target capability or a
+subclass-managed flag. A stateful target consumes one-time bootstrap history only after that call
+returns successfully; normalization failures, target errors, and cancellation retain it for retry.
+Target-side rate limiting remains independent and continues to use `limit_requests_per_minute`.
+
+`send_prompt_async` is the final public orchestration method. Custom target subclasses implement
+`_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
+overriding `send_prompt_async`.
 
 ## Chat-style targets vs general targets
 
@@ -25,7 +63,7 @@ A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is th
 
 With some algorithms, you want to send a prompt, set a system prompt, and modify conversation history (including PAIR [@chao2023pair], TAP [@mehrotra2023tap], and flip attack [@liu2024flipattack]). These algorithms require a target whose [`TargetCapabilities`](#target-capabilities) declare both `supports_multi_turn=True` and `supports_editable_history=True` — i.e. you can modify a conversation history. Consumers express this requirement via `CHAT_TARGET_REQUIREMENTS` and validate it against `target.configuration` at construction time. See [Target Capabilities](#target-capabilities) below for the full list of capabilities and how they compose into a `TargetConfiguration`.
 
-Note: The previous `PromptChatTarget` class is **deprecated** as of v0.14.0 and will be removed in v0.16.0. Use `PromptTarget` directly with a `TargetConfiguration` declaring `supports_multi_turn=True` and `supports_editable_history=True`. See [Target Capabilities](#target-capabilities) for details.
+Note: The previous `PromptChatTarget` class has been **removed**. Use `PromptTarget` directly with a `TargetConfiguration` declaring `supports_multi_turn=True` and `supports_editable_history=True`. See [Target Capabilities](#target-capabilities) for details.
 
 
 Here are some examples:
@@ -64,7 +102,7 @@ A `TargetConfiguration` composes three concerns:
 
 Each target class defines defaults; instances can override individual capabilities when they depend on deployment configuration (e.g. `HTTPTarget`, `PlaywrightTarget`).
 
-For well-known underlying models, you can look up a profile with `TargetCapabilities.get_known_capabilities(underlying_model="gpt-4o")`.
+For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
 
 ### How consumers use capabilities
 

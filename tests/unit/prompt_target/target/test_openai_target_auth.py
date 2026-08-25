@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import inspect
 import os
 from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -79,7 +80,7 @@ class TestOpenAITargetAuthResolution:
     def test_azure_endpoint_falls_back_to_entra(self):
         """Azure endpoints without a key fall back to get_azure_openai_auth."""
         mock_auth = AsyncMock(return_value="entra-token")
-        with patch("pyrit.prompt_target.openai.openai_target.get_azure_openai_auth", return_value=mock_auth):
+        with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth):
             target = _build_target(
                 endpoint="https://myresource.openai.azure.com/openai/v1",
                 api_key=None,
@@ -101,7 +102,7 @@ class TestOpenAITargetAuthResolution:
             return "sync-token"
 
         target = _build_target(api_key=sync_provider)
-        assert asyncio.iscoroutinefunction(target._api_key)
+        assert inspect.iscoroutinefunction(target._api_key)
         # Verify the wrapper actually calls through
         token = asyncio.run(target._api_key())
         assert token == "sync-token"
@@ -142,7 +143,7 @@ class TestEnsureAsyncTokenProvider:
             return "sync-token"
 
         result = ensure_async_token_provider(provider)
-        assert asyncio.iscoroutinefunction(result)
+        assert inspect.iscoroutinefunction(result)
         assert asyncio.run(result()) == "sync-token"
 
     def test_non_callable_non_string_returned_as_is(self):

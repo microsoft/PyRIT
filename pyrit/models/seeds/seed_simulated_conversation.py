@@ -220,7 +220,7 @@ class SeedSimulatedConversation(Seed):
     @property
     def sequence_range(self) -> range:
         """
-        Get the range of sequence numbers this simulated conversation will occupy.
+        The range of sequence numbers this simulated conversation will occupy.
 
         Each turn generates 2 messages (user + assistant), so num_turns generates
         num_turns * 2 messages. If next_message_system_prompt_path is set, an additional

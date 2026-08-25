@@ -12,6 +12,7 @@ import {
 } from '@fluentui/react-components'
 import { ArrowDownloadRegular, ArrowReplyRegular, ArrowForwardRegular, ChatAddRegular, BranchForkRegular, OpenRegular } from '@fluentui/react-icons'
 import { Message, MessageAttachment } from '../../types'
+import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
 
 interface MessageListProps {
@@ -34,6 +35,8 @@ interface MessageListProps {
   isCrossTarget?: boolean
   /** True when no target is currently selected */
   noTargetSelected?: boolean
+  /** Conversation-wide default: render message text as Markdown. */
+  globalMarkdown?: boolean
 }
 
 /** Image that shows a spinner while loading. */
@@ -78,7 +81,7 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   if (type === 'video') {
     return <video src={src} controls className={className} onError={handleError} data-testid="video-player" />
   }
-  return <audio src={src} controls onError={handleError} data-testid="audio-player" />
+  return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
 /**
@@ -105,7 +108,7 @@ function tryFormatJson(text: string): string | null {
   }
 }
 
-export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected }: MessageListProps) {
+export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -152,8 +155,9 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
   }
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} data-testid="message-list">
       {messages.map((message, index) => {
+        if (message.role === 'system') return null
         const isUser = message.role === 'user'
         const isSimulated = message.role === 'simulated_assistant'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
@@ -208,10 +212,10 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                   {message.originalAttachments && message.originalAttachments.length > 0 && (
                     <div className={styles.attachmentsContainer}>
                       {message.originalAttachments.map((att, i) => (
-                        <div key={i}>
+                        <div key={i} className={styles.attachmentItem}>
                           {att.type === 'image' && <ImageWithSpinner src={att.url} alt={att.name} className={styles.attachmentPreview} hiddenClassName={styles.attachmentPreviewHidden} containerClassName={styles.imageContainer} spinnerClassName={styles.imageSpinner} />}
                           {att.type === 'video' && <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />}
-                          {att.type === 'audio' && <MediaWithFallback type="audio" src={att.url} />}
+                          {att.type === 'audio' && <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />}
                           {att.type === 'file' && <div className={styles.attachmentFile}><Text size={200}>📄 {att.name}</Text></div>}
                         </div>
                       ))}
@@ -239,6 +243,16 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                     </Text>
                   )
                 }
+                // When Markdown rendering is enabled, it takes precedence over
+                // the JSON auto-format below.
+                if (globalMarkdown) {
+                  return (
+                    <MarkdownContent
+                      content={message.content}
+                      testId={`message-markdown-${index}`}
+                    />
+                  )
+                }
                 // For assistant / simulated_assistant messages, detect
                 // structured JSON responses (e.g. PromptShield verdicts) and
                 // render them pretty-printed inside a <pre> so the user can
@@ -262,7 +276,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
               {message.attachments && message.attachments.length > 0 && (
                 <div className={styles.attachmentsContainer}>
                   {message.attachments.map((att, attIndex) => (
-                    <div key={attIndex}>
+                    <div key={attIndex} className={styles.attachmentItem}>
                       {att.type === 'image' && (
                         <ImageWithSpinner
                           src={att.url}
@@ -277,7 +291,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         <MediaWithFallback type="video" src={att.url} className={styles.videoPreview} />
                       )}
                       {att.type === 'audio' && (
-                        <MediaWithFallback type="audio" src={att.url} />
+                        <MediaWithFallback type="audio" src={att.url} className={styles.audioPreview} />
                       )}
                       {att.type === 'file' && (
                         <div className={styles.attachmentFile}>
@@ -327,7 +341,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onCopyToInput(index)}
                           data-testid={`copy-to-input-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -352,7 +366,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onCopyToNewConversation(index)}
                           data-testid={`copy-to-new-conv-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -379,7 +393,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           disabled={disabled}
                           onClick={() => onBranchConversation(index)}
                           data-testid={`branch-conv-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -397,7 +411,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                             icon={<ChatAddRegular />}
                             onClick={() => onBranchAttack(index)}
                             data-testid={`branch-attack-btn-${index}`}
-                            style={{ minWidth: 'auto', padding: '2px' }}
+                            className={styles.messageActionButton}
                           />
                         </Tooltip>
                       )
@@ -417,7 +431,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                           icon={<ChatAddRegular />}
                           disabled
                           data-testid={`branch-attack-btn-${index}`}
-                          style={{ minWidth: 'auto', padding: '2px' }}
+                          className={styles.messageActionButton}
                         />
                       </Tooltip>
                     )
@@ -432,7 +446,7 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         icon={<ArrowDownloadRegular />}
                         onClick={() => handleDownload(att)}
                         data-testid={`download-btn-${index}-${ai}`}
-                        style={{ minWidth: 'auto', padding: '2px' }}
+                        className={styles.messageActionButton}
                       />
                     </Tooltip>
                   ))}

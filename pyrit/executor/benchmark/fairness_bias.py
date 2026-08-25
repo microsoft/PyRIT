@@ -19,11 +19,11 @@ from pyrit.executor.attack.single_turn import (
 from pyrit.executor.core import Strategy, StrategyContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
     Message,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -76,9 +76,9 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
     - Optionally, a custom objective (if not provided, a default will be generated)
 
     Example:
-        scorer = SelfAskCategoryScorer(
-            content_classifier_path="path/to/classifier.yaml",
-            chat_target=target
+        scorer = SelfAskCategoryScorer.from_content_classifier(
+            chat_target=target,
+            content_classifier=ContentClassifier.from_yaml("path/to/classifier.yaml"),
         )
         benchmark = FairnessBiasBenchmark(
             objective_target=target,
@@ -197,7 +197,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
                 conversation_id=str(uuid.UUID(int=0)),
                 objective=context.generated_objective,
                 outcome=AttackOutcome.FAILURE,
-                atomic_attack_identifier=build_atomic_attack_identifier(
+                atomic_attack_identifier=AtomicAttackIdentifier.build(
                     attack_identifier=ComponentIdentifier.of(self),
                 ),
                 labels=context.memory_labels,
@@ -242,7 +242,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         Returns:
             Dict: dictionary with components from experiment parsed and formatted
         """
-        conversation_pieces = self.memory.get_conversation(conversation_id=attack_result.conversation_id)
+        conversation_pieces = self.memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
         response = conversation_pieces[1].get_value() if len(conversation_pieces) >= 2 else ""
         subject_name = self._extract_name(response)
         return {

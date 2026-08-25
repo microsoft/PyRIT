@@ -5,11 +5,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
-# # Round Robin Target
+# # Round Robin Target - optional
 #
 # The `RoundRobinTarget` distributes requests across multiple inner targets using weighted round-robin
 # selection. This is useful for load-balancing across multiple deployments of the same model (e.g.,
@@ -38,7 +38,7 @@
 import os
 
 from pyrit.auth import get_azure_openai_auth
-from pyrit.models import Message
+from pyrit.models import Message, MessageScorable
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -197,7 +197,7 @@ await output_attack_async(result)
 
 # %%
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
-from pyrit.score import ContentClassifierPaths, SelfAskCategoryScorer
+from pyrit.score import ContentClassifier, ContentClassifierPaths, SelfAskCategoryScorer
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
@@ -238,9 +238,9 @@ scorer_target_b = OpenAIChatTarget(
 )
 rr_scorer_target = RoundRobinTarget(targets=[scorer_target_a, scorer_target_b], weights=[2, 1])
 
-scorer = SelfAskCategoryScorer(
+scorer = SelfAskCategoryScorer.from_content_classifier(
     chat_target=rr_scorer_target,
-    content_classifier_path=ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value,
+    content_classifier=ContentClassifier.from_yaml(ContentClassifierPaths.HARMFUL_CONTENT_CLASSIFIER.value),
 )
 
 # Collect response messages for scoring
@@ -252,7 +252,7 @@ scorer_target_a_hash = scorer_target_a.get_identifier().hash
 # You may want to use `score_prompts_batch_async` like below in practice for efficiency
 # await scorer.score_prompts_batch_async(messages=response_messages)  # type: ignore
 for i, response_message in enumerate(response_messages):
-    scores = await scorer.score_async(message=response_message)  # type: ignore
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(response_message))  # type: ignore
 
     # The scorer's internal LLM response has inner_target_identifier in metadata.
     # We can check the round-robin counter to determine which target was used.

@@ -4,12 +4,13 @@
 from collections.abc import Sequence
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
-from pyrit.analytics.conversation_analytics import ConversationAnalytics
+from pyrit.analytics.conversation_analytics import ConversationAnalytics, cosine_similarity
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import EmbeddingDataEntry
-from pyrit.models import Message, MessagePiece
+from pyrit.models import MessagePiece, flatten_to_message_pieces
 from unit.mocks import get_sample_conversations
 
 
@@ -21,7 +22,7 @@ def mock_memory_interface():
 @pytest.fixture
 def sample_message_pieces() -> Sequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 def test_get_similar_chat_messages_by_content(mock_memory_interface, sample_message_pieces):
@@ -70,3 +71,15 @@ def test_get_similar_chat_messages_by_embedding(mock_memory_interface, sample_me
     assert len(similar_messages) == 1
     assert similar_messages[0].score >= 0.99
     assert similar_messages[0].metric == "cosine_similarity"
+
+
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        (np.array([0.0, 0.0]), np.array([1.0, 2.0])),
+        (np.array([1.0, 2.0]), np.array([0.0, 0.0])),
+        (np.array([0.0, 0.0]), np.array([0.0, 0.0])),
+    ],
+)
+def test_cosine_similarity_zero_vector_returns_zero(a: np.ndarray, b: np.ndarray) -> None:
+    assert cosine_similarity(a, b) == 0.0

@@ -13,37 +13,26 @@ Reads the JSON files produced by pydoc2json.py and generates clean
 MyST markdown pages suitable for Jupyter Book 2.
 
 Usage:
-    python build_scripts/gen_api_md.py
+    python -m build_scripts.gen_api_md
 """
 
 import json
 import re
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 # Import sibling script for post-generation TOC validation.
-sys.path.insert(0, str(Path(__file__).parent))
-import validate_docs
+from build_scripts import validate_docs
+from build_scripts.example_index import ExampleReference, SymbolEntry, _build_example_index
 
-API_JSON_DIR = Path("doc/_api")
-API_MD_DIR = Path("doc/api")
+DOC_ROOT = Path("doc")
+API_JSON_DIR = DOC_ROOT / "_api"
+API_MD_DIR = DOC_ROOT / "api"
 
 # Modules excluded from generated API docs (internal implementation details)
 EXCLUDED_MODULES = {
     "pyrit.backend",
 }
-
-
-@dataclass(frozen=True)
-class SymbolEntry:
-    """A resolved API symbol that can be cross-referenced from a docstring."""
-
-    module: str  # dotted module path, e.g. "pyrit.prompt_target"
-    kind: str  # "class" | "function" | "method"
-    name: str  # short name (last segment)
-    qualname: str  # "PromptTarget" or "PromptTarget.send_prompt_async"
-    anchor: str  # MyST label, e.g. "api-pyrit_prompt_target-PromptTarget"
 
 
 # Backtick code spans that look like Python identifiers (with optional
@@ -382,6 +371,28 @@ def _process_docstring_text(
     return _rewrite_symbol_refs(escaped, symbol_index, current_class=current_class)
 
 
+def _example_link_path(
+    path: str,
+    *,
+    api_md_dir: Path = API_MD_DIR,
+    doc_root: Path = DOC_ROOT,
+) -> str:
+    """Return a doc-root-relative example path from a generated API page."""
+    api_depth = len(api_md_dir.relative_to(doc_root).parts)
+    return "/".join([*(".." for _ in range(api_depth)), path])
+
+
+def render_examples(examples: list[ExampleReference] | None) -> str:
+    """Render links to user-guide pages that exercise an API symbol."""
+    if not examples:
+        return ""
+    parts = ["**Examples:**\n"]
+    for example in examples:
+        title = example.title.replace("[", r"\[").replace("]", r"\]")
+        parts.append(f"- [{title}]({_example_link_path(example.path)})")
+    return "\n".join(parts)
+
+
 def render_function(
     func: dict,
     *,
@@ -389,6 +400,7 @@ def render_function(
     module: str,
     class_name: str | None = None,
     symbol_index: dict[str, list[SymbolEntry]] | None = None,
+    examples_by_anchor: dict[str, list[ExampleReference]] | None = None,
 ) -> str:
     """Render a function as markdown."""
     name = func["name"]
@@ -431,6 +443,10 @@ def render_function(
         if raises_md:
             parts.append(raises_md + "\n")
 
+    examples_md = render_examples(examples_by_anchor.get(anchor) if examples_by_anchor and class_name is None else None)
+    if examples_md:
+        parts.append(examples_md + "\n")
+
     return "\n".join(parts)
 
 
@@ -439,6 +455,7 @@ def render_class(
     *,
     module: str,
     symbol_index: dict[str, list[SymbolEntry]] | None = None,
+    examples_by_anchor: dict[str, list[ExampleReference]] | None = None,
 ) -> str:
     """Render a class as markdown."""
     name = cls["name"]
@@ -465,6 +482,10 @@ def render_class(
                 _rewrite_param_table(init_params, symbol_index, name)
             parts.append("**Constructor Parameters:**\n")
             parts.append(render_params(init_params) + "\n")
+
+    examples_md = render_examples(examples_by_anchor.get(anchor) if examples_by_anchor else None)
+    if examples_md:
+        parts.append(examples_md + "\n")
 
     # Methods
     methods = cls.get("methods", [])
@@ -498,6 +519,7 @@ def render_module(
     data: dict,
     *,
     symbol_index: dict[str, list[SymbolEntry]] | None = None,
+    examples_by_anchor: dict[str, list[ExampleReference]] | None = None,
 ) -> str:
     """Render a full module page."""
     mod_name = data["name"]
@@ -524,9 +546,25 @@ def render_module(
 
     if functions:
         parts.append("## Functions\n")
-        parts.extend(render_function(f, module=mod_name, symbol_index=symbol_index) for f in functions)
+        parts.extend(
+            render_function(
+                f,
+                module=mod_name,
+                symbol_index=symbol_index,
+                examples_by_anchor=examples_by_anchor,
+            )
+            for f in functions
+        )
 
-    parts.extend(render_class(cls, module=mod_name, symbol_index=symbol_index) for cls in classes)
+    parts.extend(
+        render_class(
+            cls,
+            module=mod_name,
+            symbol_index=symbol_index,
+            examples_by_anchor=examples_by_anchor,
+        )
+        for cls in classes
+    )
 
     if aliases:
         parts.append("## Re-exports\n")
@@ -683,13 +721,20 @@ def main() -> None:
     # Build a symbol index over the post-resolution module tree so the
     # docstring rewriter can turn backticked names into MyST cross-references.
     symbol_index = _build_symbol_index(modules)
+    example_index = _build_example_index(
+        doc_root=DOC_ROOT,
+        toc_path=DOC_ROOT / "myst.yml",
+        symbol_index=symbol_index,
+    )
+    indexed_pages = {example.path for examples in example_index.values() for example in examples}
+    print(f"Indexed examples: {len(example_index)} symbols across {len(indexed_pages)} pages")
 
     # Generate per-module pages
     for data in modules:
         mod_name = data["name"]
         slug = mod_name.replace(".", "_")
         md_path = API_MD_DIR / f"{slug}.md"
-        content = render_module(data, symbol_index=symbol_index)
+        content = render_module(data, symbol_index=symbol_index, examples_by_anchor=example_index)
         members = data.get("members", [])
         rendered_count = sum(1 for m in members if m.get("kind") in ("class", "function"))
         md_path.write_text(content, encoding="utf-8")

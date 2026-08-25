@@ -4,6 +4,7 @@
 import logging
 from typing import Any, Literal
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -30,6 +31,7 @@ class OpenAITTSTarget(OpenAITarget):
         )
     )
 
+    @forward_init_parameters
     def __init__(
         self,
         *,

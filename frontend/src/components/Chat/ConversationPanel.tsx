@@ -49,40 +49,70 @@ export default function ConversationPanel({
   const styles = useConversationPanelStyles()
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [mainConversationId, setMainConversationId] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  // Initialize to `true` only when we will actually fetch on mount so the spinner
+  // shows during the initial fetch without needing a synchronous setState inside
+  // the effect body (which `react-hooks/set-state-in-effect` would flag).
+  const [isLoading, setIsLoading] = useState(() => attackResultId != null)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchConversations = useCallback(async () => {
+  // Counter used by the retry button to re-trigger the fetch effect without
+  // calling setState synchronously in an effect body.
+  const [retryCount, setRetryCount] = useState(0)
+
+  useEffect(() => {
     if (!attackResultId) {
-      setConversations([])
-      setMainConversationId(null)
       return
     }
 
-    setIsLoading(true)
-    setError(null)
-    try {
-      const response = await attacksApi.getConversations(attackResultId)
-      setConversations(response.conversations)
-      setMainConversationId(response.main_conversation_id)
-    } catch (err) {
+    let cancelled = false
+    attacksApi.getConversations(attackResultId)
+      .then((response) => {
+        if (cancelled) return
+        setConversations(response.conversations)
+        setMainConversationId(response.main_conversation_id)
+        setError(null)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setConversations([])
+        setMainConversationId(null)
+        setError(toApiError(err).detail)
+      })
+      .finally(() => {
+        if (cancelled) return
+        setIsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [attackResultId, activeConversationId, refreshKey, retryCount])
+
+  // Reset local state when the attack is unloaded so stale data from a prior
+  // attack doesn't briefly appear when the user opens a new one. Uses the
+  // "adjust state during render" pattern instead of a useEffect to satisfy
+  // react-hooks/set-state-in-effect.
+  const [prevAttackResultId, setPrevAttackResultId] = useState<string | null>(attackResultId ?? null)
+  if (attackResultId !== prevAttackResultId) {
+    setPrevAttackResultId(attackResultId ?? null)
+    if (!attackResultId) {
       setConversations([])
       setMainConversationId(null)
-      setError(toApiError(err).detail)
-    } finally {
+      setError(null)
       setIsLoading(false)
     }
-  }, [attackResultId])
+  }
 
-  useEffect(() => {
-    fetchConversations()
-  }, [fetchConversations, activeConversationId, refreshKey])
+  const handleRetry = useCallback(() => {
+    setIsLoading(true)
+    setError(null)
+    setRetryCount((c) => c + 1)
+  }, [])
 
   // Expose refresh via a data attribute on the root element so parent can call it
   // Actually, we'll handle refresh via the attackConversationId dependency
 
   return (
-    <div className={styles.root} data-testid="conversation-panel">
+    <div id="conversation-panel" className={styles.root} data-testid="conversation-panel">
       <div className={styles.header}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, overflow: 'hidden' }}>
           <div className={styles.headerTitle}>
@@ -111,6 +141,7 @@ export default function ConversationPanel({
             <Button
               appearance="subtle"
               size="small"
+              className={styles.headerButton}
               icon={<AddRegular />}
               onClick={onNewConversation}
               disabled={!attackResultId || !!lockedReason}
@@ -121,6 +152,7 @@ export default function ConversationPanel({
             <Button
               appearance="subtle"
               size="small"
+              className={styles.headerButton}
               icon={<DismissRegular />}
               onClick={onClose}
               data-testid="close-panel-btn"
@@ -144,8 +176,9 @@ export default function ConversationPanel({
             <Button
               appearance="primary"
               size="small"
+              className={styles.retryButton}
               icon={<ArrowSyncRegular />}
-              onClick={fetchConversations}
+              onClick={handleRetry}
               data-testid="conversation-retry-btn"
             >
               Retry
@@ -166,11 +199,22 @@ export default function ConversationPanel({
 
         {!isLoading && !error && conversations.map((conv) => {
           const isActive = conv.conversation_id === activeConversationId
+          const selectConversation = () => onSelectConversation(conv.conversation_id)
           return (
             <div
               key={conv.conversation_id}
               className={`${styles.conversationItem} ${isActive ? styles.conversationItemActive : ''}`}
-              onClick={() => onSelectConversation(conv.conversation_id)}
+              onClick={selectConversation}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  selectConversation()
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              aria-label={`Select conversation ${conv.conversation_id}`}
+              aria-current={isActive ? 'true' : undefined}
               data-testid={`conversation-item-${conv.conversation_id}`}
             >
               <div className={styles.conversationHeader}>
@@ -199,7 +243,7 @@ export default function ConversationPanel({
                         }
                       }}
                       data-testid={`star-btn-${conv.conversation_id}`}
-                      style={{ minWidth: 'auto', padding: '2px' }}
+                      className={styles.starButton}
                     />
                   </Tooltip>
                   <Badge appearance="tint" size="small">

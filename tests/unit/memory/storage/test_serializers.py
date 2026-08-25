@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import tempfile
+from pathlib import Path
 from typing import get_args
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
@@ -13,16 +14,47 @@ from PIL import Image
 
 from pyrit.memory.storage import (
     AllowedCategories,
+    AzureBlobStorageIO,
     BinaryPathDataTypeSerializer,
     DataTypeSerializer,
     ErrorDataTypeSerializer,
     ImagePathDataTypeSerializer,
+    StorageIO,
     TextDataTypeSerializer,
     data_serializer_factory,
     set_message_piece_sha256_async,
     set_seed_sha256_async,
 )
 from pyrit.models import MessagePiece, SeedPrompt
+
+
+class LegacyStorageIO(StorageIO):
+    """
+    Test double representing an existing third-party ``StorageIO`` implementation.
+
+    Its ``write_file_async(path, data)`` method intentionally retains the original
+    two-argument contract. Tests using this class ensure serializers do not pass a
+    new content-type keyword argument that would break pre-existing custom storage
+    backends when Azure Blob Storage adds MIME metadata internally.
+    """
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[Path | str, bytes]] = []
+
+    async def read_file_async(self, path: Path | str) -> bytes:
+        return b""
+
+    async def write_file_async(self, path: Path | str, data: bytes) -> None:
+        self.writes.append((path, data))
+
+    async def path_exists_async(self, path: Path | str) -> bool:
+        return False
+
+    async def is_file_async(self, path: Path | str) -> bool:
+        return False
+
+    async def create_directory_if_not_exists_async(self, path: Path | str) -> None:
+        return None
 
 
 def test_allowed_categories():
@@ -285,6 +317,41 @@ async def test_get_data_filename(sqlite_instance):
     assert not os.path.exists(filename)  # File should not exist yet
 
 
+async def test_get_data_filename_does_not_duplicate_extension(sqlite_instance):
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+
+    filename = await serializer.get_data_filename_async(file_name="photo.png")
+
+    assert Path(filename).name == "photo.png"
+
+
+async def test_get_data_filename_preserves_dotted_basename(sqlite_instance):
+    serializer = data_serializer_factory(
+        category="prompt-memory-entries",
+        data_type="binary_path",
+        extension="pdf",
+    )
+
+    filename = await serializer.get_data_filename_async(file_name="2024.10.15_report")
+
+    assert Path(filename).name == "2024.10.15_report.pdf"
+
+
+async def test_save_data_supports_legacy_storage_io_write_signature():
+    storage = LegacyStorageIO()
+    mock_memory = MagicMock()
+    mock_memory.results_path = "https://account.blob.core.windows.net/container/results"
+    mock_memory.results_storage_io = storage
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        await serializer.save_data_async(b"\x89PNG", output_filename="photo.png")
+
+    assert storage.writes == [
+        ("https://account.blob.core.windows.net/container/results/prompt-memory-entries/images/photo.png", b"\x89PNG")
+    ]
+
+
 def test_binary_path_normalizer_factory(sqlite_instance):
     """Test factory creates BinaryPathDataTypeSerializer correctly."""
     serializer = data_serializer_factory(category="prompt-memory-entries", data_type="binary_path")
@@ -315,6 +382,23 @@ async def test_binary_path_save_data(sqlite_instance):
     assert os.path.isabs(serializer_value)
     assert os.path.exists(serializer_value)
     assert os.path.isfile(serializer_value)
+
+
+async def test_binary_path_default_extension_sets_azure_content_type():
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    mock_container_client = AsyncMock()
+    storage._client_async = mock_container_client
+    mock_memory = MagicMock()
+    mock_memory.results_path = "https://account.blob.core.windows.net/container/results"
+    mock_memory.results_storage_io = storage
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="binary_path")
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        await serializer.save_data_async(b"\x00\x01", output_filename="payload")
+
+    upload_kwargs = mock_container_client.upload_blob.await_args.kwargs
+    assert upload_kwargs["name"] == "results/prompt-memory-entries/binaries/payload.bin"
+    assert upload_kwargs["content_settings"].content_type == "application/octet-stream"
 
 
 async def test_binary_path_read_data(sqlite_instance):
@@ -433,6 +517,36 @@ async def test_save_formatted_audio_writes_local_wav_via_to_thread(sqlite_instan
         assert wav_file.readframes(wav_file.getnframes()) == pcm
 
 
+async def test_save_formatted_audio_uses_wav_filename_content_and_metadata(tmp_path):
+    import io
+    import wave
+
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    mock_container_client = AsyncMock()
+    storage._client_async = mock_container_client
+    mock_memory = MagicMock()
+    mock_memory.results_path = "https://account.blob.core.windows.net/container/results"
+    mock_memory.results_storage_io = storage
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
+    pcm = b"\x01\x00\x02\x00\x03\x00\x04\x00"
+
+    with (
+        patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory),
+        patch("pyrit.memory.storage.serializers.DB_DATA_PATH", tmp_path),
+    ):
+        await serializer.save_formatted_audio_async(data=pcm, output_filename="recording.mp3")
+
+    upload_kwargs = mock_container_client.upload_blob.await_args.kwargs
+    assert upload_kwargs["name"] == "results/prompt-memory-entries/audio/recording.wav"
+    assert upload_kwargs["content_settings"].content_type == "audio/wav"
+    assert serializer.value.endswith("/audio/recording.wav")
+    with wave.open(io.BytesIO(upload_kwargs["data"]), "rb") as wav_file:
+        assert wav_file.getnchannels() == 1
+        assert wav_file.getsampwidth() == 2
+        assert wav_file.getframerate() == 16000
+        assert wav_file.readframes(wav_file.getnframes()) == pcm
+
+
 def test_write_wav_sync_produces_readable_wav(tmp_path):
     """_write_wav_sync should produce a WAV file readable by wave.open with the same metadata and frames."""
     import wave
@@ -532,73 +646,6 @@ async def test_get_data_filename_uses_db_data_path_when_results_path_falsy():
     result_str = str(result).replace("\\", "/")
     assert "/fallback/db_data" in result_str
     assert result_str.endswith(".png")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Deprecated shim coverage: each ``<name>`` shim warns and forwards to ``<name>_async``.
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-async def test_save_data_emits_deprecation_warning_and_delegates(sqlite_instance):
-    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
-    with patch.object(serializer, "save_data_async", new=AsyncMock()) as mock_async:
-        with pytest.warns(DeprecationWarning, match="save_data_async"):
-            await serializer.save_data(b"\x00")
-    mock_async.assert_awaited_once_with(b"\x00", None)
-
-
-async def test_save_b64_image_emits_deprecation_warning_and_delegates(sqlite_instance):
-    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
-    with patch.object(serializer, "save_b64_image_async", new=AsyncMock()) as mock_async:
-        with pytest.warns(DeprecationWarning, match="save_b64_image_async"):
-            await serializer.save_b64_image("ZGF0YQ==")
-    mock_async.assert_awaited_once_with("ZGF0YQ==", None)
-
-
-async def test_save_formatted_audio_emits_deprecation_warning_and_delegates(sqlite_instance):
-    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
-    with patch.object(serializer, "save_formatted_audio_async", new=AsyncMock()) as mock_async:
-        with pytest.warns(DeprecationWarning, match="save_formatted_audio_async"):
-            await serializer.save_formatted_audio(b"\x00\x01")
-    mock_async.assert_awaited_once_with(b"\x00\x01", 1, 2, 16000, None)
-
-
-async def test_read_data_emits_deprecation_warning_and_delegates(sqlite_instance):
-    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
-    with patch.object(serializer, "read_data_async", new=AsyncMock(return_value=b"bytes")) as mock_async:
-        with pytest.warns(DeprecationWarning, match="read_data_async"):
-            result = await serializer.read_data()
-    assert result == b"bytes"
-    mock_async.assert_awaited_once_with()
-
-
-async def test_read_data_base64_emits_deprecation_warning_and_delegates(sqlite_instance):
-    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
-    with patch.object(serializer, "read_data_base64_async", new=AsyncMock(return_value="QUFB")) as mock_async:
-        with pytest.warns(DeprecationWarning, match="read_data_base64_async"):
-            result = await serializer.read_data_base64()
-    assert result == "QUFB"
-    mock_async.assert_awaited_once_with()
-
-
-async def test_get_sha256_emits_deprecation_warning_and_delegates(sqlite_instance):
-    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="text", value="hello")
-    with patch.object(serializer, "get_sha256_async", new=AsyncMock(return_value="deadbeef")) as mock_async:
-        with pytest.warns(DeprecationWarning, match="get_sha256_async"):
-            result = await serializer.get_sha256()
-    assert result == "deadbeef"
-    mock_async.assert_awaited_once_with()
-
-
-async def test_get_data_filename_emits_deprecation_warning_and_delegates(sqlite_instance):
-    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path")
-    with patch.object(
-        serializer, "get_data_filename_async", new=AsyncMock(return_value="/path/file.png")
-    ) as mock_async:
-        with pytest.warns(DeprecationWarning, match="get_data_filename_async"):
-            result = await serializer.get_data_filename(file_name="custom")
-    assert result == "/path/file.png"
-    mock_async.assert_awaited_once_with("custom")
 
 
 async def test_save_formatted_audio_azure_storage_unlinks_local_temp(tmp_path):

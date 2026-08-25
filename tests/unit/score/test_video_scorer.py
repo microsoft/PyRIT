@@ -52,6 +52,7 @@ def video_converter_sample_video(tmp_path, patch_central_database):
         converted_value=video_path,
         original_value_data_type="video_path",
         converted_value_data_type="video_path",
+        conversation_id=str(uuid.uuid4()),
     )
     message_piece.id = uuid.uuid4()
     yield message_piece

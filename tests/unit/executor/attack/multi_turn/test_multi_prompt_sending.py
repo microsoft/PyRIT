@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
@@ -15,6 +16,11 @@ from pyrit.executor.attack import (
     MultiPromptSendingAttackParameters,
     MultiTurnAttackContext,
 )
+from pyrit.executor.attack.component import PrependedConversationConfig
+from pyrit.executor.attack.component.prepended_history_send_context import (
+    PrependedHistorySendContext,
+)
+from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNormalizer
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -23,9 +29,13 @@ from pyrit.models import (
     MessagePiece,
     Score,
 )
-from pyrit.prompt_converter import Base64Converter, StringJoinConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from pyrit.prompt_target import (
+    CapabilityName,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+)
 from pyrit.score import Scorer, TrueFalseScorer
 
 
@@ -160,8 +170,8 @@ class TestMultiPromptSendingAttackInitialization:
 
     def test_init_with_all_custom_configurations(self, mock_target, mock_true_false_scorer, mock_prompt_normalizer):
         converter_cfg = AttackConverterConfig(
-            request_converters=[PromptConverterConfiguration(converters=[Base64Converter()])],
-            response_converters=[PromptConverterConfiguration(converters=[StringJoinConverter()])],
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])],
+            response_converters=[ConverterConfiguration(converters=[StringJoinConverter()])],
         )
         scoring_cfg = AttackScoringConfig(objective_scorer=mock_true_false_scorer)
 
@@ -290,7 +300,7 @@ class TestSetupPhase:
         }
 
     async def test_setup_updates_conversation_state_with_converters(self, mock_target, basic_context):
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
         attack = MultiPromptSendingAttack(
             objective_target=mock_target,
             attack_converter_config=AttackConverterConfig(request_converters=converter_config),
@@ -311,11 +321,40 @@ class TestSetupPhase:
 class TestPromptSending:
     """Tests for sending prompts to target"""
 
+    async def test_send_prompt_forwards_prepended_formatter_override(
+        self, mock_target, mock_prompt_normalizer, basic_context, sample_response
+    ):
+        mock_target.configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))
+        formatter = MagicMock(spec=MessageStringNormalizer)
+        attack = MultiPromptSendingAttack(
+            objective_target=mock_target,
+            prompt_normalizer=mock_prompt_normalizer,
+            prepended_conversation_config=PrependedConversationConfig(message_normalizer=formatter),
+        )
+        target_context = PrependedHistorySendContext(
+            conversation_id=basic_context.session.conversation_id,
+            seed_message_ids=(uuid.uuid4(),),
+            replay_seed_each_send=False,
+        )
+        basic_context.prepended_history_send_context = target_context
+        mock_prompt_normalizer.send_prompt_async.return_value = sample_response
+
+        await attack._send_prompt_to_objective_target_async(
+            current_message=Message.from_prompt(prompt="test prompt", role="user"),
+            context=basic_context,
+        )
+
+        send_kwargs = mock_prompt_normalizer.send_prompt_async.await_args.kwargs
+        override = send_kwargs["normalizer_overrides"][CapabilityName.EDITABLE_HISTORY]
+        assert isinstance(override, HistorySquashNormalizer)
+        assert override._message_normalizer is formatter
+        assert send_kwargs["send_context"] is target_context
+
     async def test_send_prompt_to_target_with_all_configurations(
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
-        request_converters = [PromptConverterConfiguration(converters=[])]
-        response_converters = [PromptConverterConfiguration(converters=[])]
+        request_converters = [ConverterConfiguration(converters=[])]
+        response_converters = [ConverterConfiguration(converters=[])]
 
         attack = MultiPromptSendingAttack(
             objective_target=mock_target,
@@ -601,7 +640,7 @@ class TestConverterIntegration:
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
         converter_config = AttackConverterConfig(
-            request_converters=[PromptConverterConfiguration(converters=[Base64Converter()])]
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])]
         )
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 
@@ -621,7 +660,7 @@ class TestConverterIntegration:
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
         converter_config = AttackConverterConfig(
-            response_converters=[PromptConverterConfiguration(converters=[StringJoinConverter()])]
+            response_converters=[ConverterConfiguration(converters=[StringJoinConverter()])]
         )
         mock_prompt_normalizer.send_prompt_async.return_value = sample_response
 

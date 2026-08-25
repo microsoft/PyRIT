@@ -2,15 +2,17 @@
 # Licensed under the MIT license.
 
 import asyncio
+import inspect
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import FrozenInstanceError, dataclass, field, replace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from treelib.tree import Tree
+from unit.mocks import store_message
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack import (
@@ -21,12 +23,15 @@ from pyrit.executor.attack import (
     TAPAttackResult,
     TreeOfAttacksWithPruningAttack,
 )
+from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     AttackScoringConfig,
     TAPAttackScoringConfig,
+    _TAPAttackConfiguration,
     _TreeOfAttacksNode,
 )
 from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
     ComponentIdentifier,
     ConversationReference,
@@ -38,11 +43,25 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, MessageScorable, Scorer, TrueFalseScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
 
 logger = logging.getLogger(__name__)
+
+
+# Mirrors the shipped ``adversarial_chat.yaml``: every key required, no extras allowed. Used to
+# exercise the strict validation TAP/PAIR now inherit by delegating to the shared parser.
+_STRICT_ADVERSARIAL_CHAT_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "next_message": {"type": "string"},
+        "rationale": {"type": "string"},
+        "last_response_summary": {"type": "string"},
+    },
+    "required": ["next_message", "rationale", "last_response_summary"],
+    "additionalProperties": False,
+}
 
 
 @dataclass
@@ -85,10 +104,10 @@ class MockNodeFactory:
         node.send_prompt_async = AsyncMock(return_value=None)
 
         node._generate_adversarial_prompt_async = AsyncMock(return_value="test prompt")
-        node._generate_red_teaming_prompt_async = AsyncMock(return_value='{"prompt": "test prompt"}')
+        node._generate_red_teaming_prompt_async = AsyncMock(return_value='{"next_message": "test prompt"}')
         node._send_prompt_to_target_async = AsyncMock(return_value=MagicMock())
         node._score_response_async = AsyncMock(return_value=None)
-        node._send_to_adversarial_chat_async = AsyncMock(return_value='{"prompt": "test prompt"}')
+        node._send_to_adversarial_chat_async = AsyncMock(return_value='{"next_message": "test prompt"}')
         node._check_on_topic_async = AsyncMock(return_value=True)
         node._execute_objective_prompt_async = AsyncMock(return_value=None)
 
@@ -239,6 +258,9 @@ class AttackBuilder:
         target.configuration.includes.side_effect = lambda capability: (
             capability == CapabilityName.MULTI_TURN and supports_multi_turn
         )
+        # Sensible defaults so the _ModalityFeedbackRouter sees a text-only target,
+        # matching the historical behavior of these tests.
+        target.configuration.capabilities.input_modalities = frozenset({frozenset(["text"])})
         target.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", target)
 
@@ -251,6 +273,8 @@ class AttackBuilder:
             class_name="MockChatTarget",
             class_module="test_module",
         )
+        chat.configuration.capabilities.input_modalities = frozenset({frozenset(["text"])})
+        chat.configuration.capabilities.output_modalities = frozenset({frozenset(["text"])})
         return cast("PromptTarget", chat)
 
     @staticmethod
@@ -343,7 +367,7 @@ class TestHelpers:
                 class_module="test_module",
             ),
         )
-        mock_float_scorer.score_async = AsyncMock(return_value=[float_score])
+        mock_float_scorer._score_nested_message_async = AsyncMock(return_value=[float_score])
 
         # Create the actual FloatScaleThresholdScorer
         threshold_scorer = FloatScaleThresholdScorer(scorer=mock_float_scorer, threshold=threshold)
@@ -368,7 +392,7 @@ class TestHelpers:
         )
 
         # Score using the actual FloatScaleThresholdScorer
-        scores = await threshold_scorer.score_async(dummy_message)
+        scores = await threshold_scorer.score_async(scorable=MessageScorable.from_message(store_message(dummy_message)))
         return scores[0]
 
     @staticmethod
@@ -412,6 +436,26 @@ class TestHelpers:
             attack._load_adversarial_prompts()
 
 
+class TestTAPAttackContext:
+    """Tests for TAP conversation correlation."""
+
+    def test_conversation_id_uses_first_active_branch_before_best_is_selected(self, node_factory):
+        context = TestHelpers.create_basic_context()
+        context.nodes = [
+            node_factory.create_node(NodeMockConfig(objective_target_conversation_id="first-branch")),
+            node_factory.create_node(NodeMockConfig(objective_target_conversation_id="second-branch")),
+        ]
+
+        assert context.conversation_id == "first-branch"
+
+    def test_conversation_id_prefers_best_branch(self, node_factory):
+        context = TestHelpers.create_basic_context()
+        context.nodes = [node_factory.create_node(NodeMockConfig(objective_target_conversation_id="active-branch"))]
+        context.best_conversation_id = "best-branch"
+
+        assert context.conversation_id == "best-branch"
+
+
 @pytest.fixture
 def node_factory():
     """Fixture providing the MockNodeFactory."""
@@ -444,42 +488,91 @@ class TestTreeOfAttacksInitialization:
         """Test that attack initializes correctly with only required parameters."""
         attack = attack_builder.with_default_mocks().build()
 
-        assert attack._tree_width == 3
-        assert attack._tree_depth == 5
-        assert attack._branching_factor == 2
-        assert attack._on_topic_checking_enabled is True
-        assert attack._batch_size == 10
+        assert attack._configuration == _TAPAttackConfiguration(
+            tree_width=3,
+            tree_depth=5,
+            branching_factor=2,
+            on_topic_checking_enabled=True,
+            desired_response_prefix="Sure, here is",
+            batch_size=10,
+        )
 
     def test_init_with_custom_tree_parameters(self, attack_builder):
         """Test initialization with custom tree parameters."""
         attack = (
             attack_builder.with_default_mocks()
-            .with_tree_params(tree_width=5, tree_depth=10, branching_factor=3, batch_size=20)
+            .with_tree_params(
+                tree_width=5,
+                tree_depth=10,
+                branching_factor=3,
+                on_topic_checking_enabled=False,
+                desired_response_prefix="Absolutely",
+                batch_size=20,
+            )
             .build()
         )
 
-        assert attack._tree_width == 5
-        assert attack._tree_depth == 10
-        assert attack._branching_factor == 3
-        assert attack._batch_size == 20
+        assert attack._configuration == _TAPAttackConfiguration(
+            tree_width=5,
+            tree_depth=10,
+            branching_factor=3,
+            on_topic_checking_enabled=False,
+            desired_response_prefix="Absolutely",
+            batch_size=20,
+        )
+
+    def test_configuration_is_immutable(self, basic_attack):
+        with pytest.raises(FrozenInstanceError):
+            basic_attack._configuration.tree_width = 4  # type: ignore[misc]
+
+    def test_constructor_preserves_legacy_keyword_contract(self):
+        signature = inspect.signature(TreeOfAttacksWithPruningAttack.__init__)
+
+        assert list(signature.parameters) == [
+            "self",
+            "objective_target",
+            "attack_adversarial_config",
+            "attack_converter_config",
+            "attack_scoring_config",
+            "prompt_normalizer",
+            "tree_width",
+            "tree_depth",
+            "branching_factor",
+            "on_topic_checking_enabled",
+            "desired_response_prefix",
+            "batch_size",
+            "prepended_conversation_config",
+        ]
+        assert all(
+            parameter.kind is inspect.Parameter.KEYWORD_ONLY
+            for name, parameter in signature.parameters.items()
+            if name != "self"
+        )
+        assert signature.parameters["tree_width"].default == 3
+        assert signature.parameters["tree_depth"].default == 5
+        assert signature.parameters["branching_factor"].default == 2
+        assert signature.parameters["on_topic_checking_enabled"].default is True
+        assert signature.parameters["desired_response_prefix"].default == "Sure, here is"
+        assert signature.parameters["batch_size"].default == 10
 
     @pytest.mark.parametrize(
         "tree_params,expected_error",
         [
-            ({"tree_width": 0}, "tree width must be at least 1"),
-            ({"tree_depth": 0}, "tree depth must be at least 1"),
-            ({"branching_factor": 0}, "branching factor must be at least 1"),
-            ({"batch_size": 0}, "batch size must be at least 1"),
-            ({"tree_width": -1}, "tree width must be at least 1"),
-            ({"tree_depth": -1}, "tree depth must be at least 1"),
-            ({"branching_factor": -1}, "branching factor must be at least 1"),
-            ({"batch_size": -1}, "batch size must be at least 1"),
+            ({"tree_width": 0}, "The tree width must be at least 1."),
+            ({"tree_depth": 0}, "The tree depth must be at least 1."),
+            ({"branching_factor": 0}, "The branching factor must be at least 1."),
+            ({"batch_size": 0}, "The batch size must be at least 1."),
+            ({"tree_width": -1}, "The tree width must be at least 1."),
+            ({"tree_depth": -1}, "The tree depth must be at least 1."),
+            ({"branching_factor": -1}, "The branching factor must be at least 1."),
+            ({"batch_size": -1}, "The batch size must be at least 1."),
         ],
     )
     def test_init_with_invalid_tree_parameters(self, attack_builder, tree_params, expected_error):
         """Test that invalid tree parameters raise ValueError."""
-        with pytest.raises(ValueError, match=expected_error):
+        with pytest.raises(ValueError) as exc_info:
             attack_builder.with_default_mocks().with_tree_params(**tree_params).build()
+        assert str(exc_info.value) == expected_error
 
     def test_init_with_auxiliary_scorers(self, attack_builder):
         """Test initialization with auxiliary scorers."""
@@ -561,6 +654,43 @@ class TestTreeOfAttacksInitialization:
                 next_message=next_message,
             )
 
+    async def test_interleaved_contexts_keep_independent_visualization_roots(self, basic_attack, helpers):
+        prepended_context = helpers.create_basic_context()
+        prepended_context.prepended_conversation = [
+            Message.from_prompt(prompt="Hello", role="user"),
+            Message.from_prompt(prompt="Hi", role="assistant"),
+        ]
+        plain_context = helpers.create_basic_context()
+        first_setup_complete = asyncio.Event()
+        second_setup_complete = asyncio.Event()
+
+        def create_node(**_: Any) -> MagicMock:
+            node = MagicMock(spec=_TreeOfAttacksNode)
+            node.adversarial_chat_conversation_id = str(uuid.uuid4())
+            node.initialize_with_prepended_conversation_async = AsyncMock()
+            return node
+
+        async def initialize_context_async(*, context: TAPAttackContext, first: bool) -> None:
+            await basic_attack._setup_async(context=context)
+            if first:
+                first_setup_complete.set()
+                await second_setup_complete.wait()
+            else:
+                await first_setup_complete.wait()
+                second_setup_complete.set()
+            await basic_attack._initialize_first_level_nodes_async(context)
+
+        with patch.object(basic_attack, "_create_attack_node", side_effect=create_node):
+            await asyncio.gather(
+                initialize_context_async(context=prepended_context, first=True),
+                initialize_context_async(context=plain_context, first=False),
+            )
+
+        assert prepended_context.visualization_root_id == "prepended_1"
+        assert {node._vis_node_id for node in prepended_context.nodes} == {"prepended_1"}
+        assert plain_context.visualization_root_id == "root"
+        assert {node._vis_node_id for node in plain_context.nodes} == {"root"}
+
     def test_default_scorer_detects_text_output_modalities(self):
         """Test that default scorer detects text output modalities from target capabilities."""
         builder = AttackBuilder()
@@ -602,7 +732,7 @@ class TestPruningLogic:
         nodes = node_factory.create_nodes_with_scores([0.9, 0.7, 0.5, 0.3, 0.1])
         context.nodes = nodes
         helpers.add_nodes_to_tree(context, nodes)
-        basic_attack._tree_width = 3
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
 
         # Execute pruning
         basic_attack._prune_nodes_to_maintain_width(context=context)
@@ -880,7 +1010,7 @@ class TestPruningLogic:
 
     def test_no_pruning_when_below_width(self, basic_attack, node_factory, helpers):
         """Test that blocked nodes are not pruned when completed list is below tree_width."""
-        basic_attack._tree_width = 5
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=5)
 
         context = helpers.create_basic_context()
 
@@ -925,7 +1055,6 @@ class TestBlockedScoringDefaults:
     short-circuits at all in `_score_response_async`.
     """
 
-    @pytest.mark.asyncio
     async def test_score_response_delegates_to_scorer_for_blocked(self, attack_builder):
         """A blocked response goes straight through Scorer.score_response_async — no TAP-side
         short-circuit. The scorer is responsible for producing 0.0 via its unified fallback."""
@@ -954,6 +1083,10 @@ class TestBlockedScoringDefaults:
             auxiliary_scorers=[],
             attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
             attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            modality_router=_ModalityFeedbackRouter(
+                adversarial_chat=builder.adversarial_chat,
+                objective_target=builder.objective_target,
+            ),
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -990,7 +1123,6 @@ class TestBlockedScoringDefaults:
         assert node.objective_score is not None
         assert node.objective_score.get_value() == 0.0
 
-    @pytest.mark.asyncio
     async def test_score_response_delegates_to_scorer_for_unknown_error(self, attack_builder):
         """Non-blocked errors (e.g. 'unknown') also flow through the scorer; no special-casing."""
         builder = attack_builder.with_default_mocks()
@@ -1018,6 +1150,10 @@ class TestBlockedScoringDefaults:
             auxiliary_scorers=[],
             attack_id=ComponentIdentifier(class_name="Test", class_module="test"),
             attack_strategy_name="TreeOfAttacksWithPruningAttack",
+            modality_router=_ModalityFeedbackRouter(
+                adversarial_chat=builder.adversarial_chat,
+                objective_target=builder.objective_target,
+            ),
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1056,7 +1192,7 @@ class TestBranchingLogic:
     def test_branch_existing_nodes(self, basic_attack, node_factory, helpers):
         """Test that nodes are branched correctly."""
         context = helpers.create_basic_context()
-        basic_attack._branching_factor = 3
+        basic_attack._configuration = replace(basic_attack._configuration, branching_factor=3)
 
         # Create initial nodes
         initial_nodes = node_factory.create_nodes_with_scores([0.8, 0.7])
@@ -1321,7 +1457,7 @@ class TestEndToEndExecution:
         mock_result.auxiliary_scores_summary = {}
 
         with patch.object(attack, "_perform_async", return_value=mock_result) as mock_perform:
-            with patch.object(attack._memory, "get_conversation", return_value=[]):
+            with patch.object(attack._memory, "get_conversation_messages", return_value=[]):
                 with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                     with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
                         result = await attack.execute_async(
@@ -1367,7 +1503,7 @@ class TestEndToEndExecution:
         mock_result.auxiliary_scores_summary = {}
 
         with patch.object(attack, "_perform_async", return_value=mock_result):
-            with patch.object(attack._memory, "get_conversation", return_value=[]):
+            with patch.object(attack._memory, "get_conversation_messages", return_value=[]):
                 with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                     with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
                         result = await attack.execute_async(objective="Test objective", memory_labels={"test": "label"})
@@ -1392,12 +1528,25 @@ class TestTreeOfAttacksNode:
 
         adversarial_chat_system_seed_prompt = MagicMock(spec=SeedPrompt)
         adversarial_chat_system_seed_prompt.render_template_value = MagicMock(return_value="rendered system prompt")
+        adversarial_chat_system_seed_prompt.response_json_schema = None
 
         adversarial_chat_prompt_template = MagicMock(spec=SeedPrompt)
         adversarial_chat_prompt_template.render_template_value = MagicMock(return_value="rendered template")
 
         prompt_normalizer = MagicMock()
         prompt_normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        # Build the modality router that nodes now require. The builder's mock targets
+        # advertise text-only by default; that matches the historical behavior of these tests
+        # (which never expected media forwarding).
+        builder.objective_target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+        builder.objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
+        builder.adversarial_chat.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
+        builder.adversarial_chat.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
+        modality_router = _ModalityFeedbackRouter(
+            adversarial_chat=builder.adversarial_chat,
+            objective_target=builder.objective_target,
+        )
 
         return {
             "objective_target": builder.objective_target,
@@ -1413,6 +1562,7 @@ class TestTreeOfAttacksNode:
             "auxiliary_scorers": [],
             "attack_id": {"id": "test_attack"},
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
+            "modality_router": modality_router,
             "memory_labels": {"test": "label"},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -1430,6 +1580,29 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores == {}
         assert node.error_message is None
 
+    async def test_subsequent_prompt_omits_score_when_feedback_disabled(self, node_components):
+        """A disabled score-feedback setting preserves response context without exposing the score."""
+        node = _TreeOfAttacksNode(**node_components, use_score_as_feedback=False)
+        response = MagicMock()
+        response.get_piece.return_value = MessagePiece(
+            role="assistant",
+            original_value="target response",
+            converted_value="target response",
+            conversation_id=node.objective_target_conversation_id,
+        )
+
+        with (
+            patch.object(node._memory, "get_conversation_messages", return_value=[response]),
+            patch.object(node, "_get_response_score_async", new_callable=AsyncMock) as get_score,
+        ):
+            result = await node._generate_subsequent_turn_prompt_async("test objective")
+
+        assert result == "rendered template"
+        get_score.assert_not_awaited()
+        render_kwargs = node_components["adversarial_chat_prompt_template"].render_template_value.call_args.kwargs
+        assert render_kwargs["target_response"] == "target response"
+        assert render_kwargs["score"] == ""
+
     def test_node_duplicate_creates_child(self, node_components):
         """Test that duplicate() creates a proper child node."""
         parent_node = _TreeOfAttacksNode(**node_components)
@@ -1442,6 +1615,98 @@ class TestTreeOfAttacksNode:
         assert child_node.node_id != parent_node.node_id
         assert child_node.parent_id == parent_node.node_id
         assert child_node.completed is False
+
+    def _node_with_schema(self, node_components, schema):
+        """Build a real node whose adversarial system prompt advertises ``schema``.
+
+        The manager resolves its schema from ``_adversarial_chat_system_seed_prompt.response_json_schema``
+        (falling back to the canonical ``adversarial_chat`` schema when it is None), so overriding it
+        here lets the tests drive the real send/parse path through both the strict shipped-schema case
+        and the schemaless custom-prompt case.
+        """
+        node = _TreeOfAttacksNode(**node_components)
+        node._adversarial_chat_system_seed_prompt.response_json_schema = schema
+        return node
+
+    @staticmethod
+    def _mock_adversarial_reply(node, raw: str) -> None:
+        """Make the node's adversarial chat return ``raw`` so the manager parses it on the next send."""
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt=raw, role="assistant")
+        )
+
+    async def test_send_to_adversarial_chat_returns_next_message_with_strict_schema(self, node_components):
+        """A schema-compliant reply yields the next_message the node forwards to the objective target."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(
+            node, json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
+        )
+
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
+
+    async def test_send_to_adversarial_chat_accepts_camel_case_keys(self, node_components):
+        """TAP/PAIR historically hand-rolled a parser that never normalized camelCase. Routing through the
+        shared manager closes that exact gap, so a schema-aware adversarial model that emits ``nextMessage``
+        no longer breaks the node the way it once broke a crescendo CI run."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(
+            node, json.dumps({"nextMessage": "attack text", "rationale": "why", "lastResponseSummary": "summary"})
+        )
+
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
+
+    async def test_send_to_adversarial_chat_strict_schema_rejects_missing_key(self, node_components):
+        """With the shipped schema present the node enforces every required key, so a reply carrying only
+        next_message now raises instead of silently proceeding as the old TAP parser did."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(node, '{"next_message": "x"}')
+
+        with pytest.raises(InvalidJsonException, match="Missing required keys"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
+
+    async def test_send_to_adversarial_chat_strict_schema_rejects_extra_key(self, node_components):
+        """``additionalProperties: false`` from the shipped schema is enforced through the manager."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(
+            node,
+            json.dumps(
+                {
+                    "next_message": "x",
+                    "rationale": "why",
+                    "last_response_summary": "summary",
+                    "surprise": "nope",
+                }
+            ),
+        )
+
+        with pytest.raises(InvalidJsonException, match="Unexpected keys"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
+
+    async def test_send_to_adversarial_chat_without_declared_schema_enforces_canonical(self, node_components):
+        """A schemaless custom adversarial prompt no longer skips validation: the manager falls back to the
+        canonical adversarial_chat schema, so an incomplete reply is rejected instead of silently accepted.
+        This closes the old lax path where a custom prompt could proceed on an unvalidated reply."""
+        node = self._node_with_schema(node_components, None)
+        self._mock_adversarial_reply(node, '{"next_message": "x"}')
+
+        with pytest.raises(InvalidJsonException, match="Missing required keys"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
+
+    async def test_send_to_adversarial_chat_strips_markdown_fencing(self, node_components):
+        """Adversarial models routinely wrap JSON in ```json fences; the shared parser strips them."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        payload = json.dumps({"next_message": "attack text", "rationale": "why", "last_response_summary": "summary"})
+        self._mock_adversarial_reply(node, f"```json\n{payload}\n```")
+
+        assert await node._send_to_adversarial_chat_async(prompt_text="x") == "attack text"
+
+    async def test_send_to_adversarial_chat_invalid_json_raises(self, node_components):
+        """A non-JSON reply raises InvalidJsonException so the manager's json-retry can retry the turn."""
+        node = self._node_with_schema(node_components, _STRICT_ADVERSARIAL_CHAT_SCHEMA)
+        self._mock_adversarial_reply(node, "not json at all")
+
+        with pytest.raises(InvalidJsonException, match="Invalid JSON"):
+            await node._send_to_adversarial_chat_async(prompt_text="x")
 
     async def test_node_send_prompt_json_error_handling(self, node_components):
         """Test handling of JSON parsing errors in send_prompt_async."""
@@ -1465,6 +1730,34 @@ class TestTreeOfAttacksNode:
         assert node.error_message is not None
         assert "Error sending prompt with conversation ID" in node.error_message
 
+    async def test_send_to_adversarial_chat_forwards_json_schema(self, node_components):
+        """The shared adversarial_chat JSON schema is forwarded to the target via metadata."""
+        prompt_normalizer = MagicMock(spec=PromptNormalizer)
+        components_with_normalizer = node_components.copy()
+        components_with_normalizer["prompt_normalizer"] = prompt_normalizer
+        components_with_normalizer["adversarial_chat"].configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        components_with_normalizer["modality_router"] = _ModalityFeedbackRouter(
+            adversarial_chat=components_with_normalizer["adversarial_chat"],
+            objective_target=components_with_normalizer["objective_target"],
+        )
+        node = _TreeOfAttacksNode(**components_with_normalizer)
+
+        schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+        node._adversarial_chat_system_seed_prompt.response_json_schema = schema
+
+        prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt='{"next_message": "x"}', role="assistant")
+        )
+
+        await node._send_to_adversarial_chat_async(prompt_text="Test prompt")
+
+        sent_message = prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        metadata = sent_message.message_pieces[0].prompt_metadata
+        assert metadata["response_format"] == "json"
+        assert metadata[JSON_SCHEMA_METADATA_KEY] == schema
+
     async def test_node_send_prompt_unexpected_error_handling(self, node_components):
         """Test handling of unexpected errors in send_prompt_async."""
         node = _TreeOfAttacksNode(**node_components)
@@ -1479,6 +1772,85 @@ class TestTreeOfAttacksNode:
         assert node.completed is False
         assert node.error_message is not None
         assert "Execution error" in node.error_message
+
+    async def test_node_later_scorer_failure_clears_previous_turn_outcome(self, node_components, basic_attack):
+        """A later scorer failure must not leave the branch eligible under its previous score."""
+        node = _TreeOfAttacksNode(**node_components)
+        previous_score = Score(
+            score_value="0.7",
+            score_value_description="previous turn",
+            score_type="float_scale",
+            score_rationale="previous turn succeeded",
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=node._objective_scorer.get_identifier(),
+            objective="Test objective",
+        )
+        response = Message.from_prompt(prompt="unscored response", role="assistant")
+
+        node.completed = True
+        node.objective_score = previous_score
+        node.auxiliary_scores = {"previous": previous_score}
+        node.error_message = "previous error"
+
+        with (
+            patch.object(
+                node,
+                "_generate_adversarial_prompt_async",
+                new_callable=AsyncMock,
+                return_value="next prompt",
+            ),
+            patch.object(
+                node,
+                "_send_prompt_to_target_async",
+                new_callable=AsyncMock,
+                return_value=response,
+            ),
+            patch.object(
+                node,
+                "_score_response_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("scorer unavailable"),
+            ),
+        ):
+            await node.send_prompt_async(objective="Test objective")
+
+        assert node.completed is False
+        assert node.objective_score is None
+        assert node.auxiliary_scores == {}
+        assert node.error_message == "Execution error: scorer unavailable"
+        assert basic_attack._get_completed_nodes_sorted_by_score([node]) == []
+
+    async def test_node_empty_objective_scores_marks_turn_incomplete(self, node_components):
+        """A scorer response without an objective score must prune the branch."""
+        node = _TreeOfAttacksNode(**node_components)
+        response = Message.from_prompt(prompt="unscored response", role="assistant")
+
+        with (
+            patch.object(
+                node,
+                "_generate_adversarial_prompt_async",
+                new_callable=AsyncMock,
+                return_value="next prompt",
+            ),
+            patch.object(
+                node,
+                "_send_prompt_to_target_async",
+                new_callable=AsyncMock,
+                return_value=response,
+            ),
+            patch.object(
+                Scorer,
+                "score_response_async",
+                new_callable=AsyncMock,
+                return_value={"objective_scores": [], "auxiliary_scores": []},
+            ) as score_response,
+        ):
+            await node.send_prompt_async(objective="Test objective")
+
+        score_response.assert_awaited_once()
+        assert node.completed is False
+        assert node.objective_score is None
+        assert node.error_message == "Execution error: No objective scores returned from scoring process."
 
     async def test_node_off_topic_detection(self, node_components):
         """Test off-topic detection in nodes after retry exhaustion.
@@ -1512,7 +1884,6 @@ class TestTreeOfAttacksNode:
             ) as red_teaming_mock,
             patch("pyrit.executor.attack.multi_turn.tree_of_attacks.get_retry_max_num_attempts", return_value=1),
             patch.object(node, "_send_to_adversarial_chat_async", new_callable=AsyncMock, return_value="new prompt"),
-            patch.object(node, "_parse_red_teaming_response", return_value="new prompt"),
         ):
             await node.send_prompt_async(objective="Test objective")
 
@@ -1558,13 +1929,18 @@ class TestTreeOfAttacksNode:
             target = kwargs.get("target")
 
             if target == node._adversarial_chat:
-                # Return JSON response for adversarial chat
+                # Return JSON response for adversarial chat. The manager now validates every reply
+                # against the canonical adversarial_chat schema, so include all required keys.
                 return Message(
                     message_pieces=[
                         MessagePiece(
                             role="assistant",
-                            original_value=json.dumps({"prompt": "test prompt", "improvement": "test"}),
-                            converted_value=json.dumps({"prompt": "test prompt", "improvement": "test"}),
+                            original_value=json.dumps(
+                                {"next_message": "test prompt", "rationale": "test", "last_response_summary": "s"}
+                            ),
+                            converted_value=json.dumps(
+                                {"next_message": "test prompt", "rationale": "test", "last_response_summary": "s"}
+                            ),
                             conversation_id=node.adversarial_chat_conversation_id,
                             id=str(uuid.uuid4()),
                         )
@@ -1609,7 +1985,8 @@ class TestTreeOfAttacksNode:
         assert node.completed is True
         assert node.error_message is None
         assert node.last_prompt_sent == "test prompt"
-        assert node.last_response == "Target response"
+        assert node.last_response is not None
+        assert node.last_response.get_value() == "Target response"
 
         # Verify scores
         assert node.objective_score is not None
@@ -1623,9 +2000,8 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores["AuxScorer1"].get_value() == 0.8
         assert node.auxiliary_scores["AuxScorer2"].get_value() == 0.6
 
-    @pytest.mark.asyncio
-    async def test_node_single_turn_target_generates_new_conv_id(self, node_components):
-        """Test that single-turn targets get a fresh conversation_id before each send."""
+    async def test_node_unseeded_single_turn_target_rotates_conversation_id(self, node_components):
+        """An unseeded single-turn node keeps prior live history out of the next payload."""
         node_components["objective_target"].capabilities.supports_multi_turn = False
         node_components["objective_target"].configuration.includes.side_effect = lambda capability: False
         node = _TreeOfAttacksNode(**node_components)
@@ -1648,10 +2024,11 @@ class TestTreeOfAttacksNode:
             with patch.object(node, "_score_response_async", new_callable=AsyncMock):
                 await node._send_prompt_to_target_async("test prompt")
 
-        # Conversation ID should have changed for single-turn target
         assert node.objective_target_conversation_id != original_conv_id
+        send_kwargs = node._prompt_normalizer.send_prompt_async.await_args.kwargs
+        assert send_kwargs["conversation_id"] == node.objective_target_conversation_id
+        assert send_kwargs["send_context"] is None
 
-    @pytest.mark.asyncio
     async def test_node_multi_turn_target_keeps_conv_id(self, node_components):
         """Test that multi-turn targets keep the same conversation_id."""
         node_components["objective_target"].capabilities.supports_multi_turn = True
@@ -1677,6 +2054,48 @@ class TestTreeOfAttacksNode:
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksErrorHandling:
     """Tests for error handling in TreeOfAttacksWithPruningAttack."""
+
+    def test_attack_result_uses_response_linked_to_best_score(self, attack_builder, helpers):
+        """A later unscored response must not be paired with an earlier best score."""
+        attack = attack_builder.with_default_mocks().build()
+        context = helpers.create_basic_context()
+        conversation_id = str(uuid.uuid4())
+        original_response_id = uuid.uuid4()
+        scored_response = MessagePiece(
+            role="assistant",
+            original_value="scored response",
+            converted_value="scored response",
+            conversation_id=conversation_id,
+            original_prompt_id=original_response_id,
+        )
+        later_response = MessagePiece(
+            role="assistant",
+            original_value="later unscored response",
+            converted_value="later unscored response",
+            conversation_id=conversation_id,
+        )
+        best_score = Score(
+            score_value="0.7",
+            score_value_description="best score",
+            score_type="float_scale",
+            score_rationale="best scored response",
+            message_piece_id=str(original_response_id),
+            scorer_class_identifier=attack._objective_scorer.get_identifier(),
+            objective=context.objective,
+        )
+        context.best_conversation_id = conversation_id
+        context.best_objective_score = best_score
+
+        with patch.object(
+            attack._memory,
+            "get_message_pieces",
+            return_value=[scored_response, later_response],
+        ):
+            result = attack._create_failure_result(context)
+
+        assert result.last_response is scored_response
+        assert result.last_score is best_score
+        assert str(result.last_score.message_piece_id) == str(result.last_response.original_prompt_id)
 
     async def test_attack_handles_all_nodes_failing(self, attack_builder, helpers, node_factory):
         """Test attack behavior when all nodes fail."""
@@ -1887,7 +2306,6 @@ class TestTreeOfAttacksVisualization:
         assert context.tree_visualization.parent(node_0_child_1._vis_node_id).identifier == node_0._vis_node_id
         assert context.tree_visualization.parent(node_1_child_0._vis_node_id).identifier == node_1._vis_node_id
 
-    @pytest.mark.asyncio
     async def test_surviving_node_gets_child_vis_nodes_per_depth(self, attack_builder, node_factory, helpers):
         """Test that a surviving node gets a new child vis node at each depth (not appended scores)."""
         attack = (
@@ -1969,7 +2387,7 @@ class TestTreeOfAttacksConversationTracking:
         helpers.add_nodes_to_tree(context, nodes)
 
         # Set up branching factor to create additional nodes
-        basic_attack._branching_factor = 3
+        basic_attack._configuration = replace(basic_attack._configuration, branching_factor=3)
 
         # Branch the nodes
         basic_attack._branch_existing_nodes(context)
@@ -2003,7 +2421,7 @@ class TestTreeOfAttacksConversationTracking:
         context = helpers.create_basic_context()
 
         # Set tree width to create multiple nodes
-        basic_attack._tree_width = 3
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
 
         # Initialize first level nodes
         asyncio.run(basic_attack._initialize_first_level_nodes_async(context))
@@ -2020,6 +2438,48 @@ class TestTreeOfAttacksConversationTracking:
                 )
                 in context.related_conversations
             )
+
+    def test_initialize_first_level_nodes_edit_only_objective_seeds_all_roots(self, attack_builder, helpers):
+        """Edit-only objectives seed every root node so turn-0 requests are valid."""
+        builder = attack_builder.with_default_mocks().with_tree_params(tree_width=3)
+        builder.objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        builder.objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"image_path"})})
+        attack = builder.build()
+        context = helpers.create_basic_context()
+        context.next_message = Message(
+            message_pieces=[
+                MessagePiece.adversarial_placeholder(),
+                MessagePiece(role="user", original_value="/path/to/seed.png", original_value_data_type="image_path"),
+            ]
+        )
+
+        asyncio.run(attack._initialize_first_level_nodes_async(context))
+
+        assert len(context.nodes) == 3
+        for node in context.nodes:
+            assert node._initial_prompt is not None
+            assert any(piece.is_adversarial_placeholder() for piece in node._initial_prompt.message_pieces)
+            assert any(piece.original_value_data_type == "image_path" for piece in node._initial_prompt.message_pieces)
+        assert context.next_message is None
+
+    def test_initialize_first_level_nodes_text_objective_keeps_seed_on_first_root_only(self, basic_attack, helpers):
+        """Text-capable objectives keep historical behavior: node 0 consumes next_message."""
+        context = helpers.create_basic_context()
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
+        context.next_message = Message(
+            message_pieces=[
+                MessagePiece.adversarial_placeholder(),
+                MessagePiece(role="user", original_value="/path/to/seed.png", original_value_data_type="image_path"),
+            ]
+        )
+
+        asyncio.run(basic_attack._initialize_first_level_nodes_async(context))
+
+        assert context.nodes[0]._initial_prompt is not None
+        assert all(node._initial_prompt is None for node in context.nodes[1:])
+        assert context.next_message is None
 
     def test_attack_result_includes_adversarial_chat_conversation_ids(self, attack_builder, helpers):
         """Test that the attack result includes the tracked adversarial chat conversation IDs."""
@@ -2125,10 +2585,25 @@ def test_tap_init_raises_when_objective_scorer_is_none():
             attack_adversarial_config=MagicMock(
                 target=MagicMock(spec=PromptTarget),
                 system_prompt=None,
-                system_prompt_path=None,
             ),
             attack_scoring_config=scoring_config,
         )
+
+
+def test_tap_scoring_config_threshold_raises_for_reassigned_invalid_scorer():
+    """threshold re-validates objective_scorer at access time, not just at construction.
+
+    __init__ already rejects a non-FloatScaleThresholdScorer objective_scorer, so this
+    exercises the defensive re-check by mutating the attribute after construction.
+    """
+    mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+    mock_threshold_scorer.threshold = 0.8
+    scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
+
+    scoring_config.objective_scorer = MagicMock(spec=Scorer)
+
+    with pytest.raises(TypeError, match="TAP objective scorer must be a FloatScaleThresholdScorer"):
+        _ = scoring_config.threshold
 
 
 def test_tap_attack_result_tree_visualization_getter_returns_value():
@@ -2374,7 +2849,6 @@ class TestTAPScenarios:
     Each scenario is run twice: once with a multi-turn target and once with a single-turn target.
     """
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("supports_multi_turn", [True, False], ids=["multi_turn", "single_turn"])
     @pytest.mark.parametrize(
         "tree_width, tree_depth, branching_factor, threshold, "
@@ -2483,6 +2957,290 @@ class TestTAPScenarios:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestModalityRouterIntegration:
+    """Integration tests for the capability-aware modality router wiring in TAP."""
+
+    @pytest.fixture
+    def node_components(self, attack_builder):
+        """Local copy of the node_components fixture used by TestTreeOfAttacksNode."""
+        builder = attack_builder.with_default_mocks()
+
+        adversarial_chat_seed_prompt = MagicMock(spec=SeedPrompt)
+        adversarial_chat_seed_prompt.render_template_value = MagicMock(return_value="seed")
+        adversarial_chat_system_seed_prompt = MagicMock(spec=SeedPrompt)
+        adversarial_chat_system_seed_prompt.render_template_value = MagicMock(return_value="system")
+        adversarial_chat_prompt_template = MagicMock(spec=SeedPrompt)
+        adversarial_chat_prompt_template.render_template_value = MagicMock(return_value="template")
+
+        prompt_normalizer = MagicMock()
+        prompt_normalizer.send_prompt_async = AsyncMock(return_value=None)
+
+        modality_router = _ModalityFeedbackRouter(
+            adversarial_chat=builder.adversarial_chat,
+            objective_target=builder.objective_target,
+        )
+
+        return {
+            "objective_target": builder.objective_target,
+            "adversarial_chat": builder.adversarial_chat,
+            "objective_scorer": builder.objective_scorer,
+            "adversarial_chat_seed_prompt": adversarial_chat_seed_prompt,
+            "adversarial_chat_system_seed_prompt": adversarial_chat_system_seed_prompt,
+            "adversarial_chat_prompt_template": adversarial_chat_prompt_template,
+            "desired_response_prefix": "Sure, here is",
+            "on_topic_scorer": None,
+            "request_converters": [],
+            "response_converters": [],
+            "auxiliary_scorers": [],
+            "attack_id": {"id": "test_attack"},
+            "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
+            "modality_router": modality_router,
+            "memory_labels": {},
+            "parent_id": None,
+            "prompt_normalizer": prompt_normalizer,
+        }
+
+    @staticmethod
+    def _make_image_response(conversation_id: str) -> Message:
+        return Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="/tmp/output.png",
+                    original_value_data_type="image_path",
+                    converted_value="/tmp/output.png",
+                    converted_value_data_type="image_path",
+                    conversation_id=conversation_id,
+                )
+            ]
+        )
+
+    async def test_node_send_prompt_to_target_forwards_prev_image(self, node_components):
+        """Objective accepting {text, image_path} gets prev image attached on turn N."""
+        # Override the router to point at an image-capable objective.
+        node_components["objective_target"].configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        node_components["objective_target"].configuration.capabilities.output_modalities = frozenset(
+            {frozenset({"image_path"})}
+        )
+        node_components["modality_router"] = _ModalityFeedbackRouter(
+            adversarial_chat=node_components["adversarial_chat"],
+            objective_target=node_components["objective_target"],
+        )
+
+        node = _TreeOfAttacksNode(**node_components)
+
+        # Seed prior response and pre-populate objective conversation so _is_first_turn() is False.
+        node.last_response = self._make_image_response(node.objective_target_conversation_id)
+        from pyrit.memory import CentralMemory
+
+        memory = CentralMemory.get_memory_instance()
+        prior_user = Message.from_prompt(prompt="prior", role="user")
+        prior_user.message_pieces[0].conversation_id = node.objective_target_conversation_id
+        prior_assistant = self._make_image_response(node.objective_target_conversation_id)
+        memory.add_message_to_memory(request=prior_user)
+        memory.add_message_to_memory(request=prior_assistant)
+
+        captured_message: dict = {}
+
+        async def capture_send(*args, **kwargs):
+            captured_message["message"] = kwargs.get("message")
+            return Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="assistant",
+                        original_value="/tmp/next.png",
+                        original_value_data_type="image_path",
+                        converted_value_data_type="image_path",
+                    )
+                ]
+            )
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=capture_send)
+        node._objective = "test"
+
+        await node._send_prompt_to_target_async("next adversarial prompt")
+
+        sent = captured_message["message"]
+        assert sent is not None
+        assert len(sent.message_pieces) == 2
+        assert sent.message_pieces[0].original_value == "next adversarial prompt"
+        assert sent.message_pieces[1].original_value_data_type == "image_path"
+        assert sent.message_pieces[1].original_value == "/tmp/output.png"
+
+    async def test_node_send_prompt_text_only_target_drops_prev_media(self, node_components):
+        """Text-only objective never receives prev image even if available."""
+        node = _TreeOfAttacksNode(**node_components)
+        node.last_response = self._make_image_response(node.objective_target_conversation_id)
+
+        captured_message: dict = {}
+
+        async def capture_send(*args, **kwargs):
+            captured_message["message"] = kwargs.get("message")
+            return Message.from_prompt(prompt="ok", role="assistant")
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=capture_send)
+        node._objective = "test"
+
+        await node._send_prompt_to_target_async("text-only prompt")
+
+        sent = captured_message["message"]
+        assert sent is not None
+        assert len(sent.message_pieces) == 1
+        assert sent.get_value() == "text-only prompt"
+
+    async def test_node_send_initial_prompt_placeholder_branch(self, node_components):
+        """Initial prompt with adversarial-placeholder + seed image triggers adv-generation + fill."""
+        node_components["objective_target"].configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        node_components["modality_router"] = _ModalityFeedbackRouter(
+            adversarial_chat=node_components["adversarial_chat"],
+            objective_target=node_components["objective_target"],
+        )
+
+        shared_conv = "tap-edit-conv"
+        seed_message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value="",
+                    original_value_data_type="text",
+                    conversation_id=shared_conv,
+                    prompt_metadata={"adversarial_placeholder": True},
+                ),
+                MessagePiece(
+                    role="user",
+                    original_value="/path/to/seed.png",
+                    original_value_data_type="image_path",
+                    conversation_id=shared_conv,
+                ),
+            ]
+        )
+        node_components["initial_prompt"] = seed_message
+
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        # None -> the manager resolves the canonical adversarial_chat schema (requires all three keys).
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
+
+        captured_message: dict = {}
+
+        async def routed_send(*args, **kwargs):
+            # The adversarial chat send returns a JSON reply; the objective-target send is captured.
+            if kwargs.get("target") is node._adversarial_chat:
+                reply = {"next_message": "adv generated text", "rationale": "r", "last_response_summary": "s"}
+                return Message.from_prompt(prompt=json.dumps(reply), role="assistant")
+            captured_message["message"] = kwargs.get("message")
+            return Message.from_prompt(prompt="ok", role="assistant")
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=routed_send)
+
+        await node._send_initial_prompt_to_target_async()
+
+        sent = captured_message["message"]
+        assert sent is not None
+        assert len(sent.message_pieces) == 2
+        # Placeholder slot was filled with adversarial text.
+        assert sent.message_pieces[0].original_value == "adv generated text"
+        assert sent.message_pieces[0].original_value_data_type == "text"
+        assert sent.message_pieces[0].is_adversarial_placeholder() is False
+        # Seed media is preserved.
+        assert sent.message_pieces[1].original_value_data_type == "image_path"
+        assert sent.message_pieces[1].original_value == "/path/to/seed.png"
+
+    async def test_node_send_initial_prompt_bypass_no_placeholder(self, node_components):
+        """A concrete seed (no adversarial placeholder) is sent as-is, bypassing the adversarial chat."""
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        # The manager is still constructed on the bypass path, so give it a resolvable schema.
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
+        node._initial_prompt = Message.from_prompt(prompt="concrete seed prompt", role="user")
+
+        captured_message: dict = {}
+
+        async def routed_send(*args, **kwargs):
+            # The adversarial chat must never be sent to on the bypass path.
+            if kwargs.get("target") is node._adversarial_chat:
+                raise AssertionError("Adversarial chat must not be invoked when the seed has no placeholder")
+            captured_message["message"] = kwargs.get("message")
+            return Message.from_prompt(prompt="ok", role="assistant")
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(side_effect=routed_send)
+
+        await node._send_initial_prompt_to_target_async()
+
+        sent = captured_message["message"]
+        assert sent is not None
+        assert sent.get_value() == "concrete seed prompt"
+
+    def test_validate_context_raises_when_edit_only_target_has_no_seed(self, attack_builder):
+        """Edit-only objective without seed in next_message fails validation early."""
+        builder = attack_builder.with_default_mocks()
+        # Switch the objective target to edit-only AFTER default mocks (defaults set text-only).
+        builder.objective_target.configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text", "image_path"})}
+        )
+        attack = builder.build()
+        context = TestHelpers.create_basic_context()
+
+        with pytest.raises(ValueError, match="seed"):
+            attack._validate_context(context=context)
+
+    async def test_node_send_to_adversarial_forwards_prev_image_when_supported(self, node_components):
+        """A {text, image_path}-capable adversarial chat receives the prior objective image as feedback."""
+        node_components["adversarial_chat"].configuration.capabilities.input_modalities = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        node_components["modality_router"] = _ModalityFeedbackRouter(
+            adversarial_chat=node_components["adversarial_chat"],
+            objective_target=node_components["objective_target"],
+        )
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        node._adversarial_chat_system_seed_prompt.response_json_schema = {
+            "type": "object",
+            "properties": {"next_message": {"type": "string"}},
+        }
+        node.last_response = self._make_image_response(node.objective_target_conversation_id)
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt='{"next_message": "attack text"}', role="assistant")
+        )
+
+        result = await node._send_to_adversarial_chat_async(prompt_text="feedback text")
+
+        assert result == "attack text"
+        sent = node._prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent.message_pieces) == 2
+        assert sent.message_pieces[0].original_value == "feedback text"
+        assert sent.message_pieces[1].original_value_data_type == "image_path"
+        assert sent.message_pieces[1].original_value == "/tmp/output.png"
+
+    async def test_node_send_to_adversarial_text_only_drops_response_media(self, node_components):
+        """A text-only adversarial chat receives only feedback text when the objective response carried media."""
+        # adversarial_chat default is text-only.
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        node._adversarial_chat_system_seed_prompt.response_json_schema = {
+            "type": "object",
+            "properties": {"next_message": {"type": "string"}},
+        }
+        node.last_response = self._make_image_response(node.objective_target_conversation_id)
+
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=Message.from_prompt(prompt='{"next_message": "attack text"}', role="assistant")
+        )
+
+        result = await node._send_to_adversarial_chat_async(prompt_text="feedback text")
+
+        assert result == "attack text"
+        sent = node._prompt_normalizer.send_prompt_async.call_args.kwargs["message"]
+        assert len(sent.message_pieces) == 1
+        assert sent.get_value() == "feedback text"
+
+
 class TestTAPAdversarialIdentity:
     """Tests for adversarial config in the TAP attack identity and inline system prompt."""
 
@@ -2494,7 +3252,7 @@ class TestTAPAdversarialIdentity:
         assert config.target is builder.adversarial_chat
         assert config.system_prompt is attack._adversarial_chat_system_seed_prompt
         # TAP's first-message seed prompt is a fixed default and is excluded from identity.
-        assert config.seed_prompt is None
+        assert config.first_message is None
 
     def test_get_attack_adversarial_config_returns_none_without_target(self):
         builder = AttackBuilder().with_default_mocks()

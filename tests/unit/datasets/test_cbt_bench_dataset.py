@@ -83,7 +83,7 @@ class TestCBTBenchDataset:
             assert "Thoughts:" in first_prompt.value
             assert first_prompt.data_type == "text"
             assert first_prompt.dataset_name == "cbt_bench"
-            assert first_prompt.harm_categories == ["psycho-social harms"]
+            assert first_prompt.harm_categories == ["EMOTIONAL", "MENTAL_HEALTH"]
             assert first_prompt.metadata["core_belief_fine_grained"] == ["I am unlovable", "I am immoral"]
 
     async def test_fetch_dataset_with_custom_config(self, mock_cbt_bench_data):
@@ -103,11 +103,6 @@ class TestCBTBenchDataset:
             assert call_kwargs["config"] == "core_major_seed"
             assert call_kwargs["split"] == "train"
             assert call_kwargs["cache"] is False
-
-    def test_split_kwarg_emits_deprecation_warning(self):
-        """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
-        with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
-            _CBTBenchDataset(split="train")
 
     async def test_fetch_dataset_situation_only(self, mock_cbt_bench_data_missing_thoughts):
         """Test that items with only situation (no thoughts) still work."""

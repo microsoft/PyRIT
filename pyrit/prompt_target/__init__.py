@@ -17,7 +17,6 @@ from pyrit.prompt_target.common.conversation_normalization_pipeline import Conve
 from pyrit.prompt_target.common.discover_target_capabilities import (
     discover_target_capabilities_async,
 )
-from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.realtime_audio import ServerVadConfig
 from pyrit.prompt_target.common.target_capabilities import (
@@ -25,6 +24,7 @@ from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
+    get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
@@ -36,6 +36,7 @@ from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_regex_matching_callback_function,
 )
 from pyrit.prompt_target.http_target.httpx_api_target import HTTPXAPITarget
+from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 from pyrit.prompt_target.openai.openai_completion_target import OpenAICompletionTarget
@@ -51,12 +52,13 @@ from pyrit.prompt_target.prompt_shield_target import PromptShieldTarget
 from pyrit.prompt_target.round_robin_target import RoundRobinTarget
 from pyrit.prompt_target.text_target import TextTarget
 from pyrit.prompt_target.websocket_copilot_target import WebSocketCopilotTarget
+from pyrit.prompt_target.websocket_target import WebsocketTarget
 
 if TYPE_CHECKING:
     from pyrit.prompt_target.hugging_face.hugging_face_chat_target import HuggingFaceChatTarget
 
-# Lazy imports for modules with heavy third-party dependencies (PEP 562).
-# HuggingFaceChatTarget imports `transformers` which adds ~4s to startup.
+# Keep optional inference targets lazy so package imports do not load their
+# target-specific runtime modules.
 _LAZY_IMPORTS: dict[str, str] = {
     "HuggingFaceChatTarget": "pyrit.prompt_target.hugging_face.hugging_face_chat_target",
 }
@@ -87,6 +89,7 @@ __all__ = [
     "HTTPXAPITarget",
     "HuggingFaceChatTarget",
     "limit_requests_per_minute",
+    "LiteLLMChatTarget",
     "OpenAICompletionTarget",
     "OpenAIChatAudioConfig",
     "OpenAIChatTarget",
@@ -97,7 +100,6 @@ __all__ = [
     "OpenAITarget",
     "PlaywrightTarget",
     "PlaywrightCopilotTarget",
-    "PromptChatTarget",
     "PromptShieldTarget",
     "PromptTarget",
     "RealtimeTarget",
@@ -108,6 +110,8 @@ __all__ = [
     "TargetRequirements",
     "UnsupportedCapabilityBehavior",
     "TextTarget",
+    "WebsocketTarget",
     "discover_target_capabilities_async",
+    "get_known_capabilities",
     "WebSocketCopilotTarget",
 ]

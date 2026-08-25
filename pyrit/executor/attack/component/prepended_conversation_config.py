@@ -3,16 +3,23 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
-from typing import Literal, get_args
+from typing import TYPE_CHECKING
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.message_normalizer import (
     ConversationContextNormalizer,
+    HistorySquashNormalizer,
+    MessageListNormalizer,
     MessageStringNormalizer,
 )
-from pyrit.models import ChatMessageRole
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+
+if TYPE_CHECKING:
+    from pyrit.executor.attack.component.prepended_history_send_context import (
+        PrependedHistorySendContext,
+    )
+    from pyrit.models import ChatMessageRole, Message
+    from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 
 @dataclass
@@ -23,38 +30,30 @@ class PrependedConversationConfig:
 
     This class provides control over:
     - Which message roles should have request converters applied
-    - How to normalize conversation history for non-chat objective targets
-    - What to do when the objective target is not a chat-capable PromptTarget
+    - How targets without editable history format prepended messages with live requests
+
+    Prepended messages remain role-structured in memory. Request converters are applied to
+    configured roles before a target without editable history renders that history and the
+    applicable live request together (via ``message_normalizer``; default: ConversationContextNormalizer).
+    Those converters must produce text because string normalization cannot preserve converted
+    image, audio, or other non-text output.
     """
 
-    # Roles for which request converters should be applied to prepended messages.
-    # By default, converters are applied to all roles.
-    # Example: ["user"] to apply converters only to user messages.
-    apply_converters_to_roles: list[ChatMessageRole] = field(default_factory=lambda: list(get_args(ChatMessageRole)))
+    # Request converters default to prepended user messages only. Every non-user role,
+    # including system and simulated assistant history, requires explicit opt-in.
+    apply_converters_to_roles: list[ChatMessageRole] = field(default_factory=lambda: ["user"])
 
-    # Optional normalizer to format conversation history into a single text block.
+    # Optional normalizer to format prepended history and a live request as one text block.
     # Must implement MessageStringNormalizer (e.g., TokenizerTemplateNormalizer or ConversationContextNormalizer).
-    # When None and normalization is needed (e.g., for non-chat targets), a default
-    # ConversationContextNormalizer is used that produces "Turn N: User/Assistant" format.
+    # When None and adaptation is needed, a default ConversationContextNormalizer is used
+    # that produces "Turn N: User/Assistant" format.
     message_normalizer: MessageStringNormalizer | None = None
 
-    # Deprecated: this option will be removed in v0.16.0. Setting this field to any
-    # non-None value emits a DeprecationWarning. In this release, ``"raise"`` still
-    # raises ValueError on non-chat targets; ``"normalize_first_turn"`` and ``None``
-    # both normalize the prepended conversation into the first turn (via
-    # ``message_normalizer``; default: ConversationContextNormalizer). In v0.16.0
-    # non-chat targets will always normalize; there is no replacement for the
-    # ``"raise"`` behavior.
-    non_chat_target_behavior: Literal["normalize_first_turn", "raise"] | None = None
-
     def __post_init__(self) -> None:
-        """Emit a DeprecationWarning when the deprecated ``non_chat_target_behavior`` field is set."""
-        if self.non_chat_target_behavior is not None:
-            print_deprecation_message(
-                old_item="PrependedConversationConfig(non_chat_target_behavior=...)",
-                new_item="PrependedConversationConfig() (non-chat targets always normalize the prepended conversation)",
-                removed_in="0.16.0",
-            )
+        """Normalize simulated assistant opt-in to its API-compatible role."""
+        self.apply_converters_to_roles = [
+            "assistant" if role == "simulated_assistant" else role for role in self.apply_converters_to_roles
+        ]
 
     def get_message_normalizer(self) -> MessageStringNormalizer:
         """
@@ -66,72 +65,33 @@ class PrependedConversationConfig:
         """
         return self.message_normalizer or ConversationContextNormalizer()
 
-    @classmethod
-    def default(cls) -> PrependedConversationConfig:
-        """
-        Return a deprecated configuration with ``non_chat_target_behavior="raise"``.
-
-        .. deprecated::
-            ``default()`` is deprecated and will be removed in v0.16.0. Use
-            ``PrependedConversationConfig()`` instead. In this release the returned
-            configuration still raises on non-chat targets; in v0.16.0 the ``"raise"``
-            branch is removed and non-chat targets will always normalize the prepended
-            conversation into the first turn.
-
-        Returns:
-            A configuration equivalent to ``PrependedConversationConfig(non_chat_target_behavior="raise")``.
-        """
-        print_deprecation_message(
-            old_item="PrependedConversationConfig.default()",
-            new_item="PrependedConversationConfig() (non-chat targets always normalize the prepended conversation)",
-            removed_in="0.16.0",
-        )
-        # Suppress the __post_init__ deprecation warning so callers see exactly
-        # one warning (the one for default()) rather than two for a single deprecated call.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            return cls(non_chat_target_behavior="raise")
-
-    @classmethod
-    def for_non_chat_target(
-        cls,
+    def get_normalizer_overrides(
+        self,
         *,
-        message_normalizer: MessageStringNormalizer | None = None,
-        apply_converters_to_roles: list[ChatMessageRole] | None = None,
-    ) -> PrependedConversationConfig:
+        target: PromptTarget,
+        prepended_history_send_context: PrependedHistorySendContext | None,
+    ) -> dict[CapabilityName, MessageListNormalizer[Message]]:
         """
-        Create a configuration for use with non-chat targets.
-
-        .. deprecated::
-            ``for_non_chat_target()`` is deprecated and will be removed in v0.16.0.
-            Non-chat targets always normalize the prepended conversation into the
-            first turn, so this factory is equivalent to ``PrependedConversationConfig(...)``
-            with the same arguments. Use the default constructor instead.
+        Build per-send target normalizer overrides for prepended history.
 
         Args:
-            message_normalizer: Normalizer for formatting the prepended conversation into a string.
-                Defaults to ConversationContextNormalizer if not provided.
-            apply_converters_to_roles: Roles to apply converters to before normalization.
-                Defaults to all roles.
+            target: Target that receives the live request.
+            prepended_history_send_context: Explicit persisted seed boundary for
+                this attack execution.
 
         Returns:
-            A configuration that normalizes the prepended conversation for non-chat targets.
+            Overrides keyed by the capability they adapt.
         """
-        print_deprecation_message(
-            old_item="PrependedConversationConfig.for_non_chat_target()",
-            new_item="PrependedConversationConfig() (non-chat targets always normalize the prepended conversation)",
-            removed_in="0.16.0",
-        )
-        # Suppress the __post_init__ deprecation warning so callers see exactly one
-        # warning (the one for for_non_chat_target()) rather than two.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            return cls(
-                apply_converters_to_roles=(
-                    apply_converters_to_roles
-                    if apply_converters_to_roles is not None
-                    else list(get_args(ChatMessageRole))
-                ),
-                message_normalizer=message_normalizer,
-                non_chat_target_behavior="normalize_first_turn",
+        if (
+            target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY)
+            or prepended_history_send_context is None
+            or not prepended_history_send_context.should_include_seed
+        ):
+            return {}
+
+        return {
+            CapabilityName.EDITABLE_HISTORY: HistorySquashNormalizer(
+                expected_history_message_count=prepended_history_send_context.bootstrap_message_count,
+                message_normalizer=self.get_message_normalizer(),
             )
+        }

@@ -4,6 +4,7 @@ import base64
 import logging
 from typing import Any, Literal
 
+from pyrit.common import forward_init_parameters, get_mime_type
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
@@ -41,15 +42,10 @@ class OpenAIImageTarget(OpenAITarget):
         )
     )
 
-    # Grandfathered: positional params predate the kwargs-only contract; the
-    # sandwiched ``*args``/``**kwargs`` shape forwards extras to ``OpenAITarget``.
-    # TODO: remove this opt-out and move ``*args`` up to immediately after
-    # ``self`` (or insert ``*,`` and drop ``*args`` entirely) in 0.16.0
-    # (this will be a BREAKING CHANGE for callers passing arguments positionally).
-    _brick_legacy_init = True
-
+    @forward_init_parameters
     def __init__(
         self,
+        *,
         image_size: Literal[
             "auto",
             "1024x1024",
@@ -60,7 +56,6 @@ class OpenAIImageTarget(OpenAITarget):
         quality: Literal["auto", "low", "medium", "high"] | None = None,
         background: Literal["transparent", "opaque", "auto"] | None = None,
         custom_configuration: TargetConfiguration | None = None,
-        *args: Any,
         **kwargs: Any,
     ) -> None:
         """
@@ -93,7 +88,6 @@ class OpenAIImageTarget(OpenAITarget):
                 Default is to not specify, which will use "auto" behavior.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
-            *args: Additional positional arguments to be passed to AzureOpenAITarget.
             **kwargs: Additional keyword arguments to be passed to AzureOpenAITarget.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
                 `httpx.AsyncClient()` constructor.
@@ -114,7 +108,7 @@ class OpenAIImageTarget(OpenAITarget):
         self.image_size = image_size
         self.background = background
 
-        super().__init__(*args, custom_configuration=custom_configuration, **kwargs)
+        super().__init__(custom_configuration=custom_configuration, **kwargs)
 
     def _set_openai_env_configuration_vars(self) -> None:
         self.model_name_environment_variable = "OPENAI_IMAGE_MODEL"
@@ -239,7 +233,7 @@ class OpenAIImageTarget(OpenAITarget):
 
             image_name = str(await img_serializer.get_data_filename_async())
             image_bytes = await img_serializer.read_data_async()
-            image_type = img_serializer.get_mime_type(image_path)
+            image_type = get_mime_type(image_path)
 
             image_files.append((image_name, image_bytes, image_type))
 

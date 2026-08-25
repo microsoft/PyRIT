@@ -16,13 +16,13 @@ from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
     SingleTurnAttackStrategy,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ConversationReference,
     ConversationType,
     Message,
     Score,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -67,7 +67,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_converter_config (AttackConverterConfig | None): Configuration for converters.
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
             max_attempts_on_failure (int): Maximum number of attempts to retry on failure.
@@ -76,7 +76,9 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 a params type that rejects certain fields.
             prepended_conversation_config (PrependedConversationConfiguration | None):
                 Configuration for how to process prepended conversations. Controls converter
-                application by role, message normalization, and non-chat target behavior.
+                application by role and request formatting for targets without editable history.
+                Request converters apply to prepended user messages by default; include
+                ``"assistant"`` explicitly to transform simulated assistant history.
 
         Raises:
             ValueError: If the objective scorer is not a true/false scorer.
@@ -87,6 +89,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             logger=logger,
             context_type=SingleTurnAttackContext,
             params_type=params_type,
+            prepended_conversation_config=prepended_conversation_config,
         )
 
         # Initialize the converter configuration
@@ -106,7 +109,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Skip criteria could be set directly in the injected prompt normalizer
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_manager = ConversationManager(
-            attack_identifier=self.get_identifier(),
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -115,9 +117,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             raise ValueError("max_attempts_on_failure must be a non-negative integer")
 
         self._max_attempts_on_failure = max_attempts_on_failure
-
-        # Store the prepended conversation configuration
-        self._prepended_conversation_config = prepended_conversation_config
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
@@ -231,7 +230,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         return AttackResult(
             conversation_id=context.conversation_id,
             objective=context.objective,
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=response.get_piece() if response else None,
             last_score=score,
             related_conversations=context.related_conversations,
@@ -314,7 +313,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_TARGET,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_target.get_identifier(),
             objective_target_conversation_id=context.conversation_id,
             objective=context.params.objective,
@@ -325,8 +323,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 conversation_id=context.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
-                labels=context.memory_labels,  # combined with strategy labels at _setup()
-                attack_identifier=self.get_identifier(),
+                normalizer_overrides=self._get_prepended_normalizer_overrides(
+                    prepended_history_send_context=context.prepended_history_send_context,
+                ),
+                send_context=context.prepended_history_send_context,
             )
 
     async def _evaluate_response_async(
@@ -353,7 +353,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_scorer.get_identifier() if self._objective_scorer else None,
             objective=objective,
         ):

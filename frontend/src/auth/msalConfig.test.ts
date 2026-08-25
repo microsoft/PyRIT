@@ -4,31 +4,19 @@ jest.mock("@azure/msal-browser", () => ({
   LogLevel: { Warning: 3 },
 }));
 
-import { buildMsalConfig, getApiScopes, buildLoginRequest } from "./msalConfig";
+import { buildMsalConfig, getGraphScopes, buildLoginRequest } from "./msalConfig";
 
 describe("msalConfig", () => {
-  // Tests 1-2: getApiScopes — two branches on the !clientId check (line 75)
-  describe("getApiScopes", () => {
-    it("returns default scopes when clientId is empty", () => {
-      expect(getApiScopes("")).toEqual(["openid", "profile", "email"]);
-    });
-
-    it("returns client-specific scope when clientId is provided", () => {
-      expect(getApiScopes("my-client-id")).toEqual(["api://my-client-id/access"]);
+  describe("getGraphScopes", () => {
+    it("returns the delegated Graph scope", () => {
+      expect(getGraphScopes()).toEqual(["User.Read"]);
     });
   });
 
-  // Tests 3-4: buildLoginRequest — wraps getApiScopes in { scopes }
   describe("buildLoginRequest", () => {
-    it("builds request with client-specific scopes", () => {
-      expect(buildLoginRequest("my-client-id")).toEqual({
-        scopes: ["api://my-client-id/access"],
-      });
-    });
-
-    it("builds request with default scopes when clientId is empty", () => {
-      expect(buildLoginRequest("")).toEqual({
-        scopes: ["openid", "profile", "email"],
+    it("builds request with Graph scopes", () => {
+      expect(buildLoginRequest()).toEqual({
+        scopes: ["User.Read"],
       });
     });
   });
@@ -85,22 +73,28 @@ describe("msalConfig", () => {
       expect(global.fetch).toHaveBeenCalledWith("/api/auth/config");
     });
 
-    it("returns empty config when response is not ok", async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({ ok: false });
+    it("throws when response is not ok (transient failure is not auth-disabled)", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+      });
 
       const { fetchAuthConfig } = await import("./msalConfig");
-      const result = await fetchAuthConfig();
 
-      expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupIds: "" });
+      await expect(fetchAuthConfig()).rejects.toThrow("/api/auth/config returned 503 Service Unavailable");
     });
 
-    it("returns empty config on network error", async () => {
-      (global.fetch as jest.Mock).mockRejectedValue(new Error("Network error"));
+    it("throws on network error (transient failure is not auth-disabled)", async () => {
+      const networkError = new Error("Network error");
+      (global.fetch as jest.Mock).mockRejectedValue(networkError);
 
       const { fetchAuthConfig } = await import("./msalConfig");
-      const result = await fetchAuthConfig();
 
-      expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupIds: "" });
+      await expect(fetchAuthConfig()).rejects.toMatchObject({
+        message: "Failed to reach /api/auth/config: Network error",
+        cause: networkError,
+      });
     });
   });
 });

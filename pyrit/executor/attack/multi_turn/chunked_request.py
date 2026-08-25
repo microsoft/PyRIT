@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.exceptions import ComponentRole, execution_context
-from pyrit.executor.attack.component import ConversationManager
+from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
@@ -21,11 +21,11 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackStrategy,
 )
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     Message,
     Score,
-    build_atomic_attack_identifier,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -105,6 +105,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         attack_converter_config: AttackConverterConfig | None = None,
         attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the chunked request attack strategy.
@@ -116,9 +117,11 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             chunk_type (str): Type of chunk to request (e.g., "characters", "bytes", "words").
             request_template (str): Template for generating chunk requests
                 (default: "Give me {chunk_type} {start}-{end} of '{objective}'").
-            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_converter_config (AttackConverterConfig | None): Configuration for converters.
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
+            prepended_conversation_config: Configuration for prepended-conversation
+                conversion and target-facing formatting.
 
         Raises:
             ValueError: If chunk_size or total_length are invalid.
@@ -150,6 +153,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             logger=logger,
             context_type=ChunkedRequestAttackContext,
             params_type=ChunkedRequestAttackParameters,
+            prepended_conversation_config=prepended_conversation_config,
         )
 
         # Store chunk configuration
@@ -172,7 +176,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         # Initialize prompt normalizer and conversation manager
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
         self._conversation_manager = ConversationManager(
-            attack_identifier=self.get_identifier(),
             prompt_normalizer=self._prompt_normalizer,
         )
 
@@ -247,6 +250,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             target=self._objective_target,
             conversation_id=context.session.conversation_id,
             request_converters=self._request_converters,
+            prepended_conversation_config=self._prepended_conversation_config,
             memory_labels=self._memory_labels,
         )
 
@@ -279,7 +283,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             with execution_context(
                 component_role=ComponentRole.OBJECTIVE_TARGET,
                 attack_strategy_name=self.__class__.__name__,
-                attack_identifier=self.get_identifier(),
                 component_identifier=self._objective_target.get_identifier(),
                 objective_target_conversation_id=context.session.conversation_id,
                 objective=context.objective,
@@ -290,8 +293,10 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
                     conversation_id=context.session.conversation_id,
                     request_converter_configurations=self._request_converters,
                     response_converter_configurations=self._response_converters,
-                    labels=context.memory_labels,
-                    attack_identifier=self.get_identifier(),
+                    normalizer_overrides=self._get_prepended_normalizer_overrides(
+                        prepended_history_send_context=context.prepended_history_send_context,
+                    ),
+                    send_context=context.prepended_history_send_context,
                 )
 
             # Store the response
@@ -319,7 +324,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         return AttackResult(
             conversation_id=context.session.conversation_id,
             objective=context.objective,
-            atomic_attack_identifier=build_atomic_attack_identifier(attack_identifier=self.get_identifier()),
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=response.get_piece() if response else None,
             last_score=score,
             related_conversations=context.related_conversations,
@@ -377,7 +382,6 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         with execution_context(
             component_role=ComponentRole.OBJECTIVE_SCORER,
             attack_strategy_name=self.__class__.__name__,
-            attack_identifier=self.get_identifier(),
             component_identifier=self._objective_scorer.get_identifier(),
             objective=objective,
         ):

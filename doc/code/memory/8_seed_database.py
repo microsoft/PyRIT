@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 8. Seed Database Management
+# # Seed Database Management
 #
 # Beyond storing attack results and conversation history, PyRIT memory also serves as a powerful repository for managing seed datasets. Storing seeds in the database enables:
 #
@@ -113,3 +113,38 @@ print("First image seed in the dataset")
 seed_groups = memory.get_seed_groups(data_types=["image_path"], dataset_name="pyrit_example_dataset")
 print("----------")
 print_group(seed_groups[0])
+
+# %% [markdown]
+# ## Removing Seeds from the Database
+#
+# Just as you can add and query seeds, you can remove them using `remove_seeds_from_memory`. It accepts the same filtering parameters as `get_seeds` (plus an `exact` flag), so the recommended workflow is to preview the matching seeds with `get_seeds(...)` first, then remove them with the same filters. The method returns the number of seeds removed.
+#
+# As a safety measure, at least one filter must be provided. Calling it with no filters raises a `ValueError` to prevent accidentally deleting the entire seed database.
+
+# %%
+# Preview the seeds that will be removed using the same filters
+seeds_to_remove = memory.get_seeds(dataset_name="pyrit_example_dataset")
+print(f"Seeds matching the filter: {len(seeds_to_remove)}")
+
+# Remove them and get back the number of seeds deleted
+removed_count = memory.remove_seeds_from_memory(dataset_name="pyrit_example_dataset")
+print(f"Removed {removed_count} seeds")
+
+# Confirm they are gone
+seeds = memory.get_seeds(dataset_name="pyrit_example_dataset")
+print(f"Seeds remaining in dataset: {len(seeds)}")
+
+# %% [markdown]
+# ### Removing entire groups
+#
+# `remove_seeds_from_memory` deletes only the individual seeds that match your filters. Because a seed group (for example a multimodal prompt made of text plus an image, or a multi-turn conversation) is stored as several seeds sharing a `prompt_group_id`, filtering by a single modality or attribute can leave a **partial group** behind. Some consequences to be aware of:
+#
+# - Deleting the sole objective while leaving its prompts produces an invalid `AttackSeedGroup`, and scenario initialization will raise a `ValueError`.
+# - Deleting one turn of a multi-turn conversation leaves the group with an incomplete context.
+# - Deleting the only role-bearing prompt in a sequence can cause a surviving multi-sequence group to fail role validation.
+#
+# For the most part these are user errors, but when you want to remove whole groups rather than individual seeds, use `remove_seed_groups_from_memory`. It applies the same filters, but removes every seed that shares a `prompt_group_id` with any match, so groups are never left partial. Note that it only affects seeds that belong to a group: a matching seed added individually (with no `prompt_group_id`) is skipped, so use `remove_seeds_from_memory` for those.
+#
+# > **Note on deleting by `value`.** For the remove methods, the `value` filter defaults to full-string equality (`exact=True`), so `remove_seeds_from_memory(value="the")` deletes only seeds whose value is exactly `"the"` — not everything containing it. This differs from `get_seeds`, which always matches `value` by substring. Pass `exact=False` to opt into substring deletion when you really want it. As a general rule, preview with the same filters via `get_seeds(...)` first and prefer a specific filter (such as `dataset_name` or `value_sha256`) for deletion.
+#
+# > **Note on file-backed seeds.** For `image_path`, `audio_path`, and `video_path` seeds, removal deletes only the database record; the serialized file on disk is left in place. Delete those files separately if they are no longer needed.

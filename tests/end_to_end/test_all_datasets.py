@@ -23,6 +23,8 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.datasets.seed_datasets.remote import (
     _ComicJailbreakDataset,
+    _GarakNpmDataset,
+    _GarakPypiDataset,
     _HarmBenchMultimodalDataset,
     _HiXSTestDataset,
     _JailbreakV28KDataset,
@@ -32,6 +34,7 @@ from pyrit.datasets.seed_datasets.remote import (
     _SorryBenchDataset,
     _VLGuardDataset,
     _VLSUMultimodalDataset,
+    _WildGuardMixDataset,
 )
 from pyrit.models import SeedDataset
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -50,7 +53,14 @@ _IMAGE_FETCHING_PROVIDERS: set[type] = {_HarmBenchMultimodalDataset, _SIUODatase
 
 # Providers that produce many seeds and would otherwise exceed _TEST_TIMEOUT.
 # Constructed with max_examples to keep CI fast; full coverage runs are out of scope here.
-_LIMITED_EXAMPLES_PROVIDERS: set[type] = {_ComicJailbreakDataset, _VLSUMultimodalDataset}
+# The garak package registries are multi-million-row lists (npm ~3.3M, pypi ~555k); building
+# every row as a SeedPrompt alone can exceed the timeout even with the data already cached.
+_LIMITED_EXAMPLES_PROVIDERS: set[type] = {
+    _ComicJailbreakDataset,
+    _GarakNpmDataset,
+    _GarakPypiDataset,
+    _VLSUMultimodalDataset,
+}
 
 # Providers backed by HuggingFace-gated datasets. They require both a HUGGINGFACE_TOKEN
 # and that the token's account has accepted each dataset's terms; skipped when no token
@@ -60,6 +70,7 @@ _HF_GATED_PROVIDERS: set[type] = {
     _SGXSTestDataset,
     _SorryBenchDataset,
     _VLGuardDataset,
+    _WildGuardMixDataset,
 }
 
 
@@ -128,6 +139,11 @@ class TestAllDatasets:
             # be empty".  That is a transient environment issue, not a code bug.
             if provider_cls in _IMAGE_FETCHING_PROVIDERS and "cannot be empty" in str(e):
                 pytest.skip(f"{name}: all image downloads failed ({e})")
+            # HuggingFace-gated datasets fail loudly when the token in use hasn't
+            # accepted the dataset's terms. Skip rather than fail so CI tokens that
+            # haven't gone through each per-dataset terms flow don't block the suite.
+            if provider_cls in _HF_GATED_PROVIDERS and "gated dataset" in str(e):
+                pytest.skip(f"{name}: HF account has not accepted dataset terms ({e})")
             pytest.fail(f"Failed to fetch dataset from {name}: {e}")
 
         assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"

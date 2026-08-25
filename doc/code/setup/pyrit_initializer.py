@@ -12,7 +12,7 @@
 # # PyRIT Initializers
 #
 # You can configure PyRIT using:
-# 1. **Built-in initializers** - SimpleInitializer, AIRTInitializer
+# 1. **Built-in initializers** - TargetInitializer, ScorerInitializer, TechniqueInitializer, LoadDefaultDatasets
 # 2. **External scripts** - Custom PyRITInitializer classes for project-specific needs
 #
 # ## Execution Order
@@ -30,7 +30,7 @@
 # %%
 from pyrit.common.apply_defaults import set_default_value
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 class CustomInitializer(PyRITInitializer):
@@ -47,18 +47,20 @@ CustomInitializer()
 #
 # PyRIT includes a few built-in initializers that set more intelligent defaults!
 #
-# - **SimpleInitializer**: Requires only OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY
-# - **AIRTInitializer**: Our best guess at defaults, but requires full Azure OpenAI configuration
+# - **TargetInitializer**: Registers targets from environment variables. With only OPENAI_CHAT_ENDPOINT, OPENAI_CHAT_MODEL, and OPENAI_CHAT_KEY set, it registers a sensible default objective/converter target.
+# - **ScorerInitializer**: Registers default scorers (run it after TargetInitializer, since scorers use those targets).
+# - **TechniqueInitializer**: Registers the attack techniques used by scenarios.
+# - **LoadDefaultDatasets**: Loads the datasets required by registered scenarios into memory.
 #
 # These are easy to include.
 
 # %%
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers import SimpleInitializer
+from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
 
-# Using built-in initializer
+# Using built-in initializers
 await initialize_pyrit_async(  # type: ignore
-    memory_db_type="InMemory", initializers=[SimpleInitializer()]
+    memory_db_type="InMemory", initializers=[TargetInitializer(), ScorerInitializer()]
 )
 
 # %% [markdown]
@@ -71,7 +73,7 @@ await initialize_pyrit_async(  # type: ignore
 #
 # As an example, say you are building a product, and want to set all your `adversarial_chat` in one place. You can using this!
 #
-# Like the built-in initializers, external scripts have the same format and must contain PyRITInitializer classes. In fact, using something like SimpleInitializer() as a template for your own is not a bad place to start.
+# Like the built-in initializers, external scripts have the same format and must contain PyRITInitializer classes. In fact, using something like TargetInitializer() as a template for your own is not a bad place to start.
 
 # %%
 import os
@@ -85,7 +87,7 @@ script_path = os.path.join(temp_dir, "custom_init.py")
 
 # This is the simple custom initializer from the "Creating an Initializer" section of this notebook
 script_content = """
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 from pyrit.common.apply_defaults import set_default_value
 from pyrit.prompt_target import OpenAIChatTarget
 

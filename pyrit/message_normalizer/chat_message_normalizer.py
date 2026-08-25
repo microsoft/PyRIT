@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import aiofiles
 
-from pyrit.common.data_url_converter import convert_local_image_to_data_url_async
 from pyrit.memory import DataTypeSerializer
+from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.message_normalizer.message_normalizer import (
     MessageListNormalizer,
     MessageStringNormalizer,
@@ -36,7 +36,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             Defaults to False for backward compatibility.
         system_message_behavior: How to handle system messages before conversion.
             - "keep": Keep system messages as-is (default)
-            - "squash": Merge system message into first user message
+            - "squash": Merge system messages into the following user message
             - "ignore": Drop system messages entirely
     """
 

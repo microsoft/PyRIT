@@ -7,19 +7,17 @@ from __future__ import annotations
 
 import uuid
 import warnings
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import SeedAttackGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, SeedObjective
 from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
-from pyrit.scenario.scenarios.adaptive.dispatcher import (
-    AdaptiveTechniqueDispatcher,
-)
+from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import TrueFalseScorer
 
@@ -46,16 +44,16 @@ def mock_objective_scorer() -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def reset_technique_registry():
-    """Reset registries and the cached strategy class between tests."""
+    """Reset registries and the cached technique class between tests."""
     from pyrit.registry import TargetRegistry
 
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
-    TextAdaptive._cached_strategy_class = None
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
+    TextAdaptive._cached_technique_class = None
     yield
-    AttackTechniqueRegistry.reset_instance()
-    TargetRegistry.reset_instance()
-    TextAdaptive._cached_strategy_class = None
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
+    TextAdaptive._cached_technique_class = None
 
 
 @pytest.fixture(autouse=True)
@@ -80,8 +78,8 @@ def mock_runtime_env():
         yield
 
 
-def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) -> SeedAttackGroup:
-    return SeedAttackGroup(seeds=[SeedObjective(value=value, harm_categories=harm_categories)])
+def _make_seed_group(*, value: str, harm_categories: list[str] | None = None) -> AttackSeedGroup:
+    return AttackSeedGroup(seeds=[SeedObjective(value=value, harm_categories=harm_categories)])
 
 
 def _make_fake_factory(*, seed_technique=None, adversarial_chat=None, scoring_config_type=None) -> MagicMock:
@@ -97,7 +95,7 @@ def _make_fake_factory(*, seed_technique=None, adversarial_chat=None, scoring_co
     fake_id = uuid.uuid4().hex[:8]
 
     fake_technique = MagicMock()
-    fake_attack = MagicMock(name=f"fake-attack-strategy-{fake_id}")
+    fake_attack = MagicMock(name=f"fake-attack-technique-{fake_id}")
     fake_attack.get_identifier.return_value = ComponentIdentifier(
         class_name=f"FakeAttack{fake_id}",
         class_module="test_text_adaptive",
@@ -124,21 +122,23 @@ class TestTextAdaptiveBasics:
 
     def test_default_dataset_config(self):
         config = TextAdaptive.default_dataset_config()
-        assert isinstance(config, DatasetConfiguration)
-        assert config.max_dataset_size == 4
+        assert isinstance(config, CompoundDatasetAttackConfiguration)
+        assert all(child.max_dataset_size == 4 for child in config._configurations)
+        assert config.dataset_names == TextAdaptive.required_datasets()
 
     def test_required_datasets_non_empty(self):
         assert len(TextAdaptive.required_datasets()) > 0
 
-    def test_get_strategy_class_is_cached(self):
-        cls_a = TextAdaptive.get_strategy_class()
-        cls_b = TextAdaptive.get_strategy_class()
+    def test_get_technique_class_is_cached(self):
+        cls_a = TextAdaptive.get_technique_class()
+        cls_b = TextAdaptive.get_technique_class()
         assert cls_a is cls_b
 
-    def test_get_default_strategy(self):
-        strat = TextAdaptive.get_default_strategy()
+    def test_get_default_technique(self):
+        strat = TextAdaptive.get_technique_class().default()
         # The default aggregate must resolve to something runnable.
         assert strat is not None
+        assert strat.value == "default"
 
     @patch("pyrit.scenario.core.scenario.Scenario._get_default_objective_scorer")
     def test_init_stores_adaptive_params(self, mock_get_scorer, mock_objective_scorer):
@@ -161,19 +161,27 @@ class TestTextAdaptiveAtomicAttacks:
         *,
         mock_objective_target,
         mock_objective_scorer,
-        seed_groups: dict[str, list[SeedAttackGroup]],
+        seed_groups: dict[str, list[AttackSeedGroup]],
         **scenario_kwargs,
     ):
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=seed_groups):
+        with patch.object(
+            CompoundDatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=seed_groups,
+        ):
             scenario = TextAdaptive(
                 objective_scorer=mock_objective_scorer,
                 **scenario_kwargs,
             )
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=False,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "include_baseline": False,
+                }
             )
-            return scenario, await scenario._get_atomic_attacks_async()
+            await scenario.initialize_async()
+            return scenario, scenario._atomic_attacks
 
     async def test_one_atomic_per_objective(self, mock_objective_target, mock_objective_scorer):
         groups = {
@@ -211,16 +219,22 @@ class TestTextAdaptiveAtomicAttacks:
             "violence": [_make_seed_group(value="obj-v1", harm_categories=["violence"])],
             "hate": [_make_seed_group(value="obj-h1", harm_categories=["hate"])],
         }
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            CompoundDatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=False,
-            )
-            # Only spy on the explicit invocation so the initialize_async call
-            # doesn't double-count dispatchers.
+            # Spy on the dispatcher construction that initialize_async triggers.
             with patch.object(AdaptiveTechniqueDispatcher, "__init__", _spy_init):
-                await scenario._get_atomic_attacks_async()
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                    }
+                )
+                await scenario.initialize_async()
 
         # One dispatcher per dataset; all share the same selector identity.
         assert len(selectors_seen) == 2
@@ -257,16 +271,24 @@ class TestTextAdaptiveAtomicAttacks:
 
     async def test_no_usable_techniques_raises(self, mock_objective_target, mock_objective_scorer):
         groups = {"violence": [_make_seed_group(value="obj")]}
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            CompoundDatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=False,
-            )
-            # Force the factory map to be empty.
+            # Force the factory map to be empty; initialize_async builds the atomic
+            # attacks and must raise when no techniques are usable.
             with patch.object(scenario, "_get_attack_technique_factories", return_value={}):
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                    }
+                )
                 with pytest.raises(ValueError, match="no usable techniques"):
-                    await scenario._get_atomic_attacks_async()
+                    await scenario.initialize_async()
 
     async def test_techniques_with_seed_technique_are_kept(self, mock_objective_target, mock_objective_scorer):
         """Factories that declare a ``seed_technique`` participate in the pool
@@ -277,18 +299,29 @@ class TestTextAdaptiveAtomicAttacks:
         seeded_factory = _make_fake_factory(seed_technique=MagicMock(name="seed_technique"))
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            strategy_class = scenario.get_strategy_class()
-            factories = {"role_play": plain_factory, "many_shot": seeded_factory}
+            technique_class = scenario.get_technique_class()
+            factories = {"role_play_movie_script": plain_factory, "many_shot": seeded_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    include_baseline=False,
-                    scenario_strategies=[strategy_class("role_play"), strategy_class("many_shot")],
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_techniques": [
+                            technique_class("role_play_movie_script"),
+                            technique_class("many_shot"),
+                        ],
+                    }
                 )
+                await scenario.initialize_async()
                 attacks = scenario._atomic_attacks
                 techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
@@ -297,7 +330,7 @@ class TestTextAdaptiveAtomicAttacks:
         # Both factories survive in the technique pool; in particular the
         # seeded one is no longer silently dropped.
         technique_names = {b.name for b in techniques.values()}
-        assert "role_play" in technique_names
+        assert "role_play_movie_script" in technique_names
         assert "many_shot" in technique_names
 
     async def test_incompatible_seed_technique_is_filtered_per_objective(
@@ -313,18 +346,29 @@ class TestTextAdaptiveAtomicAttacks:
 
         # Only the plain factory (no seed_technique) is compatible.
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=False),
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=False),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            strategy_class = scenario.get_strategy_class()
-            factories = {"role_play": plain_factory, "many_shot": incompatible_factory}
+            technique_class = scenario.get_technique_class()
+            factories = {"role_play_movie_script": plain_factory, "many_shot": incompatible_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    include_baseline=False,
-                    scenario_strategies=[strategy_class("role_play"), strategy_class("many_shot")],
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_techniques": [
+                            technique_class("role_play_movie_script"),
+                            technique_class("many_shot"),
+                        ],
+                    }
                 )
+                await scenario.initialize_async()
                 attacks = scenario._atomic_attacks
                 techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
@@ -335,7 +379,7 @@ class TestTextAdaptiveAtomicAttacks:
         # inside the dispatcher (``AdaptiveTechniqueDispatcher.compatible_techniques``)
         # then drops the incompatible one before selection.
         technique_names = {b.name for b in techniques.values()}
-        assert "role_play" in technique_names
+        assert "role_play_movie_script" in technique_names
         assert "many_shot" in technique_names
 
     async def test_objective_skipped_when_no_compatible_techniques(
@@ -356,24 +400,32 @@ class TestTextAdaptiveAtomicAttacks:
             return self_group.objective.value == "obj-keep"
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", _selective_compat),
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", _selective_compat),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            strategy_class = scenario.get_strategy_class()
+            technique_class = scenario.get_technique_class()
             with patch.object(
                 scenario,
                 "_get_attack_technique_factories",
-                return_value={"role_play": seeded_factory},
+                return_value={"role_play_movie_script": seeded_factory},
             ):
                 import logging
 
                 with caplog.at_level(logging.WARNING):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                        scenario_strategies=[strategy_class("role_play")],
+                    scenario.set_params_from_args(
+                        args={
+                            "objective_target": mock_objective_target,
+                            "include_baseline": False,
+                            "scenario_techniques": [technique_class("role_play_movie_script")],
+                        }
                     )
+                    await scenario.initialize_async()
                     attacks = scenario._atomic_attacks
 
         # Only the compatible objective produced an atomic attack.
@@ -394,21 +446,29 @@ class TestTextAdaptiveAtomicAttacks:
         groups = {"violence": [_make_seed_group(value="obj")]}
         narrow_factory = _make_fake_factory(scoring_config_type=NarrowScoringConfig)
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            strategy_class = scenario.get_strategy_class()
+            technique_class = scenario.get_technique_class()
             with patch.object(
                 scenario,
                 "_get_attack_technique_factories",
-                return_value={"role_play": narrow_factory},
+                return_value={"role_play_movie_script": narrow_factory},
             ):
-                await scenario.initialize_async(
-                    objective_target=mock_objective_target,
-                    include_baseline=False,
-                    scenario_strategies=[strategy_class("role_play")],
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_techniques": [technique_class("role_play_movie_script")],
+                    }
                 )
+                await scenario.initialize_async()
 
         narrow_factory.create.assert_called_once()
         kwargs = narrow_factory.create.call_args.kwargs
@@ -436,19 +496,27 @@ class TestTextAdaptiveAtomicAttacks:
         strict_factory = _make_fake_factory(scoring_config_type=StrictScoringConfig)
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            strategy_class = scenario.get_strategy_class()
-            factories = {"role_play": good_factory, "tap": strict_factory}
+            technique_class = scenario.get_technique_class()
+            factories = {"role_play_movie_script": good_factory, "tap": strict_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
                 with caplog.at_level(logging.WARNING):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                        scenario_strategies=[strategy_class("role_play"), strategy_class("tap")],
+                    scenario.set_params_from_args(
+                        args={
+                            "objective_target": mock_objective_target,
+                            "include_baseline": False,
+                            "scenario_techniques": [technique_class("role_play_movie_script"), technique_class("tap")],
+                        }
                     )
+                    await scenario.initialize_async()
                     techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
         # Strict factory's create is never called — incompatibility surfaces
@@ -456,7 +524,7 @@ class TestTextAdaptiveAtomicAttacks:
         strict_factory.create.assert_not_called()
         # Only the compatible technique remains in the pool.
         technique_names = {b.name for b in techniques.values()}
-        assert technique_names == {"role_play"}
+        assert technique_names == {"role_play_movie_script"}
         # The skip reason mentions the required config type so operators can
         # diagnose the mismatch.
         assert any("tap" in r.getMessage() and "StrictScoringConfig" in r.getMessage() for r in caplog.records)
@@ -474,25 +542,33 @@ class TestTextAdaptiveAtomicAttacks:
         bad_factory.create.side_effect = ValueError("requires FloatScaleThresholdScorer")
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            strategy_class = scenario.get_strategy_class()
-            factories = {"role_play": good_factory, "tap": bad_factory}
+            technique_class = scenario.get_technique_class()
+            factories = {"role_play_movie_script": good_factory, "tap": bad_factory}
             with patch.object(scenario, "_get_attack_technique_factories", return_value=factories):
                 with caplog.at_level(logging.WARNING):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                        scenario_strategies=[strategy_class("role_play"), strategy_class("tap")],
+                    scenario.set_params_from_args(
+                        args={
+                            "objective_target": mock_objective_target,
+                            "include_baseline": False,
+                            "scenario_techniques": [technique_class("role_play_movie_script"), technique_class("tap")],
+                        }
                     )
+                    await scenario.initialize_async()
                     attacks = scenario._atomic_attacks
                     techniques = scenario._build_techniques_dict(objective_target=mock_objective_target)
 
         assert len(attacks) == 1
         technique_names = {b.name for b in techniques.values()}
-        assert technique_names == {"role_play"}
+        assert technique_names == {"role_play_movie_script"}
         assert any("tap" in r.getMessage() and "Skipping" in r.getMessage() for r in caplog.records)
 
     async def test_all_factories_failing_raises_with_reason(self, mock_objective_target, mock_objective_scorer):
@@ -503,49 +579,69 @@ class TestTextAdaptiveAtomicAttacks:
         bad_factory.create.side_effect = ValueError("requires FloatScaleThresholdScorer")
 
         with (
-            patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups),
-            patch.object(SeedAttackGroup, "is_compatible_with_technique", return_value=True),
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(AttackSeedGroup, "is_compatible_with_technique", return_value=True),
         ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-            strategy_class = scenario.get_strategy_class()
+            technique_class = scenario.get_technique_class()
             with patch.object(
                 scenario,
                 "_get_attack_technique_factories",
                 return_value={"tap": bad_factory},
             ):
+                scenario.set_params_from_args(
+                    args={
+                        "objective_target": mock_objective_target,
+                        "include_baseline": False,
+                        "scenario_techniques": [technique_class("tap")],
+                    }
+                )
                 with pytest.raises(ValueError, match="incompatible with scenario scorer.*tap"):
-                    await scenario.initialize_async(
-                        objective_target=mock_objective_target,
-                        include_baseline=False,
-                        scenario_strategies=[strategy_class("tap")],
-                    )
+                    await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestTextAdaptiveBaselinePolicy:
     async def test_initialize_async_accepts_explicit_baseline(self, mock_objective_target, mock_objective_scorer):
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            CompoundDatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             # Baseline is Enabled by default, so explicit include_baseline=True must not raise.
-            await scenario.initialize_async(
-                objective_target=mock_objective_target,
-                include_baseline=True,
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "include_baseline": True,
+                }
             )
+            await scenario.initialize_async()
 
     async def test_baseline_emitted_at_index_zero_by_default(self, mock_objective_target, mock_objective_scorer):
         """
-        Under ``BASELINE_ATTACK_POLICY = Enabled`` (the default), the override
-        must explicitly prepend a baseline atomic at index 0 so the legacy
-        deprecation-rescue branch in ``Scenario.initialize_async`` (slated
-        for removal in 0.16.0) is bypassed and no DeprecationWarning fires.
+        Under ``BASELINE_ATTACK_POLICY = Enabled`` (the default), the base
+        scenario must prepend a baseline atomic attack at index 0.
         """
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
-        with patch.object(DatasetConfiguration, "get_seed_attack_groups", return_value=groups):
+        with patch.object(
+            CompoundDatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
             scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
             with warnings.catch_warnings():
                 warnings.simplefilter("error", DeprecationWarning)
-                await scenario.initialize_async(objective_target=mock_objective_target)
+                scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+                await scenario.initialize_async()
 
             assert scenario._atomic_attacks, "expected at least one atomic attack"
             assert scenario._atomic_attacks[0].atomic_attack_name == "baseline", (

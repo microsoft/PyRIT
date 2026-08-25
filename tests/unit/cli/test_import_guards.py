@@ -44,7 +44,12 @@ def _check_forbidden_imports(*, import_statement: str, forbidden: list[str]) -> 
 
 
 # Heavy modules that should never be loaded during CLI arg parsing.
-# This ensures `pyrit_scan --help` stays near-instant (~0.3s).
+# This ensures `pyrit_scan --help` stays near-instant (~0.4s).
+#
+# ``pyrit.models`` and ``pyrit.backend`` are the real cost we're guarding
+# against — eagerly importing ``pyrit.models`` adds ~500ms to ``--help``.
+# ``pydantic`` is kept as cheap insurance against eager BaseModel class
+# compilation creeping into the bootstrap path.
 _CLI_FORBIDDEN = [
     "alembic",
     "av",
@@ -54,6 +59,8 @@ _CLI_FORBIDDEN = [
     "openai",
     "pandas",
     "pydantic",
+    "pyrit.backend",
+    "pyrit.models",
     "scipy",
     "sqlalchemy",
     "torch",
@@ -78,6 +85,12 @@ _PROMPT_TARGET_FORBIDDEN = [
     "av",
     "pandas",
     "scipy",
+    "torch",
+    "transformers",
+]
+
+_TARGET_CATALOG_FORBIDDEN = [
+    "huggingface_hub",
     "torch",
     "transformers",
 ]
@@ -125,4 +138,19 @@ class TestImportGuards:
         assert not loaded, (
             f"PromptTarget base class loaded ML modules: {loaded}. "
             f"Ensure heavy subclass imports use __getattr__ lazy loading in __init__.py."
+        )
+
+    def test_target_catalog_discovery_does_not_load_inference_frameworks(self) -> None:
+        """Full target discovery includes Hugging Face without importing its runtime frameworks."""
+        loaded = _check_forbidden_imports(
+            import_statement=(
+                "from pyrit.registry import TargetRegistry\n"
+                "metadata = TargetRegistry.get_registry_singleton().get_all_registered_class_metadata()\n"
+                "assert any(item.class_name == 'HuggingFaceChatTarget' for item in metadata)"
+            ),
+            forbidden=_TARGET_CATALOG_FORBIDDEN,
+        )
+        assert not loaded, (
+            f"Target catalog discovery loaded inference frameworks: {loaded}. "
+            f"Move target-specific runtime imports to construction or execution paths."
         )

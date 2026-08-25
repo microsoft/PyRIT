@@ -1,20 +1,21 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Optional
-from uuid import UUID
+from __future__ import annotations
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
-from pyrit.models import ComponentIdentifier, Message, PromptDataType, Score, UnvalidatedScore
-from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.score.scorer import Scorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from typing import TYPE_CHECKING
+
+from pyrit.models import Message, Score
+from pyrit.score.message_scorer import MessageScorer
 
 if TYPE_CHECKING:
+    from pyrit.prompt_target.common.prompt_target import PromptTarget
+    from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
-class FloatScaleScorer(Scorer):
+class FloatScaleScorer(MessageScorer):
     """
     Base class for scorers that return floating-point scores in the range [0, 1].
 
@@ -35,7 +36,13 @@ class FloatScaleScorer(Scorer):
     "blocked = True") should override ``_score_piece_async`` or ``_build_fallback_score``.
     """
 
-    def __init__(self, *, validator: ScorerPromptValidator, chat_target: PromptTarget | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        validator: ScorerPromptValidator,
+        chat_target: PromptTarget | None = None,
+        message_resolver: MessageScorableResolver | None = None,
+    ) -> None:
         """
         Initialize the FloatScaleScorer.
 
@@ -43,10 +50,17 @@ class FloatScaleScorer(Scorer):
             validator: A validator object used to validate scores.
             chat_target: Optional chat target used by the scorer, forwarded to the base class
                 for validation against ``TARGET_REQUIREMENTS``.
+            message_resolver: Message evidence resolver.
         """
-        super().__init__(validator=validator, chat_target=chat_target)
+        super().__init__(
+            validator=validator,
+            chat_target=chat_target,
+            message_resolver=message_resolver,
+        )
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         """
         Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
 
@@ -56,6 +70,8 @@ class FloatScaleScorer(Scorer):
         Args:
             message (Message): The message whose first piece is inspected for status.
             objective (str | None): The objective associated with this scoring call.
+            scorer_response_blocked (bool): When True, the scorer's own LLM response was
+                blocked by content filtering; reflected in the rationale.
 
         Returns:
             list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score
@@ -69,7 +85,13 @@ class FloatScaleScorer(Scorer):
         if piece_id is None:
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
-        if first_piece.is_blocked():
+        if scorer_response_blocked:
+            rationale = (
+                "The scorer's own LLM response was blocked by content filtering "
+                "(raise_if_scorer_blocks is False); returning 0.0."
+            )
+            description = "Scorer response blocked; returning 0.0."
+        elif first_piece.is_blocked():
             rationale = (
                 "The request was blocked by the target "
                 "(score_blocked_content is False or no partial content available); returning 0.0."
@@ -107,16 +129,14 @@ class FloatScaleScorer(Scorer):
             if not (0 <= score.get_value() <= 1):
                 raise ValueError("FloatScaleScorer score value must be between 0 and 1.")
 
-    def get_scorer_metrics(self) -> Optional["HarmScorerMetrics"]:
+    def get_scorer_metrics(self) -> HarmScorerMetrics | None:
         """
         Get evaluation metrics for this scorer from the configured evaluation result file.
 
         Returns:
             HarmScorerMetrics: The metrics for this scorer, or None if not found or not configured.
         """
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_harm_metrics_by_eval_hash,
-        )
+        from pyrit.score.scorer_evaluation.scorer_metrics_io import find_harm_metrics_by_eval_hash
 
         if self.evaluation_file_mapping is None or self.evaluation_file_mapping.harm_category is None:
             return None
@@ -129,50 +149,3 @@ class FloatScaleScorer(Scorer):
             eval_hash=eval_hash,
             harm_category=self.evaluation_file_mapping.harm_category,
         )
-
-    async def _score_value_with_llm_async(
-        self,
-        *,
-        prompt_target: PromptTarget,
-        system_prompt: str,
-        message_value: str,
-        message_data_type: PromptDataType,
-        scored_prompt_id: str | UUID,
-        prepended_text_message_piece: str | None = None,
-        category: str | UUID | None = None,
-        objective: str | None = None,
-        score_value_output_key: str = "score_value",
-        rationale_output_key: str = "rationale",
-        description_output_key: str = "description",
-        metadata_output_key: str = "metadata",
-        category_output_key: str = "category",
-        attack_identifier: ComponentIdentifier | None = None,
-    ) -> UnvalidatedScore:
-        score: UnvalidatedScore | None = None
-        try:
-            score = await super()._score_value_with_llm_async(
-                prompt_target=prompt_target,
-                system_prompt=system_prompt,
-                message_value=message_value,
-                message_data_type=message_data_type,
-                scored_prompt_id=scored_prompt_id,
-                prepended_text_message_piece=prepended_text_message_piece,
-                category=category,
-                objective=objective,
-                score_value_output_key=score_value_output_key,
-                rationale_output_key=rationale_output_key,
-                description_output_key=description_output_key,
-                metadata_output_key=metadata_output_key,
-                category_output_key=category_output_key,
-                attack_identifier=attack_identifier,
-            )
-            if score is None:
-                raise ValueError("Score returned None")
-            # raise an exception if it's not parsable as a float
-            float(score.raw_score_value)
-        except ValueError:
-            score_value = score.raw_score_value if score else "None"
-            raise InvalidJsonException(
-                message=(f"Invalid JSON response, score_value should be a float not this: {score_value}")
-            ) from None
-        return score

@@ -25,52 +25,65 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  // Counter used to re-trigger the fetch effect from event handlers (Refresh,
+  // dialog close) without invoking setState synchronously in the effect body.
+  const [refetchCount, setRefetchCount] = useState(0)
 
   // Retry fetching targets a few times with backoff. The Vite dev proxy
   // returns 502 while the backend is still starting, so a single failed
   // request on initial page load would show a confusing error to the user.
-  const fetchTargets = useCallback(async () => {
+  useEffect(() => {
     const maxRetries = 3
-    setLoading(true)
-    setError(null)
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let cancelled = false
+
+    const attempt = async (n: number): Promise<void> => {
       try {
         const response = await targetsApi.listTargets(200)
+        if (cancelled) return
         setTargets(response.items)
+        setError(null)
         setLoading(false)
-        return
       } catch (err) {
-        if (attempt < maxRetries) {
-          // Wait before retrying (1s, 2s, 3s)
-          await new Promise(r => setTimeout(r, (attempt + 1) * 1000))
-        } else {
-          setError(toApiError(err).detail)
+        if (cancelled) return
+        if (n < maxRetries) {
+          await new Promise(r => setTimeout(r, (n + 1) * 1000))
+          if (cancelled) return
+          return attempt(n + 1)
         }
+        setError(toApiError(err).detail)
+        setLoading(false)
       }
     }
-    setLoading(false)
+
+    attempt(0)
+    return () => {
+      cancelled = true
+    }
+  }, [refetchCount])
+
+  const fetchTargets = useCallback(() => {
+    setLoading(true)
+    setError(null)
+    setRefetchCount(c => c + 1)
   }, [])
 
-  useEffect(() => {
+  const handleTargetCreated = useCallback(() => {
+    setDialogOpen(false)
     fetchTargets()
   }, [fetchTargets])
 
-  const handleTargetCreated = async () => {
-    setDialogOpen(false)
-    await fetchTargets()
-  }
-
   return (
-    <div className={styles.root}>
+    <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Text size={600} weight="semibold">Target Configuration</Text>
+          <Text as="h1" size={600} weight="semibold">Target Configuration</Text>
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
             Manage targets for attack sessions. Select a target to use in the chat view.
           </Text>
         </div>
         <div className={styles.headerActions}>
           <Button
+            className={styles.headerAction}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={fetchTargets}
@@ -79,6 +92,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             Refresh
           </Button>
           <Button
+            className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
@@ -106,14 +120,20 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
             Add a target manually, or configure an initializer in your <code>~/.pyrit/.pyrit_conf</code> file
             to auto-populate targets from your <code>.env</code> and <code>.env.local</code> files.
-            For example, add <code>airt</code> to the <code>initializers</code> list to register
-            Azure OpenAI targets automatically. See the{' '}
-            <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
+            For example, add <code>target</code> to the <code>initializers</code> list to register
+            available prompt targets automatically. See the{' '}
+            <Link
+              href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+              target="_blank"
+              rel="noopener noreferrer"
+              inline
+            >
               .pyrit_conf_example
             </Link>{' '}
             for details.
           </Text>
           <Button
+            className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}

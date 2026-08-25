@@ -1,14 +1,22 @@
 import axios from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { toApiError } from './errors'
-import { getApiScopes } from '../auth/msalConfig'
+import { getGraphScopes } from '../auth/msalConfig'
 import type {
+  ApplyInitializerRequest,
+  ApplyInitializerResponse,
   TargetInstance,
   TargetListResponse,
+  TargetCatalogResponse,
   ConverterCatalogResponse,
   ConverterInstance,
   ConverterListResponse,
   CreateTargetRequest,
+  InitializerSettingsResponse,
+  ListRegisteredInitializersResponse,
+  AdditionalInitializer,
+  CreateAdditionalInitializerRequest,
+  UpdateAdditionalInitializerRequest,
   CreateAttackRequest,
   CreateAttackResponse,
   AttackSummary,
@@ -54,14 +62,9 @@ function generateRequestId(): string {
 // ---------------------------------------------------------------------------
 
 let _msalInstance: PublicClientApplication | null = null
-let _clientId: string = ''
 
 export function setMsalInstance(instance: PublicClientApplication): void {
   _msalInstance = instance
-}
-
-export function setClientId(clientId: string): void {
-  _clientId = clientId
 }
 
 async function getAccessToken(forceRefresh = false): Promise<string | null> {
@@ -72,7 +75,7 @@ async function getAccessToken(forceRefresh = false): Promise<string | null> {
 
   try {
     const response = await _msalInstance.acquireTokenSilent({
-      scopes: getApiScopes(_clientId),
+      scopes: getGraphScopes(),
       account,
       forceRefresh,
     })
@@ -80,7 +83,7 @@ async function getAccessToken(forceRefresh = false): Promise<string | null> {
   } catch (error) {
     if (error instanceof InteractionRequiredAuthError) {
       await _msalInstance.acquireTokenRedirect({
-        scopes: getApiScopes(_clientId),
+        scopes: getGraphScopes(),
       })
     }
     return null
@@ -146,6 +149,11 @@ export const versionApi = {
 }
 
 export const targetsApi = {
+  listTargetCatalog: async (): Promise<TargetCatalogResponse> => {
+    const response = await apiClient.get('/targets/catalog')
+    return response.data
+  },
+
   listTargets: async (limit = 50, cursor?: string): Promise<TargetListResponse> => {
     const params: Record<string, string | number> = { limit }
     if (cursor) params.cursor = cursor
@@ -187,6 +195,51 @@ export const convertersApi = {
 
   previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string; converted_value_data_type?: string }> => {
     const response = await apiClient.post('/converters/preview', request)
+    return response.data
+  },
+}
+
+export const initializersApi = {
+  getSettings: async (): Promise<InitializerSettingsResponse> => {
+    const response = await apiClient.get('/initializers/settings')
+    return response.data
+  },
+
+  listRegistered: async (): Promise<ListRegisteredInitializersResponse> => {
+    const response = await apiClient.get('/initializers', { params: { limit: 200 } })
+    return response.data
+  },
+
+  createAdditional: async (
+    request: CreateAdditionalInitializerRequest,
+  ): Promise<AdditionalInitializer> => {
+    const response = await apiClient.post('/initializers/settings', request)
+    return response.data
+  },
+
+  updateAdditional: async (
+    id: string,
+    request: UpdateAdditionalInitializerRequest,
+  ): Promise<AdditionalInitializer> => {
+    const response = await apiClient.put(
+      `/initializers/settings/${encodeURIComponent(id)}`,
+      request,
+    )
+    return response.data
+  },
+
+  deleteAdditional: async (id: string): Promise<void> => {
+    await apiClient.delete(`/initializers/settings/${encodeURIComponent(id)}`)
+  },
+
+  applyNow: async (
+    initializerName: string,
+    request?: ApplyInitializerRequest,
+  ): Promise<ApplyInitializerResponse> => {
+    const response = await apiClient.post(
+      `/initializers/${encodeURIComponent(initializerName)}/apply`,
+      request ?? {},
+    )
     return response.data
   },
 }

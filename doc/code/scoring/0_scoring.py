@@ -19,7 +19,7 @@
 #
 # A scorer takes a response (or a whole conversation) and returns one or more
 # [`Score`](../../../pyrit/models/score.py) objects. Scorers are used three ways:
-# directly (this page), automatically inside an [attack](../executor/attack/1_prompt_sending_attack.ipynb),
+# directly (this page), automatically inside an [attack](../executor/1_single_turn.ipynb#prompt-sending),
 # and over many stored responses with the [batch scorer](#batch-scoring).
 #
 # ## The two return types
@@ -64,6 +64,8 @@ print(df.to_string(index=False))
 #
 # Every scorer derives from the abstract `Scorer` class through one of three intermediate
 # bases: `TrueFalseScorer`, `FloatScaleScorer`, or `ConversationScorer`.
+
+# %% [markdown] class="col-page-right"
 #
 # ```mermaid
 # classDiagram
@@ -88,6 +90,8 @@ print(df.to_string(index=False))
 #     TrueFalseScorer <|-- TrueFalseCompositeScorer
 #     TrueFalseScorer <|-- FloatScaleThresholdScorer
 # ```
+
+# %% [markdown]
 #
 # `ConversationScorer` is never instantiated directly. `create_conversation_scorer()`
 # builds a subclass that mixes it with a `TrueFalseScorer` or `FloatScaleScorer` so the

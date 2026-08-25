@@ -3,7 +3,7 @@
 
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import override
 
@@ -82,7 +82,14 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         "Hannaneh Hajishirzi",
     ]
 
-    _GROUPS: ClassVar[list[str]] = ["Allen Institute for AI"]
+    _GROUPS: ClassVar[list[str]] = [
+        "Allen Institute for Artificial Intelligence",
+        "University of Washington",
+        "The Ohio State University",
+        "Microsoft Research",
+        "Samaya AI",
+        "NVIDIA",
+    ]
 
     HF_DATASET_NAME: str = "allenai/coconot"
 
@@ -106,6 +113,8 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
             ValueError: If any value in ``categories`` is not a CoCoNotCategory.
         """
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(values=categories, enum_cls=CoCoNotCategory, label="categories")
         self._categories = categories
 
@@ -175,7 +184,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         logger.info(f"Successfully loaded {len(seeds)} objectives from CoCoNot ({self.dataset_name})")
         return SeedDataset(seeds=seeds, dataset_name=self.dataset_name)
 
-    def _row_to_seed(self, *, row: dict, split: str, source_url: str) -> SeedObjective:
+    def _row_to_seed(self, *, row: dict[str, Any], split: str, source_url: str) -> SeedObjective:
         """
         Convert one HF row into a SeedObjective with full per-row metadata.
 
@@ -200,10 +209,15 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         if response:
             metadata["response"] = response
 
+        # CoCoNot's noncompliance taxonomy (incomplete/unsupported/indeterminate/
+        # humanizing/safety) is not a harm taxonomy, so harm categories are left
+        # empty while the native category stays in metadata.
+        harm_categories: list[str] = []
+
         return SeedObjective(
             value=row["prompt"],
             dataset_name=self.dataset_name,
-            harm_categories=[category] if category else [],
+            harm_categories=harm_categories,
             description=self.DEFAULT_DESCRIPTION,
             source=source_url,
             authors=self._AUTHORS,
@@ -256,6 +270,8 @@ class _CoCoNotRefusalDataset(_CoCoNotBaseDataset):
         """
         super().__init__(categories=categories)
         if splits is not None:
+            if not splits:
+                raise ValueError("`splits` must be a non-empty list (pass None to include all splits)")
             self._validate_enums(values=splits, enum_cls=CoCoNotSplit, label="splits")
         self._splits = splits
 
@@ -275,7 +291,7 @@ class _CoCoNotRefusalDataset(_CoCoNotBaseDataset):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "coconot_refusal"
 
 
@@ -304,5 +320,5 @@ class _CoCoNotContrastDataset(_CoCoNotBaseDataset):
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "coconot_contrast"

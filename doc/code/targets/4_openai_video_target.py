@@ -5,10 +5,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.17.2
+#       jupytext_version: 1.19.4
 # ---
+
 # %% [markdown]
-# # 4. OpenAI Video Target
+# # OpenAI Video Target
 #
 # `OpenAIVideoTarget` supports three modes:
 # - **Text-to-video**: Generate a video from a text prompt.
@@ -53,9 +54,9 @@ objectives = [
     "Video of a raccoon pirate eating a croissant at a cafe in France",
 ]
 
-objective_scorer = SelfAskTrueFalseScorer(
+objective_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
+    question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
 )
 
 video_scorer = VideoTrueFalseScorer(
@@ -94,17 +95,15 @@ objectives = [
 ]
 
 # Visual scorer - checks what is SEEN in the video frames
-visual_scorer = SelfAskTrueFalseScorer(
+visual_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
+    question=TrueFalseQuestion(true_description="A raccoon dressed as a pirate is actively eating a pastry"),
 )
 
 # Audio transcript scorer - checks what is SAID in the video
-audio_text_scorer = SelfAskTrueFalseScorer(
+audio_text_scorer = SelfAskTrueFalseScorer.from_question(
     chat_target=OpenAIChatTarget(),
-    true_false_question=TrueFalseQuestion(
-        true_description="Someone introduces themselves and expresses enjoyment of a croissant"
-    ),
+    question=TrueFalseQuestion(true_description="Someone introduces themselves and expresses enjoyment of a croissant"),
 )
 
 # BOTH the audio and visual scorers must be true for the overall score to be true (AND aggregation)
@@ -148,7 +147,7 @@ remix_piece = MessagePiece(
     original_value="Make it a watercolor painting style",
     prompt_metadata={"video_id": video_id},
 )
-remix_result = await video_target.send_prompt_async(message=Message([remix_piece]))  # type: ignore
+remix_result = await video_target.send_prompt_async(message=Message(message_pieces=[remix_piece]))  # type: ignore
 print(f"Remixed video: {remix_result[0].message_pieces[0].converted_value}")
 
 # %% [markdown]
@@ -190,5 +189,5 @@ image_piece = MessagePiece(
     converted_value_data_type="image_path",
     conversation_id=conversation_id,
 )
-result = await i2v_target.send_prompt_async(message=Message([text_piece, image_piece]))  # type: ignore
+result = await i2v_target.send_prompt_async(message=Message(message_pieces=[text_piece, image_piece]))  # type: ignore
 print(f"Text+Image-to-video result: {result[0].message_pieces[0].converted_value}")

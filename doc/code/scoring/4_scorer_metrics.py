@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -150,13 +150,13 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
 
 gpt4o_endpoint = os.environ.get("AZURE_OPENAI_GPT4O_ENDPOINT")
-harm_scorer = SelfAskLikertScorer(
+harm_scorer = SelfAskLikertScorer.from_likert_scale(
     chat_target=OpenAIChatTarget(
         endpoint=gpt4o_endpoint,
         api_key=get_azure_openai_auth(gpt4o_endpoint),
         model_name=os.environ.get("AZURE_OPENAI_GPT4O_MODEL"),
     ),
-    likert_scale=LikertScalePaths.EXPLOITS_SCALE,
+    likert_scale=LikertScalePaths.EXPLOITS_SCALE.load(),
 )
 
 # Retrieve pre-computed metrics using the scorer's identity hash
@@ -301,7 +301,9 @@ from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFile
 from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
 
 # Create a harm scorer using the hate speech Likert scale
-likert_scorer = SelfAskLikertScorer(chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE)
+likert_scorer = SelfAskLikertScorer.from_likert_scale(
+    chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE.load()
+)
 
 # # Configure evaluation to use a small sample dataset
 # likert_scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
@@ -366,14 +368,14 @@ else:
 #
 # ```bash
 # # Evaluate all registered scorers (long-running — can take hours)
-# python build_scripts/evaluate_scorers.py
+# python -m build_scripts.evaluate_scorers
 #
 # # Evaluate only scorers with specific tags
-# python build_scripts/evaluate_scorers.py --tags refusal
-# python build_scripts/evaluate_scorers.py --tags refusal,default
+# python -m build_scripts.evaluate_scorers --tags refusal
+# python -m build_scripts.evaluate_scorers --tags refusal,default
 #
 # # Control parallelism (default: 5, lower if hitting rate limits)
-# python build_scripts/evaluate_scorers.py --max-concurrency 3
+# python -m build_scripts.evaluate_scorers --max-concurrency 3
 # ```
 #
 # ### Tags
@@ -393,7 +395,7 @@ else:
 # **Step 1: Evaluate refusal scorers first**
 #
 # ```bash
-# python build_scripts/evaluate_scorers.py --tags refusal
+# python -m build_scripts.evaluate_scorers --tags refusal
 # ```
 #
 # This evaluates only the 4 refusal variants and writes results to
@@ -403,7 +405,7 @@ else:
 # **Step 2: Re-evaluate all scorers**
 #
 # ```bash
-# python build_scripts/evaluate_scorers.py
+# python -m build_scripts.evaluate_scorers
 # ```
 #
 # On the next full run, `ScorerInitializer` reads the refusal metrics from Step 1, picks the best

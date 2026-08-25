@@ -58,33 +58,43 @@ export interface PaginationInfo {
 
 // --- Targets ---
 
-export interface TargetCapabilitiesInfo {
+export interface TargetCapabilities {
   supports_multi_turn: boolean
-  supports_multi_message_pieces: boolean
+  supports_multi_message_pieces?: boolean
   supports_json_schema: boolean
   supports_json_output: boolean
-  supports_editable_history: boolean
+  supports_editable_history?: boolean
   supports_system_prompt: boolean
+  supports_streaming_audio?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }
 
-export interface TargetInstance {
-  target_registry_name: string
-  target_type: string
+export interface TargetIdentifier {
+  class_name: string
+  class_module?: string
+  hash: string
+  pyrit_version?: string
   endpoint?: string | null
   model_name?: string | null
   underlying_model_name?: string | null
   temperature?: number | null
   top_p?: number | null
   max_requests_per_minute?: number | null
-  capabilities?: TargetCapabilitiesInfo | null
+  // Promoted + target-specific constructor params are inlined at the top level;
+  // inner target identifiers live under `__children__`.
+  [key: string]: unknown
+}
+
+export interface TargetInstance {
+  target_registry_name: string
+  /** Typed identity: class name, endpoint, model name, generation params, content hash. */
+  identifier: TargetIdentifier
+  capabilities?: TargetCapabilities | null
+  /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
   inner_targets?: TargetInstance[] | null
-  /** ComponentIdentifier content hash. Targets with the same hash resolve to the
-   *  same backend configuration and are treated as duplicates for RoundRobinTarget grouping. */
-  identifier_hash?: string | null
 }
 
 export interface TargetListResponse {
@@ -95,31 +105,104 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
-  auth_mode?: 'api_key' | 'entra'
+  auth_mode?: 'api_key' | 'identity'
+}
+
+// --- Initializers ---
+
+export interface RegisteredInitializer {
+  initializer_name: string
+  initializer_type: string
+  description: string
+  required_env_vars: string[]
+  supported_parameters: Parameter[]
+}
+
+/** A read-only initializer from the `.pyrit_conf` baseline, referenced by registry name. */
+export interface BaselineInitializerSetting {
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index: number
+}
+
+/** A persisted additional initializer, referenced by registry name. */
+export interface AdditionalInitializerSetting {
+  id: string
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface InitializerSettingsResponse {
+  /** Read-only initializers from the `.pyrit_conf` baseline, in run order. */
+  baseline: BaselineInitializerSetting[]
+  /** Persisted additional initializers that run after the baseline, in run order. */
+  additional: AdditionalInitializerSetting[]
+}
+
+/** The persisted domain row returned by create/update of an additional initializer. */
+export interface AdditionalInitializer {
+  id: string
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface CreateAdditionalInitializerRequest {
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface UpdateAdditionalInitializerRequest {
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface ListRegisteredInitializersResponse {
+  items: RegisteredInitializer[]
+  pagination: PaginationInfo
+}
+
+export interface ApplyInitializerRequest {
+  parameters?: Record<string, unknown> | null
+}
+
+export interface ApplyInitializerResponse {
+  initializer_name: string
+  status: 'applied'
+  applied_parameters?: Record<string, unknown> | null
 }
 
 // --- Converters ---
 
+export interface ConverterIdentifier {
+  class_name: string
+  class_module: string
+  hash: string
+  pyrit_version: string
+  supported_input_types?: string[] | null
+  supported_output_types?: string[] | null
+  // Converter-specific constructor params are inlined at the top level.
+  [key: string]: unknown
+}
+
 export interface ConverterInstance {
   converter_id: string
-  converter_type: string
-  display_name?: string | null
-  supported_input_types: string[]
-  supported_output_types: string[]
-  converter_specific_params?: Record<string, unknown> | null
-  sub_converter_ids?: string[] | null
+  identifier: ConverterIdentifier
 }
 
 export interface ConverterListResponse {
   items: ConverterInstance[]
 }
 
-export interface ConverterParameterSchema {
+export interface Parameter {
   name: string
   type_name: string
   required: boolean
-  default_value?: string | null
+  default?: string | null
   choices?: string[] | null
+  is_list?: boolean
   description?: string | null
 }
 
@@ -127,7 +210,7 @@ export interface ConverterCatalogEntry {
   converter_type: string
   supported_input_types: string[]
   supported_output_types: string[]
-  parameters: ConverterParameterSchema[]
+  parameters: Parameter[]
   is_llm_based: boolean
   description?: string | null
 }
@@ -136,13 +219,36 @@ export interface ConverterCatalogResponse {
   items: ConverterCatalogEntry[]
 }
 
+export interface TargetCatalogEntry {
+  target_type: string
+  parameters: Parameter[]
+  supported_auth_modes: ('api_key' | 'identity')[]
+  description?: string | null
+}
+
+export interface TargetCatalogResponse {
+  items: TargetCatalogEntry[]
+}
+
 // --- Attacks ---
 
 export interface TargetInfo {
   target_type: string
+  target_registry_name?: string | null
   endpoint?: string | null
   model_name?: string | null
+  identifier_hash: string
 }
+
+export type AttackTargetResolutionStatus =
+  | 'idle'
+  | 'loading'
+  | 'resolved'
+  | 'explicit-mismatch'
+  | 'unavailable'
+  | 'ambiguous'
+  | 'error'
+  | 'legacy'
 
 export interface AttackSummary {
   attack_result_id: string
@@ -166,6 +272,8 @@ export interface CreateAttackRequest {
   labels?: Record<string, string>
   source_conversation_id?: string
   cutoff_index?: number
+  system_prompt?: string
+  prepended_conversation?: PrependedMessageRequest[]
 }
 
 export interface CreateAttackResponse {
@@ -177,22 +285,24 @@ export interface CreateAttackResponse {
 // --- Messages ---
 
 export interface BackendScore {
-  score_id: string
+  id: string
   scorer_type: string
   score_type: string
   score_value: string
   score_category?: string[] | null
   score_rationale?: string | null
-  scored_at: string
+  timestamp: string
 }
 
 export interface BackendMessagePiece {
-  piece_id: string
+  id: string
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
+  original_value_url?: string | null
   original_value_mime_type?: string | null
   converted_value: string
+  converted_value_url?: string | null
   converted_value_mime_type?: string | null
   original_filename?: string | null
   converted_filename?: string | null
@@ -205,7 +315,7 @@ export interface BackendMessagePiece {
 export interface BackendMessage {
   turn_number: number
   role: string
-  pieces: BackendMessagePiece[]
+  message_pieces: BackendMessagePiece[]
   created_at: string
 }
 
@@ -221,6 +331,11 @@ export interface MessagePieceRequest {
   mime_type?: string
   original_prompt_id?: string
   prompt_metadata?: Record<string, unknown>
+}
+
+export interface PrependedMessageRequest {
+  role: string // 'system' | 'user' | 'assistant'
+  pieces: MessagePieceRequest[]
 }
 
 export interface AddMessageRequest {

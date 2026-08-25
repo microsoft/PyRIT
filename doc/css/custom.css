@@ -81,3 +81,178 @@
   z-index: 0;
   pointer-events: none;
 }
+
+/* --- Roakey sprite animations ----------------------------------------------
+   Each sprite is a fixed-size window onto a horizontal frame strip. With
+   `object-fit: none` the strip renders at 1:1 and the box clips it to a single
+   frame, so animating `object-position` steps through the frames. A scroll
+   timeline drives that stepping, which means the animation is scrubbed by the
+   reader rather than played on a timer.
+
+   The base `object-position` is the LAST frame: that is what shows when scroll
+   timelines are unsupported or reduced motion is requested. Starting from the
+   first frame would leave the scout invisible, since its opening frame is an
+   empty ledge.
+
+   Sprites sit absolutely (out of flow, so they never shift content). On wide
+   screens they live in the gutters beside the centred content column; below
+   that the narrow-screen rules further down open up vertical space for them
+   instead, since there are no gutters to sit in. */
+.roakey-sprite {
+  display: block;
+  position: absolute;
+  object-fit: none;
+  margin: 0;
+  pointer-events: none;
+  user-select: none;
+  z-index: 5;
+}
+
+/* Safety net: sprites are positioned out of flow, so keep any stray horizontal
+   extent from adding a scrollbar. */
+html, body {
+  overflow-x: clip;
+}
+
+/* Sprites resolve against the full-width `main` by default, rather than the
+   narrow, centred landing blocks that wrap their directives. That keeps the
+   flag centred on the page and lets the spyglass use centre-relative `calc`
+   offsets because the content column is centred and width-capped inside `main`.
+
+   Only the scout needs a nearer anchor because it perches on a card inside the
+   capabilities grid, so its rule below promotes that grid. */
+main:has(.roakey-sprite) {
+  position: relative;
+}
+.myst-landing-block:has(.roakey-sprite) {
+  position: static;
+}
+
+/* Each sprite is anchored to the content it belongs to rather than to the page
+   edge, so the three sit at clearly different levels down the page. */
+
+/* Perches on top of the CoPyRIT card: the capabilities grid is the anchor, and
+   the offsets centre the sprite over the third column. */
+.myst-grid:has(.roakey-sprite-scout) {
+  position: relative;
+}
+.roakey-sprite-scout {
+  right: 97px;
+  top: -123px;
+  width: 181px;
+  height: 156px;
+  object-position: -1086px 0;
+}
+
+/* Climbs out of the install code block, flipped to look back along the line it
+   came from. It anchors to the content column so it stays at the block's right
+   end at every width; a centre-relative `calc` offset only held while the
+   column was at its capped width, and drifted off the block below that.
+
+   `translateY` lifts it from its static position (immediately before the block)
+   so its feet come to rest on the block's top edge. Two offsets matter here:
+   the artwork stops 3px short of the frame's bottom, and the visible block edge
+   is the `.myst-code` wrapper that paints the background — not the inner `<pre>`,
+   which sits 12px lower behind the wrapper's padding. */
+.myst-landing-justified-body:has(.roakey-sprite-spyglass) {
+  position: relative;
+}
+.roakey-sprite-spyglass {
+  right: 16px;
+  width: 151px;
+  height: 119px;
+  object-position: -604px 0;
+  transform: translateY(-116px) scaleX(-1);
+}
+
+/* Runs in from the left and comes to rest centred on the page. The centring is
+   done with `calc` rather than a negative margin because the theme's own image
+   rules override margins on these elements. */
+main:has(.roakey-sprite-flag) {
+  position: relative;
+}
+.roakey-sprite-flag {
+  left: calc(50% - 75.5px);
+  width: 151px;
+  height: 120px;
+  object-position: -755px 0;
+}
+
+/* Extra vertical space is only opened where a sprite would actually land on
+   text. Both breakpoints were measured against the rendered glyph rects rather
+   than the full-width block boxes, so they mark where wrapping first pushes
+   text under the artwork.
+
+   The scout only collides once the capabilities grid collapses to one column
+   and the heading sits directly above the first card. */
+@media (max-width: 767px) {
+  .myst-grid:has(.roakey-sprite-scout) {
+    margin-top: 140px;
+  }
+}
+
+/* The install paragraph wraps under the spyglass below this width. The sprite
+   keeps its static position while the block below is pushed down, so the gap is
+   sized to land the artwork on the block's new top edge with no vertical
+   transform. */
+@media (max-width: 899px) {
+  .roakey-sprite-spyglass + * {
+    margin-top: 136px;
+  }
+  .roakey-sprite-spyglass {
+    transform: scaleX(-1);
+  }
+}
+
+/* Advance frames as each sprite scrolls through the viewport (Chromium/Edge).
+   The range is `cover 0%` to `cover 50%`: the sequence starts as the sprite
+   comes into view and resolves by the time it reaches mid-viewport, then holds
+   its final frame. Scrubbing over `entry` instead would compress the whole
+   sequence into the sprite's own height — roughly 20px of scrolling per frame,
+   far too fast to read.
+
+   `steps(n)` where the keyframe travel is n frame-widths lands the final frame
+   at the end of the range. */
+@supports (animation-timeline: view()) {
+  .roakey-sprite-spyglass {
+    animation: roakey-spyglass-frames steps(4) both;
+    animation-timeline: view();
+    animation-range: cover 0% cover 50%;
+  }
+  .roakey-sprite-scout {
+    animation: roakey-scout-frames steps(6) both;
+    animation-timeline: view();
+    animation-range: cover 0% cover 50%;
+  }
+  /* The flag sits at the very bottom of the page, where only ~230px of
+     scrolling remains once it starts entering. A percentage of `cover` scales
+     with viewport height and would strand the sequence mid-run on tall
+     screens, so this one scrubs over a fixed length that always completes. */
+  .roakey-sprite-flag {
+    animation: roakey-flag-frames steps(5) both, roakey-flag-run linear both;
+    animation-timeline: view(), view();
+    animation-range: cover 0px cover 200px, cover 0px cover 200px;
+  }
+  @keyframes roakey-spyglass-frames {
+    from { object-position: 0 0; }
+    to   { object-position: -604px 0; }
+  }
+  @keyframes roakey-scout-frames {
+    from { object-position: 0 0; }
+    to   { object-position: -1086px 0; }
+  }
+  @keyframes roakey-flag-frames {
+    from { object-position: 0 0; }
+    to   { object-position: -755px 0; }
+  }
+  @keyframes roakey-flag-run {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(0); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roakey-sprite {
+    animation: none;
+  }
+}

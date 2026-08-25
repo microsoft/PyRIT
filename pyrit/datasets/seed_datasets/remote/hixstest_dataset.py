@@ -3,13 +3,12 @@
 
 import logging
 import os
-import warnings
 from enum import Enum
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset, SeedPrompt
+from pyrit.models import SeedDataset, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,6 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         self,
         *,
         language: HiXSTestLanguage = HiXSTestLanguage.HINDI,
-        split: str | None = None,
         token: str | None = None,
     ) -> None:
         """
@@ -79,30 +77,19 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
             language: Which language to use as the primary ``SeedPrompt.value``.
                 Defaults to ``HiXSTestLanguage.HINDI`` (the dataset's intended language).
                 Pass ``HiXSTestLanguage.ENGLISH`` to use the English translation instead.
-            split: **Deprecated.** Upstream ``walledai/HiXSTest`` publishes only the
-                ``"train"`` split, so this kwarg has no effect. It will be removed in
-                v0.16.0.
             token: Hugging Face authentication token. If not provided, reads from the
                 ``HUGGINGFACE_TOKEN`` environment variable.
 
         Raises:
             ValueError: If ``language`` is not a ``HiXSTestLanguage`` instance.
         """
-        if split is not None:
-            warnings.warn(
-                "'split' is deprecated and will be removed in v0.16.0. "
-                "Upstream walledai/HiXSTest publishes only the 'train' split, "
-                "so this kwarg has no effect.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self._validate_enum(language, HiXSTestLanguage, "language")
         self.language = language
         self.token = token if token is not None else os.environ.get("HUGGINGFACE_TOKEN")
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "hixstest"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -152,12 +139,15 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
         source_url = f"https://huggingface.co/datasets/{self.HF_DATASET_NAME}"
         groups = ["Walled AI", "DeCLaRe Lab, Singapore University of Technology and Design"]
 
-        seed_prompts = [
+        seed_prompts: list[SeedUnion] = [
             SeedPrompt(
                 value=self._select_value(item),
                 data_type="text",
                 dataset_name=self.dataset_name,
-                harm_categories=[item["category"]] if item.get("category") else [],
+                # HiXSTest's `category` is the polysemous Hindi trigger word being tested
+                # (e.g. "मारना"), not a harm. It's preserved in metadata; harm_categories is
+                # left empty (over-refusal contrast set).
+                harm_categories=[],
                 description=description,
                 source=source_url,
                 authors=authors,
@@ -177,7 +167,7 @@ class _HiXSTestDataset(_RemoteDatasetLoader):
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
 
-    def _select_value(self, item: dict) -> str:
+    def _select_value(self, item: dict[str, str]) -> str:
         """
         Return the prompt text to use as ``SeedPrompt.value`` based on ``self.language``.
 

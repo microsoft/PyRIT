@@ -12,7 +12,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
     CommittedEvent,
@@ -103,10 +103,10 @@ def _mock_session_wire(session: _OpenAIRealtimeStreamingSession) -> None:
 
 def _build_normalizer() -> MagicMock:
     normalizer = MagicMock(name="PromptNormalizer")
-    normalizer.add_prepended_conversation_to_memory = AsyncMock()
+    normalizer.add_prepended_conversation_to_memory_async = AsyncMock()
     # Identity: the session treats ``converted is raw_pcm`` as "no converters ran".
     normalizer.convert_audio_async = AsyncMock(side_effect=lambda raw_pcm, **kw: raw_pcm)
-    normalizer.convert_values = AsyncMock()
+    normalizer.convert_values_async = AsyncMock()
     normalizer.hash_and_persist_message_async = AsyncMock()
     return normalizer
 
@@ -289,8 +289,8 @@ async def test_run_async_applies_response_converters_to_assistant_message():
         messages = await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-1")])
 
     assert len(messages) == 1
-    normalizer.convert_values.assert_awaited_once()
-    call_kwargs = normalizer.convert_values.await_args.kwargs
+    normalizer.convert_values_async.assert_awaited_once()
+    call_kwargs = normalizer.convert_values_async.await_args.kwargs
     assert call_kwargs["converter_configurations"] == [response_cfg]
     assert call_kwargs["message"] is messages[0]
 
@@ -314,7 +314,7 @@ async def test_run_async_swaps_user_audio_and_records_identifiers_when_request_c
 
     persisted_user_messages: list[Message] = []
 
-    async def _capture(*, message: Message) -> None:
+    async def _capture(*, message: Message, target_identifier=None) -> None:
         if message.message_pieces[0].api_role == "user":
             persisted_user_messages.append(message)
 
@@ -349,7 +349,7 @@ async def test_run_async_skips_swap_and_identifiers_when_no_request_converters()
 
     persisted_user_messages: list[Message] = []
 
-    async def _capture(*, message: Message) -> None:
+    async def _capture(*, message: Message, target_identifier=None) -> None:
         if message.message_pieces[0].api_role == "user":
             persisted_user_messages.append(message)
 
@@ -379,7 +379,7 @@ async def test_run_async_skips_swap_and_identifiers_when_no_request_converters()
 
 
 async def test_run_async_persists_prepended_conversation_and_forwards_vad_config():
-    """``prepended_conversation`` reaches normalizer.add_prepended_conversation_to_memory; vad reaches the session."""
+    """``prepended_conversation`` reaches normalizer.add_prepended_conversation_to_memory_async; vad reaches session."""
     target = _build_target()
     normalizer = _build_normalizer()
 
@@ -415,8 +415,8 @@ async def test_run_async_persists_prepended_conversation_and_forwards_vad_config
     # The streaming session config was emitted exactly once.
     session._send_streaming_session_config_async.assert_awaited_once()
 
-    normalizer.add_prepended_conversation_to_memory.assert_awaited_once()
-    prep_kwargs = normalizer.add_prepended_conversation_to_memory.await_args.kwargs
+    normalizer.add_prepended_conversation_to_memory_async.assert_awaited_once()
+    prep_kwargs = normalizer.add_prepended_conversation_to_memory_async.await_args.kwargs
     assert prep_kwargs["conversation_id"] == "conv-prep"
     assert prep_kwargs["should_convert"] is False
     assert prep_kwargs["prepended_conversation"] == prepended
@@ -461,6 +461,36 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
 
         with pytest.raises(RuntimeError, match="dispatch loop died"):
             await asyncio.gather(_consume(), _fire_failure())
+
+
+async def test_run_async_propagates_audio_source_failure_and_cleans_up():
+    """A failing audio source surfaces its error after preserving session teardown."""
+    target = _build_target()
+    normalizer = _build_normalizer()
+    connection = target._connect_async.return_value
+
+    async def _failing_chunks():
+        yield b"\x01" * 100
+        raise RuntimeError("audio source disconnected")
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_failing_chunks(),
+        prompt_normalizer=normalizer,
+    )
+    _mock_session_wire(session)
+
+    with _patched_dispatcher() as captured:
+        with pytest.raises(RuntimeError, match="audio source disconnected"):
+            async for _ in session.run_async():
+                pytest.fail("no message should be yielded after the audio source fails")
+
+    session._push_audio_chunk_async.assert_awaited_once_with(b"\x01" * 100)
+    captured["dispatcher"].drain_callbacks_async.assert_not_awaited()
+    captured["dispatcher"].stop_async.assert_awaited_once()
+    connection.input_audio_buffer.commit.assert_not_awaited()
+    connection.close.assert_awaited_once()
+    normalizer.hash_and_persist_message_async.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -643,73 +673,6 @@ async def test_buffer_start_session_ms_advances_across_commits():
 
 
 # ---------------------------------------------------------------------------
-# 9. attack_identifier is stamped on persisted user + assistant pieces
-# ---------------------------------------------------------------------------
-
-
-async def test_attack_identifier_stamped_on_persisted_pieces_when_set():
-    """When ``attack_identifier`` is provided, every persisted piece carries it."""
-    target = _build_target()
-    normalizer = _build_normalizer()
-
-    persisted_messages: list[Message] = []
-
-    async def _capture(*, message: Message) -> None:
-        persisted_messages.append(message)
-
-    normalizer.hash_and_persist_message_async = AsyncMock(side_effect=_capture)
-
-    attack_id = ComponentIdentifier(class_name="BargeInAttack", class_module="test")
-
-    finish = asyncio.Event()
-    session = _OpenAIRealtimeStreamingSession(
-        target=target,
-        audio_chunks=_paced_chunks([b"\x01" * 96], finish),
-        prompt_normalizer=normalizer,
-        attack_identifier=attack_id,
-    )
-    _mock_session_wire(session)
-
-    with _patched_dispatcher():
-        await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="i")])
-
-    # Expect one user message + one assistant message (two pieces) — three pieces total.
-    all_pieces = [piece for msg in persisted_messages for piece in msg.message_pieces]
-    assert len(all_pieces) == 3
-    for piece in all_pieces:
-        assert piece.attack_identifier == attack_id
-
-
-async def test_attack_identifier_absent_when_not_provided():
-    """Without ``attack_identifier``, persisted pieces have None attribution (back-compat)."""
-    target = _build_target()
-    normalizer = _build_normalizer()
-
-    persisted_messages: list[Message] = []
-
-    async def _capture(*, message: Message) -> None:
-        persisted_messages.append(message)
-
-    normalizer.hash_and_persist_message_async = AsyncMock(side_effect=_capture)
-
-    finish = asyncio.Event()
-    session = _OpenAIRealtimeStreamingSession(
-        target=target,
-        audio_chunks=_paced_chunks([b"\x01" * 96], finish),
-        prompt_normalizer=normalizer,
-    )
-    _mock_session_wire(session)
-
-    with _patched_dispatcher():
-        await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="i")])
-
-    all_pieces = [piece for msg in persisted_messages for piece in msg.message_pieces]
-    assert len(all_pieces) == 3
-    for piece in all_pieces:
-        assert piece.attack_identifier is None
-
-
-# ---------------------------------------------------------------------------
 # 10. persist_prepended_conversation=False skips the prepended-memory write
 # ---------------------------------------------------------------------------
 
@@ -742,7 +705,7 @@ async def test_persist_prepended_conversation_false_skips_memory_add():
     # _send_streaming_session_config still runs (it reads the prepended conversation for system msg).
     session._send_streaming_session_config_async.assert_awaited_once()
     # But the memory write is skipped — the caller (e.g., the attack) has already persisted it.
-    normalizer.add_prepended_conversation_to_memory.assert_not_called()
+    normalizer.add_prepended_conversation_to_memory_async.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -770,7 +733,6 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
     req_cfgs = [MagicMock(name="req_cfg")]
     resp_cfgs = [MagicMock(name="resp_cfg")]
     vad = ServerVadConfig(prefix_padding_ms=42)
-    attack_id = {"__type__": "BargeInAttack", "id": "x"}
 
     captured: dict[str, Any] = {}
 
@@ -790,7 +752,6 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
             response_converter_configurations=resp_cfgs,
             prepended_conversation=prepended,
             server_vad=vad,
-            attack_identifier=attack_id,
             persist_prepended_conversation=False,
         )
 
@@ -802,7 +763,6 @@ def test_open_streaming_session_forwards_kwargs_to_session_constructor(sqlite_in
     assert captured["response_converter_configurations"] is resp_cfgs
     assert captured["prepended_conversation"] is prepended
     assert captured["server_vad"] is vad
-    assert captured["attack_identifier"] is attack_id
     assert captured["persist_prepended_conversation"] is False
 
 

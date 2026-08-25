@@ -32,13 +32,23 @@ export const useMainLayoutStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     marginLeft: tokens.spacingHorizontalXS,
   },
+  spacer: {
+    flex: 1,
+  },
+  tourButton: {
+    '@media (max-width: 600px)': {
+      minHeight: '44px',
+    },
+  },
   contentArea: {
     display: 'flex',
     flex: 1,
+    minWidth: 0,
     overflow: 'hidden',
   },
   sidebar: {
     width: '60px',
+    flexShrink: 0,
     backgroundColor: tokens.colorNeutralBackground3,
     borderRight: `1px solid ${tokens.colorNeutralStroke1}`,
     display: 'flex',
@@ -46,6 +56,7 @@ export const useMainLayoutStyles = makeStyles({
   },
   main: {
     flex: 1,
+    minWidth: 0,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',

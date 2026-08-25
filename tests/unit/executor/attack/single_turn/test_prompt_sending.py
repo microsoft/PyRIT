@@ -1,19 +1,24 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import base64
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
+from unit.mocks import MockPromptTarget, get_mock_scorer_identifier, get_mock_target_identifier
 
+from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackParameters,
     AttackScoringConfig,
+    PrependedConversationConfig,
     PromptSendingAttack,
     SingleTurnAttackContext,
 )
+from pyrit.memory import CentralMemory
+from pyrit.message_normalizer import TokenizerTemplateNormalizer
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -24,9 +29,10 @@ from pyrit.models import (
     SeedGroup,
     SeedPrompt,
 )
-from pyrit.prompt_converter import Base64Converter, StringJoinConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import Scorer, TrueFalseScorer
 
 
@@ -213,7 +219,6 @@ class TestContextValidation:
                 next_message=Message.from_prompt(prompt="test", role="user"),
             ),
             conversation_id=str(uuid.uuid4()),
-            system_prompt="System prompt",
             metadata={"key": "value"},
         )
 
@@ -257,11 +262,11 @@ class TestSetupPhase:
         assert basic_context.conversation_id  # Should have a new conversation_id
 
     async def test_setup_updates_conversation_state_with_converters(self, mock_target, basic_context):
-        from pyrit.prompt_normalizer.prompt_converter_configuration import (
-            PromptConverterConfiguration,
+        from pyrit.prompt_normalizer.converter_configuration import (
+            ConverterConfiguration,
         )
 
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
         attack = PromptSendingAttack(
             objective_target=mock_target,
             attack_converter_config=AttackConverterConfig(request_converters=converter_config),
@@ -277,9 +282,104 @@ class TestSetupPhase:
             target=mock_target,
             conversation_id=basic_context.conversation_id,
             request_converters=converter_config,
-            prepended_conversation_config=None,
+            prepended_conversation_config=PrependedConversationConfig(),
             memory_labels={},
         )
+
+    async def test_default_converter_scoping_preserves_simulated_assistant_history(self):
+        target = MockPromptTarget()
+        converter_config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        )
+        attack = PromptSendingAttack(objective_target=target, attack_converter_config=converter_config)
+        prepended_user = "prepended user request"
+        simulated_response = "simulated assistant response"
+        final_request = "live final request"
+
+        result = await attack.execute_async(
+            objective="Test objective",
+            prepended_conversation=[
+                Message.from_prompt(prompt=prepended_user, role="user"),
+                Message.from_prompt(prompt=simulated_response, role="assistant"),
+            ],
+            next_message=Message.from_prompt(prompt=final_request, role="user"),
+        )
+
+        pieces = CentralMemory.get_memory_instance().get_message_pieces(conversation_id=result.conversation_id)
+        assistant_piece = next(piece for piece in pieces if piece.original_value == simulated_response)
+        final_piece = next(piece for piece in pieces if piece.original_value == final_request)
+
+        assert assistant_piece.role == "simulated_assistant"
+        assert assistant_piece.converted_value == assistant_piece.original_value
+        assert assistant_piece.converter_identifiers == []
+        assert final_piece.converted_value != final_piece.original_value
+        assert [identifier.class_name for identifier in final_piece.converter_identifiers] == ["Base64Converter"]
+
+    async def test_explicit_assistant_role_opt_in_converts_simulated_history(self):
+        target = MockPromptTarget()
+        converter_config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        )
+        attack = PromptSendingAttack(
+            objective_target=target,
+            attack_converter_config=converter_config,
+            prepended_conversation_config=PrependedConversationConfig(apply_converters_to_roles=["assistant"]),
+        )
+        simulated_response = "assistant history explicitly converted"
+
+        result = await attack.execute_async(
+            objective="Test objective",
+            prepended_conversation=[Message.from_prompt(prompt=simulated_response, role="assistant")],
+            next_message=Message.from_prompt(prompt="live request", role="user"),
+        )
+
+        pieces = CentralMemory.get_memory_instance().get_message_pieces(conversation_id=result.conversation_id)
+        assistant_piece = next(piece for piece in pieces if piece.original_value == simulated_response)
+
+        assert assistant_piece.role == "simulated_assistant"
+        assert assistant_piece.converted_value != assistant_piece.original_value
+        assert [identifier.class_name for identifier in assistant_piece.converter_identifiers] == ["Base64Converter"]
+
+    async def test_non_chat_target_converts_history_by_role_before_flattening(self):
+        target = MockPromptTarget()
+        target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
+        converter_config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        )
+        attack = PromptSendingAttack(objective_target=target, attack_converter_config=converter_config)
+        prepended_user = "prepended user request"
+        simulated_response = "simulated assistant response"
+        final_request = "live final request"
+
+        await attack.execute_async(
+            objective="Test objective",
+            prepended_conversation=[
+                Message.from_prompt(prompt=prepended_user, role="user"),
+                Message.from_prompt(prompt=simulated_response, role="assistant"),
+            ],
+            next_message=Message.from_prompt(prompt=final_request, role="user"),
+        )
+
+        encoded_user = base64.b64encode(prepended_user.encode()).decode()
+        encoded_final_request = base64.b64encode(final_request.encode()).decode()
+        assert target.prompt_sent == [
+            (f"Turn 1:\nuser: {encoded_user}\nassistant: {simulated_response}\nTurn 2:\nuser: {encoded_final_request}")
+        ]
+
+    async def test_retry_setup_creates_fresh_conversation(self, basic_context):
+        target = MockPromptTarget()
+        target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
+        attack = PromptSendingAttack(objective_target=target)
+        basic_context.prepended_conversation = [
+            Message.from_prompt(prompt="prepended", role="user"),
+        ]
+
+        await attack._setup_async(context=basic_context)
+        first_conversation_id = basic_context.conversation_id
+
+        await attack._setup_async(context=basic_context)
+
+        assert basic_context.conversation_id != first_conversation_id
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -386,12 +486,12 @@ class TestPromptSending:
     async def test_send_prompt_to_target_with_all_configurations(
         self, mock_target, mock_prompt_normalizer, basic_context
     ):
-        from pyrit.prompt_normalizer.prompt_converter_configuration import (
-            PromptConverterConfiguration,
+        from pyrit.prompt_normalizer.converter_configuration import (
+            ConverterConfiguration,
         )
 
-        request_converters = [PromptConverterConfiguration(converters=[])]
-        response_converters = [PromptConverterConfiguration(converters=[])]
+        request_converters = [ConverterConfiguration(converters=[])]
+        response_converters = [ConverterConfiguration(converters=[])]
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -402,7 +502,6 @@ class TestPromptSending:
         )
 
         message = Message.from_prompt(prompt="Test prompt", role="user")
-        basic_context.memory_labels = {"test": "label"}
         mock_response = MagicMock()
         mock_prompt_normalizer.send_prompt_async.return_value = mock_response
 
@@ -417,8 +516,6 @@ class TestPromptSending:
         assert call_args.kwargs["conversation_id"] == basic_context.conversation_id
         assert call_args.kwargs["request_converter_configurations"] == request_converters
         assert call_args.kwargs["response_converter_configurations"] == response_converters
-        assert call_args.kwargs["labels"] == {"test": "label"}
-        assert "attack_identifier" in call_args.kwargs
 
     async def test_send_prompt_handles_none_response(self, mock_target, mock_prompt_normalizer, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target, prompt_normalizer=mock_prompt_normalizer)
@@ -719,7 +816,7 @@ class TestConverterIntegration:
         input_text,
         expected_pattern,
     ):
-        converter_config = PromptConverterConfiguration.from_converters(converters=converters)
+        converter_config = ConverterConfiguration.from_converters(converters=converters)
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -745,7 +842,7 @@ class TestConverterIntegration:
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
         response_converter = Base64Converter()
-        converter_config = PromptConverterConfiguration.from_converters(converters=[response_converter])
+        converter_config = ConverterConfiguration.from_converters(converters=[response_converter])
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -1038,7 +1135,6 @@ class TestAttackLifecycle:
             prepended_conversation=[sample_response],
             memory_labels={"test": "label"},
             next_message=message,
-            system_prompt="System prompt",
         )
 
         # Verify result
@@ -1052,7 +1148,13 @@ class TestAttackLifecycle:
         assert context.objective == "Test objective"
         assert context.memory_labels == {"test": "label"}
         assert context.next_message is not None
-        assert context.system_prompt == "System prompt"
+
+    async def test_execute_async_with_system_prompt_raises_error(self, mock_target):
+        """Passing the removed system_prompt parameter is rejected."""
+        attack = PromptSendingAttack(objective_target=mock_target)
+
+        with pytest.raises(ValueError, match="does not accept parameters.*system_prompt"):
+            await attack.execute_async(objective="Test objective", system_prompt="System prompt")
 
     async def test_execute_async_with_invalid_params_raises_error(self, mock_target):
         """Test execute_async raises error when invalid parameters are passed"""
@@ -1149,6 +1251,34 @@ class TestEdgeCasesAndErrorHandling:
         # Same config produces same identifier
         assert id1.hash == id2.hash
         assert id1.class_name == id2.class_name == "PromptSendingAttack"
+
+    def test_attack_identifier_owns_prepended_formatter_provenance(self, mock_target):
+        tokenizer = MagicMock()
+        tokenizer.name_or_path = "example/tokenizer"
+        tokenizer.chat_template = "{{ messages }}"
+        tokenizer.special_tokens_map = {"bos_token": "<s>"}
+        keep_formatter = TokenizerTemplateNormalizer(
+            tokenizer=tokenizer,
+            system_message_behavior="keep",
+        )
+        ignore_formatter = TokenizerTemplateNormalizer(
+            tokenizer=tokenizer,
+            system_message_behavior="ignore",
+        )
+
+        keep_attack = PromptSendingAttack(
+            objective_target=mock_target,
+            prepended_conversation_config=PrependedConversationConfig(message_normalizer=keep_formatter),
+        )
+        ignore_attack = PromptSendingAttack(
+            objective_target=mock_target,
+            prepended_conversation_config=PrependedConversationConfig(message_normalizer=ignore_formatter),
+        )
+
+        keep_identifier = keep_attack.get_identifier()
+        ignore_identifier = ignore_attack.get_identifier()
+        assert "prepended_conversation_formatter" in keep_identifier.children
+        assert keep_identifier.hash != ignore_identifier.hash
 
     async def test_retry_stores_unsuccessful_conversation_and_updates_id(
         self, mock_target, mock_true_false_scorer, basic_context, sample_response, failure_score

@@ -13,21 +13,15 @@ import numpy as np
 from scipy.stats import ttest_1samp
 
 from pyrit.common.path import SCORER_EVALS_PATH
+from pyrit.score.message_scorer import extract_objective_from_previous_turn
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
     HumanLabeledDataset,
     ObjectiveHumanLabeledEntry,
 )
 from pyrit.score.scorer_evaluation.krippendorff import krippendorff_alpha
-from pyrit.score.scorer_evaluation.metrics_type import (
-    MetricsType,
-    RegistryUpdateBehavior,
-)
-from pyrit.score.scorer_evaluation.scorer_metrics import (
-    HarmScorerMetrics,
-    ObjectiveScorerMetrics,
-    ScorerMetrics,
-)
+from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior
+from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics, ObjectiveScorerMetrics, ScorerMetrics
 from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     find_harm_metrics_by_eval_hash,
     find_objective_metrics_by_eval_hash,
@@ -381,6 +375,12 @@ class ScorerEvaluator(abc.ABC):
         # Validate dataset and extract data
         assistant_responses, human_scores_list, objectives = self._validate_and_extract_data(labeled_dataset)
 
+        # Harm datasets carry no objective, so the previous turn stands in for one.
+        resolved_objectives = objectives or [
+            extract_objective_from_previous_turn(message=response, memory=self.scorer._memory)
+            for response in assistant_responses
+        ]
+
         # Transpose human scores so each row is a complete set of scores across all responses
         all_human_scores = np.array(human_scores_list).T
 
@@ -392,9 +392,8 @@ class ScorerEvaluator(abc.ABC):
             start_time = time.perf_counter()
             scores = await self.scorer.score_prompts_batch_async(
                 messages=assistant_responses,
-                objectives=objectives,
+                objectives=resolved_objectives,
                 batch_size=max_concurrency,
-                infer_objective_from_request=True,
             )
             elapsed_time = time.perf_counter() - start_time
             total_scoring_time += elapsed_time
@@ -534,7 +533,8 @@ class HarmScorerEvaluator(ScorerEvaluator):
 
         Returns:
             Tuple of (assistant_responses, human_scores_list, None).
-            objectives is None for harm scoring (uses infer_objective_from_request).
+            objectives is None for harm scoring; the caller reads each objective from the
+            previous turn instead.
 
         Raises:
             ValueError: If dataset is not HARM type or has multiple harm categories.

@@ -168,6 +168,7 @@ cython_debug/
 
 # PyRIT secrets file
 .env
+.env_akv
 .pyrit_cache/
 
 # Cache for generating docs
@@ -201,3 +202,6 @@ doc/_autosummary/
 
 # Custom user instructions
 .github/instructions/user-custom.instructions.md
+
+# Impeccable skill local cache
+.impeccable/

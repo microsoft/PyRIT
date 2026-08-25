@@ -14,26 +14,25 @@ argument parsing before the full runtime is initialised.
 from __future__ import annotations
 
 import argparse
-import copy
 import dataclasses
 import inspect
 import json
 import logging
 import shlex
+from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_origin
+from typing import TYPE_CHECKING, Any, get_args, get_origin
 
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
     validate_log_level,
     validate_log_level_argparse,
 )
-from pyrit.common.parameter import Parameter, coerce_value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pyrit.setup.configuration_loader import ScenarioConfig
+    from pyrit.models.parameter import Parameter
 
 # ---------------------------------------------------------------------------
 # Database type constants
@@ -41,6 +40,55 @@ if TYPE_CHECKING:
 IN_MEMORY = "InMemory"
 SQLITE = "SQLite"
 AZURE_SQL = "AzureSQL"
+
+
+# ---------------------------------------------------------------------------
+# Scenario-results views
+# ---------------------------------------------------------------------------
+
+
+class ScenarioResultView(str, Enum):
+    """
+    Granularity of a ``scenario-results`` render.
+
+    Defined here (a lightweight, parse-time-safe module) rather than alongside
+    the Pydantic payload models in ``pyrit.cli._results`` so the argument parsers
+    can reference it without importing ``pydantic`` on the ``--help`` path.
+    Inherits from ``str`` so the value round-trips cleanly through argparse.
+    """
+
+    #: Scenario-level aggregate (totals + per-group success rates).
+    OVERVIEW = "overview"
+    #: One row per individual attack result.
+    ATTACKS = "attacks"
+    #: Individual messages for each attack result conversation.
+    CONVERSATIONS = "conversations"
+    #: All of the above.
+    FULL = "full"
+
+
+def parse_scenario_result_view(raw: str) -> ScenarioResultView:
+    """
+    Parse a ``--view`` token into a ``ScenarioResultView``.
+
+    Used as an argparse ``type=`` so an invalid value produces an error that
+    lists the valid view names (``ScenarioResultView(raw)`` alone would raise a
+    bare ``ValueError`` argparse renders without the choices).
+
+    Args:
+        raw (str): The raw ``--view`` token.
+
+    Returns:
+        ScenarioResultView: The matching view.
+
+    Raises:
+        argparse.ArgumentTypeError: If *raw* is not a valid view name.
+    """
+    try:
+        return ScenarioResultView(raw)
+    except ValueError:
+        valid = ", ".join(view.value for view in ScenarioResultView)
+        raise argparse.ArgumentTypeError(f"invalid view '{raw}' (choose from {valid})") from None
 
 
 # ---------------------------------------------------------------------------
@@ -241,17 +289,109 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
     if not isinstance(labels, dict):
         raise ValueError("Memory labels must be a JSON object (dictionary)")
 
-    # Validate all keys and values are strings
+    # Validate all keys and values are strings and build a precisely typed result
+    validated_labels: dict[str, str] = {}
     for key, value in labels.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise ValueError(f"All label keys and values must be strings. Got: {key}={value}")
+        validated_labels[key] = value
 
-    return labels
+    return validated_labels
+
+
+def parse_dataset_filter(arg: str) -> tuple[str, str]:
+    """
+    Parse a single ``KEY=VALUE`` dataset-filter token from the CLI.
+
+    Note: The ``arg`` parameter is positional (not keyword-only) so it can be used directly
+    as an argparse ``type=`` callable and an ``_ArgSpec`` parser. This mirrors
+    ``_parse_initializer_arg`` and is an intentional exception to the keyword-only style rule
+    for argparse compatibility.
+
+    Args:
+        arg (str): The raw ``KEY=VALUE`` token.
+
+    Returns:
+        tuple[str, str]: The (key, value) pair. The value keeps its raw string form so the
+            server can coerce and validate it.
+
+    Raises:
+        ValueError: If the token is not in ``KEY=VALUE`` form or the key is empty. Argparse
+            converts this into a clean CLI error; the shell catches it directly.
+    """
+    if "=" not in arg:
+        raise ValueError(f"Dataset filter must be in KEY=VALUE form, got: {arg!r}")
+    key, _, value = arg.partition("=")
+    key = key.strip()
+    if not key:
+        raise ValueError(f"Dataset filter key cannot be empty in: {arg!r}")
+    return key, value
+
+
+def collapse_dataset_filters(tokens: list[tuple[str, str]]) -> dict[str, list[str]]:
+    """
+    Fold parsed ``KEY=VALUE`` dataset-filter tokens into list-valued filters, rejecting duplicates.
+
+    Repeating a key (e.g. ``harm_categories=cyber harm_categories=violence``) would otherwise be
+    silently collapsed by ``dict(...)`` to the last value, dropping earlier constraints. Since
+    list-valued filters accept comma-separated values, a repeated key is almost certainly a
+    mistake, so this fails loud instead. Each value is coerced into a list of tokens (comma
+    splitting is CLI input parsing); the server-side request model validates the keys.
+
+    Args:
+        tokens (list[tuple[str, str]]): The parsed ``(key, value)`` pairs.
+
+    Returns:
+        dict[str, list[str]]: The collapsed, list-valued filter mapping.
+
+    Raises:
+        ValueError: If any key appears more than once.
+    """
+    filters: dict[str, list[str]] = {}
+    for key, value in tokens:
+        if key in filters:
+            raise ValueError(
+                f"Duplicate dataset filter '{key}'; combine values with commas: {key}={','.join(filters[key])},{value}"
+            )
+        filters[key] = _coerce_filter_values(value)
+    return filters
+
+
+def _coerce_filter_values(value: str) -> list[str]:
+    """
+    Split a raw dataset-filter value string into a list of non-empty tokens.
+
+    Comma-splitting raw CLI input is a frontend concern, so it lives here next to
+    ``parse_dataset_filter`` rather than in the dataset-config module that consumes filters.
+
+    Args:
+        value (str): The raw comma-separated value string.
+
+    Returns:
+        list[str]: The cleaned list of values.
+    """
+    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 # ---------------------------------------------------------------------------
 # Shared argument help text
 # ---------------------------------------------------------------------------
+
+# Per-key help for --dataset-filters. Kept in sync with
+# pyrit.models.catalog.scenario.DATASET_FILTERS (this module deliberately avoids importing
+# pyrit.models to keep argument-parsing startup fast); tests/unit/cli/test_pyrit_scan.py pins
+# the key sets equal so the two cannot drift.
+#
+# Each value states this key's comma-list semantics, because those differ per field (the actual
+# behavior lives in get_seeds, in pyrit.memory). When you add a key here to match a new
+# DATASET_FILTERS entry, the surrounding entries model the expected one-line semantics note --
+# write one for the new key too.
+_DATASET_FILTER_HELP: dict[str, str] = {
+    "harm_categories": "matches seeds tagged with ALL given values (AND, substring match), "
+    "so harm_categories=cyber,violence is an intersection",
+    "data_types": "matches seeds of ANY given value (OR, exact match), so data_types=text,image_path is a union",
+}
+
 ARG_HELP = {
     "config_file": CONFIG_FILE_HELP,
     "initializers": (
@@ -262,7 +402,10 @@ ARG_HELP = {
     "initialization_scripts": "Paths to custom Python initialization scripts to run before the scenario",
     "env_files": "Paths to environment files to load in order (e.g., .env.production .env.local). Later files "
     "override earlier ones.",
-    "scenario_strategies": "List of strategy names to run (e.g., base64 rot13)",
+    "scenario_techniques": "List of technique names to run (e.g., base64 rot13). Append one or more "
+    "registered converters to a technique with ':converter.<name>' (repeatable), e.g. "
+    "role_play_movie_script:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
+    "the technique's built-in converters. Use --list-converters to see registered converter names",
     "max_concurrency": "Maximum number of concurrent attack executions (must be >= 1)",
     "max_retries": "Maximum number of automatic retries on exception (must be >= 0)",
     "memory_labels": 'Additional labels as JSON string (e.g., \'{"experiment": "test1"}\')',
@@ -272,10 +415,74 @@ ARG_HELP = {
     "Creates a new dataset config; fetches all items unless --max-dataset-size is also specified",
     "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
     "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
+    "dataset_filters": "Dataset seed filters as KEY=VALUE tokens "
+    "(e.g., harm_categories=cyber data_types=text). Keys filter seeds before sizing. "
+    "List values may be comma-separated, but semantics differ per key: "
+    + "; ".join(f"{key} {semantics}" for key, semantics in _DATASET_FILTER_HELP.items())
+    + ".",
     "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
     "Targets are registered by initializers (e.g., 'target' initializer). "
     "Use --list-targets to see available target names after initializers have run",
 }
+
+
+def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
+    """
+    Add the shared ``scenario-results`` selection flags to *parser*.
+
+    Registers ``--view``, ``--attack-result-ids``, and ``--limit`` in a
+    ``scenario results`` group so that ``pyrit_scan`` (its ``scenario-results``
+    sub-parser) and ``pyrit_shell`` (``build_scenario_results_parser``) expose an
+    identical results interface. Both surfaces take the scenario-result id as a
+    positional, added by the caller.
+
+    ``--view`` defaults to ``None`` (not ``OVERVIEW``) so callers can tell an
+    explicit ``--view`` apart from an omitted one; resolve it with
+    ``pyrit.cli._results.resolve_view``.
+
+    Args:
+        parser (argparse.ArgumentParser): The parser to extend.
+    """
+    group = parser.add_argument_group("scenario results")
+    group.add_argument(
+        "--view",
+        type=parse_scenario_result_view,
+        default=None,
+        metavar="{" + ",".join(view.value for view in ScenarioResultView) + "}",
+        help="Result granularity: 'overview' (aggregate, default), 'attacks' (per-attack table), "
+        "'conversations' (per-attack message transcripts), or 'full' (attacks + conversations)",
+    )
+    group.add_argument(
+        "--attack-result-ids",
+        nargs="+",
+        metavar="ID",
+        help="Restrict the view to these attack result ids (default: all attacks in the run)",
+    )
+    group.add_argument(
+        "--limit",
+        type=positive_int,
+        metavar="N",
+        help="Show at most N attacks (ignored for --view overview; defaults to 5 for "
+        "--view conversations/full when no --attack-result-ids is given)",
+    )
+
+
+def build_scenario_results_parser() -> argparse.ArgumentParser:
+    """
+    Build the ``pyrit_shell`` parser for ``scenario-results <id> [flags]``.
+
+    The shell takes the scenario-result id positionally (scan takes it as the
+    ``--scenario-results`` value), then shares the remaining selection flags via
+    ``add_results_arguments``. ``add_help`` is disabled so a bad line raises
+    ``SystemExit`` for the caller to catch instead of printing argparse's help.
+
+    Returns:
+        argparse.ArgumentParser: The configured parser.
+    """
+    parser = argparse.ArgumentParser(prog="scenario-results", add_help=False)
+    parser.add_argument("scenario_result_id", help="Scenario result id to inspect")
+    add_results_arguments(parser=parser)
+    return parser
 
 
 # ---------------------------------------------------------------------------
@@ -345,8 +552,8 @@ class _ArgSpec:
     constant, not editing any parsing logic.
 
     Attributes:
-        flags: CLI flag strings that trigger this argument (e.g., ``["--strategies", "-s"]``).
-        result_key: Key name in the returned dict (e.g., ``"scenario_strategies"``).
+        flags: CLI flag strings that trigger this argument (e.g., ``["--techniques", "-s"]``).
+        result_key: Key name in the returned dict (e.g., ``"scenario_techniques"``).
         multi_value: If True, collect values until the next flag.
             If False, consume exactly one value.
         parser: Optional callable to transform each raw string value.
@@ -371,9 +578,9 @@ _INIT_SCRIPTS_ARG = _ArgSpec(
     multi_value=True,
 )
 
-_STRATEGIES_ARG = _ArgSpec(
-    flags=["--strategies", "-s"],
-    result_key="scenario_strategies",
+_TECHNIQUES_ARG = _ArgSpec(
+    flags=["--techniques", "-t"],
+    result_key="scenario_techniques",
     multi_value=True,
 )
 _MAX_CONCURRENCY_ARG = _ArgSpec(
@@ -406,6 +613,12 @@ _MAX_DATASET_SIZE_ARG = _ArgSpec(
     result_key="max_dataset_size",
     parser=lambda v: validate_integer(v, name="--max-dataset-size", min_value=1),
 )
+_DATASET_FILTERS_ARG = _ArgSpec(
+    flags=["--dataset-filters"],
+    result_key="dataset_filters",
+    multi_value=True,
+    parser=parse_dataset_filter,
+)
 _TARGET_ARG = _ArgSpec(
     flags=["--target"],
     result_key="target",
@@ -413,12 +626,13 @@ _TARGET_ARG = _ArgSpec(
 
 _RUN_ARG_SPECS: list[_ArgSpec] = [
     _INITIALIZERS_ARG,
-    _STRATEGIES_ARG,
+    _TECHNIQUES_ARG,
     _MAX_CONCURRENCY_ARG,
     _MAX_RETRIES_ARG,
     _MEMORY_LABELS_ARG,
     _DATASET_NAMES_ARG,
     _MAX_DATASET_SIZE_ARG,
+    _DATASET_FILTERS_ARG,
     _TARGET_ARG,
 ]
 
@@ -508,7 +722,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
         always populated from the first positional token.
 
     Raises:
-        ValueError: Empty input, scenario-flag collision, or shell parser failure.
+        ValueError: Empty input or shell parser failure.
     """
     parts = shlex.split(args_string)
 
@@ -518,7 +732,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
     augmented_specs: list[_ArgSpec] = list(_RUN_ARG_SPECS)
     if declared_params:
         scenario_specs = [_arg_spec_from_parameter(param=p) for p in declared_params]
-        _validate_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
+        scenario_specs = _resolve_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
         augmented_specs.extend(scenario_specs)
 
     result = _parse_shell_arguments(parts=parts[1:], arg_specs=augmented_specs)
@@ -569,20 +783,32 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
 
     Returns:
         _ArgSpec: Spec with ``scenario__<name>`` result key and a parser
-            that routes through ``pyrit.common.parameter.coerce_value``.
+            that routes through ``pyrit.models.parameter.coerce_value``.
     """
+    from pyrit.models.parameter import Parameter
+
     multi = get_origin(param.param_type) is list
     parser: Callable[[str], Any] | None
     if multi:
-        # Per-element coercion; v1 only ships list[str].
-        parser = str
-    elif param.param_type is None or (param.param_type is str and param.choices is None):
-        # No coercion needed and no choices to enforce.
+        # Per-element coercion via a temporary scalar-typed Parameter.
+        type_args = get_args(param.param_type)
+        element_type = type_args[0] if type_args else str
+        element_param = Parameter(
+            name=param.name,
+            description=param.description,
+            param_type=element_type,
+        )
+
+        def parser(raw: str) -> Any:
+            return element_param.coerce_value(raw)
+
+    elif param.param_type is None or param.param_type is str:
+        # No coercion needed (plain str / untyped passthrough).
         parser = None
     else:
-        # Coerce + validate (handles ints/floats/bools AND str-with-choices).
+        # Coerce + validate (handles ints/floats/bools AND Literal/Enum membership).
         def parser(raw: str) -> Any:
-            return coerce_value(param=param, raw_value=raw)
+            return param.coerce_value(raw)
 
     return _ArgSpec(
         flags=[_normalize_scenario_flag(name=param.name)],
@@ -592,29 +818,35 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
     )
 
 
-def _validate_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> None:
+def _resolve_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> list[_ArgSpec]:
     """
-    Reject scenario-vs-built-in and scenario-vs-scenario flag collisions.
+    Drop scenario specs whose flag is already taken; first declaration wins.
 
-    Raises:
-        ValueError: If a scenario flag duplicates a built-in flag, or two
-            scenario parameters normalize to the same CLI flag.
+    A scenario's ``supported_parameters`` (fetched from the API) include the framework's common
+    parameters — e.g. ``memory_labels``, ``max_concurrency``, ``max_retries`` — which normalize to
+    flags already provided as built-ins. A scenario could also declare two params that normalize to
+    the same flag. In both cases the colliding spec is silently dropped and the earlier owner (the
+    built-in, or the first-declared scenario param) keeps the flag. This mirrors
+    ``pyrit_scan._add_scenario_params_from_api``, which skips any flag already registered on the
+    parser, so the two entry points accept the same inputs.
+
+    Args:
+        scenario_specs: Specs built from scenario-declared parameters.
+        base_specs: Built-in run argument specs.
+
+    Returns:
+        list[_ArgSpec]: The scenario specs whose flags do not collide with a built-in flag or an
+            earlier scenario spec.
     """
-    base_flags = {flag for spec in base_specs for flag in spec.flags}
-    seen: set[str] = set()
+    seen: set[str] = {flag for spec in base_specs for flag in spec.flags}
+    resolved: list[_ArgSpec] = []
     for spec in scenario_specs:
-        for flag in spec.flags:
-            if flag in base_flags:
-                raise ValueError(
-                    f"Scenario parameter flag {flag!r} collides with a built-in flag. "
-                    f"Rename the parameter to avoid the collision."
-                )
-            if flag in seen:
-                raise ValueError(
-                    f"Scenario declares two parameters that normalize to the same CLI flag {flag!r}. "
-                    f"Rename one of them."
-                )
-            seen.add(flag)
+        if any(flag in seen for flag in spec.flags):
+            # Flag already owned by a built-in or an earlier scenario param; first wins.
+            continue
+        seen.update(spec.flags)
+        resolved.append(spec)
+    return resolved
 
 
 def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
@@ -643,43 +875,23 @@ def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_parameters_from_api(*, api_params: list[dict[str, Any]]) -> list[Parameter] | None:
+def build_parameters_from_api(*, api_params: list[Parameter]) -> list[Parameter] | None:
     """
-    Build ``Parameter`` objects from a scenario catalog's ``supported_parameters``.
+    Return a scenario catalog's ``supported_parameters`` as coercion-ready ``Parameter`` objects.
 
-    Maps the display ``param_type`` string ("int", "float", "bool", "str",
-    "list[...]", "any") back to a concrete ``param_type`` so the shell parser
-    can apply per-element coercion and treat list params as ``multi_value``.
+    The REST client deserializes catalog payloads directly into ``Parameter``,
+    which reconstructs each parameter's live ``param_type`` from its serialized
+    display fields (``type_name`` / ``choices`` / ``is_list``). The parameters are
+    therefore already coercion-ready, so the shell parser can apply per-element
+    coercion and treat list parameters as ``multi_value`` without further mapping.
 
     Args:
-        api_params: List of parameter dicts from ``GET /api/scenarios/catalog/{name}``.
+        api_params: Scenario-declared parameters from ``GET /api/scenarios/catalog/{name}``.
 
     Returns:
         list[Parameter] | None: Parameter list when ``api_params`` is non-empty, else ``None``.
     """
-    if not api_params:
-        return None
-    type_map: dict[str, Any] = {"int": int, "float": float, "bool": bool, "str": str}
-    parameters: list[Parameter] = []
-    for p in api_params:
-        type_display = p.get("param_type", "")
-        if p.get("is_list"):
-            element_type = type_map.get(type_display.removeprefix("list[").rstrip("]"), str)
-            resolved_type: Any = list[element_type]  # type: ignore[valid-type]
-        else:
-            resolved_type = type_map.get(type_display)
-        raw_choices = p.get("choices")
-        choices: tuple[Any, ...] | None = tuple(raw_choices) if raw_choices else None
-        parameters.append(
-            Parameter(
-                name=p["name"],
-                description=p.get("description", ""),
-                param_type=resolved_type,
-                default=p.get("default"),
-                choices=choices,
-            )
-        )
-    return parameters
+    return list(api_params) or None
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -691,43 +903,3 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         default=logging.WARNING,
         help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: WARNING)",
     )
-
-
-# Module-level logger (stdlib only — no heavy deps)
-_logger = logging.getLogger(__name__)
-
-
-def merge_config_scenario_args(
-    *,
-    config_scenario: ScenarioConfig | None,
-    effective_scenario_name: str,
-    cli_args: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Merge config-file scenario args with CLI scenario args (CLI wins per-key).
-
-    When ``config_scenario.name`` does not match ``effective_scenario_name``, the
-    config args are skipped with a warning so users are not silently surprised.
-    Mutable values are deep-copied so they don't leak across runs.
-
-    Args:
-        config_scenario (ScenarioConfig | None): The ``scenario:`` block from
-            the layered config, or ``None`` when not configured.
-        effective_scenario_name (str): The scenario about to run (CLI wins).
-        cli_args (dict[str, Any]): Scenario args supplied on the CLI.
-
-    Returns:
-        dict[str, Any]: The merged scenario-args dict to pass to ``set_params_from_args``.
-    """
-    merged: dict[str, Any] = {}
-    if config_scenario and config_scenario.args:
-        if config_scenario.name == effective_scenario_name:
-            merged.update(copy.deepcopy(config_scenario.args))
-        else:
-            _logger.warning(
-                "Config args for scenario '%s' not applied while running '%s'.",
-                config_scenario.name,
-                effective_scenario_name,
-            )
-    merged.update(cli_args)
-    return merged

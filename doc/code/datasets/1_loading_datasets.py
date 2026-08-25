@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 1. Loading Built-in Datasets
+# # Loading Built-in Datasets
 #
 # PyRIT includes many built-in datasets to help you get started with AI red teaming. While PyRIT aims to be unopinionated about what constitutes harmful content, it provides easy mechanisms to use datasets—whether built-in, community-contributed, or your own custom datasets.
 #
@@ -18,6 +18,7 @@
 # The following command lists all built-in datasets available in PyRIT. Some datasets are stored locally, while others are fetched remotely from sources like HuggingFace.
 #
 # Many of these datasets come from published research, including
+# 0DIN [@odin2024],
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
 # ALERT [@tedeschi2024alert],
@@ -54,6 +55,8 @@
 # ToxicChat [@lin2023toxicchat],
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
+# WildGuard [@han2024wildguard],
+# XL-SafetyBench [@choi2026xlsafetybench],
 # XSTest [@rottger2023xstest],
 # AILuminate [@ghosh2025ailuminate],
 # Transphobia Awareness [@scheuerman2025transphobia],
@@ -61,6 +64,12 @@
 # and PromptIntel [@roccia2024promptintel].
 # Some datasets also originate from tools like garak [@derczynski2024garak]
 # and AdvBench [@zou2023gcg].
+# The garak family includes per-language package-hallucination registries
+# (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
+# `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
+# `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
+# `garak_tm_system_prompts`), an audio jailbreak set
+# (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
@@ -94,7 +103,6 @@ for dataset in datasets:
 # The following example demonstrates adding datasets to memory. For comprehensive details on memory capabilities, see the [memory documentation](../memory/0_memory.md) and [seed database guide](../memory/8_seed_database.ipynb).
 
 # %%
-
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 memory = CentralMemory().get_memory_instance()

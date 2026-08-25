@@ -5,7 +5,7 @@ import io
 import logging
 import uuid
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
@@ -13,7 +13,7 @@ from pyrit.datasets.seed_datasets.remote._image_cache import (
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt, SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -83,25 +83,6 @@ _CATEGORY_TO_GITHUB_SCENARIO: dict[str, str] = {
 }
 
 
-_AUTHORS = [
-    "Xin Liu",
-    "Yichen Zhu",
-    "Jindong Gu",
-    "Yunshi Lan",
-    "Chao Yang",
-    "Yu Qiao",
-]
-
-_DESCRIPTION = (
-    "MM-SafetyBench (ECCV 2024) is a multimodal safety benchmark of 5,040 "
-    "text-image pairs across 13 risk scenarios. The harmful concept is "
-    "moved into the image (as a Stable Diffusion render of the concept, as "
-    "typography of the key phrase, or both) while the visible text prompt is "
-    "rephrased to be benign-looking ('the image shows a phrase of an "
-    "activity. List steps in detail to perform this activity.')."
-)
-
-
 class _MMSafetyBenchDataset(_RemoteDatasetLoader):
     """
     Loader for the MM-SafetyBench multimodal safety benchmark (ECCV 2024).
@@ -147,6 +128,28 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
     Paper: [@liu2024mmsafetybench]
     """
 
+    _AUTHORS: ClassVar[list[str]] = [
+        "Xin Liu",
+        "Yichen Zhu",
+        "Jindong Gu",
+        "Yunshi Lan",
+        "Chao Yang",
+        "Yu Qiao",
+    ]
+    _GROUPS: ClassVar[list[str]] = [
+        "East China Normal University",
+        "Shanghai AI Laboratory",
+        "Midea Group",
+        "University of Oxford",
+    ]
+    _DESCRIPTION: ClassVar[str] = (
+        "MM-SafetyBench (ECCV 2024) is a multimodal safety benchmark of 5,040 "
+        "text-image pairs across 13 risk scenarios. The harmful concept is "
+        "moved into the image (as a Stable Diffusion render of the concept, as "
+        "typography of the key phrase, or both) while the visible text prompt is "
+        "rephrased to be benign-looking ('the image shows a phrase of an "
+        "activity. List steps in detail to perform this activity.')."
+    )
     HF_DATASET_NAME: str = "PKU-Alignment/MM-SafetyBench"
     PAPER_URL: str = "https://arxiv.org/abs/2311.17600"
     SOURCE_URL: str = "https://huggingface.co/datasets/PKU-Alignment/MM-SafetyBench"
@@ -203,6 +206,8 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         """
         self._validate_enum(variant, MMSafetyBenchVariant, "variant")
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, MMSafetyBenchCategory, "category")
 
         self.variant = variant
@@ -213,7 +218,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
 
     @property
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "mm_safetybench"
 
     async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
@@ -234,7 +239,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         tiny_id_map = self._load_tiny_id_map(cache=cache) if self.use_tiny else None
         selected_categories = list(self.categories) if self.categories is not None else list(MMSafetyBenchCategory)
 
-        seeds: list[Seed] = []
+        seeds: list[SeedUnion] = []
         group_count = 0
         failed_image_count = 0
 
@@ -399,7 +404,7 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
         objective_text: str,
         rephrased_text: str,
         local_image_path: str,
-    ) -> list[Seed]:
+    ) -> list[SeedUnion]:
         """
         Build a ``SeedObjective`` + image ``SeedPrompt`` + text ``SeedPrompt`` group for one row.
 
@@ -429,8 +434,9 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
             name=f"MM-SafetyBench Objective - {category_value} {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=[harm_category],
-            description=_DESCRIPTION,
-            authors=_AUTHORS,
+            description=self._DESCRIPTION,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.PAPER_URL,
             prompt_group_id=group_id,
             metadata=metadata,
@@ -442,8 +448,9 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
             name=f"MM-SafetyBench Image - {category_value} {self.variant.value} {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=[harm_category],
-            description=_DESCRIPTION,
-            authors=_AUTHORS,
+            description=self._DESCRIPTION,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.SOURCE_URL,
             prompt_group_id=group_id,
             sequence=0,
@@ -456,8 +463,9 @@ class _MMSafetyBenchDataset(_RemoteDatasetLoader):
             name=f"MM-SafetyBench Text - {category_value} {self.variant.value} {question_id}",
             dataset_name=self.dataset_name,
             harm_categories=[harm_category],
-            description=_DESCRIPTION,
-            authors=_AUTHORS,
+            description=self._DESCRIPTION,
+            authors=self._AUTHORS,
+            groups=self._GROUPS,
             source=self.SOURCE_URL,
             prompt_group_id=group_id,
             sequence=0,

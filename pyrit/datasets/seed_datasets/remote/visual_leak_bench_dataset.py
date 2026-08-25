@@ -15,6 +15,7 @@ from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
 from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models.harm_category import HarmCategory
 
 logger = logging.getLogger(__name__)
 
@@ -109,15 +110,19 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         self.pii_types = pii_types
 
         if categories is not None:
+            if not categories:
+                raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
             self._validate_enums(categories, VisualLeakBenchCategory, "category")
 
         if pii_types is not None:
+            if not pii_types:
+                raise ValueError("`pii_types` must be a non-empty list (pass None to include all PII types)")
             self._validate_enums(pii_types, VisualLeakBenchPIIType, "PII type")
 
     @property
     @override
     def dataset_name(self) -> str:
-        """Return the dataset name."""
+        """The dataset name."""
         return "visual_leak_bench"
 
     @override
@@ -237,6 +242,20 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
         group_id = uuid.uuid4()
 
         harm_categories = self._build_harm_categories(category_str, pii_type_str)
+        standardized_harm_categories = self._standardize_harm_categories(
+            harm_categories,
+            alias_overrides={
+                "pii_leakage": HarmCategory.PPI,
+                "email": HarmCategory.PPI,
+                "dob": HarmCategory.PPI,
+                "phone": HarmCategory.PPI,
+                "password": HarmCategory.PPI,
+                "pin": HarmCategory.PPI,
+                "api_key": HarmCategory.PPI,
+                "ssn": HarmCategory.PPI,
+                "credit_card": HarmCategory.PPI,
+            },
+        )
         text_prompt_value = self._get_query_prompt(category_str)
 
         local_image_path = await self._fetch_and_save_image_async(image_url, example_id)
@@ -246,7 +265,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             data_type="image_path",
             name=f"VisualLeakBench Image - {example_id}",
             dataset_name=self.dataset_name,
-            harm_categories=harm_categories,
+            harm_categories=standardized_harm_categories,
             description=description,
             authors=authors,
             groups=groups,
@@ -266,7 +285,7 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             data_type="text",
             name=f"VisualLeakBench Text - {example_id}",
             dataset_name=self.dataset_name,
-            harm_categories=harm_categories,
+            harm_categories=standardized_harm_categories,
             description=description,
             authors=authors,
             groups=groups,
@@ -294,12 +313,11 @@ class _VisualLeakBenchDataset(_RemoteDatasetLoader):
             list[str]: List of harm category strings.
         """
         if category_str == VisualLeakBenchCategory.OCR_INJECTION.value:
-            return ["ocr_injection"]
+            return []
         if category_str == VisualLeakBenchCategory.PII_LEAKAGE.value:
-            categories = ["pii_leakage"]
             if pii_type_str:
-                categories.append(pii_type_str.lower().replace(" ", "_"))
-            return categories
+                return [pii_type_str.lower().replace(" ", "_")]
+            return ["pii_leakage"]
         return [category_str.lower().replace(" ", "_")]
 
     def _get_query_prompt(self, category_str: str) -> str:

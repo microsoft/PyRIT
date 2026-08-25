@@ -118,7 +118,7 @@ class XPIAResult(WorkflowResult):
     @property
     def status(self) -> XPIAStatus:
         """
-        Get the status of the attack result.
+        The status of the attack result.
 
         Returns:
             XPIAStatus: The status of the attack result.
@@ -137,7 +137,7 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
     2. The processing_callback is executed to trigger the target's processing
     3. The response is optionally scored to determine success
 
-    The workflow supports customization through prompt converters and scorers,
+    The workflow supports customization through converters and scorers,
     allowing for various attack techniques and evaluation methods.
     """
 
@@ -334,8 +334,6 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             target=self._attack_setup_target,
-            labels=context.memory_labels,
-            attack_identifier=self.get_identifier(),
             conversation_id=context.attack_setup_target_conversation_id,
         )
 
@@ -374,7 +372,6 @@ class XPIAWorkflow(WorkflowStrategy[XPIAContext, XPIAResult], Identifiable):
                         original_value=processing_response,
                         original_value_data_type="text",
                         role="assistant",
-                        attack_identifier=self.get_identifier(),
                     )
                 ],
             )
@@ -575,8 +572,6 @@ class XPIATestWorkflow(XPIAWorkflow):
                 target=self._processing_target,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
-                labels=context.memory_labels,
-                attack_identifier=self.get_identifier(),
                 conversation_id=context.processing_conversation_id,
             )
 

@@ -5,7 +5,8 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
+from uuid import uuid4
 
 import pandas as pd
 
@@ -158,7 +159,7 @@ class HumanLabeledDataset:
         self.harm_definition_version = harm_definition_version
         self._harm_definition_obj: HarmDefinition | None = None
 
-    def get_harm_definition(self) -> Optional["HarmDefinition"]:
+    def get_harm_definition(self) -> "HarmDefinition | None":
         """
         Load and return the HarmDefinition object for this dataset.
 
@@ -320,6 +321,7 @@ class HumanLabeledDataset:
                             role="assistant",
                             original_value=response_to_score,
                             original_value_data_type=cast("PromptDataType", data_type),
+                            conversation_id=str(uuid4()),
                         )
                     ],
                 )

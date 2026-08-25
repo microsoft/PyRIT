@@ -9,6 +9,12 @@ export const useNavigationStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingVerticalM,
   },
+  primaryNavigation: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: tokens.spacingVerticalM,
+  },
   navButton: {
     width: '44px',
     height: '44px',

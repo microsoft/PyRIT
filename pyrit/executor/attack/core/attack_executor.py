@@ -14,7 +14,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    Optional,
     TypeVar,
 )
 
@@ -25,7 +24,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategyContextT,
     AttackStrategyResultT,
 )
-from pyrit.models import SeedAttackGroup
+from pyrit.models import AttackSeedGroup
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -92,7 +91,7 @@ class AttackExecutorResult(Generic[AttackResultT]):
 
     @property
     def exceptions(self) -> list[BaseException]:
-        """Get all exceptions from incomplete objectives."""
+        """All exceptions from incomplete objectives."""
         return [exception for _, exception in self.incomplete_objectives]
 
     def raise_if_incomplete(self) -> None:
@@ -171,23 +170,23 @@ class AttackExecutor:
         self,
         *,
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
-        seed_groups: Sequence[SeedAttackGroup],
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        seed_groups: Sequence[AttackSeedGroup],
+        adversarial_chat: "PromptTarget | None" = None,
+        objective_scorer: "TrueFalseScorer | None" = None,
         field_overrides: Sequence[dict[str, Any]] | None = None,
         return_partial_on_failure: bool = False,
         attribution: AttackResultAttribution | None = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
-        Execute attacks in parallel, extracting parameters from SeedAttackGroups.
+        Execute attacks in parallel, extracting parameters from AttackSeedGroups.
 
         Uses the attack's params_type.from_seed_group() to extract parameters,
         automatically handling which fields the attack accepts.
 
         Args:
             attack: The attack strategy to execute.
-            seed_groups: SeedAttackGroups containing objectives and optional prompts.
+            seed_groups: AttackSeedGroups containing objectives and optional prompts.
             adversarial_chat: Optional chat target for generating adversarial prompts
                 or simulated conversations. Required when seed groups contain
                 SeedSimulatedConversation configurations.
@@ -196,8 +195,10 @@ class AttackExecutor:
             field_overrides: Optional per-seed-group field overrides. If provided,
                 must match the length of seed_groups. Each dict is passed to
                 from_seed_group() as overrides.
-            return_partial_on_failure: If True, returns partial results when some
-                objectives fail. If False (default), raises the first exception.
+            return_partial_on_failure: If True, executes successfully constructed
+                objectives and returns parameter-build or execution failures alongside
+                completed results. If False (default), a parameter-build failure
+                suppresses execution and raises the first exception by input order.
             attribution: Optional ``AttackResultAttribution`` stamped onto every
                 per-task ``AttackContext`` so the persisted ``AttackResultEntry``
                 row carries ``attribution_parent_id`` + ``attribution_data``.
@@ -228,7 +229,7 @@ class AttackExecutor:
         # This can take time if the SeedSimulatedConversation generation is included
         semaphore = self._get_semaphore()
 
-        async def build_params_async(i: int, sg: SeedAttackGroup) -> AttackParameters:
+        async def build_params_async(i: int, sg: AttackSeedGroup) -> AttackParameters:
             async with semaphore:
                 combined_overrides = dict(broadcast_fields)
                 if field_overrides is not None:
@@ -240,13 +241,39 @@ class AttackExecutor:
                     **combined_overrides,
                 )
 
-        params_list = list(await asyncio.gather(*[build_params_async(i, sg) for i, sg in enumerate(seed_groups)]))
+        build_results = list(
+            await asyncio.gather(
+                *[build_params_async(i, sg) for i, sg in enumerate(seed_groups)],
+                return_exceptions=True,
+            )
+        )
+        params_list: list[AttackParameters] = []
+        successful_input_indices: list[int] = []
+        build_failures: list[tuple[int, str, Exception]] = []
+        for index, (seed_group, build_result) in enumerate(zip(seed_groups, build_results, strict=True)):
+            if isinstance(build_result, Exception):
+                assert seed_group.objective is not None
+                build_failures.append((index, seed_group.objective.value, build_result))
+            elif isinstance(build_result, BaseException):
+                raise build_result
+            else:
+                params_list.append(build_result)
+                successful_input_indices.append(index)
 
-        return await self._execute_with_params_list_async(
+        if build_failures and not return_partial_on_failure:
+            raise build_failures[0][2]
+
+        execution_result = await self._execute_with_params_list_async(
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
             attribution=attribution,
+            input_indices=successful_input_indices,
+        )
+        return self._merge_parameter_build_failures(
+            build_failures=build_failures,
+            successful_input_indices=successful_input_indices,
+            execution_result=execution_result,
         )
 
     async def execute_attack_async(
@@ -324,6 +351,7 @@ class AttackExecutor:
         params_list: Sequence[AttackParameters],
         return_partial_on_failure: bool = False,
         attribution: AttackResultAttribution | None = None,
+        input_indices: Sequence[int] | None = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.
@@ -338,6 +366,8 @@ class AttackExecutor:
             attribution: Optional ``AttackResultAttribution`` stamped onto every
                 per-task ``AttackContext`` so the persistence path can record
                 orchestrator linkage.
+            input_indices: Original input positions for ``params_list``. Defaults
+                to sequential positions when parameters were constructed directly.
 
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
@@ -358,6 +388,7 @@ class AttackExecutor:
             objectives=[p.objective for p in params_list],
             results_or_exceptions=list(results_or_exceptions),
             return_partial_on_failure=return_partial_on_failure,
+            input_indices=input_indices,
         )
 
     def _process_execution_results(
@@ -366,6 +397,7 @@ class AttackExecutor:
         objectives: Sequence[str],
         results_or_exceptions: list[Any],
         return_partial_on_failure: bool,
+        input_indices: Sequence[int] | None = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Process results from parallel execution into an AttackExecutorResult.
@@ -374,23 +406,30 @@ class AttackExecutor:
             objectives: The objectives that were executed.
             results_or_exceptions: Results or exceptions from asyncio.gather.
             return_partial_on_failure: Whether to return partial results on failure.
+            input_indices: Original input positions corresponding to ``objectives``.
 
         Returns:
             AttackExecutorResult with completed and incomplete results.
 
         Raises:
             BaseException: If return_partial_on_failure=False and any failed.
+            ValueError: If input_indices length doesn't match objectives length.
         """
         completed: list[AttackStrategyResultT] = []
         incomplete: list[tuple[str, BaseException]] = []
         completed_indices: list[int] = []
+        source_indices = list(input_indices) if input_indices is not None else list(range(len(objectives)))
+        if len(source_indices) != len(objectives):
+            raise ValueError("input_indices length must match objectives length")
 
-        for i, (objective, result) in enumerate(zip(objectives, results_or_exceptions, strict=False)):
+        self._raise_first_fatal_exception(results_or_exceptions=results_or_exceptions)
+
+        for i, (objective, result) in enumerate(zip(objectives, results_or_exceptions, strict=True)):
             if isinstance(result, BaseException):
                 incomplete.append((objective, result))
             else:
                 completed.append(result)
-                completed_indices.append(i)
+                completed_indices.append(source_indices[i])
 
         executor_result: AttackExecutorResult[AttackStrategyResultT] = AttackExecutorResult(
             completed_results=completed,
@@ -402,3 +441,41 @@ class AttackExecutor:
             executor_result.raise_if_incomplete()
 
         return executor_result
+
+    @staticmethod
+    def _raise_first_fatal_exception(*, results_or_exceptions: Sequence[Any]) -> None:
+        """Propagate cancellation and other non-recoverable base exceptions."""
+        for result in results_or_exceptions:
+            if isinstance(result, BaseException) and not isinstance(result, Exception):
+                raise result
+
+    @staticmethod
+    def _merge_parameter_build_failures(
+        *,
+        build_failures: Sequence[tuple[int, str, Exception]],
+        successful_input_indices: Sequence[int],
+        execution_result: AttackExecutorResult[AttackStrategyResultT],
+    ) -> AttackExecutorResult[AttackStrategyResultT]:
+        """
+        Merge parameter-build and execution failures by original input position.
+
+        Returns:
+            The combined executor result.
+        """
+        if not build_failures:
+            return execution_result
+
+        incomplete_by_index: dict[int, tuple[str, BaseException]] = {
+            index: (objective, error) for index, objective, error in build_failures
+        }
+        completed_indices = set(execution_result.input_indices)
+        execution_failures = iter(execution_result.incomplete_objectives)
+        for input_index in successful_input_indices:
+            if input_index not in completed_indices:
+                incomplete_by_index[input_index] = next(execution_failures)
+
+        return AttackExecutorResult(
+            completed_results=execution_result.completed_results,
+            incomplete_objectives=[incomplete_by_index[index] for index in sorted(incomplete_by_index)],
+            input_indices=execution_result.input_indices,
+        )

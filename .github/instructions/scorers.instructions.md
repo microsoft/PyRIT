@@ -6,6 +6,8 @@ applyTo: "pyrit/score/**"
 
 Scorers evaluate model responses against an objective and live under `pyrit/score/`. Style rules from `style-guide.instructions.md` (async `_async` suffix, keyword-only args, type hints, enums-over-Literals) still apply and are not repeated here.
 
+**Does not own** (see [framework.md](../../doc/code/framework.md)): acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job and aggregating scores across runs is analytics'. It may call a target to evaluate, but must not send the attack's objective prompt or manage the conversation. Flag such bleed in review.
+
 ## Constructor contract
 
 `Scorer` subclasses MUST use the keyword-only constructor shape:
@@ -35,20 +37,6 @@ Requirements:
 - ``super().__init__(validator=..., chat_target=...)`` is required so the
   base class wires the validator and validates ``TARGET_REQUIREMENTS``
   against any provided ``chat_target``.
-- Existing subclasses that cannot adopt the contract immediately may set
-  the class attribute ``_brick_legacy_init = True`` to opt into a
-  one-release grace period that downgrades the error to a
-  ``DeprecationWarning(removed_in="0.16.0")``. The opt-out is removed in
-  0.16.0; classes that still violate the contract at that point will hard
-  fail.
-
-### Currently grandfathered
-
-- ``PlagiarismScorer`` (``pyrit/score/float_scale/plagiarism_scorer.py``) —
-  accepts ``reference_text`` positionally as part of its public API. The
-  positional shape is preserved through one release cycle via
-  ``_brick_legacy_init = True`` and is scheduled to become
-  keyword-only in 0.16.0 (``BREAKING CHANGE``).
 
 ## Common pitfalls
 

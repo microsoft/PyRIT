@@ -1,23 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import TYPE_CHECKING, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pyrit.models import Message, Score
-from pyrit.score.scorer import Scorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_score_aggregator import (
-    TrueFalseAggregatorFunc,
-    TrueFalseScoreAggregator,
-)
+from pyrit.score.message_scorer import MessageScorer
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
-class TrueFalseScorer(Scorer):
+class TrueFalseScorer(MessageScorer):
     """
     Base class for scorers that return true/false binary scores.
 
@@ -40,14 +40,15 @@ class TrueFalseScorer(Scorer):
     """
 
     # Default evaluation configuration - evaluates against all objective CSVs
-    evaluation_file_mapping: Optional["ScorerEvalDatasetFiles"] = None
+    evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
 
     def __init__(
         self,
         *,
         validator: ScorerPromptValidator,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        chat_target: Optional["PromptTarget"] = None,
+        chat_target: PromptTarget | None = None,
+        message_resolver: MessageScorableResolver | None = None,
     ) -> None:
         """
         Initialize the TrueFalseScorer.
@@ -58,21 +59,24 @@ class TrueFalseScorer(Scorer):
                 Defaults to TrueFalseScoreAggregator.OR.
             chat_target (PromptTarget | None): Optional chat target used by the scorer,
                 forwarded to the base class for validation against ``TARGET_REQUIREMENTS``.
+            message_resolver (MessageScorableResolver | None): Message evidence resolver.
         """
         self._score_aggregator = score_aggregator
 
         # Set default evaluation file mapping if not already set by subclass
         if self.evaluation_file_mapping is None:
-            from pyrit.score.scorer_evaluation.scorer_evaluator import (
-                ScorerEvalDatasetFiles,
-            )
+            from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
 
             self.evaluation_file_mapping = ScorerEvalDatasetFiles(
                 human_labeled_datasets_files=["objective/*.csv"],
                 result_file="objective/objective_achieved_metrics.jsonl",
             )
 
-        super().__init__(validator=validator, chat_target=chat_target)
+        super().__init__(
+            validator=validator,
+            chat_target=chat_target,
+            message_resolver=message_resolver,
+        )
 
     def validate_return_scores(self, scores: list[Score]) -> None:
         """
@@ -91,7 +95,7 @@ class TrueFalseScorer(Scorer):
         if scores[0].score_value.lower() not in ["true", "false"]:
             raise ValueError("TrueFalseScorer score value must be True or False.")
 
-    def get_scorer_metrics(self) -> Optional["ObjectiveScorerMetrics"]:
+    def get_scorer_metrics(self) -> ObjectiveScorerMetrics | None:
         """
         Get evaluation metrics for this scorer from the configured evaluation result file.
 
@@ -99,9 +103,7 @@ class TrueFalseScorer(Scorer):
             ObjectiveScorerMetrics: The metrics for this scorer, or None if not found or not configured.
         """
         from pyrit.common.path import SCORER_EVALS_PATH
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
-            find_objective_metrics_by_eval_hash,
-        )
+        from pyrit.score.scorer_evaluation.scorer_metrics_io import find_objective_metrics_by_eval_hash
 
         if self.evaluation_file_mapping is None:
             return None
@@ -158,7 +160,9 @@ class TrueFalseScorer(Scorer):
             )
         ]
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         """
         Build a single-element list containing a ``false`` score when no pieces could be scored.
 
@@ -168,6 +172,8 @@ class TrueFalseScorer(Scorer):
         Args:
             message (Message): The message whose first piece is inspected for status.
             objective (str | None): The objective associated with this scoring call.
+            scorer_response_blocked (bool): When True, the scorer's own LLM response was
+                blocked by content filtering; reflected in the rationale.
 
         Returns:
             list[Score]: A single-element list containing a ``false`` ``true_false`` score
@@ -181,7 +187,13 @@ class TrueFalseScorer(Scorer):
         if piece_id is None:
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
-        if first_piece.is_blocked():
+        if scorer_response_blocked:
+            rationale = (
+                "The scorer's own LLM response was blocked by content filtering "
+                "(raise_if_scorer_blocks is False); returning false."
+            )
+            description = "Scorer response blocked; returning false."
+        elif first_piece.is_blocked():
             rationale = (
                 "The request was blocked by the target "
                 "(score_blocked_content is False or no partial content available); returning false."

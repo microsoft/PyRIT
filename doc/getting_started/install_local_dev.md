@@ -33,20 +33,21 @@ Set up a PyRIT development environment on your local machine.
    wget -qO- https://astral.sh/uv/install.sh | sh
    ```
 
-2. **Python 3.12**: uv will automatically download and use the correct Python version based on `.python-version`
+2. **Python 3.10-3.14**: PyRIT supports these versions, and CI tests all of them. The repository does
+   not pin an interpreter, so `uv` selects a compatible one for you (downloading it if needed).
 
 3. **Git**. Git is required to clone the repo locally. It is available to download [here](https://git-scm.com/downloads).
     ```bash
     git clone https://github.com/microsoft/PyRIT
     ```
 
-4. **Node.js and npm**. Required for building the TypeScript/React frontend. Download [Node.js](https://nodejs.org/) (which includes npm). Version 18 or higher is recommended.
+4. **Node.js and npm**. Required for building the TypeScript/React frontend. Download [Node.js](https://nodejs.org/) (which includes npm). Version 22 or higher is required (the frontend's `react-router` dependency requires Node >= 22.22.0).
 
 ### Installation
 
 1. Navigate to the directory where you cloned the PyRIT repo.
 
-2. The repository includes a `.python-version` file that pins Python 3.12. Run:
+2. From the root of your clone, run:
 
 ```bash
 uv sync
@@ -54,10 +55,13 @@ uv sync
 
 This command will:
 - Create a `.venv` directory with a virtual environment
-- Install Python 3.12 if not already available
+- Download a supported Python version if none is already available
 - Install PyRIT in editable mode; `uv sync` by default installs in editable mode so no extra flag is necessary
 - Install all dependencies including dev tools (pytest, ruff, etc.) via the `dev` dependency group
 - Create a `uv.lock` file for reproducible builds
+
+To pin your checkout to a single version, run `uv python pin 3.12`. That writes a
+`.python-version` file, which is local to your working copy and not tracked by the repository.
 
 
 3. Verify Installation
@@ -77,17 +81,29 @@ VS Code should automatically detect the `.venv` virtual environment. If not:
 3. Choose `.venv\Scripts\python.exe`
 
 #### Running Jupyter Notebooks
-You can create a Jupyter kernel using:
-```bash
-uv run ipython kernel install --user --env VIRTUAL_ENV $(pwd)/.venv --name=pyrit-dev
-```
+
+`uv sync` already installs a `python3` kernel inside `.venv`, and Jupyter binds it to whichever
+interpreter is running it, so notebooks work out of the box with no kernel registration step.
+
 Start the server using
 ```bash
 uv run jupyter lab
 ```
-or using VS Code, open a Jupyter Notebook (.ipynb file) window, in the top search bar of VS Code, type `>Notebook: Select Notebook Kernel` > `Python Environments...` to choose the `pyrit-dev` kernel when executing code in the notebooks, like those in `examples`. You can also choose a kernel with the "Select Kernel" button on the top-right corner of a Notebook.
+or using VS Code, open a Jupyter Notebook (.ipynb file) window, in the top search bar of VS Code, type `>Notebook: Select Notebook Kernel` > `Python Environments...` to choose the `.venv` interpreter for this checkout. You can also choose a kernel with the "Select Kernel" button on the top-right corner of a Notebook.
 
 This will be the kernel that runs all code examples in Python Notebooks.
+
+If you do want a separately named kernel, scope it to the virtual environment:
+
+```bash
+uv run python -m ipykernel install --sys-prefix --name=pyrit-dev
+```
+
+Avoid `--user` with a fixed name if you work in more than one clone or git worktree. A `--user`
+kernel is installed machine-wide, so every checkout that registers the same name overwrites the
+others, and the survivor points at a single interpreter. Notebooks then execute against an
+unrelated checkout, or fail with `FileNotFoundError: [WinError 2]` once that checkout is deleted.
+See [Jupyter setup](troubleshooting/jupyter_setup.md) if you hit this.
 
 
 #### Running Python Scripts

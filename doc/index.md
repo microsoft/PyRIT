@@ -42,6 +42,11 @@ Run standardized evaluation scenarios at large scale — covering content harms,
 A graphical user interface for human-led red teaming. Interact with AI systems directly, track findings, and collaborate with your team — all from a modern web UI.
 ::::
 
+```{image} sprites/roakey-peek-and-scout.png
+:alt: Roakey rising up to peek over a ledge
+:class: roakey-sprite roakey-sprite-scout
+```
+
 ::::{card}
 🔌 **Any Target**
 
@@ -67,6 +72,12 @@ Evaluate AI responses with true/false, Likert scale, classification, and custom 
 ## Getting Started
 1. Install PyRIT and verify installation.\
 For more details and alternative installation methods, see the [Install PyRIT](getting_started/install) page
+
+```{image} sprites/roakey-spyglass-scan.png
+:alt: Roakey raising a spyglass to scan the horizon
+:class: roakey-sprite roakey-sprite-spyglass
+```
+
 ```bash
 # note: for local installation, python version 3.13 is recommended: https://www.python.org/downloads/latest/python3.13
 pip install pyrit
@@ -101,7 +112,6 @@ initializers:
         - default
         - scorer
   - name: scorer
-  - name: load_default_datasets
 ```
 ::::
 
@@ -115,7 +125,7 @@ initializers:
 Run security assessments from the command line with `pyrit_scan` or the interactive `pyrit_shell`. Execute built-in scenarios against your AI targets.
 
 ```bash
-pyrit_scan airt.scam --target openai_chat
+pyrit_scan run airt.scam --target openai_chat
 ```
 
 ![scanner-demo](scanner-demo.png)
@@ -141,7 +151,8 @@ For more details, see the [GUI](gui/0_gui) page.
 Dive into PyRIT's modular components — targets, converters, scorers, memory, and more. Create custom attacks and extend the framework.
 
 ```python
-from pyrit.executor.attack import ConsoleAttackResultPrinter, PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -151,8 +162,8 @@ target = OpenAIChatTarget()
 attack = PromptSendingAttack(objective_target=target)
 result = await attack.execute_async(objective="What model exactly are you? be concise.")
 
-printer = ConsoleAttackResultPrinter()
-await printer.print_conversation_async(result=result)
+printer = PrettyAttackResultMemoryPrinter()
+await printer.write_async(result)
 ```
 
 ![framework-demo](framework-demo.png)
@@ -160,3 +171,8 @@ await printer.print_conversation_async(result=result)
 
 For more details, see the [Framework](code/framework) page.
 ::::
+
+```{image} sprites/roakey-run-and-flag.png
+:alt: Roakey running in and planting a pirate flag
+:class: roakey-sprite roakey-sprite-flag
+```

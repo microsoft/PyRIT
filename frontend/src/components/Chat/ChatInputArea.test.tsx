@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatInputArea from "./ChatInputArea";
 import type { ChatInputAreaHandle } from "./ChatInputArea";
-import type { TargetCapabilitiesInfo } from "../../types";
+import { makeTarget } from "@/test-utils/targetFixtures";
+import type { TargetCapabilities } from "../../types";
 
 // Wrapper component for Fluent UI context
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -12,8 +13,8 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 const buildCapabilities = (
-  overrides: Partial<TargetCapabilitiesInfo> = {}
-): TargetCapabilitiesInfo => ({
+  overrides: Partial<TargetCapabilities> = {}
+): TargetCapabilities => ({
   supports_multi_turn: true,
   supports_multi_message_pieces: false,
   supports_json_schema: false,
@@ -57,7 +58,10 @@ describe("ChatInputArea", () => {
 
     expect(screen.getByRole("textbox")).toBeInTheDocument();
     expect(getSendButton()).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /convert/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /convert/i })).toHaveAttribute(
+      "data-tour",
+      "converter-toggle"
+    );
   });
 
   it("should call converter panel toggle handler when convert button is clicked", async () => {
@@ -76,6 +80,81 @@ describe("ChatInputArea", () => {
     await user.click(screen.getByRole("button", { name: /convert/i }));
 
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("should expose the visible target prerequisite to the tour", () => {
+    render(
+      <TestWrapper>
+        <ChatInputArea {...defaultProps} noTargetSelected />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("no-target-banner")).toHaveAttribute(
+      "data-tour",
+      "chat-prerequisite"
+    );
+    expect(
+      screen.queryByRole("button", { name: /toggle converter panel/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("should show a retry action when target verification fails", async () => {
+    const user = userEvent.setup();
+    const onRetryTargetResolution = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          targetResolutionStatus="error"
+          onRetryTargetResolution={onRetryTargetResolution}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("target-resolution-error-banner")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+    expect(onRetryTargetResolution).toHaveBeenCalledTimes(1);
+  });
+
+  it("should direct ambiguous target identities to remove duplicates and retry", async () => {
+    const user = userEvent.setup();
+    const onRetryTargetResolution = jest.fn();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          targetResolutionStatus="ambiguous"
+          onRetryTargetResolution={onRetryTargetResolution}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("target-resolution-ambiguous-banner")).toBeInTheDocument();
+    expect(screen.getByText(/remove duplicate registrations/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+    expect(onRetryTargetResolution).toHaveBeenCalledTimes(1);
+  });
+
+  it("should keep legacy attacks read-only while allowing a new-attack template", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <ChatInputArea
+          {...defaultProps}
+          activeTarget={makeTarget({ target_registry_name: "explicit-target" })}
+          targetResolutionStatus="legacy"
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByTestId("target-resolution-legacy-banner")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /continue with your target/i }));
+    expect(defaultProps.onUseAsTemplate).toHaveBeenCalledTimes(1);
   });
 
   it("should call onSend with input value when send button clicked", async () => {
@@ -295,7 +374,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
         />
       </TestWrapper>
     );
@@ -395,11 +474,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "test",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supports_multi_turn: false }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -416,11 +495,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "test",
             target_type: "OpenAIChatTarget",
             capabilities: buildCapabilities({ supports_multi_turn: true }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -604,7 +683,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
         />
       </TestWrapper>
@@ -632,7 +711,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           mediaConversions={[{ pieceType: "image", convertedValue: "/tmp/converted.png", convertedDataType: "image_path" }]}
           onClearMediaConversion={onClearMediaConversion}
         />
@@ -660,7 +739,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedValue="aGVsbG8="
           originalValue="hello"
           onConvertedValueChange={onConvertedValueChange}
@@ -674,7 +753,8 @@ describe("ChatInputArea", () => {
     expect(screen.getByTestId("converted-indicator")).toBeInTheDocument();
 
     // Edit the converted value
-    const convertedInput = screen.getByTestId("converted-value-input");
+    const convertedInput = screen.getByRole("textbox", { name: /converted prompt/i });
+    expect(convertedInput).toHaveValue("aGVsbG8=");
     await user.clear(convertedInput);
     await user.type(convertedInput, "new");
     expect(onConvertedValueChange).toHaveBeenCalled();
@@ -694,7 +774,7 @@ describe("ChatInputArea", () => {
         <ChatInputArea
           {...defaultProps}
           onSend={onSend}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedValue="convertedHello"
           originalValue="hello"
           onClearConversion={onClearConversion}
@@ -715,7 +795,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "result.pdf",
             url: "/api/media?path=%2Ftmp%2Fresult.pdf",
@@ -741,7 +821,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "result.pdf",
             url: "/api/media?path=%2Ftmp%2Fresult.pdf",
@@ -761,7 +841,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "result.png",
             url: "/api/media?path=%2Ftmp%2Fresult.png",
@@ -785,7 +865,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "speech.wav",
             url: "/api/media?path=%2Ftmp%2Fspeech.wav",
@@ -808,7 +888,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "clip.mp4",
             url: "/api/media?path=%2Ftmp%2Fclip.mp4",
@@ -829,7 +909,7 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" }}
+          activeTarget={makeTarget({ target_registry_name: "t", target_type: "T", endpoint: "e", model_name: "m" })}
           convertedFileChip={{
             name: "result.pdf",
             url: "/api/media?path=%2Ftmp%2Fresult.pdf",
@@ -855,11 +935,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -881,11 +961,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -926,11 +1006,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -952,11 +1032,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -983,11 +1063,11 @@ describe("ChatInputArea", () => {
         <ChatInputArea
           {...defaultProps}
           onSend={onSend}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -1011,11 +1091,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
         />
       </TestWrapper>
     );
@@ -1037,11 +1117,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
           converterOutputDataTypes={["image_path"]}
         />
       </TestWrapper>
@@ -1060,11 +1140,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "OpenAIChatTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text", "image_path"] }),
-          }}
+          })}
           converterOutputDataTypes={["image_path"]}
         />
       </TestWrapper>
@@ -1080,11 +1160,11 @@ describe("ChatInputArea", () => {
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          activeTarget={{
+          activeTarget={makeTarget({
             target_registry_name: "t",
             target_type: "TextTarget",
             capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
-          }}
+          })}
           converterOutputDataTypes={["audio_path"]}
         />
       </TestWrapper>

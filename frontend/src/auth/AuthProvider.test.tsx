@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 
 // ---------------------------------------------------------------------------
@@ -26,11 +27,8 @@ jest.mock("./msalConfig", () => ({
 }));
 
 const mockSetMsalInstance = jest.fn();
-const mockSetClientId = jest.fn();
-
 jest.mock("../services/api", () => ({
   setMsalInstance: (...args: unknown[]) => mockSetMsalInstance(...args),
-  setClientId: (...args: unknown[]) => mockSetClientId(...args),
 }));
 
 // MSAL browser mocks — PublicClientApplication instance methods
@@ -39,7 +37,6 @@ const mockHandleRedirectPromise = jest.fn().mockResolvedValue(null);
 const mockGetActiveAccount = jest.fn().mockReturnValue(null);
 const mockGetAllAccounts = jest.fn().mockReturnValue([]);
 const mockSetActiveAccount = jest.fn();
-const mockAddEventCallback = jest.fn();
 const mockLoginRedirect = jest.fn().mockResolvedValue(undefined);
 
 jest.mock("@azure/msal-browser", () => ({
@@ -49,7 +46,6 @@ jest.mock("@azure/msal-browser", () => ({
     getActiveAccount: mockGetActiveAccount,
     getAllAccounts: mockGetAllAccounts,
     setActiveAccount: mockSetActiveAccount,
-    addEventCallback: mockAddEventCallback,
     loginRedirect: mockLoginRedirect,
   })),
   EventType: { LOGIN_SUCCESS: "msal:loginSuccess" },
@@ -78,6 +74,7 @@ jest.mock("@azure/msal-react", () => ({
 }));
 
 import { AuthProvider } from "./AuthProvider";
+import type { AuthConfig } from "./msalConfig";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -95,8 +92,11 @@ describe("AuthProvider", () => {
   });
 
   // Test 10: fetchAuthConfig never resolves → stuck in loading state
-  it("shows loading state while initializing", () => {
-    mockFetchAuthConfig.mockReturnValue(new Promise(() => {}));
+  it("shows loading state while initializing", async () => {
+    let resolveConfig: (config: AuthConfig) => void = () => {}
+    mockFetchAuthConfig.mockReturnValue(new Promise((resolve) => {
+      resolveConfig = resolve
+    }));
 
     render(
       <AuthProvider>
@@ -105,6 +105,8 @@ describe("AuthProvider", () => {
     );
 
     expect(screen.getByText("Initializing authentication...")).toBeVisible();
+    resolveConfig({ clientId: "", tenantId: "", allowedGroupIds: "" });
+    await screen.findByText("Child");
   });
 
   // Test 11: empty clientId + tenantId → auth disabled, children render directly
@@ -159,6 +161,7 @@ describe("AuthProvider", () => {
     await waitFor(() => {
       expect(screen.getByText("Authentication Error")).toBeVisible();
       expect(screen.getByText("Config fetch failed")).toBeVisible();
+      expect(screen.getByText("Reload the page to try again.")).toBeVisible();
     });
   });
 
@@ -200,7 +203,29 @@ describe("AuthProvider", () => {
     expect(mockInitialize).toHaveBeenCalled();
     expect(mockHandleRedirectPromise).toHaveBeenCalled();
     expect(mockSetMsalInstance).toHaveBeenCalled();
-    expect(mockSetClientId).toHaveBeenCalledWith("test-client");
+  });
+
+  it("handles the redirect once when Strict Mode replays effects", async () => {
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+
+    render(
+      <StrictMode>
+        <AuthProvider>
+          <div>Child</div>
+        </AuthProvider>
+      </StrictMode>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("msal-provider")).toBeInTheDocument();
+    });
+    expect(mockHandleRedirectPromise).toHaveBeenCalledTimes(1);
+    expect(mockHandleRedirectPromise).toHaveBeenCalledWith({ navigateToLoginRequestUrl: false });
+    expect(mockLoginRedirect).toHaveBeenCalledTimes(1);
   });
 
   // Test 16: handleRedirectPromise returns account → setActiveAccount called
@@ -313,4 +338,106 @@ describe("AuthProvider", () => {
         expect(screen.getByTestId("consumer")).toBeVisible();
       });
     });
+
+  // Test 20: the originally requested path is passed as MSAL state on login,
+  // so it can be restored after the redirect round-trip.
+  it("passes the requested path as state to loginRedirect", async () => {
+    window.history.replaceState(null, "", "/attacks/atk-7?tab=related");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(mockLoginRedirect).toHaveBeenCalledWith(
+        expect.objectContaining({ state: "/attacks/atk-7?tab=related" })
+      );
+    });
+  });
+
+  // Test 21: a same-origin path returned as redirect state is restored.
+  it("restores the requested deep link from redirect state", async () => {
+    window.history.replaceState(null, "", "/");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+    mockHandleRedirectPromise.mockResolvedValue({
+      account: { username: "user@test.com" },
+      state: "/attacks/atk-7",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/attacks/atk-7");
+    });
+  });
+
+  // Test 22: an absolute/cross-origin state is rejected (open-redirect guard).
+  it("ignores an unsafe cross-origin redirect state", async () => {
+    window.history.replaceState(null, "", "/");
+    const replaceSpy = jest.spyOn(window.history, "replaceState");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+    mockHandleRedirectPromise.mockResolvedValue({
+      account: { username: "user@test.com" },
+      state: "https://evil.example.com/phish",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(mockSetActiveAccount).toHaveBeenCalled();
+    });
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  // Test 23: a backslash-prefixed state ("/\evil.com") is rejected, since the
+  // URL parser normalizes "\" to "/" and would otherwise yield "//evil.com".
+  it("ignores a backslash-prefixed redirect state", async () => {
+    window.history.replaceState(null, "", "/");
+    const replaceSpy = jest.spyOn(window.history, "replaceState");
+    mockFetchAuthConfig.mockResolvedValue({
+      clientId: "test-client",
+      tenantId: "test-tenant",
+      allowedGroupIds: "g1",
+    });
+    mockHandleRedirectPromise.mockResolvedValue({
+      account: { username: "user@test.com" },
+      state: "/\\evil.example.com/phish",
+    });
+
+    render(
+      <AuthProvider>
+        <div>Child</div>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(mockSetActiveAccount).toHaveBeenCalled();
+    });
+    expect(replaceSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/");
+  });
 });

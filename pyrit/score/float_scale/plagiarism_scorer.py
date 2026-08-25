@@ -32,17 +32,9 @@ class PlagiarismScorer(FloatScaleScorer):
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
-    # Grandfathered: ``reference_text`` is part of the public positional API
-    # at the time the keyword-only Scorer contract was introduced. Opting
-    # into the legacy grace period emits a ``DeprecationWarning`` on import
-    # instead of raising ``TypeError`` so existing user code keeps working
-    # for one release cycle. TODO: drop this opt-out and insert ``*,``
-    # after ``self`` in 0.16.0 (this will be a BREAKING CHANGE for callers
-    # that still pass parameters positionally).
-    _brick_legacy_init = True
-
     def __init__(
         self,
+        *,
         reference_text: str,
         metric: PlagiarismMetric = PlagiarismMetric.LCS,
         n: int = 5,
@@ -132,6 +124,27 @@ class PlagiarismScorer(FloatScaleScorer):
         """
         return {tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)}
 
+    def _is_contiguous_sublist(self, *, sub: list[str], full: list[str]) -> bool:
+        """
+        Check whether ``sub`` appears as a contiguous run of tokens inside ``full``.
+
+        This mirrors the word-level tokenization the metrics rely on, so the
+        verbatim-match fast path stays consistent with them.
+
+        Returns:
+            bool: True if ``sub`` is a contiguous sublist of ``full``.
+        """
+        if not sub or len(sub) > len(full):
+            return False
+
+        # Join on a separator that cannot occur in whitespace-split tokens so the
+        # check stays O(n) and only matches on token boundaries (e.g. ["b"] must
+        # not match inside ["ab", "cd"]).
+        separator = "\0"
+        wrapped_sub = separator + separator.join(sub) + separator
+        wrapped_full = separator + separator.join(full) + separator
+        return wrapped_sub in wrapped_full
+
     def _plagiarism_score(
         self,
         response: str,
@@ -147,8 +160,13 @@ class PlagiarismScorer(FloatScaleScorer):
         if response_len == 0 or reference_len == 0:
             return 0.0
 
-        # If reference is in response, all three metrics should be 1.0
-        if reference in response:
+        # If the reference appears verbatim (word-level) in the response, all
+        # three metrics should be 1.0. Compare tokenized sequences rather than
+        # raw strings so this fast path matches the case/punctuation-insensitive
+        # tokenization used below, and so a short reference that is merely a
+        # substring of a longer response word (e.g. "cat" in "concatenate")
+        # does not falsely score as fully plagiarized.
+        if self._is_contiguous_sublist(sub=tokens_reference, full=tokens_response):
             return 1.0
 
         # Compute the LCS metric (normalized by reference length)
