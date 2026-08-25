@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, ClassVar
@@ -54,6 +55,7 @@ class _CrescendoResumeScenario(Scenario):
         adversarial_chat: PromptTarget,
         objective_scorer: TrueFalseScorer,
         refusal_scorer: TrueFalseScorer,
+        max_turns: int = 1,
         scenario_result_id: str | None = None,
     ) -> None:
         super().__init__(
@@ -66,6 +68,7 @@ class _CrescendoResumeScenario(Scenario):
         )
         self._adversarial_chat = adversarial_chat
         self._refusal_scorer = refusal_scorer
+        self._max_turns = max_turns
 
     async def _resolve_seed_groups_by_dataset_async(
         self,
@@ -88,7 +91,7 @@ class _CrescendoResumeScenario(Scenario):
                 refusal_scorer=self._refusal_scorer,
             ),
             max_backtracks=1,
-            max_turns=1,
+            max_turns=self._max_turns,
         )
         return [
             AtomicAttack(
@@ -180,12 +183,14 @@ def _build_scenario(
     objective_scorer: SubStringScorer,
     refusal_scorer: SelfAskRefusalScorer,
     max_retries: int,
+    max_turns: int = 1,
     scenario_result_id: str | None = None,
 ) -> _CrescendoResumeScenario:
     scenario = _CrescendoResumeScenario(
         adversarial_chat=adversarial_target,
         objective_scorer=objective_scorer,
         refusal_scorer=refusal_scorer,
+        max_turns=max_turns,
         scenario_result_id=scenario_result_id,
     )
     scenario.set_params_from_args(
@@ -458,3 +463,277 @@ async def test_crescendo_scenario_retry_and_resume_use_real_components_without_s
     assert [event.attempt_number for event in malformed_result.retry_events] == [1, 2]
     assert all(event.exception_type == "InvalidJsonException" for event in malformed_result.retry_events)
     assert all(event.component_role == "adversarial_chat" for event in malformed_result.retry_events)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_only_incomplete_objective() -> None:
+    objective_target = _build_target(model_name="objective-model")
+    adversarial_target = _build_target(model_name="adversarial-model")
+    scorer_target = _build_target(model_name="scorer-model")
+    objective_scorer = SubStringScorer(substring="RECOVERED")
+    refusal_scorer = SelfAskRefusalScorer(chat_target=scorer_target)
+
+    events: list[str] = []
+    adversarial_requests: list[dict[str, Any]] = []
+    objective_requests: list[dict[str, Any]] = []
+    scorer_requests: list[dict[str, Any]] = []
+    cancellation_started = asyncio.Event()
+    block_until_cancelled = asyncio.Event()
+    adversarial_schedule = [
+        (
+            "adversarial:a:success",
+            _build_chat_completion(text=_adversarial_reply(prompt="A prompt"), completion_id="adv-a"),
+        ),
+        ("adversarial:b:rate-limit", _build_rate_limit_error()),
+        (
+            "adversarial:b:turn-1",
+            _build_chat_completion(text=_adversarial_reply(prompt="B prompt 1"), completion_id="adv-b-1"),
+        ),
+        ("adversarial:b:malformed", _build_chat_completion(text=_MALFORMED_REPLY, completion_id="adv-b-malformed")),
+        (
+            "adversarial:b:refusal",
+            _build_chat_completion(text=_adversarial_reply(prompt="B refused prompt"), completion_id="adv-b-refusal"),
+        ),
+        (
+            "adversarial:b:recovery",
+            _build_chat_completion(text=_adversarial_reply(prompt="B recovery prompt"), completion_id="adv-b-recovery"),
+        ),
+        (
+            "adversarial:b:turn-3",
+            _build_chat_completion(text=_adversarial_reply(prompt="B prompt 3"), completion_id="adv-b-3"),
+        ),
+        (
+            "adversarial:b:turn-4",
+            _build_chat_completion(text=_adversarial_reply(prompt="B prompt 4"), completion_id="adv-b-4"),
+        ),
+        (
+            "adversarial:b:cancel",
+            _build_chat_completion(text=_adversarial_reply(prompt="B prompt 5"), completion_id="adv-b-5"),
+        ),
+        (
+            "adversarial:b:resumed",
+            _build_chat_completion(text=_adversarial_reply(prompt="B resumed prompt"), completion_id="adv-b-resumed"),
+        ),
+    ]
+    objective_schedule: list[tuple[str, ChatCompletion | BaseException | None]] = [
+        ("objective:a:success", _build_chat_completion(text="RECOVERED A", completion_id="objective-a")),
+        ("objective:b:turn-1", _build_chat_completion(text="B progress 1", completion_id="objective-b-1")),
+        ("objective:b:refusal", _build_chat_completion(text=_REFUSAL, completion_id="objective-b-refusal")),
+        ("objective:b:recovery", _build_chat_completion(text="B progress 2", completion_id="objective-b-2")),
+        ("objective:b:turn-3", _build_chat_completion(text="B progress 3", completion_id="objective-b-3")),
+        ("objective:b:turn-4", _build_chat_completion(text="B progress 4", completion_id="objective-b-4")),
+        ("objective:b:cancel", None),
+        ("objective:b:resumed", _build_chat_completion(text="RECOVERED B", completion_id="objective-b-resumed")),
+    ]
+    scorer_schedule = [
+        (
+            "scorer:a:not-refusal",
+            _build_chat_completion(text=_refusal_score_reply(refused=False), completion_id="score-a"),
+        ),
+        *[
+            (
+                f"scorer:b:not-refusal-{turn}",
+                _build_chat_completion(
+                    text=_refusal_score_reply(refused=False),
+                    completion_id=f"score-b-{turn}",
+                ),
+            )
+            for turn in [1]
+        ],
+        (
+            "scorer:b:refusal",
+            _build_chat_completion(text=_refusal_score_reply(refused=True), completion_id="score-b-refusal"),
+        ),
+        *[
+            (
+                f"scorer:b:not-refusal-{turn}",
+                _build_chat_completion(
+                    text=_refusal_score_reply(refused=False),
+                    completion_id=f"score-b-{turn}",
+                ),
+            )
+            for turn in [2, 3, 4]
+        ],
+        (
+            "scorer:b:resumed",
+            _build_chat_completion(text=_refusal_score_reply(refused=False), completion_id="score-b-resumed"),
+        ),
+    ]
+
+    async def objective_side_effect_async(**kwargs: Any) -> ChatCompletion:
+        objective_requests.append(kwargs)
+        label, outcome = objective_schedule.pop(0)
+        events.append(label)
+        if label == "objective:b:cancel":
+            cancellation_started.set()
+            await block_until_cancelled.wait()
+            raise AssertionError("Cancellation should interrupt the blocked target request")
+        if isinstance(outcome, BaseException):
+            raise outcome
+        assert outcome is not None
+        return outcome
+
+    first_scenario = _build_scenario(
+        objective_target=objective_target,
+        adversarial_target=adversarial_target,
+        objective_scorer=objective_scorer,
+        refusal_scorer=refusal_scorer,
+        max_retries=0,
+        max_turns=10,
+    )
+    memory = CentralMemory.get_memory_instance()
+
+    with (
+        patch.object(
+            adversarial_target._async_client.chat.completions,
+            "create",
+            new=AsyncMock(
+                side_effect=_build_boundary_side_effect(
+                    schedule=adversarial_schedule,
+                    events=events,
+                    requests=adversarial_requests,
+                )
+            ),
+        ),
+        patch.object(
+            objective_target._async_client.chat.completions,
+            "create",
+            new=AsyncMock(side_effect=objective_side_effect_async),
+        ),
+        patch.object(
+            scorer_target._async_client.chat.completions,
+            "create",
+            new=AsyncMock(
+                side_effect=_build_boundary_side_effect(
+                    schedule=scorer_schedule,
+                    events=events,
+                    requests=scorer_requests,
+                )
+            ),
+        ),
+        patch("asyncio.sleep", new_callable=AsyncMock) as sleep_mock,
+        patch.object(
+            memory,
+            "update_scenario_run_state",
+            wraps=memory.update_scenario_run_state,
+        ) as update_state,
+    ):
+        await first_scenario.initialize_async()
+        first_attack = first_scenario._atomic_attacks[0].attack_technique.attack
+        with patch.object(
+            first_attack,
+            "_teardown_async",
+            new_callable=AsyncMock,
+            wraps=first_attack._teardown_async,
+        ) as first_teardown:
+            scenario_task = asyncio.create_task(first_scenario.run_async())
+            await asyncio.wait_for(cancellation_started.wait(), timeout=5)
+            scenario_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await scenario_task
+
+        # The shared strategy tears down after objective A and again when objective B is cancelled.
+        assert first_teardown.await_count == 2
+        scenario_result_id = first_scenario._scenario_result_id
+        assert scenario_result_id is not None
+        cancelled_result = memory.get_scenario_results(scenario_result_ids=[scenario_result_id])[0]
+        assert cancelled_result.scenario_run_state == ScenarioRunState.CANCELLED
+        assert cancelled_result.number_tries == 1
+        assert [result.objective for result in cancelled_result.attack_results[_ATOMIC_ATTACK_NAME]] == [_OBJECTIVE_A]
+        assert memory.get_attack_results(objective=_OBJECTIVE_B) == []
+
+        partial_piece = next(piece for piece in memory.get_message_pieces() if piece.original_value == "B progress 4")
+        partial_conversation_id = partial_piece.conversation_id
+        partial_piece_ids = {piece.id for piece in memory.get_message_pieces(conversation_id=partial_conversation_id)}
+
+        resumed_scenario = _build_scenario(
+            objective_target=objective_target,
+            adversarial_target=adversarial_target,
+            objective_scorer=objective_scorer,
+            refusal_scorer=refusal_scorer,
+            max_retries=0,
+            max_turns=10,
+            scenario_result_id=scenario_result_id,
+        )
+        await resumed_scenario.initialize_async()
+        resumed_attack = resumed_scenario._atomic_attacks[0].attack_technique.attack
+        with patch.object(
+            resumed_attack,
+            "_teardown_async",
+            new_callable=AsyncMock,
+            wraps=resumed_attack._teardown_async,
+        ) as resumed_teardown:
+            completed_result = await resumed_scenario.run_async()
+
+    # Resume executes only the incomplete objective B.
+    resumed_teardown.assert_awaited_once()
+    attack_results = completed_result.attack_results[_ATOMIC_ATTACK_NAME]
+    assert completed_result.scenario_run_state == ScenarioRunState.COMPLETED
+    assert completed_result.number_tries == 2
+    assert [result.objective for result in attack_results] == [_OBJECTIVE_A, _OBJECTIVE_B]
+    assert len({result.attack_result_id for result in attack_results}) == 2
+    assert len({result.conversation_id for result in attack_results}) == 2
+
+    objective_a_result, objective_b_result = attack_results
+    assert objective_a_result.executed_turns == 1
+    assert objective_b_result.executed_turns == 1
+    assert objective_b_result.conversation_id != partial_conversation_id
+    assert objective_b_result.last_response and objective_b_result.last_response.converted_value == "RECOVERED B"
+    assert partial_piece_ids <= {
+        piece.id for piece in memory.get_message_pieces(conversation_id=partial_conversation_id)
+    }
+    resumed_messages = memory.get_conversation_messages(conversation_id=objective_b_result.conversation_id)
+    assert [message.get_value() for message in resumed_messages] == ["B resumed prompt", "RECOVERED B"]
+    assert [
+        message.get_value() for message in memory.get_conversation_messages(conversation_id=partial_conversation_id)
+    ] == [
+        "B prompt 1",
+        "B progress 1",
+        "B recovery prompt",
+        "B progress 2",
+        "B prompt 3",
+        "B progress 3",
+        "B prompt 4",
+        "B progress 4",
+    ]
+
+    assert events == [
+        "adversarial:a:success",
+        "objective:a:success",
+        "scorer:a:not-refusal",
+        "adversarial:b:rate-limit",
+        "adversarial:b:turn-1",
+        "objective:b:turn-1",
+        "scorer:b:not-refusal-1",
+        "adversarial:b:malformed",
+        "adversarial:b:refusal",
+        "objective:b:refusal",
+        "scorer:b:refusal",
+        "adversarial:b:recovery",
+        "objective:b:recovery",
+        "scorer:b:not-refusal-2",
+        "adversarial:b:turn-3",
+        "objective:b:turn-3",
+        "scorer:b:not-refusal-3",
+        "adversarial:b:turn-4",
+        "objective:b:turn-4",
+        "scorer:b:not-refusal-4",
+        "adversarial:b:cancel",
+        "objective:b:cancel",
+        "adversarial:b:resumed",
+        "objective:b:resumed",
+        "scorer:b:resumed",
+    ]
+    assert not adversarial_schedule
+    assert not objective_schedule
+    assert not scorer_schedule
+    assert sleep_mock.await_count == 2
+    adversarial_messages = _message_contents(adversarial_requests)
+    assert adversarial_messages[1] == adversarial_messages[2]
+    assert adversarial_messages[3] == adversarial_messages[4]
+    assert [call.kwargs["scenario_run_state"] for call in update_state.call_args_list] == [
+        ScenarioRunState.IN_PROGRESS,
+        ScenarioRunState.CANCELLED,
+        ScenarioRunState.IN_PROGRESS,
+        ScenarioRunState.COMPLETED,
+    ]
