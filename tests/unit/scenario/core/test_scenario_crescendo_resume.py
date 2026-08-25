@@ -682,6 +682,8 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
     assert partial_piece_ids <= {
         piece.id for piece in memory.get_message_pieces(conversation_id=partial_conversation_id)
     }
+    resumed_messages = memory.get_conversation_messages(conversation_id=objective_b_result.conversation_id)
+    assert [message.get_value() for message in resumed_messages] == ["B resumed prompt", "RECOVERED B"]
     assert [
         message.get_value() for message in memory.get_conversation_messages(conversation_id=partial_conversation_id)
     ] == [
