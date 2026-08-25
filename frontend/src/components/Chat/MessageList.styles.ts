@@ -242,7 +242,7 @@ export const useMessageListStyles = makeStyles({
   },
   scoreValue: {
     display: 'block',
-    flex: '1 1 0',
+    flex: '0 1 auto',
     minWidth: 0,
     maxWidth: '100%',
     height: 'auto',

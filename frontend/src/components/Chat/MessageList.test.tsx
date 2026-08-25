@@ -274,9 +274,9 @@ describe("MessageList", () => {
     expect(screen.getByText("Yes")).toBeInTheDocument();
 
     await user.hover(auxiliaryTab);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Score 0.9 from NewScorer, Piece 2 · text"
-    );
+    expect(
+      await screen.findByText("Score 0.9 from NewScorer, Piece 2 · text")
+    ).toBeInTheDocument();
     await user.unhover(auxiliaryTab);
 
     await user.click(auxiliaryTab);
@@ -345,6 +345,72 @@ describe("MessageList", () => {
     await user.unhover(stackedScoreButton);
     await user.click(stackedScoreButton);
     expect(screen.getByRole("tabpanel")).toHaveTextContent(longScoreValue);
+  });
+
+  it("should focus the selected score tab when reopening with the keyboard", async () => {
+    const user = userEvent.setup();
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Scored response",
+        timestamp: new Date().toISOString(),
+        scores: [
+          {
+            id: "score-latest",
+            message_piece_id: "piece-1",
+            scorer_type: "ScaleScorer",
+            score_type: "float_scale",
+            score_value: "0.91",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:01:00Z",
+          },
+          {
+            id: "score-true",
+            message_piece_id: "piece-1",
+            scorer_type: "BooleanScorer",
+            score_type: "true_false",
+            score_value: "True",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:00:00Z",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    const trigger = screen.getByRole("button", {
+      name: /view 2 scores, displayed score 0.91 from scalescorer/i,
+    });
+    await user.click(trigger);
+
+    const trueTab = screen.getByRole("tab", {
+      name: /score true from booleanscorer/i,
+    });
+    await user.click(trueTab);
+    expect(trueTab).toHaveAttribute("aria-selected", "true");
+
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    await user.keyboard("{Enter}");
+
+    const reopenedTrueTab = screen.getByRole("tab", {
+      name: /score true from booleanscorer/i,
+    });
+    const reopenedLatestTab = screen.getByRole("tab", {
+      name: /score 0.91 from scalescorer/i,
+    });
+    expect(reopenedTrueTab).toHaveAttribute("aria-selected", "true");
+    expect(reopenedTrueTab).toHaveFocus();
+    expect(reopenedLatestTab).not.toHaveFocus();
   });
 
   it("should display the latest score when there is no objective score", async () => {

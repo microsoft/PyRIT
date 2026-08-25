@@ -513,6 +513,17 @@ test.describe("Mobile touch targets", () => {
     const scoreTabs = page.locator('[data-testid^="message-score-tab-1-"]');
     await expect(scoreTabs).toHaveCount(2);
     await expectMinimumTouchTargets(scoreTabs);
+    await scoreTabs.nth(1).click();
+
+    const shortScoreValue = scoreDetails.getByText("false", { exact: true });
+    await expect(shortScoreValue).toBeVisible();
+    const shortValueGeometry = await shortScoreValue.evaluate((element) => ({
+      valueWidth: element.getBoundingClientRect().width,
+      rowWidth: element.parentElement?.getBoundingClientRect().width ?? 0,
+    }));
+    expect(shortValueGeometry.valueWidth).toBeLessThan(
+      shortValueGeometry.rowWidth
+    );
 
     const moreScores = page.getByRole("button", {
       name: "More scores, 7 hidden",

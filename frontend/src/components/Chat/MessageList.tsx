@@ -306,6 +306,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
   const [visibleCount, setVisibleCount] = useState(Infinity)
   const [isScorePopoverOpen, setIsScorePopoverOpen] = useState(false)
   const tabBarRef = useRef<HTMLDivElement>(null)
+  const selectedTabRef = useRef<HTMLButtonElement>(null)
   const selectedScore = scores.find((score) => score.id === selectedScoreId) ?? displayedScore
   const selectedIndex = scores.indexOf(selectedScore)
   const orderedScores = useMemo(
@@ -319,6 +320,12 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
   const overflowScores = orderedScores.filter(
     (score) => !visibleScores.some((visibleScore) => visibleScore.id === score.id)
   )
+
+  useEffect(() => {
+    if (isScorePopoverOpen) {
+      selectedTabRef.current?.focus()
+    }
+  }, [isScorePopoverOpen, selectedScore.id])
 
   useLayoutEffect(() => {
     const tabBar = tabBarRef.current
@@ -373,6 +380,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
       <Popover
         withArrow
         open={isScorePopoverOpen}
+        unstable_disableAutoFocus
         onOpenChange={(_event: unknown, data: { open: boolean }) => setIsScorePopoverOpen(data.open)}
       >
         <Tooltip content={displayedScore.score_value} relationship="description" withArrow>
@@ -415,6 +423,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
                     withArrow
                   >
                     <Tab
+                      ref={score.id === selectedScore.id ? selectedTabRef : undefined}
                       value={score.id}
                       id={`message-score-tab-${groupId}-${scoreIndex}`}
                       aria-label={scoreContext}
