@@ -14,6 +14,8 @@ export interface MessageAttachment {
    */
   size?: number
   file?: File
+  /** Raw backend value used when reconstructing a persisted attachment for resubmission. */
+  sourceValue?: string
   /** Backend piece ID — preserved so remix/copy can trace back to the original piece */
   pieceId?: string
   /** Backend prompt_metadata — preserved so video_id etc. carry over on remix/copy */
@@ -43,6 +45,11 @@ export interface Message {
 export interface MessageError {
   type: string // e.g. 'blocked', 'processing', 'empty', 'unknown'
   description?: string
+}
+
+export interface ChatSendOutcome {
+  status: 'sent' | 'retryable_failure' | 'non_retryable_failure'
+  clearDraft: boolean
 }
 
 // ============================================================================
@@ -307,6 +314,7 @@ export interface BackendMessagePiece {
   original_filename?: string | null
   converted_filename?: string | null
   prompt_metadata?: Record<string, unknown> | null
+  converter_identifiers?: Array<Record<string, unknown>>
   scores: BackendScore[]
   response_error: string // 'none' | 'blocked' | 'processing' | 'empty' | 'unknown'
   response_error_description?: string | null

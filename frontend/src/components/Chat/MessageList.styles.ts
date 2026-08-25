@@ -187,6 +187,17 @@ export const useMessageListStyles = makeStyles({
   errorContainer: {
     marginTop: tokens.spacingVerticalS,
   },
+  errorRecovery: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalS,
+    marginTop: tokens.spacingVerticalS,
+    paddingBottom: tokens.spacingVerticalS,
+  },
+  errorRecoveryButton: {
+    ...mobileTouchTarget,
+  },
   mediaActions: {
     display: 'flex',
     gap: tokens.spacingHorizontalXXS,

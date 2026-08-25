@@ -87,8 +87,8 @@ export function conversationToMarkdown(
  * Serialize the in-state conversation to pretty-printed JSON, exporting exactly
  * what the GUI holds (WYSIWYG). The envelope records the conversation id, the
  * export timestamp, and the messages. Loading placeholders are dropped and the
- * non-serializable `File` handle is removed from each attachment; every other
- * field (including attachment metadata) is preserved as-is.
+ * internal `File` handles and raw resubmission values are removed from each
+ * attachment; export-safe fields (including attachment metadata) are preserved.
  */
 export function conversationToJson(
   messages: Message[],
@@ -154,17 +154,18 @@ function messageForExport(message: Message): Message {
   }
   const next: Message = { ...message }
   if (message.attachments) {
-    next.attachments = message.attachments.map(attachmentWithoutFile)
+    next.attachments = message.attachments.map(attachmentForExport)
   }
   if (message.originalAttachments) {
-    next.originalAttachments = message.originalAttachments.map(attachmentWithoutFile)
+    next.originalAttachments = message.originalAttachments.map(attachmentForExport)
   }
   return next
 }
 
-function attachmentWithoutFile(attachment: MessageAttachment): MessageAttachment {
+function attachmentForExport(attachment: MessageAttachment): MessageAttachment {
   const next = { ...attachment }
   delete next.file
+  delete next.sourceValue
   return next
 }
 

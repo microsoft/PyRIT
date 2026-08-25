@@ -1,9 +1,16 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import { Message, MessageAttachment, TargetCapabilities, TargetInfo, TargetInstance } from "../../types";
+import {
+  BackendMessage,
+  Message,
+  MessageAttachment,
+  TargetCapabilities,
+  TargetInfo,
+  TargetInstance,
+} from "../../types";
 import { attacksApi, convertersApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
@@ -48,12 +55,17 @@ jest.mock("../../services/api", () => ({
 
 jest.mock("../../utils/messageMapper", () => ({
   buildMessagePieces: jest.fn(),
+  backendMessageToFrontend: jest.fn(),
+  backendMessageToOriginalDraft: jest.fn(),
   backendMessagesToFrontend: jest.fn(),
 }));
 
 const mockedAttacksApi = attacksApi as jest.Mocked<typeof attacksApi>;
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>;
 const mockedMapper = messageMapper as jest.Mocked<typeof messageMapper>;
+const actualMessageMapper = jest.requireActual<typeof import("../../utils/messageMapper")>(
+  "../../utils/messageMapper"
+);
 const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
@@ -222,12 +234,36 @@ function makeMultiModalResponse() {
   };
 }
 
-function makeErrorResponse(errorType: string, description: string) {
+function makeErrorResponse(
+  errorType: string,
+  description: string,
+  failedRequestTurnNumber = 0,
+  hasConverters = false
+) {
   return {
     messages: {
       messages: [
         {
-          turn_number: 1,
+          turn_number: failedRequestTurnNumber,
+          role: "user",
+          message_pieces: [
+            {
+              id: "p-failed-request",
+              original_value_data_type: "text",
+              converted_value_data_type: "text",
+              original_value: "failed request",
+              converted_value: "failed request",
+              converter_identifiers: hasConverters
+                ? [{ type: "MockConverter" }]
+                : [],
+              scores: [],
+              response_error: "none",
+            },
+          ],
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          turn_number: failedRequestTurnNumber + 1,
           role: "assistant",
           message_pieces: [
             {
@@ -276,6 +312,11 @@ describe("ChatWindow Integration", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedMapper.backendMessageToFrontend.mockReset();
+    mockedMapper.backendMessageToOriginalDraft.mockReset();
+    mockedMapper.backendMessageToOriginalDraft.mockImplementation(
+      actualMessageMapper.backendMessageToOriginalDraft
+    );
     window.localStorage.clear();
     mockMatchMedia(false);
     // Default: panel API returns empty conversations
@@ -664,6 +705,7 @@ describe("ChatWindow Integration", () => {
     // Messages should appear in the DOM
     await waitFor(() => {
       expect(screen.getByText("Hello back!")).toBeInTheDocument();
+      expect(input).toHaveValue("");
     });
   });
 
@@ -1046,6 +1088,7 @@ describe("ChatWindow Integration", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Request failed with status code 404/)).toBeInTheDocument();
+      expect(input).toHaveValue("test");
     });
   });
 
@@ -1495,6 +1538,378 @@ describe("ChatWindow Integration", () => {
   // Backend error in response piece (blocked, processing, etc.)
   // -----------------------------------------------------------------------
 
+  it("should preserve the draft and expose recovery for an HTTP 200 processing error", async () => {
+    const user = userEvent.setup();
+    const onSelectConversation = jest.fn();
+
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { data_type: "text", original_value: "retry this prompt" },
+    ]);
+    mockedAttacksApi.addMessage.mockResolvedValue(
+      makeErrorResponse("processing", "The target could not process this message.", 2) as never
+    );
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([
+      {
+        role: "user",
+        content: "retry this prompt",
+        timestamp: "2026-01-01T00:00:00Z",
+      },
+      {
+        role: "assistant",
+        content: "",
+        timestamp: "2026-01-01T00:00:01Z",
+        error: {
+          type: "processing",
+          description: "The target could not process this message.",
+        },
+      },
+    ]);
+    mockedAttacksApi.createConversation.mockResolvedValue({
+      conversation_id: "conv-processing-recovery",
+    } as never);
+
+    const rendered = render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-conv-processing"
+          conversationId="conv-processing"
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "retry this prompt");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    const recoveryButton = await screen.findByRole(
+      "button",
+      { name: /edit in clean conversation/i }
+    );
+    expect(input).toHaveValue("retry this prompt");
+    expect(input).toBeDisabled();
+    expect(screen.queryByTestId("message-actions-1")).not.toBeInTheDocument();
+
+    await user.click(recoveryButton);
+    await waitFor(() => {
+      expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
+        "ar-conv-processing",
+        {
+          source_conversation_id: "conv-processing",
+          cutoff_index: 1,
+        }
+      );
+      expect(onSelectConversation).toHaveBeenCalledWith("conv-processing-recovery");
+    });
+
+    rendered.rerender(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-conv-processing"
+          conversationId="conv-processing"
+          activeConversationId="conv-processing-recovery"
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(input).toHaveFocus();
+      expect(input).toHaveValue("retry this prompt");
+    });
+  });
+
+  it("should reconstruct recovery when loading a persisted processing error", async () => {
+    const user = userEvent.setup();
+    const onSelectConversation = jest.fn();
+    const persistedMessages: BackendMessage[] = [
+      {
+        turn_number: 2,
+        role: "user",
+        message_pieces: [
+          {
+            id: "p-text-to-pdf",
+            original_value_data_type: "text",
+            converted_value_data_type: "binary_path",
+            original_value: "original persisted prompt",
+            converted_value: "/converted/report.pdf",
+            converted_value_mime_type: "application/pdf",
+            converted_filename: "converted.pdf",
+            converter_identifiers: [{ type: "PDFConverter" }],
+            scores: [],
+            response_error: "none",
+          },
+          {
+            id: "p-image-to-text",
+            original_value_data_type: "image_path",
+            converted_value_data_type: "text",
+            original_value: "/original/evidence.png",
+            original_value_url: "/api/media?path=%2Foriginal%2Fevidence.png",
+            original_value_mime_type: "image/png",
+            original_filename: "evidence.png",
+            converted_value: "converted image description",
+            converter_identifiers: [{ type: "ImageToTextConverter" }],
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        turn_number: 3,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p-processing-error",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            original_value: "",
+            converted_value: "",
+            scores: [],
+            response_error: "processing",
+            response_error_description: "The target could not process this message.",
+          },
+        ],
+        created_at: "2026-01-01T00:00:01Z",
+      },
+    ];
+
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      messages: persistedMessages,
+    } as never);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([
+      {
+        role: "user",
+        content: "",
+        attachments: [
+          {
+            type: "file",
+            name: "converted.pdf",
+            url: "/converted/report.pdf",
+            mimeType: "application/pdf",
+          },
+        ],
+        timestamp: "2026-01-01T00:00:00Z",
+      },
+      {
+        role: "assistant",
+        content: "",
+        timestamp: "2026-01-01T00:00:01Z",
+        error: {
+          type: "processing",
+          description: "The target could not process this message.",
+        },
+      },
+    ]);
+    mockedAttacksApi.createConversation.mockResolvedValue({
+      conversation_id: "conv-persisted-recovery",
+    } as never);
+
+    const rendered = render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-persisted-processing"
+          conversationId="conv-persisted-processing"
+          activeConversationId="conv-persisted-processing"
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+
+    const recoveryButton = await screen.findByRole(
+      "button",
+      { name: /edit in clean conversation/i }
+    );
+    expect(screen.getByText(/converter choices could not be restored/i)).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeDisabled();
+
+    await user.click(recoveryButton);
+    await waitFor(() => {
+      expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
+        "ar-persisted-processing",
+        {
+          source_conversation_id: "conv-persisted-processing",
+          cutoff_index: 1,
+        }
+      );
+      expect(onSelectConversation).toHaveBeenCalledWith("conv-persisted-recovery");
+    });
+
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] } as never);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    rendered.rerender(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-persisted-processing"
+          conversationId="conv-persisted-processing"
+          activeConversationId="conv-persisted-recovery"
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+
+    const restoredInput = await screen.findByRole("textbox");
+    expect(restoredInput).toHaveValue("original persisted prompt");
+    expect(screen.getAllByText("evidence.png", { exact: false })).toHaveLength(1);
+    expect(screen.queryByText(/converted\.pdf/i)).not.toBeInTheDocument();
+  });
+
+  it("should clear an unchanged submitted draft after switching conversations", async () => {
+    const user = userEvent.setup();
+    const response = makeTextResponse("Reply from conversation A");
+    let resolveMessage: ((value: typeof response) => void) | undefined;
+
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] } as never);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { data_type: "text", original_value: "conversation A draft" },
+    ]);
+    mockedAttacksApi.addMessage.mockImplementation(
+      () => new Promise<typeof response>((resolve) => {
+        resolveMessage = resolve;
+      }) as never
+    );
+
+    const rendered = render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-conversation-switch"
+          conversationId="conv-a"
+          activeConversationId="conv-a"
+        />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledWith(
+        "ar-conversation-switch",
+        "conv-a"
+      );
+    });
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "conversation A draft");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => expect(mockedAttacksApi.addMessage).toHaveBeenCalledTimes(1));
+
+    rendered.rerender(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-conversation-switch"
+          conversationId="conv-a"
+          activeConversationId="conv-b"
+        />
+      </TestWrapper>
+    );
+    await waitFor(() => {
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledWith(
+        "ar-conversation-switch",
+        "conv-b"
+      );
+    });
+
+    await act(async () => {
+      resolveMessage?.(response);
+      await Promise.resolve();
+    });
+
+    expect(input).toHaveValue("");
+  });
+
+  it("should not overwrite another conversation when recovery completes after navigation", async () => {
+    const user = userEvent.setup();
+    const onSelectConversation = jest.fn();
+    let resolveConversation: ((value: { conversation_id: string }) => void) | undefined;
+
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { data_type: "text", original_value: "failed draft" },
+    ]);
+    mockedAttacksApi.addMessage.mockResolvedValue(
+      makeErrorResponse(
+        "processing",
+        "The target could not process this message.",
+        2
+      ) as never
+    );
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([
+      {
+        role: "user",
+        content: "failed draft",
+        timestamp: "2026-01-01T00:00:00Z",
+      },
+      {
+        role: "assistant",
+        content: "",
+        timestamp: "2026-01-01T00:00:01Z",
+        error: {
+          type: "processing",
+          description: "The target could not process this message.",
+        },
+      },
+    ]);
+    mockedAttacksApi.createConversation.mockImplementation(
+      () => new Promise<{ conversation_id: string }>((resolve) => {
+        resolveConversation = resolve;
+      }) as never
+    );
+
+    const rendered = render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-recovery-navigation"
+          conversationId="conv-failed"
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "failed draft");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    const recoveryButton = await screen.findByRole(
+      "button",
+      { name: /edit in clean conversation/i }
+    );
+
+    await user.click(recoveryButton);
+    await waitFor(() => {
+      expect(recoveryButton).toBeDisabled();
+      expect(mockedAttacksApi.createConversation).toHaveBeenCalledTimes(1);
+    });
+    await user.click(recoveryButton);
+    expect(mockedAttacksApi.createConversation).toHaveBeenCalledTimes(1);
+
+    rendered.rerender(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-recovery-navigation"
+          conversationId="conv-failed"
+          activeConversationId="conv-other"
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.clear(input);
+    await user.type(input, "newer conversation draft");
+
+    await act(async () => {
+      resolveConversation?.({ conversation_id: "conv-unused-recovery" });
+      await Promise.resolve();
+    });
+
+    expect(onSelectConversation).not.toHaveBeenCalled();
+    expect(input).toHaveValue("newer conversation draft");
+  });
+
   it("should handle blocked response from target", async () => {
     const user = userEvent.setup();
 
@@ -1532,7 +1947,94 @@ describe("ChatWindow Integration", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Content was filtered by safety system/)).toBeInTheDocument();
+      expect(input).toHaveValue("");
     });
+    expect(screen.queryByTestId(/^recover-processing-error-btn-/)).not.toBeInTheDocument();
+  });
+
+  it("should restore a single-turn draft in a new conversation after a processing error", async () => {
+    const user = userEvent.setup();
+    const onSelectConversation = jest.fn();
+    const singleTurnTarget: TargetInstance = makeTarget({
+      target_registry_name: "single-turn-target",
+      target_type: "OpenAIImageTarget",
+      capabilities: buildCapabilities({ supports_multi_turn: false }),
+    });
+
+    mockedMapper.buildMessagePieces.mockResolvedValue([
+      { data_type: "text", original_value: "generate this image" },
+    ]);
+    mockedAttacksApi.addMessage.mockResolvedValue(
+      makeErrorResponse("processing", "The target could not process this message.") as never
+    );
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([
+      {
+        role: "user",
+        content: "generate this image",
+        timestamp: "2026-01-01T00:00:00Z",
+      },
+      {
+        role: "assistant",
+        content: "",
+        timestamp: "2026-01-01T00:00:01Z",
+        error: {
+          type: "processing",
+          description: "The target could not process this message.",
+        },
+      },
+    ]);
+    mockedAttacksApi.createConversation.mockResolvedValue({
+      conversation_id: "conv-single-recovery",
+    } as never);
+
+    const rendered = render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={singleTurnTarget}
+          attackResultId="ar-single-processing"
+          conversationId="conv-single-original"
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+
+    const input = screen.getByRole("textbox");
+    await user.type(input, "generate this image");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    const recoveryButton = await screen.findByRole(
+      "button",
+      { name: /edit in new conversation/i }
+    );
+    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
+
+    await user.click(recoveryButton);
+    await waitFor(() => {
+      expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
+        "ar-single-processing",
+        {}
+      );
+      expect(onSelectConversation).toHaveBeenCalledWith("conv-single-recovery");
+    });
+
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] } as never);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    rendered.rerender(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          activeTarget={singleTurnTarget}
+          attackResultId="ar-single-processing"
+          conversationId="conv-single-original"
+          activeConversationId="conv-single-recovery"
+          onSelectConversation={onSelectConversation}
+        />
+      </TestWrapper>
+    );
+
+    const restoredInput = await screen.findByRole("textbox");
+    expect(restoredInput).toHaveValue("generate this image");
   });
 
   // -----------------------------------------------------------------------

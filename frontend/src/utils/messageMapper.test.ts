@@ -4,6 +4,7 @@ import {
   dataTypeToAttachmentType,
   buildDataUri,
   backendMessageToFrontend,
+  backendMessageToOriginalDraft,
   backendMessagesToFrontend,
   attachmentToMessagePieceRequest,
   buildMessagePieces,
@@ -91,6 +92,57 @@ describe("messageMapper", () => {
     it("should build audio data URI", () => {
       const result = buildDataUri("YXVkaW8=", "audio/wav");
       expect(result).toBe("data:audio/wav;base64,YXVkaW8=");
+    });
+  });
+
+  describe("backendMessageToOriginalDraft", () => {
+    it("restores only original text and media without converted output", () => {
+      const msg: BackendMessage = {
+        turn_number: 2,
+        role: "user",
+        message_pieces: [
+          {
+            id: "text-to-pdf",
+            original_value_data_type: "text",
+            converted_value_data_type: "binary_path",
+            original_value: "original persisted prompt",
+            converted_value: "/converted/report.pdf",
+            converted_value_mime_type: "application/pdf",
+            converted_filename: "converted.pdf",
+            scores: [],
+            response_error: "none",
+          },
+          {
+            id: "image-to-text",
+            original_value_data_type: "image_path",
+            converted_value_data_type: "text",
+            original_value: "/original/evidence.png",
+            original_value_url: "/api/media?path=%2Foriginal%2Fevidence.png",
+            original_value_mime_type: "image/png",
+            original_filename: "evidence.png",
+            converted_value: "converted image description",
+            scores: [],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-01-01T00:00:00Z",
+      };
+
+      const result = backendMessageToOriginalDraft(msg);
+
+      expect(result.content).toBe("original persisted prompt");
+      expect(result.attachments).toEqual([
+        expect.objectContaining({
+          name: "evidence.png",
+          url: "/api/media?path=%2Foriginal%2Fevidence.png",
+          sourceValue: "/original/evidence.png",
+        }),
+      ]);
+      expect(result.attachments).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "converted.pdf" }),
+        ])
+      );
     });
   });
 
@@ -288,7 +340,7 @@ describe("messageMapper", () => {
       expect(result.attachments![0].url).toBe("/api/media?path=output%2Fdoc.pdf");
     });
 
-    it("should handle error response", () => {
+    it("should preserve user-facing content for a blocked response", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
@@ -296,8 +348,8 @@ describe("messageMapper", () => {
           {
             id: "p1",
             original_value_data_type: "text",
-            converted_value_data_type: "text",
-            converted_value: "",
+            converted_value_data_type: "error",
+            converted_value: "I cannot help with that request.",
             scores: [],
             response_error: "blocked",
             response_error_description: "Content was filtered",
@@ -311,6 +363,33 @@ describe("messageMapper", () => {
       expect(result.error).toBeDefined();
       expect(result.error!.type).toBe("blocked");
       expect(result.error!.description).toBe("Content was filtered");
+      expect(result.content).toBe("I cannot help with that request.");
+    });
+
+    it("should hide stored processing diagnostics and provide a safe description", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p-processing",
+            original_value_data_type: "text",
+            converted_value_data_type: "error",
+            converted_value: "RuntimeError: target failed\nTraceback (most recent call last): ...",
+            scores: [],
+            response_error: "processing",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.content).toBe("");
+      expect(result.error).toEqual({
+        type: "processing",
+        description: "The target could not process this message.",
+      });
     });
 
     it("should handle multi-piece message with text + image", () => {
@@ -807,6 +886,20 @@ describe("messageMapper", () => {
       const result = await attachmentToMessagePieceRequest(att);
 
       expect(result.prompt_metadata).toEqual({ video_id: "sora-vid-456" });
+    });
+
+    it("should resubmit the raw backend value for a reconstructed attachment", async () => {
+      const att: MessageAttachment = {
+        type: "file",
+        name: "evidence.txt",
+        url: "/api/media?path=evidence.txt",
+        sourceValue: "stored attachment value",
+        mimeType: "text/plain",
+      };
+
+      const result = await attachmentToMessagePieceRequest(att);
+
+      expect(result.original_value).toBe("stored attachment value");
     });
   });
 

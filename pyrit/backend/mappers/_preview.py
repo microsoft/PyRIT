@@ -66,9 +66,10 @@ def format_last_message_preview(
 
     Media-path data types are rendered as ``[Image: <basename>]`` (and
     variants) so the absolute filesystem path of memory artifacts is never
-    exposed through API responses or UI previews. Text-like data types pass
-    through with truncation and an ellipsis suffix when they exceed
-    *max_len*.
+    exposed through API responses or UI previews. Error values are replaced
+    with a generic status so persisted exception tracebacks are not exposed.
+    Text-like data types pass through with truncation and an ellipsis suffix
+    when they exceed *max_len*.
 
     Args:
         value: Raw ``converted_value`` for the last piece (or ``None``).
@@ -86,6 +87,9 @@ def format_last_message_preview(
         label = _MEDIA_LABEL[data_type]
         basename = _derive_basename(value or "")
         return f"[{label}: {basename}]" if basename else f"[{label}]"
+
+    if data_type == "error":
+        return "Target response error"
 
     if not value:
         return None
