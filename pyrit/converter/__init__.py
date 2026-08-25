@@ -35,6 +35,7 @@ from pyrit.converter.braille_converter import BrailleConverter
 from pyrit.converter.caesar_converter import CaesarConverter
 from pyrit.converter.character_space_converter import CharacterSpaceConverter
 from pyrit.converter.charswap_attack_converter import CharSwapConverter
+from pyrit.converter.code_attack_converter import CodeAttackConverter
 from pyrit.converter.codechameleon_converter import CodeChameleonConverter
 from pyrit.converter.colloquial_wordswap_converter import ColloquialWordswapConverter
 from pyrit.converter.converter import Converter, ConverterResult, get_converter_modalities
@@ -178,6 +179,7 @@ __all__ = [
     "CaesarConverter",
     "CharSwapConverter",
     "CharacterSpaceConverter",
+    "CodeAttackConverter",
     "CodeChameleonConverter",
     "ColloquialWordswapConverter",
     "ContentWordSelectionStrategy",
