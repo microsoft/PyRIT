@@ -138,8 +138,21 @@ test.describe("Scenarios API", () => {
 
 test.describe("Error Handling", () => {
   test("should display UI when backend is slow", async ({ page }) => {
-    // Intercept and delay API calls
+    // Auth configuration must resolve before the application can render.
     await page.route("**/api/**", async (route) => {
+      if (new URL(route.request().url()).pathname === "/api/auth/config") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            clientId: "",
+            tenantId: "",
+            allowedGroupIds: "",
+          }),
+        });
+        return;
+      }
+
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await route.continue();
     });
