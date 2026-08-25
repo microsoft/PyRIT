@@ -2000,8 +2000,8 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores["AuxScorer1"].get_value() == 0.8
         assert node.auxiliary_scores["AuxScorer2"].get_value() == 0.6
 
-    async def test_node_single_turn_target_generates_new_conv_id(self, node_components):
-        """Test that single-turn targets get a fresh conversation_id before each send."""
+    async def test_node_unseeded_single_turn_target_rotates_conversation_id(self, node_components):
+        """An unseeded single-turn node keeps prior live history out of the next payload."""
         node_components["objective_target"].capabilities.supports_multi_turn = False
         node_components["objective_target"].configuration.includes.side_effect = lambda capability: False
         node = _TreeOfAttacksNode(**node_components)
@@ -2024,8 +2024,10 @@ class TestTreeOfAttacksNode:
             with patch.object(node, "_score_response_async", new_callable=AsyncMock):
                 await node._send_prompt_to_target_async("test prompt")
 
-        # Conversation ID should have changed for single-turn target
         assert node.objective_target_conversation_id != original_conv_id
+        send_kwargs = node._prompt_normalizer.send_prompt_async.await_args.kwargs
+        assert send_kwargs["conversation_id"] == node.objective_target_conversation_id
+        assert send_kwargs["send_context"] is None
 
     async def test_node_multi_turn_target_keeps_conv_id(self, node_components):
         """Test that multi-turn targets keep the same conversation_id."""
