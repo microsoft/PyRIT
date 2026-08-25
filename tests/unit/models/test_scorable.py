@@ -1,12 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import dataclasses
 import uuid
+from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
-from pyrit.models import ContentScorable, Message, MessagePiece, MessageScorable, Scorable
+from pyrit.models import (
+    ContentEntryScorable,
+    ContentScorable,
+    Message,
+    MessagePiece,
+    MessageScorable,
+    Scorable,
+    ScorableUnion,
+    Score,
+    scorable_from_dict,
+)
 
 
 def _message(value: str = "response") -> Message:
@@ -25,7 +36,7 @@ def _message(value: str = "response") -> Message:
     ],
 )
 def test_scorable_is_frozen(scorable: Scorable, field_name: str):
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(ValidationError):
         setattr(scorable, field_name, "changed")
 
 
@@ -103,3 +114,51 @@ def test_content_scorable_from_message_uses_converted_view():
 
     assert scorable.value == "converted"
     assert scorable.data_type == "text"
+
+
+@pytest.mark.parametrize(
+    "scorable",
+    [
+        MessageScorable(message_piece_ids=(uuid.uuid4(),)),
+        ContentScorable(value="hello", data_type="text"),
+        ContentEntryScorable(content_id=uuid.uuid4(), data_type="image_path"),
+    ],
+)
+def test_scorable_round_trips_through_score(scorable: Scorable):
+    score = Score(score_value="true", score_type="true_false", scorable=scorable)
+
+    restored = Score.model_validate(score.model_dump(mode="json"))
+
+    assert restored.scorable == scorable
+    assert type(restored.scorable) is type(scorable)
+
+
+def test_stored_scorable_carries_no_type_tag():
+    piece_id = uuid.uuid4()
+
+    dumped = MessageScorable(message_piece_ids=(piece_id,)).model_dump(mode="json")
+
+    assert dumped == {"message_piece_ids": [str(piece_id)]}
+
+
+def test_every_union_member_round_trips_to_its_own_type():
+    """Pydantic dispatches on field shape, so members must stay distinguishable.
+
+    A new scorable whose required fields overlap an existing one would silently load as
+    the wrong type. Adding a member without a case here fails on the coverage assert.
+    """
+    cases: list[Scorable] = [
+        MessageScorable(message_piece_ids=(uuid.uuid4(),)),
+        ContentScorable(value="hello"),
+        ContentEntryScorable(content_id=uuid.uuid4()),
+    ]
+
+    assert {type(case) for case in cases} == set(get_args(ScorableUnion))
+
+    for case in cases:
+        assert type(scorable_from_dict(case.model_dump(mode="json"))) is type(case)
+
+
+def test_unknown_stored_shape_fails_loudly():
+    with pytest.raises(ValidationError):
+        scorable_from_dict({"uri": "/data/exfiltrated.txt"})

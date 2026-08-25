@@ -16,6 +16,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -321,9 +322,12 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
-        if score and score.get_value():
-            # We have a positive score, so it's a success
-            return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+        if score:
+            outcome = attack_outcome_from_score(score)
+            if outcome is AttackOutcome.SUCCESS:
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            if outcome is AttackOutcome.UNDETERMINED:
+                return AttackOutcome.UNDETERMINED, score.score_rationale or "Scorer could not reach a verdict"
 
         if response:
             # We got response(s) but the final response did not achieve the objective

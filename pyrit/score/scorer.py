@@ -10,6 +10,7 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.exceptions import PyritException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
@@ -20,9 +21,11 @@ from pyrit.models import (
     Message,
     MessageScorable,
     Scorable,
+    ScorableUnion,
     Score,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
+    ScoreStatus,
     ScoreType,
     ScoringExpectation,
 )
@@ -30,6 +33,7 @@ from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    import uuid
     from collections.abc import Sequence
 
     from pyrit.prompt_target import PromptTarget
@@ -59,8 +63,8 @@ async def _legacy_score_scorable_async(
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
     print_deprecation_message(
-        old_item=f"{type(self).__name__}._score_async on a direct Scorer subclass",
-        new_item="pyrit.score.MessageScorer (or TrueFalseScorer / FloatScaleScorer) as the base class",
+        old_item=f"{type(self).__name__}._score_async on a scorer without a MessageScorer base",
+        new_item="pyrit.score.MessageScorer (or MessageTrueFalseScorer / MessageFloatScaleScorer) as the base class",
         removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
     )
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
@@ -74,9 +78,10 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
     Give a pre-2.0 direct ``Scorer`` subclass an implementation of the scorable contract.
 
     Subclasses of ``MessageScorer`` already inherit one, so they are left alone. A class that
-    predates the split implements ``_score_async`` instead, and would otherwise fail to
-    instantiate because ``_score_scorable_async`` is abstract. ``ABCMeta`` recomputes
-    ``__abstractmethods__`` after ``__init_subclass__``, so assigning it here is enough.
+    predates the split implements ``_score_async`` or only ``_score_piece_async`` instead, and
+    would otherwise fail to instantiate because ``_score_scorable_async`` is abstract.
+    ``ABCMeta`` recomputes ``__abstractmethods__`` after ``__init_subclass__``, so assigning
+    here is enough.
     """
     for base in cls.__mro__:
         if base is Scorer:
@@ -84,8 +89,19 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
         if "_score_scorable_async" in base.__dict__:
             return
 
-    if not any("_score_async" in base.__dict__ for base in cls.__mro__):
-        return
+    def defines(name: str) -> bool:
+        return any(name in base.__dict__ for base in cls.__mro__)
+
+    if not defines("_score_async"):
+        if not defines("_score_piece_async"):
+            return
+        # A leaf that only fans in at the piece level used to inherit the message pipeline
+        # from its family base. That pipeline now lives on MessageScorer, so lend it here.
+        from pyrit.score.message_scorer import MessageScorer
+
+        cls._score_async = MessageScorer._score_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+        if not defines("_get_supported_pieces"):
+            cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
 
     cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
 
@@ -117,6 +133,10 @@ class Scorer(Identifiable, abc.ABC):
     #: Matched condition types that this scorer cannot operate without. The empty-condition
     #: legacy path remains valid during the transition to typed expectations.
     REQUIRED_CONDITIONS: ClassVar[frozenset[type[Condition]]] = frozenset()
+
+    #: When True, blocked responses that contain partial content are scored using that
+    #: content instead of being filtered out or short-circuited.
+    score_blocked_content: bool = False
 
     _identifier: ComponentIdentifier | None = None
 
@@ -210,8 +230,8 @@ class Scorer(Identifiable, abc.ABC):
         The scorer type based on class hierarchy.
 
         Returns:
-            ScoreType: "true_false" for TrueFalseScorer subclasses,
-                      "float_scale" for FloatScaleScorer subclasses,
+            ScoreType: "true_false" for TrueFalseScorerBase subclasses,
+                      "float_scale" for FloatScaleScorerBase subclasses,
                       "unknown" for other scorers.
         """
         # Import here to avoid circular imports
@@ -288,9 +308,18 @@ class Scorer(Identifiable, abc.ABC):
 
         Raises:
             TypeError: If this scorer does not support this kind of scorable.
+            PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
+            RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
         self._validate_expectation(expectation=expectation)
-        scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
+        try:
+            scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
+        except PyritException as e:
+            e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
+            e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
         return self._validate_and_persist_scores(scores=scores)
 
     def _validate_expectation(
@@ -352,6 +381,106 @@ class Scorer(Identifiable, abc.ABC):
         self.validate_return_scores(scores=scores)
         self._memory.add_scores_to_memory(scores=scores)
         return scores
+
+    async def _score_nested_async(
+        self,
+        *,
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Score a scorable as a child in a scorer tree.
+
+        Conditions addressed to sibling leaves are ignored here because the root scorer
+        already validates that every supplied condition reaches at least one leaf. The
+        root scorer owns persistence, so this path only validates child output.
+
+        Args:
+            scorable (Scorable): What to look at.
+            expectation (ScoringExpectation | None): What to look for.
+
+        Returns:
+            list[Score]: The validated child scores.
+        """
+        self._validate_expectation(expectation=expectation, allow_unmatched_conditions=True)
+        scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
+        if scores:
+            self.validate_return_scores(scores=scores)
+        return scores
+
+    def _build_undetermined_score(
+        self,
+        *,
+        rationale: str,
+        description: str | None = None,
+        message_piece_id: uuid.UUID | str | None = None,
+        scorable: ScorableUnion | None = None,
+        objective: str | None = None,
+    ) -> Score:
+        """
+        Build a score that reports no verdict was reachable.
+
+        Args:
+            rationale (str): Why no verdict was reachable.
+            description (str | None): Short description of the outcome.
+            message_piece_id (uuid.UUID | str | None): The message piece anchor, if any.
+            scorable (Scorable | None): What the score is about, if known here.
+            objective (str | None): The objective associated with this scoring call.
+
+        Returns:
+            Score: An undetermined score of this scorer's type.
+        """
+        return Score(
+            score_value=None,
+            status=ScoreStatus.UNDETERMINED,
+            score_value_description=description,
+            score_type=self.scorer_type,
+            score_category=None,
+            score_metadata=None,
+            score_rationale=rationale,
+            scorer_class_identifier=self.get_identifier(),
+            message_piece_id=message_piece_id,
+            scorable=scorable,
+            objective=objective,
+        )
+
+    @staticmethod
+    def _piece_id_from_scorable(scorable: Scorable | None) -> uuid.UUID | str | None:
+        """
+        Return the message piece a scorable names, so message-anchored joins keep working.
+
+        Returns:
+            uuid.UUID | str | None: The first named piece id, or None when none is named.
+        """
+        if isinstance(scorable, MessageScorable) and scorable.message_piece_ids:
+            return scorable.message_piece_ids[0]
+        return None
+
+    def _should_skip_on_error(self, message: Message) -> bool:
+        """
+        Return whether an errored message should be skipped rather than scored.
+
+        Returns:
+            bool: True when the message should not be scored.
+        """
+        if not message.is_error():
+            return False
+
+        error_pieces = [
+            piece for piece in message.message_pieces if piece.has_error() or piece.converted_value_data_type == "error"
+        ]
+        # SDK-provided structured refusals stay scoreable: the refusal text is the evidence.
+        only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
+        # When score_blocked_content is enabled and the message has partial content,
+        # don't skip — let the scorer handle the substitution.
+        all_errors_have_partial_content = all(
+            piece.is_blocked() and piece.prompt_metadata.get("partial_content") for piece in error_pieces
+        )
+        if only_structured_refusals or (self.score_blocked_content and all_errors_have_partial_content):
+            return False
+
+        logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
+        return True
 
     @abstractmethod
     async def _score_scorable_async(
@@ -655,23 +784,20 @@ class Scorer(Identifiable, abc.ABC):
         """
         Apply response-scoring policy without storing policy on the scorable.
 
+        Role and error policy decide whether this response is scored at all, so they are
+        settled here rather than inside a scorer that may not be message-shaped.
+
         Returns:
-            list[Score]: Scores from the message scorer.
-
-        Raises:
-            TypeError: If the scorer does not use the message-scoring contract.
+            list[Score]: Scores from the scorer, or an empty list when policy skips the response.
         """
-        from pyrit.score.message_scorer import MessageScorer, MessageScoringOptions
-
-        if not isinstance(scorer, MessageScorer):
-            raise TypeError("Response scoring helpers require MessageScorer instances.")
+        if response.get_piece().role != role_filter:
+            logger.debug("Skipping scoring due to role filter mismatch.")
+            return []
+        if skip_on_error_result and scorer._should_skip_on_error(response):
+            return []
         return await scorer.score_async(
             scorable=MessageScorable.from_message(response),
             expectation=expectation,
-            message_options=MessageScoringOptions(
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            ),
         )
 
     @staticmethod

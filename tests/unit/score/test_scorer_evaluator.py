@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from pyrit.memory import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, Score, ScoreStatus
 from pyrit.score import (
     FloatScaleScorer,
     HarmHumanLabeledEntry,
@@ -109,6 +109,33 @@ async def test_evaluate_dataset_async_objective(mock_objective_scorer):
     assert isinstance(metrics, ObjectiveScorerMetrics)
     assert metrics.accuracy == 0.0
     assert metrics.accuracy_standard_error == 0.0
+
+
+async def test_evaluate_dataset_async_excludes_undetermined_responses(mock_objective_scorer):
+    responses = [
+        Message(message_pieces=[MessagePiece(role="assistant", original_value=value, original_value_data_type="text")])
+        for value in ["unknown", "known"]
+    ]
+    entries = [
+        ObjectiveHumanLabeledEntry([response], [expected], "Test objective")
+        for response, expected in zip(responses, [True, False], strict=True)
+    ]
+    dataset = HumanLabeledDataset(
+        name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=entries, version="1.0"
+    )
+    mock_objective_scorer.score_prompts_batch_async = AsyncMock(
+        return_value=[
+            Score(score_type="true_false", status=ScoreStatus.UNDETERMINED),
+            Score(score_type="true_false", score_value="false"),
+        ]
+    )
+
+    metrics = await ObjectiveScorerEvaluator(mock_objective_scorer).evaluate_dataset_async(
+        labeled_dataset=dataset, num_scorer_trials=2
+    )
+
+    assert metrics.accuracy == 1.0
+    assert metrics.trial_scores.shape == (2, 1)
 
 
 async def test_evaluate_dataset_async_objective_returns_metrics(mock_objective_scorer):

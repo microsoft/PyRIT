@@ -14,11 +14,14 @@ from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
 from pyrit.models import (
     ChatMessageRole,
     Condition,
+    ContentScorable,
     MatchesObjective,
     Message,
     MessagePiece,
+    MessageScorable,
     PromptResponseError,
     Scorable,
+    ScorableUnion,
     Score,
     ScoringExpectation,
 )
@@ -96,10 +99,6 @@ class MessageScorer(Scorer):
 
     Subclasses implement ``_score_async``, which still receives a ``Message``.
     """
-
-    #: When True, blocked responses that contain partial content are scored using that
-    #: content instead of being filtered out or short-circuited.
-    score_blocked_content: bool = False
 
     #: When False, a blocked response from the scorer's own LLM produces the scorer
     #: family's neutral fallback score instead of raising.
@@ -469,14 +468,21 @@ class MessageScorer(Scorer):
                 raise
             logger.info(
                 "Scorer %s LLM response was blocked by content filtering; "
-                "returning default score (raise_if_scorer_blocks=False).",
+                "returning an undetermined score (raise_if_scorer_blocks=False).",
                 self.__class__.__name__,
             )
-            scores = self._build_fallback_score(
-                message=scoring_message,
-                objective=objective,
-                scorer_response_blocked=True,
-            )
+            first_piece = scoring_message.message_pieces[0]
+            scores = [
+                self._build_undetermined_score(
+                    rationale=(
+                        "The scorer's own LLM response was blocked by content filtering "
+                        "(raise_if_scorer_blocks is False), so no verdict was reachable."
+                    ),
+                    description="Scorer response blocked; no verdict was reachable.",
+                    message_piece_id=first_piece.id or first_piece.original_prompt_id,
+                    objective=objective,
+                )
+            ]
         except PyritException as e:
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
             e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
@@ -490,6 +496,7 @@ class MessageScorer(Scorer):
             scores = self._build_fallback_score(message=scoring_message, objective=objective)
 
         self._drop_ephemeral_score_links(message=scoring_message, scores=scores)
+        self._stamp_scorable(message=scoring_message, scores=scores)
 
         return scores
 
@@ -560,31 +567,40 @@ class MessageScorer(Scorer):
             piece for piece in message.message_pieces if self._validator.is_message_piece_supported(message_piece=piece)
         ]
 
-    def _should_skip_on_error(self, message: Message) -> bool:
+    @staticmethod
+    def _scorable_from_message(message: Message) -> ScorableUnion | None:
         """
-        Return whether an errored message should be skipped rather than scored.
+        Name the evidence a prepared message holds.
+
+        A persisted message is named by its piece ids. A message that was never persisted
+        has no ids to name, so its converted content is the anchor instead.
 
         Returns:
-            bool: True when the message should not be scored.
+            Scorable | None: The anchor, or None when the message names nothing recoverable.
         """
-        if not message.is_error():
-            return False
+        pieces = message.message_pieces
+        if not pieces:
+            return None
+        if all(piece.id is not None and not piece.not_in_memory for piece in pieces):
+            return MessageScorable.from_message(message)
+        if len(pieces) == 1:
+            return ContentScorable.from_message(message)
+        return None
 
-        error_pieces = [
-            piece for piece in message.message_pieces if piece.has_error() or piece.converted_value_data_type == "error"
-        ]
-        # SDK-provided structured refusals stay scoreable: the refusal text is the evidence.
-        only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
-        # When score_blocked_content is enabled and the message has partial content,
-        # don't skip — let _score_async handle the substitution.
-        all_errors_have_partial_content = all(
-            piece.is_blocked() and piece.prompt_metadata.get("partial_content") for piece in error_pieces
-        )
-        if only_structured_refusals or (self.score_blocked_content and all_errors_have_partial_content):
-            return False
+    @classmethod
+    def _stamp_scorable(cls, *, message: Message, scores: list[Score]) -> None:
+        """
+        Anchor scores on the evidence they were taken over, when the scorer left it unset.
 
-        logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
-        return True
+        A score whose piece link was dropped because the piece was never persisted still has
+        provenance this way: the anchor carries the content itself.
+        """
+        anchor = cls._scorable_from_message(message)
+        if anchor is None:
+            return
+        for score in scores:
+            if score.scorable is None:
+                score.scorable = anchor
 
     @staticmethod
     def _drop_ephemeral_score_links(*, message: Message, scores: list[Score]) -> None:
@@ -711,7 +727,6 @@ class MessageScorer(Scorer):
         *,
         message: Message,
         objective: str | None,
-        scorer_response_blocked: bool = False,
     ) -> list[Score]:
         """
         Return the scorer family's neutral result when message evidence is unscoreable.
@@ -719,7 +734,6 @@ class MessageScorer(Scorer):
         Args:
             message (Message): The message-shaped evidence.
             objective (str | None): The objective associated with this call.
-            scorer_response_blocked (bool): Whether the scorer's own LLM was blocked.
 
         Returns:
             list[Score]: One or more fallback scores.

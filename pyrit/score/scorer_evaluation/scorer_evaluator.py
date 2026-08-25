@@ -13,6 +13,7 @@ import numpy as np
 from scipy.stats import ttest_1samp
 
 from pyrit.common.path import SCORER_EVALS_PATH
+from pyrit.models import UndeterminedScoreError
 from pyrit.score.message_scorer import extract_objective_from_previous_turn
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
@@ -386,6 +387,7 @@ class ScorerEvaluator(abc.ABC):
 
         # Run scoring trials and measure timing
         all_model_scores_list = []
+        determined_responses = np.ones(len(assistant_responses), dtype=bool)
         total_scoring_time = 0.0
         total_scored_items = 0
         for _ in range(num_scorer_trials):
@@ -398,9 +400,18 @@ class ScorerEvaluator(abc.ABC):
             elapsed_time = time.perf_counter() - start_time
             total_scoring_time += elapsed_time
             total_scored_items += len(scores)
-            score_values = [score.get_value() for score in scores]
+            score_values: list[bool | float] = []
+            for index, score in enumerate(scores):
+                try:
+                    score_values.append(score.get_value())
+                except UndeterminedScoreError:
+                    determined_responses[index] = False
+                    score_values.append(False if score.score_type == "true_false" else 0.0)
             all_model_scores_list.append(score_values)
-        all_model_scores = np.array(all_model_scores_list)
+        if not determined_responses.any():
+            raise ValueError("Scorer evaluation produced no determined scores to compare with human labels.")
+        all_model_scores = np.array(all_model_scores_list)[:, determined_responses]
+        all_human_scores = all_human_scores[:, determined_responses]
 
         # Calculate average time per scored item
         average_score_time = total_scoring_time / total_scored_items if total_scored_items > 0 else 0.0

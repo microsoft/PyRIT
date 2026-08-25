@@ -39,6 +39,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
     ScenarioResultEntry,
+    ScorableContentEntry,
     ScoreEntry,
     ScorerIdentifierEntry,
     SeedEntry,
@@ -58,6 +59,8 @@ from pyrit.models import (
     AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    ContentEntryScorable,
+    ContentScorable,
     Conversation,
     ConversationRetry,
     ConversationRetryReason,
@@ -1606,6 +1609,10 @@ class MemoryInterface(abc.ABC):
         analytics (e.g. refusal rate over a batch) still want the score row
         even when the scored content was never a real conversation turn.
 
+        A score anchored on loose content has that content written to
+        ``ScorableContentEntries`` and its anchor rewritten to name the stored row, so a
+        score's input can still be recovered when it was never a conversation turn.
+
         Raises:
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
@@ -1619,9 +1626,18 @@ class MemoryInterface(abc.ABC):
                 # auto-link score to the original prompt id if the prompt is a duplicate
                 if pieces[0].original_prompt_id != pieces[0].id:
                     score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
-        entries = [ScoreEntry(entry=score) for score in scores]
+        content_entries, anchor_rewrites = self._store_scorable_content(scores=scores)
+        anchors_by_score = {id(score): anchor for score, anchor in anchor_rewrites}
+        persisted_scores = [
+            score.model_copy(update={"scorable": anchors_by_score[id(score)]})
+            if id(score) in anchors_by_score
+            else score
+            for score in scores
+        ]
+        entries = [ScoreEntry(entry=score) for score in persisted_scores]
         with closing(self.get_session()) as session:
             try:
+                session.add_all(content_entries)
                 for entry in entries:
                     if entry.scorer_class_identifier:
                         self._persist_scorer_identifier(
@@ -1630,10 +1646,68 @@ class MemoryInterface(abc.ABC):
                         )
                 session.add_all(entries)
                 session.commit()
+                for score, anchor in anchor_rewrites:
+                    score.scorable = anchor
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error inserting scores: {e}")
                 raise
+
+    @staticmethod
+    def _store_scorable_content(
+        *, scores: Sequence[Score]
+    ) -> tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+        """
+        Turn loose-content anchors into stored references.
+
+        Scores sharing the same content share one row, so a scorer that returns several
+        scores over one input (a category per harm, say) does not duplicate it.
+
+        Returns:
+            tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+                Content rows to insert and anchor rewrites to publish after commit.
+        """
+        rows: dict[ContentScorable, ScorableContentEntry] = {}
+        anchor_rewrites: list[tuple[Score, ContentEntryScorable]] = []
+        for score in scores:
+            scorable = score.scorable
+            if not isinstance(scorable, ContentScorable):
+                continue
+            row = rows.get(scorable)
+            if row is None:
+                row = ScorableContentEntry(
+                    id=uuid.uuid4(),
+                    value=scorable.value,
+                    data_type=scorable.data_type,
+                    timestamp=datetime.now(tz=timezone.utc),
+                )
+                rows[scorable] = row
+            anchor_rewrites.append((score, ContentEntryScorable(content_id=row.id, data_type=scorable.data_type)))
+        return list(rows.values()), anchor_rewrites
+
+    def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
+        """
+        Load the loose content that stored scores are anchored on.
+
+        Args:
+            content_ids: The ids named by ``ContentEntryScorable`` anchors.
+
+        Returns:
+            dict[uuid.UUID, ContentScorable]: The content by id, omitting ids with no row.
+        """
+        if not content_ids:
+            return {}
+        wanted = [str(content_id) for content_id in content_ids]
+        entries = self._execute_batched_query(
+            ScorableContentEntry,
+            batch_column=ScorableContentEntry.id,
+            batch_values=wanted,
+        )
+        return {
+            entry.id: ContentScorable(value=entry.value, data_type=entry.data_type)
+            for entry in entries
+            if entry.value is not None
+        }
 
     @classmethod
     def _persist_scorer_identifier(cls, *, session: Any, scorer_identifier: ScorerIdentifier) -> None:

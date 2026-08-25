@@ -23,16 +23,15 @@ from pyrit.score import (
     ContentScorable,
     MessageScorable,
     MessageScorer,
+    MessageTrueFalseScorer,
     Scorable,
     Scorer,
     ScorerPromptValidator,
-    TrueFalseScorer,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import MessageScoringOptions, extract_objective_from_previous_turn
 
 
-@dataclasses.dataclass(frozen=True)
 class UnsupportedScorable(Scorable):
     """A scorable kind no message scorer handles."""
 
@@ -50,7 +49,7 @@ class PermissiveValidator(ScorerPromptValidator):
         return True
 
 
-class RecordingScorer(TrueFalseScorer):
+class RecordingScorer(MessageTrueFalseScorer):
     """A message scorer that remembers what it was asked to score."""
 
     def __init__(

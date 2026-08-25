@@ -18,7 +18,7 @@ from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerAllCategories,
     FloatScaleScorerByCategory,
 )
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
 from pyrit.score.float_scale.insecure_code_scorer import (
     InsecureCodeScorer,
     render_insecure_code_system_prompt,
@@ -125,7 +125,7 @@ from pyrit.score.true_false.substring_scorer import SubStringScorer
 from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
@@ -192,6 +192,7 @@ __all__ = [
     "FloatScaleScoreAggregator",
     "FloatScaleScorerAllCategories",
     "FloatScaleScorerByCategory",
+    "MessageFloatScaleScorer",
     "FloatScaleScorer",
     "FloatScaleThresholdScorer",
     "GandalfScorer",
@@ -284,6 +285,7 @@ __all__ = [
     "TrueFalseQuestionPaths",
     "TrueFalseScoreAggregator",
     "TrueFalseAggregatorFunc",
+    "MessageTrueFalseScorer",
     "TrueFalseScorer",
     "VideoFloatScaleScorer",
     "VideoTrueFalseScorer",

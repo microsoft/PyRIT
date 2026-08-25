@@ -36,7 +36,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
 )
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
+from pyrit.executor.attack.core.attack_strategy import AttackStrategy, attack_outcome_from_score
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -64,7 +64,7 @@ from pyrit.score import (
     TrueFalseQuestion,
     TrueFalseScorer,
 )
-from pyrit.score.score_utils import normalize_score_to_float
+from pyrit.score.score_utils import normalize_score_to_float, score_is_true
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
@@ -1001,7 +1001,7 @@ class _TreeOfAttacksNode:
         for attempt in range(max_retries):
             on_topic_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
 
-            if on_topic_score.get_value():
+            if score_is_true(on_topic_score):
                 # Prompt is on-topic, we're done
                 return prompt
 
@@ -1023,7 +1023,7 @@ class _TreeOfAttacksNode:
 
         # Final check after all retries
         final_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
-        if not final_score.get_value():
+        if not score_is_true(final_score):
             logger.info(f"Node {self.node_id}: Prompt still off-topic after {max_retries} retries, pruning branch")
             self.off_topic = True
 
@@ -2258,8 +2258,17 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Returns:
             TAPAttackResult: The failure result indicating the attack did not achieve its objective.
         """
-        best_score = normalize_score_to_float(context.best_objective_score)
-        outcome_reason = f"Did not achieve threshold score. Best score: {best_score:.2f}"
+        best_score = context.best_objective_score
+        if best_score is not None and attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:
+            return self._create_attack_result(
+                context=context,
+                outcome=AttackOutcome.UNDETERMINED,
+                outcome_reason=getattr(best_score, "score_rationale", None)
+                or "Objective scorer could not reach a verdict",
+            )
+
+        normalized_best = normalize_score_to_float(best_score)
+        outcome_reason = f"Did not achieve threshold score. Best score: {normalized_best:.2f}"
 
         return self._create_attack_result(
             context=context,

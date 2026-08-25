@@ -9,12 +9,12 @@ from unit.mocks import store_message
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import ComponentIdentifier, MatchesObjective, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.score import (
-    FloatScaleScorer,
+    MessageFloatScaleScorer,
     MessageScorable,
+    MessageTrueFalseScorer,
     ScorerPromptValidator,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
-    TrueFalseScorer,
 )
 
 
@@ -26,7 +26,7 @@ def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
     )
 
 
-class MockScorer(TrueFalseScorer):
+class MockScorer(MessageTrueFalseScorer):
     """A mock scorer for testing purposes."""
 
     def _score_aggregator(self, score_list):
@@ -169,7 +169,7 @@ async def test_composite_scorer_majority_false(mock_request, true_scorer, false_
 
 
 def test_composite_scorer_invalid_scorer_type():
-    class InvalidScorer(FloatScaleScorer):
+    class InvalidScorer(MessageFloatScaleScorer):
         def __init__(self):
             self._validator = MagicMock()
 

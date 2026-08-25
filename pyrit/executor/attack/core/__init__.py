@@ -20,6 +20,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategy,
     AttackStrategyContextT,
     AttackStrategyResultT,
+    attack_outcome_from_score,
 )
 
 __all__ = [
@@ -34,6 +35,7 @@ __all__ = [
     "AttackStrategyResultT",
     "AttackExecutor",
     "AttackExecutorResult",
+    "attack_outcome_from_score",
     "resolve_adversarial_json_schema",
     "resolve_adversarial_system_prompt",
 ]

@@ -20,7 +20,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 _LLAMAGUARD_DATA_PATH = SCORER_SEED_PROMPT_PATH / "llamaguard"
 _DEFAULT_LLAMA_GUARD_3_POLICY_PATH = _LLAMAGUARD_DATA_PATH / "llamaguard_3_policy.yaml"
@@ -67,7 +67,7 @@ def render_llamaguard_prompt(
     )
 
 
-class LlamaGuardScorer(TrueFalseScorer):
+class LlamaGuardScorer(MessageTrueFalseScorer):
     """
     Classify text with a Llama Guard endpoint.
 

@@ -1205,8 +1205,8 @@ class TestResponseScoring:
         """Test that _check_refusal_async does not skip scoring on error responses.
 
         When the target returns an error response (e.g., blocked by content filter),
-        the refusal scorer should still be called with skip_on_error_result=False
-        so that error responses are treated as refusals and trigger backtracking.
+        the refusal scorer should still be called so that error responses are treated
+        as refusals and trigger backtracking.
 
         This prevents IndexError when accessing scores[0] on an empty list.
         """
@@ -1224,13 +1224,10 @@ class TestResponseScoring:
 
         await attack._check_refusal_async(context=basic_context, objective="test task")
 
-        # Verify message policy does not skip error results
+        # Refusal scoring carries no skip policy, so an error response is still scored
+        # rather than skipped, which would leave scores[0] to raise IndexError.
         mock_refusal_scorer.score_async.assert_called_once()
-        message_options = mock_refusal_scorer.score_async.call_args.kwargs["message_options"]
-        assert message_options.skip_on_error_result is False, (
-            "Refusal scorer must be called with skip_on_error_result=False "
-            "to ensure error responses are scored (treated as refusals) rather than skipped"
-        )
+        assert "message_options" not in mock_refusal_scorer.score_async.call_args.kwargs
 
 
 @pytest.mark.usefixtures("patch_central_database")

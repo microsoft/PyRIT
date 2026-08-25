@@ -23,6 +23,7 @@ from pyrit.executor.attack.core import (
     AttackParameters,
     AttackScoringConfig,
     AttackStrategy,
+    attack_outcome_from_score,
 )
 from pyrit.executor.attack.multi_turn import (
     ChunkedRequestAttack,
@@ -95,5 +96,6 @@ __all__ = [
     "TAPAttackResult",
     "TAPSystemPromptPaths",
     "TreeOfAttacksWithPruningAttack",
+    "attack_outcome_from_score",
     "generate_simulated_conversation_async",
 ]

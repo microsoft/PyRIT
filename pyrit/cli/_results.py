@@ -119,6 +119,10 @@ def build_attacks_table_payload(
             if id_filter is not None and attack_result.attack_result_id not in id_filter:
                 continue
             score = attack_result.last_score
+            score_value: str | None = None
+            if score is not None:
+                # An undetermined score has no value, so name its status instead.
+                score_value = score.score_value if score.score_value is not None else score.status.value
             rows.append(
                 AttackRow(
                     attack_result_id=attack_result.attack_result_id,
@@ -126,7 +130,7 @@ def build_attacks_table_payload(
                     objective=attack_result.objective,
                     outcome=attack_result.outcome.value,
                     executed_turns=attack_result.executed_turns,
-                    score_value=str(score.score_value) if score is not None else None,
+                    score_value=score_value,
                 )
             )
 

@@ -35,9 +35,11 @@ from pyrit.models import (
     ConverterIdentifier,
     Identifiable,
     Message,
+    Score,
     ScorerIdentifier,
     SeedPrompt,
     TargetIdentifier,
+    UndeterminedScoreError,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
@@ -51,6 +53,28 @@ if TYPE_CHECKING:
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
+
+
+def attack_outcome_from_score(score: Score) -> AttackOutcome:
+    """
+    Map an objective score onto the outcome it justifies.
+
+    This is the attack-side contract for undetermined scores, stated once so no attack
+    invents its own. An undetermined score is neither achievement nor refutation, so it
+    never reads as failure; an attack that ends on one ends undetermined.
+
+    Args:
+        score (Score): The objective score to read.
+
+    Returns:
+        AttackOutcome: ``UNDETERMINED`` when no verdict was reachable, otherwise
+            ``SUCCESS`` or ``FAILURE``.
+    """
+    try:
+        value = score.get_value()
+    except UndeterminedScoreError:
+        return AttackOutcome.UNDETERMINED
+    return AttackOutcome.SUCCESS if bool(value) else AttackOutcome.FAILURE
 
 
 class _NextMessageOverrideState(Enum):

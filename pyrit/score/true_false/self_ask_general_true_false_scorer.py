@@ -13,7 +13,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.models import (
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
 
-class SelfAskGeneralTrueFalseScorer(TrueFalseScorer):
+class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
     """
     A general-purpose self-ask True/False scorer that uses a chat target and a configurable
     system prompt and prompt format.

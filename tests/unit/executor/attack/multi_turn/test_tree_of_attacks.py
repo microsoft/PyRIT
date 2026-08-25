@@ -367,7 +367,7 @@ class TestHelpers:
                 class_module="test_module",
             ),
         )
-        mock_float_scorer._score_nested_message_async = AsyncMock(return_value=[float_score])
+        mock_float_scorer._score_nested_async = AsyncMock(return_value=[float_score])
 
         # Create the actual FloatScaleThresholdScorer
         threshold_scorer = FloatScaleThresholdScorer(scorer=mock_float_scorer, threshold=threshold)

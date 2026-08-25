@@ -288,7 +288,8 @@ export interface BackendScore {
   id: string
   scorer_type: string
   score_type: string
-  score_value: string
+  score_value?: string | null
+  status: string
   score_category?: string[] | null
   score_rationale?: string | null
   timestamp: string

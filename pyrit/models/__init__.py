@@ -80,14 +80,20 @@ from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import (
     Condition,
+    ContentEntryScorable,
     ContentScorable,
     MatchesObjective,
     MessageScorable,
     Scorable,
+    ScorableUnion,
     Score,
+    ScoreStatus,
     ScoreType,
     ScoringExpectation,
+    UndeterminedScoreError,
     UnvalidatedScore,
+    scorable_from_dict,
+    storable_scorable,
 )
 
 # Seeds - import from new seeds submodule for forward compatibility
@@ -151,6 +157,7 @@ __all__ = [
     "ConversationRetryReason",
     "ConversationStats",
     "ConversationType",
+    "ContentEntryScorable",
     "ContentScorable",
     "construct_response_from_request",
     "display_choices",
@@ -198,7 +205,9 @@ __all__ = [
     "REGISTRY_NAME_PATTERN",
     "ScaleDescription",
     "Scorable",
+    "ScorableUnion",
     "Score",
+    "ScoreStatus",
     "ScoreType",
     "ScoringExpectation",
     "ScenarioEvaluationIdentifier",
@@ -231,9 +240,12 @@ __all__ = [
     "TOKEN_USAGE_METADATA_PREFIX",
     "TokenUsage",
     "ToolCall",
+    "UndeterminedScoreError",
     "UnvalidatedScore",
     "read_usage_int",
     "read_usage_value",
     "validate_registry_name",
+    "scorable_from_dict",
+    "storable_scorable",
     "RetryEvent",
 ]
