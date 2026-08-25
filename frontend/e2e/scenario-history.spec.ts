@@ -210,6 +210,14 @@ async function mockScenarioAPIs(page: Page): Promise<ScenarioMocks> {
   let launchRequest: Record<string, unknown> | undefined;
   const estimateRequests: Record<string, unknown>[] = [];
 
+  await page.route(/\/api\/auth\/config(?:\?|$)/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ clientId: "", tenantId: "", allowedGroupIds: "" }),
+    });
+  });
+
   await page.route(/\/api\/version(?:\?|$)/, async (route) => {
     await route.fulfill({
       status: 200,
