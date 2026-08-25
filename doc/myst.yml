@@ -109,6 +109,7 @@ project:
             - file: code/executor/6_benchmark.ipynb
             - file: code/executor/7_promptgen.ipynb
             - file: code/executor/8_modality_feedback.ipynb
+            - file: code/executor/cot_hijacking_attack.ipynb
             - file: code/executor/gcg/0_gcg.ipynb
               children:
                 - file: code/executor/gcg/1_gcg_azure_ml.ipynb
