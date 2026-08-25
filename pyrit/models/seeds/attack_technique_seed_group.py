@@ -93,7 +93,10 @@ class AttackTechniqueSeedGroup(SeedGroup):
         Args:
             messages (list[Message]): Conversation messages to convert into technique seeds.
             starting_sequence (int): Sequence number assigned to the first message.
-                Defaults to 0.
+                Prompt sequences are usually normalized when the technique is merged into an
+                ``AttackSeedGroup``. If the merged group contains a ``SeedSimulatedConversation``,
+                prompt sequences are preserved, so choose a starting value outside that simulated
+                conversation's sequence range. Defaults to 0.
             insertion_index (int | None): Where to insert the technique when merging
                 into a ``AttackSeedGroup``. Defaults to None.
             prompt_placement (Literal["preserve", "prepend"]): How to place prompts

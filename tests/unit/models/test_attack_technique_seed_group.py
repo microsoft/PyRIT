@@ -285,6 +285,15 @@ class TestAttackTechniqueSeedGroupFromMessages:
         assert all(seed.is_general_technique for seed in group.prompts)
         assert group.prompt_placement == "prepend"
 
+    def test_respects_insertion_index(self):
+        """Test that insertion_index is forwarded to the group."""
+        group = AttackTechniqueSeedGroup.from_messages(
+            messages=[Message.from_prompt(prompt="encoded practice", role="user")],
+            insertion_index=0,
+        )
+
+        assert group.insertion_index == 0
+
     def test_merged_message_technique_extracts_teaching_context_before_objective(self):
         """Test that message-built techniques prepend context while leaving the objective as final turn."""
         technique = AttackTechniqueSeedGroup.from_messages(
