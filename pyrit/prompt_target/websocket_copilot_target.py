@@ -95,7 +95,7 @@ class WebSocketCopilotTarget(PromptTarget):
     def __init__(
         self,
         *,
-        websocket_base_url: str = "wss://substrate.office.com/m365Copilot/Chathub",
+        websocket_base_url: str = "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub",
         max_requests_per_minute: int | None = None,
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
@@ -107,7 +107,7 @@ class WebSocketCopilotTarget(PromptTarget):
 
         Args:
             websocket_base_url (str): Base URL for the Copilot WebSocket endpoint.
-                Defaults to ``wss://substrate.office.com/m365Copilot/Chathub``.
+                Defaults to ``wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub``.
             max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
             response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.

@@ -139,7 +139,7 @@ class TestWebSocketCopilotTargetInit:
             assert target._authenticator == mock_auth_instance
             assert target._response_timeout_seconds == WebSocketCopilotTarget.RESPONSE_TIMEOUT_SECONDS
             assert target._model_name == "copilot"
-            assert target._endpoint == "wss://substrate.office.com/m365Copilot/Chathub"
+            assert target._endpoint == "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub"
             assert target._verbose is False
             assert target._max_requests_per_minute is None
 
@@ -252,7 +252,7 @@ class TestBuildWebsocketUrl:
         )
         expected_token = await mock_authenticator.get_token_async()
 
-        assert url.startswith("wss://substrate.office.com/m365Copilot/Chathub/test_object_id@test_tenant_id?")
+        assert url.startswith("wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub/test_object_id@test_tenant_id?")
         assert f"X-SessionId={session_id}" in url
         assert f"ConversationId={copilot_conversation_id}" in url
         assert f"access_token={expected_token}" in url
