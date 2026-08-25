@@ -22,6 +22,18 @@ def test_json_schema_response_handler_rejects_non_object_response(response_text:
         )
 
 
+@pytest.mark.parametrize("score_value", ["nan", "NaN", "inf", "-inf", "Infinity"])
+def test_json_schema_response_handler_rejects_non_finite_numeric_values(score_value: str) -> None:
+    handler = JsonSchemaResponseHandler(numeric_value=True)
+
+    with pytest.raises(InvalidJsonException, match="finite float"):
+        handler.parse(
+            response_text=f'{{"score_value": "{score_value}", "rationale": "test"}}',
+            scorer_identifier=SCORER_IDENTIFIER,
+            scored_prompt_id="test-id",
+        )
+
+
 @pytest.mark.parametrize(
     ("json_value", "expected"),
     [

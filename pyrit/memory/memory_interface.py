@@ -891,7 +891,8 @@ class MemoryInterface(abc.ABC):
         filters: dict[str, Any],
     ) -> Sequence[IdentifierModel]:
         if identifier_hashes is not None and not identifier_hashes:
-            return []
+            empty_identifiers: list[IdentifierModel] = []
+            return empty_identifiers
 
         list_filters = {name: value for name, value in filters.items() if isinstance(value, list)}
         conditions = [
@@ -1442,11 +1443,15 @@ class MemoryInterface(abc.ABC):
             batch_size=effective_batch_size,
         )
 
+        if not other_large_params:
+            return results
+
+        filtered_results: list[Model] = list(results)
         for _col, vals, attr_name in other_large_params:
             vals_set = set(vals)
-            results = [e for e in results if getattr(e, attr_name, None) in vals_set]
+            filtered_results = [e for e in filtered_results if getattr(e, attr_name, None) in vals_set]
 
-        return results
+        return filtered_results
 
     def _insert_entry(self, entry: Base) -> None:
         """
@@ -1703,7 +1708,8 @@ class MemoryInterface(abc.ABC):
             Sequence[Score]: A list of Score objects that match the specified filters.
         """
         if score_ids is not None and len(score_ids) == 0:
-            return []
+            empty_scores: list[Score] = []
+            return empty_scores
 
         conditions: list[Any] = []
 
@@ -1736,7 +1742,8 @@ class MemoryInterface(abc.ABC):
 
         # No score_ids specified - use regular query
         if not conditions:
-            return []
+            no_condition_scores: list[Score] = []
+            return no_condition_scores
 
         score_entries: Sequence[ScoreEntry] = self._query_entries(ScoreEntry, conditions=and_(*conditions))
         return [entry.get_score() for entry in score_entries]
@@ -1799,7 +1806,8 @@ class MemoryInterface(abc.ABC):
         # with their originals.
         original_ids = {piece.original_prompt_id for piece in message_pieces if piece.original_prompt_id is not None}
         if not original_ids:
-            return []
+            no_original_ids_scores: list[Score] = []
+            return no_original_ids_scores
 
         score_entries = self._execute_batched_query(
             ScoreEntry,
@@ -1966,7 +1974,8 @@ class MemoryInterface(abc.ABC):
                 an exception is logged and an empty list is returned.
         """
         if prompt_ids is not None and len(prompt_ids) == 0:
-            return []
+            empty_message_pieces: list[MessagePiece] = []
+            return empty_message_pieces
 
         try:
             conditions: list[Any] = []
@@ -2280,10 +2289,11 @@ class MemoryInterface(abc.ABC):
         # Ensure cleanup happens even if the object is garbage collected before process exits
         weakref.finalize(self, self.dispose_engine)
 
-    def get_seeds(
+    def _build_seed_filter_conditions(
         self,
         *,
         value: str | None = None,
+        exact: bool = False,
         value_sha256: Sequence[str] | None = None,
         dataset_name: str | None = None,
         dataset_name_pattern: str | None = None,
@@ -2297,13 +2307,20 @@ class MemoryInterface(abc.ABC):
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
-    ) -> Sequence[Seed]:
+    ) -> "list[ColumnElement[bool]]":
         """
-        Retrieve a list of seed prompts based on the specified filters.
+        Build SQLAlchemy filter conditions shared by seed query and removal methods.
+
+        This centralizes the filter-building logic so that get_seeds and
+        remove_seeds_from_memory stay in sync and cannot drift.
 
         Args:
-            value (str): The value to match by substring. If None, all values are returned.
-            value_sha256 (str): The SHA256 hash of the value to match. If None, all values are returned.
+            value (str): The value to match. By default this matches by substring; pass exact=True to
+                require full-string equality instead. If None, all values are returned.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
+                Has no effect unless ``value`` is provided. Defaults to False (substring matching).
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are returned.
             dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
             dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
                 Supports wildcards: % (any characters) and _ (single character).
@@ -2328,13 +2345,13 @@ class MemoryInterface(abc.ABC):
             prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
 
         Returns:
-            Sequence[SeedPrompt]: A list of prompts matching the criteria.
+            list[ColumnElement[bool]]: A list of SQLAlchemy filter conditions.
         """
-        conditions = []
+        conditions: list[ColumnElement[bool]] = []
 
         # Apply filters for non-list fields
         if value:
-            conditions.append(SeedEntry.value.contains(value))
+            conditions.append(SeedEntry.value == value if exact else SeedEntry.value.contains(value))
         if value_sha256:
             conditions.append(SeedEntry.value_sha256.in_(value_sha256))
         if dataset_name:
@@ -2367,6 +2384,77 @@ class MemoryInterface(abc.ABC):
         if metadata:
             conditions.append(self._get_seed_metadata_conditions(metadata=metadata))
 
+        return conditions
+
+    def get_seeds(
+        self,
+        *,
+        value: str | None = None,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> Sequence[Seed]:
+        """
+        Retrieve a list of seed prompts based on the specified filters.
+
+        Args:
+            value (str): The value to match by substring. If None, all values are returned.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are returned.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories returns only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively returns
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            Sequence[Seed]: A list of seeds (e.g., SeedPrompt, SeedObjective, SeedSimulatedConversation)
+                matching the criteria.
+        """
+        conditions = self._build_seed_filter_conditions(
+            value=value,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
         try:
             memory_entries: Sequence[SeedEntry] = self._query_entries(
                 SeedEntry,
@@ -2377,8 +2465,245 @@ class MemoryInterface(abc.ABC):
             logger.exception(f"Failed to retrieve prompts with dataset name {dataset_name} with error {e}")
             raise
 
+    def remove_seeds_from_memory(
+        self,
+        *,
+        value: str | None = None,
+        exact: bool = True,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> int:
+        """
+        Delete a list of seed prompts based on the specified filters.
+
+        Accepts the same filtering parameters as get_seeds (plus an exact flag). It is recommended to
+        call get_seeds with the same filters first to preview which seeds will be removed. At least one
+        filter must be provided to prevent accidental deletion of all seeds. The deletion runs in a single
+        transaction, so it works consistently across SQLite and Azure SQL.
+
+        Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
+        serialized file on disk is left in place; delete those files separately if they are no longer needed.
+
+        Args:
+            value (str): The value to match. For the remove methods this defaults to full-string equality
+                (exact=True) so a short or common value does not delete far more seeds than intended; pass
+                exact=False to match by substring instead. If None, all values are considered.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
+                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
+                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
+                by substring.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are considered.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            int: The number of seeds removed.
+
+        Raises:
+            ValueError: If no filters are provided.
+            SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
+        """
+        conditions = self._build_seed_filter_conditions(
+            value=value,
+            exact=exact,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+        # Guard against accidental "delete all": require at least one filter.
+        if not conditions:
+            raise ValueError(
+                "At least one filter parameter must be provided to remove_seeds_from_memory. "
+                "Calling without filters would delete all seeds."
+            )
+
+        # Delete matching rows in a single transaction so it is atomic across backends.
+        with closing(self.get_session()) as session:
+            try:
+                query = session.query(SeedEntry).filter(and_(*conditions))
+                count = query.delete(synchronize_session=False)
+                session.commit()
+                return count
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Failed to remove seeds from memory: {e}")
+                raise
+
+    def remove_seed_groups_from_memory(
+        self,
+        *,
+        value: str | None = None,
+        exact: bool = True,
+        value_sha256: Sequence[str] | None = None,
+        dataset_name: str | None = None,
+        dataset_name_pattern: str | None = None,
+        data_types: Sequence[str] | None = None,
+        harm_categories: Sequence[str] | None = None,
+        added_by: str | None = None,
+        authors: Sequence[str] | None = None,
+        groups: Sequence[str] | None = None,
+        source: str | None = None,
+        seed_type: SeedType | None = None,
+        parameters: Sequence[str] | None = None,
+        metadata: dict[str, str | int] | None = None,
+        prompt_group_ids: Sequence[uuid.UUID] | None = None,
+    ) -> int:
+        """
+        Delete groups of seed prompts based on the provided filtering criteria.
+
+        Unlike remove_seeds_from_memory, which deletes only the individual seeds that match, this
+        removes every seed that shares a prompt_group_id with any matching seed. This preserves group
+        integrity: filtering by a single modality (e.g. data_types=["image_path"]) or attribute removes
+        the whole group rather than leaving a partial group behind. It accepts the same filtering
+        parameters as get_seeds (plus an exact flag). It is recommended to call get_seed_groups with the
+        same filters first to preview which groups will be removed. At least one filter must be provided
+        to prevent accidental deletion of all seeds. The deletion runs in a single transaction, so it
+        works consistently across SQLite and Azure SQL.
+
+        Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
+        one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+
+        Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
+        serialized file on disk is left in place; delete those files separately if they are no longer needed.
+
+        Args:
+            value (str): The value to match. For the remove methods this defaults to full-string equality
+                (exact=True) so a short or common value does not delete far more seeds than intended; pass
+                exact=False to match by substring instead. If None, all values are considered.
+            exact (bool): When True, ``value`` is matched by full-string equality rather than substring.
+                Has no effect unless ``value`` is provided. Defaults to True for the remove methods (the
+                safer choice for deletion). Note this differs from get_seeds, which always matches ``value``
+                by substring.
+            value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
+                If None, all values are considered.
+            dataset_name (str): The dataset name to match exactly. If None, all dataset names are considered.
+            dataset_name_pattern (str): A pattern to match dataset names using SQL LIKE syntax.
+                Supports wildcards: % (any characters) and _ (single character).
+                Examples: "harm%" matches names starting with "harm", "%test%" matches names containing "test".
+                If both dataset_name and dataset_name_pattern are provided, dataset_name takes precedence.
+            data_types (Sequence[str] | None): List of data types to filter seed prompts by
+                (e.g., text, image_path).
+            harm_categories (Sequence[str]): A list of harm categories to filter by. If None,
+            all harm categories are considered.
+                Specifying multiple harm categories matches only prompts that are marked with all harm categories.
+            added_by (str): The user who added the prompts.
+            authors (Sequence[str]): A list of authors to filter by.
+                Note that this filters by substring, so a query for "Adam Jones" may not return results if the record
+                is "A. Jones", "Jones, Adam", etc. If None, all authors are considered.
+            groups (Sequence[str]): A list of groups to filter by. If None, all groups are considered.
+            source (str): The source to filter by. If None, all sources are considered.
+            seed_type (SeedType): The type of seed to filter by ("prompt", "objective", or
+                "simulated_conversation").
+            parameters (Sequence[str]): A list of parameters to filter by. Specifying parameters effectively targets
+                prompt templates instead of prompts.
+            metadata (dict[str, str | int]): A free-form dictionary for tagging prompts with custom metadata.
+            prompt_group_ids (Sequence[uuid.UUID]): A list of prompt group IDs to filter by.
+
+        Returns:
+            int: The number of seeds removed across all affected groups.
+
+        Raises:
+            ValueError: If no filters are provided.
+            SQLAlchemyError: If the database deletion fails (the transaction is rolled back).
+        """
+        conditions = self._build_seed_filter_conditions(
+            value=value,
+            exact=exact,
+            value_sha256=value_sha256,
+            dataset_name=dataset_name,
+            dataset_name_pattern=dataset_name_pattern,
+            data_types=data_types,
+            harm_categories=harm_categories,
+            added_by=added_by,
+            authors=authors,
+            groups=groups,
+            source=source,
+            seed_type=seed_type,
+            parameters=parameters,
+            metadata=metadata,
+            prompt_group_ids=prompt_group_ids,
+        )
+
+        # Guard against accidental "delete all": require at least one filter.
+        if not conditions:
+            raise ValueError(
+                "At least one filter parameter must be provided to remove_seed_groups_from_memory. "
+                "Calling without filters would delete all seeds."
+            )
+
+        # Expand matches to whole groups and delete them in a single transaction. The matching group IDs
+        # are selected with a server-side subquery rather than materialized into Python and sent back as an
+        # IN (...) list, so a broad filter cannot exceed the backend's bound-parameter limit (e.g. Azure SQL).
+        # Seeds with a NULL prompt_group_id are excluded, so ungrouped matches are skipped.
+        with closing(self.get_session()) as session:
+            try:
+                group_id_subquery = (
+                    select(SeedEntry.prompt_group_id)
+                    .where(and_(*conditions))
+                    .where(SeedEntry.prompt_group_id.isnot(None))
+                    .distinct()
+                )
+                count = (
+                    session.query(SeedEntry)
+                    .filter(SeedEntry.prompt_group_id.in_(group_id_subquery))
+                    .delete(synchronize_session=False)
+                )
+                session.commit()
+                return count
+            except SQLAlchemyError as e:
+                session.rollback()
+                logger.exception(f"Failed to remove seed groups from memory: {e}")
+                raise
+
     def _add_list_conditions(
-        self, field: InstrumentedAttribute[Any], conditions: list[Any], values: Sequence[str] | None = None
+        self,
+        field: InstrumentedAttribute[Any],
+        conditions: "list[ColumnElement[bool]]",
+        values: Sequence[str] | None = None,
     ) -> None:
         if values:
             conditions.extend(field.contains(value) for value in values)
@@ -2501,7 +2826,7 @@ class MemoryInterface(abc.ABC):
                 distinct=True,
             )
             # Extract unique dataset names from the entries
-            dataset_names = set()
+            dataset_names: set[str] = set()
             for entry in entries:
                 if entry.dataset_name:
                     dataset_names.add(entry.dataset_name)
@@ -2932,7 +3257,8 @@ class MemoryInterface(abc.ABC):
                 with an ID-batched lookup.
         """
         if self._attack_result_query_has_empty_lookup(query=query):
-            return []
+            empty_attack_results: list[AttackResult] = []
+            return empty_attack_results
 
         conditions = self._build_attack_result_conditions(query=query)
         paginating = query.limit is not None or query.after is not None
@@ -3437,7 +3763,8 @@ class MemoryInterface(abc.ABC):
                 ordered by completion_time descending.
         """
         if scenario_result_ids is not None and len(scenario_result_ids) == 0:
-            return []
+            empty_scenario_results: list[ScenarioResult] = []
+            return empty_scenario_results
 
         conditions = self._build_scenario_result_query_conditions(
             scenario_name=scenario_name,

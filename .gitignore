@@ -168,6 +168,7 @@ cython_debug/
 
 # PyRIT secrets file
 .env
+.env_akv
 .pyrit_cache/
 
 # Cache for generating docs

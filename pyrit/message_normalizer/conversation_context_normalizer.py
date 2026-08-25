@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-
+from pyrit.message_normalizer._helpers import format_message_piece_for_context
 from pyrit.message_normalizer.message_normalizer import MessageStringNormalizer
 from pyrit.models import Message, MessagePiece
 
@@ -72,19 +72,4 @@ class ConversationContextNormalizer(MessageStringNormalizer):
         Returns:
             The formatted content string.
         """
-        data_type = piece.converted_value_data_type or piece.original_value_data_type
-
-        # For non-text pieces, use metadata description or placeholder
-        if data_type != "text":
-            if piece.prompt_metadata and "context_description" in piece.prompt_metadata:
-                description = piece.prompt_metadata["context_description"]
-                return f"[{data_type.capitalize()} - {description}]"
-            return f"[{data_type.capitalize()}]"
-
-        # For text pieces, include both original and converted if different
-        original = piece.original_value
-        converted = piece.converted_value
-
-        if original != converted:
-            return f"{converted} (original: {original})"
-        return converted
+        return format_message_piece_for_context(piece=piece)

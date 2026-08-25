@@ -119,7 +119,7 @@ class ResponsesResponseAdapter(OpenAIResponseAdapter[Response]):
         if getattr(response, "status", None) != "incomplete":
             return False
         incomplete_details = getattr(response, "incomplete_details", None)
-        return incomplete_details is not None and incomplete_details.reason == "content_filter"
+        return incomplete_details is not None and bool(incomplete_details.reason == "content_filter")
 
     def extract_partial_content(self, *, response: Response) -> str | None:
         """
@@ -132,13 +132,17 @@ class ResponsesResponseAdapter(OpenAIResponseAdapter[Response]):
             str | None: Partial text, if present.
         """
         try:
-            parts = [
-                content_item.text
-                for section in response.output or []
-                if getattr(section, "type", None) == "message" and getattr(section, "status", None) == "completed"
-                for content_item in getattr(section, "content", None) or []
-                if isinstance(content_item, ResponseOutputText) and content_item.text
-            ]
+            parts: list[str] = []
+            for section in response.output or []:
+                if getattr(section, "type", None) != "message" or getattr(section, "status", None) != "completed":
+                    continue
+                parts.extend(
+                    content_item.text
+                    for content_item in getattr(section, "content", None) or []
+                    if isinstance(content_item, ResponseOutputText)
+                    and isinstance(content_item.text, str)
+                    and content_item.text
+                )
         except (AttributeError, IndexError, TypeError):
             return None
         return "\n".join(parts) if parts else None

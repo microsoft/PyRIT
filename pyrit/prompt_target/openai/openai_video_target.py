@@ -261,8 +261,7 @@ class OpenAIVideoTarget(OpenAITarget):
         logger.info("Text+Image-to-video mode: Using image as first frame")
         input_file = await self._prepare_image_input_async(image_piece=image_piece)
         return await self._handle_openai_request_async(
-            # Azure continues to support the Videos API despite its OpenAI deprecation.
-            api_call=lambda: self._client.videos.create_and_poll(  # ty: ignore[deprecated]
+            api_call=lambda: self._client.videos.create_and_poll(
                 model=self._model_name,
                 prompt=prompt,
                 size=self._size,
@@ -284,8 +283,7 @@ class OpenAIVideoTarget(OpenAITarget):
             The response Message with the generated video path.
         """
         return await self._handle_openai_request_async(
-            # Azure continues to support the Videos API despite its OpenAI deprecation.
-            api_call=lambda: self._client.videos.create_and_poll(  # ty: ignore[deprecated]
+            api_call=lambda: self._client.videos.create_and_poll(
                 model=self._model_name,
                 prompt=prompt,
                 size=self._size,
@@ -339,12 +337,11 @@ class OpenAIVideoTarget(OpenAITarget):
         Returns:
             The completed Video object from the OpenAI SDK.
         """
-        # Azure continues to support the Videos API despite its OpenAI deprecation.
-        video = await self._client.videos.remix(video_id, prompt=prompt)  # ty: ignore[deprecated]
+        video = await self._client.videos.remix(video_id, prompt=prompt)
 
         # Poll until completion if not already done
         if video.status not in ["completed", "failed"]:
-            video = await self._client.videos.poll(video.id)  # ty: ignore[deprecated]
+            video = await self._client.videos.poll(video.id)
 
         return video
 
@@ -394,8 +391,7 @@ class OpenAIVideoTarget(OpenAITarget):
                 logger.info(f"Video was remixed from: {video.remixed_from_video_id}")
 
             # Download video content using SDK
-            # Azure continues to support the Videos API despite its OpenAI deprecation.
-            video_response = await self._client.videos.download_content(video.id)  # ty: ignore[deprecated]
+            video_response = await self._client.videos.download_content(video.id)
             # Extract bytes from HttpxBinaryResponseContent
             video_content = video_response.content
 

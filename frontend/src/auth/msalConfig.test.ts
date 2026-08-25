@@ -73,22 +73,28 @@ describe("msalConfig", () => {
       expect(global.fetch).toHaveBeenCalledWith("/api/auth/config");
     });
 
-    it("returns empty config when response is not ok", async () => {
-      (global.fetch as jest.Mock).mockResolvedValue({ ok: false });
+    it("throws when response is not ok (transient failure is not auth-disabled)", async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+      });
 
       const { fetchAuthConfig } = await import("./msalConfig");
-      const result = await fetchAuthConfig();
 
-      expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupIds: "" });
+      await expect(fetchAuthConfig()).rejects.toThrow("/api/auth/config returned 503 Service Unavailable");
     });
 
-    it("returns empty config on network error", async () => {
-      (global.fetch as jest.Mock).mockRejectedValue(new Error("Network error"));
+    it("throws on network error (transient failure is not auth-disabled)", async () => {
+      const networkError = new Error("Network error");
+      (global.fetch as jest.Mock).mockRejectedValue(networkError);
 
       const { fetchAuthConfig } = await import("./msalConfig");
-      const result = await fetchAuthConfig();
 
-      expect(result).toEqual({ clientId: "", tenantId: "", allowedGroupIds: "" });
+      await expect(fetchAuthConfig()).rejects.toMatchObject({
+        message: "Failed to reach /api/auth/config: Network error",
+        cause: networkError,
+      });
     });
   });
 });
