@@ -119,6 +119,190 @@ describe("messageMapper", () => {
       expect(result.content).toBe("Hello there");
       expect(result.attachments).toBeUndefined();
       expect(result.error).toBeUndefined();
+      expect(result.scores).toBeUndefined();
+    });
+
+    it("should preserve text pieces with their own scores in backend order", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p1",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            original_value: "Hello",
+            converted_value: "Hello",
+            scores: [
+              {
+                id: "score-old",
+                message_piece_id: "p1",
+                scorer_type: "OldScorer",
+                score_type: "true_false",
+                score_value: "False",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+          {
+            id: "p2",
+            original_value_data_type: "text",
+            converted_value_data_type: "text",
+            original_value: "there",
+            converted_value: "there",
+            scores: [
+              {
+                id: "score-new",
+                message_piece_id: "p2",
+                scorer_type: "NewScorer",
+                score_type: "float_scale",
+                score_value: "0.9",
+                score_category: ["harmful"],
+                score_rationale: "Newest rationale",
+                timestamp: "2026-02-15T00:01:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.scores).toBeUndefined();
+      expect(result.displayPieces).toEqual([
+        {
+          type: "text",
+          pieceId: "p1",
+          pieceIndex: 0,
+          content: "Hello",
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[0].scores[0],
+              pieceIndex: 0,
+              pieceType: "text",
+              sourceLabel: "Piece 1 · text",
+            }),
+          ],
+        },
+        {
+          type: "text",
+          pieceId: "p2",
+          pieceIndex: 1,
+          content: "there",
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[1].scores[0],
+              pieceIndex: 1,
+              pieceType: "text",
+              sourceLabel: "Piece 2 · text",
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it("should attach an image piece's scores to its display piece, not to message.scores", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p1",
+            original_value_data_type: "text",
+            converted_value_data_type: "image_path",
+            original_value: "generate an image",
+            converted_value: "/api/media?path=output%2Fimage.png",
+            converted_value_mime_type: "image/png",
+            scores: [
+              {
+                id: "score-image",
+                message_piece_id: "p1",
+                scorer_type: "ImageScorer",
+                score_type: "true_false",
+                score_value: "True",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.scores).toBeUndefined();
+      expect(result.attachments).toHaveLength(1);
+      expect(result.attachments![0]).not.toHaveProperty("scores");
+      expect(result.displayPieces).toEqual([
+        expect.objectContaining({
+          type: "media",
+          pieceId: "p1",
+          pieceIndex: 0,
+          attachment: result.attachments![0],
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[0].scores[0],
+              pieceIndex: 0,
+              pieceType: "image_path",
+              sourceLabel: "Piece 1 · image_path · image_path_p1",
+            }),
+          ],
+        }),
+      ]);
+    });
+
+    it("should keep a media piece with no renderable value as a score-only display piece", () => {
+      const msg: BackendMessage = {
+        turn_number: 1,
+        role: "assistant",
+        message_pieces: [
+          {
+            id: "p1",
+            original_value_data_type: "image_path",
+            converted_value_data_type: "image_path",
+            original_value: "/api/media?path=output%2Foriginal.png",
+            converted_value: "",
+            converted_value_mime_type: "image/png",
+            scores: [
+              {
+                id: "score-image",
+                message_piece_id: "p1",
+                scorer_type: "ImageScorer",
+                score_type: "true_false",
+                score_value: "False",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+            response_error: "none",
+          },
+        ],
+        created_at: "2026-02-15T00:00:00Z",
+      };
+
+      const result = backendMessageToFrontend(msg);
+
+      expect(result.scores).toBeUndefined();
+      expect(result.attachments).toBeUndefined();
+      expect(result.displayPieces).toEqual([
+        {
+          type: "media",
+          pieceId: "p1",
+          pieceIndex: 0,
+          attachment: undefined,
+          scores: [
+            expect.objectContaining({
+              ...msg.message_pieces[0].scores[0],
+              pieceIndex: 0,
+              pieceType: "image_path",
+              sourceLabel: "Piece 1 · image_path · image_path_p1",
+            }),
+          ],
+        },
+      ]);
     });
 
     it("should convert an image response", () => {
@@ -344,6 +528,7 @@ describe("messageMapper", () => {
       expect(result.content).toBe("Here is the image:");
       expect(result.attachments).toHaveLength(1);
       expect(result.attachments![0].type).toBe("image");
+      expect(result.displayPieces?.map((piece) => piece.type)).toEqual(["text", "media"]);
     });
 
     it("should map user role correctly", () => {
