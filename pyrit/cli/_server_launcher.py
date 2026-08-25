@@ -732,8 +732,8 @@ class ServerLauncher:
                         pid=listener_pid,
                         startup_state=startup_state,
                     )
-                startup_state.record_ready()
                 print(f"Server ready (PID {self._listener_pid}). Logs: {self._log_path}")
+                startup_state.record_ready()
                 return
 
             remaining = deadline - time.monotonic()
@@ -831,12 +831,12 @@ class ServerLauncher:
                     self._listener_pid = startup_state.process.pid
                     self._port = port if startup_state.pid_record_written else None
                 try:
-                    cleanup_succeeded = await startup_state.cleanup_async()
+                    await startup_state.cleanup_async()
                 finally:
                     if startup_state.cleanup_succeeded:
                         self._clear_process_state()
-                if not cleanup_succeeded:
-                    _logger.warning("Failed to stop backend launcher process %d", startup_state.process.pid)
+                    elif startup_state.cleanup_succeeded is False:
+                        _logger.warning("Failed to stop backend launcher process %d", startup_state.process.pid)
 
         if startup_state.timed_out:
             cleanup_message = (
