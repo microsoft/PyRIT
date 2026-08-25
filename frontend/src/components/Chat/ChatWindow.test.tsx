@@ -3167,6 +3167,62 @@ describe("ChatWindow Integration", () => {
     });
   });
 
+  it("should not copy a score-only media piece into the input box", async () => {
+    const mockMessages: Message[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: "Blocked media response",
+        displayPieces: [
+          {
+            type: "media",
+            pieceId: "piece-blocked",
+            pieceIndex: 0,
+            scores: [
+              {
+                id: "score-blocked",
+                message_piece_id: "piece-blocked",
+                scorer_type: "ImageScorer",
+                score_type: "true_false",
+                score_value: "True",
+                pieceIndex: 0,
+                pieceType: "image_path",
+                sourceLabel: "Piece 1 · image_path",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-copy-score-only"
+          conversationId="conv-copy-score-only"
+          activeConversationId="conv-copy-score-only"
+        />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("loading-state")).not.toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId("copy-to-input-btn-1"));
+
+    await waitFor(() => {
+      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      expect(textarea.value).toBe("Blocked media response");
+    });
+    expect(screen.queryByTestId("remove-attachment-0")).not.toBeInTheDocument();
+  });
+
   // ---------------------------------------------------------------------------
   // Converter panel integration
   // ---------------------------------------------------------------------------
