@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import random
+from typing import Any
 
+from pyrit.converter.text_selection_strategy import WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
+from pyrit.models import ComponentIdentifier
 
 
 class EmojiConverter(WordLevelConverter):
@@ -43,6 +45,35 @@ class EmojiConverter(WordLevelConverter):
         "z": ["🅩", "🆉", "🅉"],
     }
 
+    def __init__(
+        self,
+        *,
+        seed: int | None = None,
+        word_selection_strategy: WordSelectionStrategy | None = None,
+        word_split_separator: str | None = " ",
+        **kwargs: Any,
+    ) -> None:
+        """
+        Initialize the converter.
+
+        Args:
+            seed (int | None): Optional seed for reproducible output. Defaults to None.
+            word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
+                If None, all words will be converted.
+            word_split_separator (str | None): Separator used to split words in the input text.
+            **kwargs: Forwarded to ``WordLevelConverter`` for cooperative multiple inheritance.
+        """
+        super().__init__(
+            word_selection_strategy=word_selection_strategy,
+            word_split_separator=word_split_separator,
+            **kwargs,
+        )
+        self._seed = seed
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(params={**base_identifier.params, "seed": self._seed})
+
     async def convert_word_async(self, word: str) -> str:
         """
         Convert a single word into the target format supported by the converter.
@@ -54,10 +85,11 @@ class EmojiConverter(WordLevelConverter):
             str: The converted word.
         """
         word = word.lower()
+        rng = self._get_random_generator(stream="emoji-substitutions")
         result = []
         for char in word:
             if char in EmojiConverter.emoji_dict:
-                result.append(random.choice(EmojiConverter.emoji_dict[char]))
+                result.append(rng.choice(EmojiConverter.emoji_dict[char]))
             else:
                 result.append(char)
         return "".join(result)

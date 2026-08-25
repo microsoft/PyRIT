@@ -53,6 +53,55 @@ _DEFAULT_TEST_PREFIXES: list[str] = [
 ]
 
 
+class StopReason(str, Enum):
+    """Why an optimization run stopped iterating."""
+
+    MAX_STEPS_REACHED = "max_steps_reached"
+    ALL_PROMPTS_JAILBROKEN = "all_prompts_jailbroken"
+
+
+@dataclass
+class OptimizationRunState:
+    """
+    Typed iteration state for a single optimization run.
+
+    Captures the current suffix, losses, best result, counters, and stop reason
+    explicitly instead of leaving them as loose loop locals, so each phase of
+    the optimization loop has a stable contract that can be asserted under
+    seeded tests. ``loss`` is the loss of the *active* control suffix;
+    ``candidate_loss`` is the loss of the most recently evaluated candidate,
+    which annealing may have rejected. Exposed as ``MultiPromptAttack.last_run_state`` after a call
+    to ``MultiPromptAttack.run``.
+    """
+
+    control: str
+    best_control: str
+    loss: float
+    best_loss: float
+    candidate_loss: float | None = None
+    steps_completed: int = 0
+    runtime: float = 0.0
+    stop_reason: StopReason | None = None
+
+
+@dataclass
+class ProgressiveScheduleState:
+    """
+    Typed schedule state for ``ProgressiveMultiPromptAttack``.
+
+    Tracks how many goals and workers have been admitted so far, together with
+    the shared step counter and the loss carried between progressive rounds.
+    Exposed as ``ProgressiveMultiPromptAttack.last_schedule_state`` after a call
+    to ``ProgressiveMultiPromptAttack.run``.
+    """
+
+    goals_admitted: int
+    workers_admitted: int
+    steps_completed: int = 0
+    loss: float = float("inf")
+    stop_inner_on_success: bool = False
+
+
 class NpEncoder(json.JSONEncoder):
     """Encode NumPy scalar and array values for JSON output."""
 
@@ -768,6 +817,10 @@ class PromptManager:
 class MultiPromptAttack:
     """A class used to manage multiple prompt-based attacks."""
 
+    #: State of the most recent `run` call; ``None`` until one completes
+    #: and cleared at the start of each run so failed runs expose no stale data.
+    last_run_state: OptimizationRunState | None = None
+
     def __init__(
         self,
         goals: list[str],
@@ -900,6 +953,52 @@ class MultiPromptAttack:
         """Execute one attack optimization step."""
         raise NotImplementedError("Attack step function not yet implemented")
 
+    def _all_training_prompts_jailbroken(self) -> bool:
+        """
+        Check whether every worker jailbreaks every training prompt.
+
+        This is the stopping phase of the optimization loop.
+
+        Returns:
+            bool: True when all jailbreak tests pass for every worker.
+        """
+        model_tests_jb, _, _ = self.test(self.workers, self.prompts)
+        return all(all(tests for tests in model_test) for model_test in model_tests_jb)
+
+    def _log_best_checkpoint(
+        self,
+        *,
+        global_step: int,
+        n_steps_total: int,
+        runtime: float,
+        verbose: bool,
+        state: OptimizationRunState,
+    ) -> None:
+        """
+        Test the best-known suffix and write one periodic log entry.
+
+        This is the logging phase of the optimization loop.
+
+        Temporarily swaps ``self.control_str`` to the best-known suffix so the
+        held-out evaluation reflects it, then restores the active suffix.
+
+        Args:
+            global_step (int): The step number used for logging (including ``anneal_from``).
+            n_steps_total (int): The total step budget used for logging.
+            runtime (float): Runtime of the most recent optimization step, in seconds.
+            verbose (bool): Whether the log entry should print progress output.
+            state (OptimizationRunState): The current run state to read from.
+        """
+        last_control = self.control_str
+        try:
+            self.control_str = state.best_control
+            model_tests = self.test_all()
+            self.log(
+                global_step, n_steps_total, self.control_str, state.best_loss, runtime, model_tests, verbose=verbose
+            )
+        finally:
+            self.control_str = last_control
+
     def run(
         self,
         n_steps: int = 100,
@@ -949,22 +1048,39 @@ class MultiPromptAttack:
             def control_weight_fn(_: int) -> float:
                 return control_weight
 
-        steps = 0
-        loss = best_loss = 1e6
-        best_control = self.control_str
-        runtime = 0.0
+        # Clear eagerly: a run that raises mid-loop must not leave the previous
+        # run's state looking current.
+        self.last_run_state = None
+
+        # Seed both losses from the incoming loss: a large sentinel would pair
+        # the starting suffix with a fake loss and let a rejected first
+        # candidate take over best-tracking. ``log()`` caps the seed for
+        # readability so infinite seeds stay renderable.
+        state = OptimizationRunState(
+            control=self.control_str,
+            best_control=self.control_str,
+            loss=prev_loss,
+            best_loss=prev_loss,
+        )
 
         if self.logfile is not None and log_first:
             model_tests = self.test_all()
-            self.log(anneal_from, n_steps + anneal_from, self.control_str, loss, runtime, model_tests, verbose=verbose)
+            self.log(
+                anneal_from,
+                n_steps + anneal_from,
+                self.control_str,
+                min(state.loss, 1e6),
+                state.runtime,
+                model_tests,
+                verbose=verbose,
+            )
 
         for i in range(n_steps):
-            if stop_on_success:
-                model_tests_jb, model_tests_mb, _ = self.test(self.workers, self.prompts)
-                if all(all(tests for tests in model_test) for model_test in model_tests_jb):
-                    break
+            if stop_on_success and self._all_training_prompts_jailbroken():
+                state.stop_reason = StopReason.ALL_PROMPTS_JAILBROKEN
+                break
 
-            steps += 1
+            state.steps_completed += 1
             start = time.time()
             control, loss = self.step(
                 batch_size=batch_size,
@@ -976,35 +1092,38 @@ class MultiPromptAttack:
                 filter_cand=filter_cand,
                 verbose=verbose,
             )
-            runtime = time.time() - start
+            state.runtime = time.time() - start
             keep_control = True if not anneal else acceptance_probability(prev_loss, loss, i + anneal_from)
             if keep_control:
                 self.control_str = control
+                state.control = control
+                state.loss = loss
 
+            # ``candidate_loss`` tracks what was just evaluated even when
+            # annealing rejects it, so ``state.loss`` always describes the
+            # suffix in ``state.control``.
+            state.candidate_loss = loss
             prev_loss = loss
-            if loss < best_loss:
-                best_loss = loss
-                best_control = control
-            logger.info(f"Current Loss: {loss}, Best Loss: {best_loss}")
+            if loss < state.best_loss:
+                state.best_loss = loss
+                state.best_control = control
+            logger.info(f"Current Loss: {loss}, Best Loss: {state.best_loss}")
 
             if self.logfile is not None and (i + 1 + anneal_from) % test_steps == 0:
-                last_control = self.control_str
-                self.control_str = best_control
-
-                model_tests = self.test_all()
-                self.log(
-                    i + 1 + anneal_from,
-                    n_steps + anneal_from,
-                    self.control_str,
-                    best_loss,
-                    runtime,
-                    model_tests,
+                self._log_best_checkpoint(
+                    global_step=i + 1 + anneal_from,
+                    n_steps_total=n_steps + anneal_from,
+                    runtime=state.runtime,
                     verbose=verbose,
+                    state=state,
                 )
 
-                self.control_str = last_control
+        if state.stop_reason is None:
+            state.stop_reason = StopReason.MAX_STEPS_REACHED
 
-        return self.control_str, loss, steps
+        self.last_run_state = state
+
+        return self.control_str, state.loss, state.steps_completed
 
     def test(
         self, workers: list[ModelWorker], prompts: list[PromptManager], include_loss: bool = False
@@ -1151,6 +1270,10 @@ class MultiPromptAttack:
 class ProgressiveMultiPromptAttack:
     """A class used to manage multiple progressive prompt-based attacks."""
 
+    #: State of the most recent `run` call; ``None`` until one completes
+    #: and cleared at the start of each run so failed runs expose no stale data.
+    last_schedule_state: ProgressiveScheduleState | None = None
+
     def __init__(
         self,
         goals: list[str],
@@ -1246,6 +1369,22 @@ class ProgressiveMultiPromptAttack:
         """Return options whose names use the ``mpa_`` prefix."""
         return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
 
+    def _finalize_progressive_run(
+        self, *, attack: MultiPromptAttack, step: int, n_steps: int, loss: float, verbose: bool
+    ) -> None:
+        """
+        Result-construction phase: run the final held-out evaluation and record the closing log entry.
+
+        Args:
+            attack (MultiPromptAttack): The fully-admitted inner attack that just finished.
+            step (int): The global step count reached by the progressive schedule.
+            n_steps (int): The total step budget of the progressive run.
+            loss (float): The final loss reported by the inner attack.
+            verbose (bool): Whether the closing log entry should print progress output.
+        """
+        model_tests = attack.test_all()
+        attack.log(step, n_steps, self.control, loss, 0.0, model_tests, verbose=verbose)
+
     def run(
         self,
         n_steps: int = 1000,
@@ -1296,6 +1435,11 @@ class ProgressiveMultiPromptAttack:
         Returns:
             tuple[str, int]: The final control suffix and completed step count.
         """
+        # Clear eagerly, before any fallible setup work: if this rerun raises
+        # while opening or parsing the logfile, the previous run's state must
+        # not keep looking current.
+        self.last_schedule_state = None
+
         _update_attack_log_params(
             logfile=self.logfile,
             params={
@@ -1313,17 +1457,23 @@ class ProgressiveMultiPromptAttack:
             },
         )
 
-        num_goals = 1 if self.progressive_goals else len(self.goals)
-        num_workers = 1 if self.progressive_models else len(self.workers)
-        step = 0
-        stop_inner_on_success = self.progressive_goals
-        loss = np.inf
+        schedule = ProgressiveScheduleState(
+            goals_admitted=1 if self.progressive_goals else len(self.goals),
+            workers_admitted=1 if self.progressive_models else len(self.workers),
+            stop_inner_on_success=self.progressive_goals,
+        )
+        # Whether ``schedule.loss`` currently reflects an inner run's measured
+        # loss, as opposed to the ``inf`` sentinel written when a new round is
+        # admitted. Tracked explicitly so a legitimately non-finite inner loss
+        # (non-finite model loss or numeric overflow) is not mistaken for an
+        # unupdated sentinel value.
+        loss_is_measured = False
 
-        while step < n_steps:
+        while schedule.steps_completed < n_steps:
             attack = self.managers["MPA"](
-                self.goals[:num_goals],
-                self.targets[:num_goals],
-                self.workers[:num_workers],
+                self.goals[: schedule.goals_admitted],
+                self.targets[: schedule.goals_admitted],
+                self.workers[: schedule.workers_admitted],
                 self.control,
                 self.test_prefixes,
                 self.logfile,
@@ -1332,10 +1482,10 @@ class ProgressiveMultiPromptAttack:
                 self.test_targets,
                 self.test_workers,
             )
-            if num_goals == len(self.goals) and num_workers == len(self.workers):
-                stop_inner_on_success = False
+            if schedule.goals_admitted == len(self.goals) and schedule.workers_admitted == len(self.workers):
+                schedule.stop_inner_on_success = False
             inner_result: tuple[str, float, int] = attack.run(
-                n_steps=n_steps - step,
+                n_steps=n_steps - schedule.steps_completed,
                 batch_size=batch_size,
                 topk=topk,
                 temp=temp,
@@ -1343,40 +1493,65 @@ class ProgressiveMultiPromptAttack:
                 target_weight=target_weight,
                 control_weight=control_weight,
                 anneal=anneal,
-                anneal_from=step,
-                prev_loss=loss,
-                stop_on_success=stop_inner_on_success,
+                anneal_from=schedule.steps_completed,
+                prev_loss=schedule.loss,
+                stop_on_success=schedule.stop_inner_on_success,
                 test_steps=test_steps,
                 filter_cand=filter_cand,
                 verbose=verbose,
             )
-            control, loss, inner_steps = inner_result
+            control, inner_loss, inner_steps = inner_result
+            schedule.loss = inner_loss
+            loss_is_measured = True
 
-            step += inner_steps
+            schedule.steps_completed += inner_steps
             self.control = control
 
-            if num_goals < len(self.goals):
-                num_goals += 1
-                loss = np.inf
-            elif num_goals == len(self.goals):
-                if num_workers < len(self.workers):
-                    num_workers += 1
-                    loss = np.inf
-                elif num_workers == len(self.workers) and stop_on_success:
-                    model_tests = attack.test_all()
-                    attack.log(step, n_steps, self.control, loss, 0.0, model_tests, verbose=verbose)
-                    break
-                else:
-                    if isinstance(control_weight, (int, float)) and incr_control:
-                        if control_weight <= 0.09:
-                            control_weight += 0.01
-                            loss = np.inf
-                            if verbose:
-                                logger.info(f"Control weight increased to {control_weight:.5}")
-                        else:
-                            stop_inner_on_success = False
+            # Once the step budget is spent, stop preparing further rounds:
+            # admissions and their sentinel resets would strand ``inf`` on
+            # ``schedule.loss`` for a run that legitimately ends right here.
+            prepare_next_round = schedule.steps_completed < n_steps
 
-        return self.control, step
+            if schedule.goals_admitted < len(self.goals):
+                if prepare_next_round:
+                    schedule.goals_admitted += 1
+                    schedule.loss = np.inf
+                    loss_is_measured = False
+            elif schedule.workers_admitted < len(self.workers):
+                if prepare_next_round:
+                    schedule.workers_admitted += 1
+                    schedule.loss = np.inf
+                    loss_is_measured = False
+            elif schedule.workers_admitted == len(self.workers) and stop_on_success:
+                self._finalize_progressive_run(
+                    attack=attack,
+                    step=schedule.steps_completed,
+                    n_steps=n_steps,
+                    loss=schedule.loss,
+                    verbose=verbose,
+                )
+                break
+            elif prepare_next_round and isinstance(control_weight, (int, float)) and incr_control:
+                if control_weight <= 0.09:
+                    control_weight += 0.01
+                    schedule.loss = np.inf
+                    loss_is_measured = False
+                    if verbose:
+                        logger.info(f"Control weight increased to {control_weight:.5}")
+                else:
+                    schedule.stop_inner_on_success = False
+
+        # The inner run must have produced a measured loss whenever any
+        # optimization happened; guards against silent carry-over regressions.
+        # Whether the loss was measured is tracked explicitly (a completed
+        # inner run may legitimately report a non-finite loss), never inferred
+        # from the numeric value.
+        if schedule.steps_completed > 0:
+            assert loss_is_measured, "schedule.loss was never updated by the inner run"
+
+        self.last_schedule_state = schedule
+
+        return self.control, schedule.steps_completed
 
 
 class IndividualPromptAttack:

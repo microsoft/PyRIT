@@ -55,7 +55,7 @@ from pyrit.converter import (
 )
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+await initialize_pyrit_async(memory_db_type=IN_MEMORY, seed=42)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
 
@@ -121,8 +121,14 @@ from pyrit.converter import (
 prompt = "tell me how to cut down a tree"
 
 print("Leetspeak:", await LeetspeakConverter().convert_async(prompt=prompt))  # type: ignore
-print("Random Capitals:", await RandomCapitalLettersConverter(percentage=50.0).convert_async(prompt=prompt))  # type: ignore
-print("Unicode Confusable:", await UnicodeConfusableConverter().convert_async(prompt=prompt))  # type: ignore
+print(
+    "Random Capitals:",
+    await RandomCapitalLettersConverter(percentage=50.0).convert_async(prompt=prompt),  # type: ignore
+)
+print(
+    "Unicode Confusable:",
+    await UnicodeConfusableConverter().convert_async(prompt=prompt),  # type: ignore
+)
 print("Unicode Substitution:", await UnicodeSubstitutionConverter().convert_async(prompt=prompt))  # type: ignore
 print("Unicode Replacement:", await UnicodeReplacementConverter().convert_async(prompt=prompt))  # type: ignore
 print("Emoji:", await EmojiConverter().convert_async(prompt=prompt))  # type: ignore
@@ -151,7 +157,10 @@ print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 
 # CharSwap swaps characters within words
-char_swap = CharSwapConverter(max_iterations=3, word_selection_strategy=WordProportionSelectionStrategy(proportion=0.8))
+char_swap = CharSwapConverter(
+    max_iterations=3,
+    word_selection_strategy=WordProportionSelectionStrategy(proportion=0.8),
+)
 print("CharSwap:", await char_swap.convert_async(prompt=prompt))  # type: ignore
 
 # Insert punctuation adds punctuation marks
