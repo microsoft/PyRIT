@@ -27,16 +27,14 @@ class TestLifespan:
     async def test_lifespan_yields(self) -> None:
         """Test that lifespan delegates to ConfigurationLoader and yields."""
         fake_config = ConfigurationLoader()
+        service = MagicMock(
+            register_persisted_custom_initializers_async=AsyncMock(),
+            run_additional_initializers_async=AsyncMock(),
+        )
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
-            patch(
-                "pyrit.backend.main.get_initializer_service",
-                return_value=MagicMock(
-                    register_persisted_custom_initializers_async=AsyncMock(),
-                    run_additional_initializers_async=AsyncMock(),
-                ),
-            ),
+            patch("pyrit.backend.main.get_initializer_service", return_value=service),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
@@ -46,15 +44,18 @@ class TestLifespan:
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
+            service.register_persisted_custom_initializers_async.assert_not_awaited()
+            service.run_additional_initializers_async.assert_awaited_once_with(allow_custom_initializers=False)
 
     async def test_lifespan_registers_custom_initializers_before_running_additional(self) -> None:
-        fake_config = ConfigurationLoader()
+        fake_config = ConfigurationLoader(allow_custom_initializers=True)
         call_order: list[str] = []
 
         async def register_custom_async() -> None:
             call_order.append("custom")
 
-        async def run_additional_async() -> None:
+        async def run_additional_async(*, allow_custom_initializers: bool) -> None:
+            assert allow_custom_initializers is True
             call_order.append("additional")
 
         service = MagicMock(

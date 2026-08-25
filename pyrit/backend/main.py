@@ -70,8 +70,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         for order_index, initializer in enumerate(config.initializer_configs)
     ]
     initializer_service = get_initializer_service()
-    await initializer_service.register_persisted_custom_initializers_async()
-    await initializer_service.run_additional_initializers_async()
+    if config.allow_custom_initializers:
+        await initializer_service.register_persisted_custom_initializers_async()
+    await initializer_service.run_additional_initializers_async(
+        allow_custom_initializers=config.allow_custom_initializers
+    )
 
     # Expose config values to route handlers via app.state
     default_labels: dict[str, str] = {}

@@ -251,12 +251,16 @@ class InitializerService:
             applied_parameters=parameters,
         )
 
-    async def run_additional_initializers_async(self) -> None:
+    async def run_additional_initializers_async(self, *, allow_custom_initializers: bool) -> None:
         """
         Run all persisted additional initializers in stored order, after the baseline.
 
         Intended for the backend startup lifespan: the ``.pyrit_conf`` baseline runs first via
         the configuration loader, then this appends the user's additional initializers.
+        When custom initializers are disabled, only built-in initializers are run.
+
+        Args:
+            allow_custom_initializers: Whether persisted custom initializers may run.
 
         Failures are isolated per initializer: a persisted row that fails to build, validate, or
         initialize (e.g. a missing required environment variable) is logged and skipped so one bad
@@ -269,6 +273,12 @@ class InitializerService:
 
         logger.info("Running %d additional initializer(s)...", len(initializers))
         for initializer in initializers:
+            if not allow_custom_initializers and not self._registry.is_builtin(initializer.initializer_name):
+                logger.info(
+                    "Skipping custom additional initializer '%s' because custom initializers are disabled.",
+                    initializer.initializer_name,
+                )
+                continue
             try:
                 await asyncio.to_thread(
                     self._build_and_run_initializer,

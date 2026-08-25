@@ -481,7 +481,7 @@ class TestInitializerServiceSettings:
                 AdditionalInitializer(id="a2", initializer_name="widget", order_index=1),
             ]
 
-            await service.run_additional_initializers_async()
+            await service.run_additional_initializers_async(allow_custom_initializers=True)
 
             assert service._registry.create_and_configure.call_args_list[0].args == ("target",)
             assert service._registry.create_and_configure.call_args_list[0].kwargs == {
@@ -498,9 +498,30 @@ class TestInitializerServiceSettings:
             service._memory = MagicMock()
             service._memory.get_additional_initializers.return_value = []
 
-            await service.run_additional_initializers_async()
+            await service.run_additional_initializers_async(allow_custom_initializers=True)
 
             service._registry.create_and_configure.assert_not_called()
+
+    async def test_run_additional_initializers_skips_custom_when_disabled(self) -> None:
+        builtin = MagicMock()
+        builtin.validate = MagicMock()
+        builtin.initialize_async = AsyncMock(return_value=None)
+
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.is_builtin.side_effect = lambda name: name == "builtin"
+            service._registry.create_and_configure.return_value = builtin
+            service._memory = MagicMock()
+            service._memory.get_additional_initializers.return_value = [
+                AdditionalInitializer(id="a1", initializer_name="builtin", order_index=0),
+                AdditionalInitializer(id="a2", initializer_name="custom", order_index=1),
+            ]
+
+            await service.run_additional_initializers_async(allow_custom_initializers=False)
+
+            service._registry.create_and_configure.assert_called_once_with("builtin", initializer_params=None)
+            builtin.initialize_async.assert_awaited_once()
 
     async def test_run_additional_initializers_isolates_failures(self) -> None:
         failing = MagicMock()
@@ -521,7 +542,7 @@ class TestInitializerServiceSettings:
                 AdditionalInitializer(id="good", initializer_name="widget", order_index=1),
             ]
 
-            await service.run_additional_initializers_async()
+            await service.run_additional_initializers_async(allow_custom_initializers=True)
 
             failing.initialize_async.assert_not_called()
             healthy.initialize_async.assert_awaited_once()
