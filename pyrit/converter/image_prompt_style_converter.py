@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import random
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -10,6 +9,7 @@ import yaml
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.common.random_context import get_random_generator
 from pyrit.converter.converter import ConverterResult
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.models import (
@@ -91,7 +91,10 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
         else:
             # No filter specified — pick a random built-in filter
             available = self.list_available_filters()
-            self._filter_name = random.choice(available)
+            self._filter_name = get_random_generator(
+                namespace=f"{type(self).__module__}.{type(self).__qualname__}",
+                stream="filter",
+            ).choice(available)
             resolved_path = self.IMAGE_PROMPT_STYLE_DIR / f"{self._filter_name}.yaml"
 
         with open(resolved_path, encoding="utf-8") as f:
@@ -164,7 +167,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
         if self._variation is not None:
             name = self._variation_map[self._variation.strip().lower()]
         else:
-            name = random.choice(list(self._variations.keys()))
+            name = self._get_random_generator(stream="variation").choice(list(self._variations.keys()))
 
         # Inject the per-call variation into the parent's system-prompt render kwargs
         self._prompt_kwargs["variation"] = f"{name}: {self._variations[name]}"

@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, KeyboardEvent, Ref } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useId, forwardRef, useImperativeHandle, KeyboardEvent, Ref } from 'react'
 import {
   Button,
   Caption1,
@@ -241,6 +241,7 @@ interface TextInputRowsProps {
 
 function TextInputRows({ input, convertedValue, convertedFileChip, disabled, textareaRef, convertedRef, onInput, onKeyDown, onConvertedValueChange, onClearConvertedFileChip, styles, textInputClassName }: TextInputRowsProps) {
   const hasConversion = Boolean(convertedValue) || Boolean(convertedFileChip)
+  const convertedTextareaId = useId()
   return (
     <>
       <div className={styles.textRow}>
@@ -261,8 +262,11 @@ function TextInputRows({ input, convertedValue, convertedFileChip, disabled, tex
       </div>
       {convertedValue && (
         <div className={styles.convertedRow} data-testid="converted-indicator">
-          <span className={styles.convertedBadge}>Converted</span>
+          <label htmlFor={convertedTextareaId} className={styles.convertedBadge}>
+            Converted prompt
+          </label>
           <textarea
+            id={convertedTextareaId}
             ref={convertedRef}
             className={styles.convertedTextarea}
             value={convertedValue}
