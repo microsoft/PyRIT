@@ -11,13 +11,16 @@ Extends SeedGroup to enforce that all seeds have is_general_technique=True.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
 from pyrit.models.seeds.seed_group import SeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
+
+if TYPE_CHECKING:
+    from pyrit.models.messages.message import Message
 
 
 class AttackTechniqueSeedGroup(SeedGroup):
@@ -70,6 +73,46 @@ class AttackTechniqueSeedGroup(SeedGroup):
             seeds=[SeedPrompt(value=system_prompt, data_type="text", role="system", is_general_technique=True)],
             insertion_index=insertion_index,
             prompt_placement="prepend",
+        )
+
+    @classmethod
+    def from_messages(
+        cls,
+        *,
+        messages: list[Message],
+        starting_sequence: int = 0,
+        insertion_index: int | None = None,
+        prompt_placement: Literal["preserve", "prepend"] = "prepend",
+    ) -> AttackTechniqueSeedGroup:
+        """
+        Build a technique group from conversation messages.
+
+        This supports techniques that generate reusable teaching or priming
+        messages programmatically before a generic attack sends each objective.
+
+        Args:
+            messages (list[Message]): Conversation messages to convert into technique seeds.
+            starting_sequence (int): Sequence number assigned to the first message.
+                Prompt sequences are usually normalized when the technique is merged into an
+                ``AttackSeedGroup``. If the merged group contains a ``SeedSimulatedConversation``,
+                prompt sequences are preserved, so choose a starting value outside that simulated
+                conversation's sequence range. Defaults to 0.
+            insertion_index (int | None): Where to insert the technique when merging
+                into a ``AttackSeedGroup``. Defaults to None.
+            prompt_placement (Literal["preserve", "prepend"]): How to place prompts
+                when merging into a ``AttackSeedGroup``. Defaults to ``"prepend"``.
+
+        Returns:
+            AttackTechniqueSeedGroup: A group containing general-technique prompts.
+        """
+        seed_prompts = SeedPrompt.from_messages(messages=messages, starting_sequence=starting_sequence)
+        for seed_prompt in seed_prompts:
+            seed_prompt.is_general_technique = True
+
+        return cls(
+            seeds=seed_prompts,
+            insertion_index=insertion_index,
+            prompt_placement=prompt_placement,
         )
 
     def _check_invariants(self) -> None:
