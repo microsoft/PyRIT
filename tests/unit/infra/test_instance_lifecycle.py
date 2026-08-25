@@ -127,23 +127,57 @@ class DeployInstanceContractTests(unittest.TestCase):
         self.assertTrue(url.endswith(f"servicePrincipals/{GROUP_ID}/appRoleAssignedTo"))
         self.assertNotIn("/appRoleAssignments", url)
 
-    def test_data_plane_firewalls_use_only_static_egress_ip(self):
+    def test_storage_keeps_authenticated_sas_media_network_path(self):
+        with (
+            patch.object(DEPLOY, "run_az") as run_az,
+            patch.object(
+                DEPLOY,
+                "run_az_json",
+                return_value=(
+                    f"{RESOURCE_GROUP_ID}/providers/Microsoft.Storage/storageAccounts/copyritauditdemosa"
+                ),
+            ),
+        ):
+            DEPLOY.create_storage_account(
+                resource_group=RESOURCE_GROUP,
+                location="eastus2",
+                account_name="copyritauditdemosa",
+            )
+
+        commands = [call.kwargs["args"] for call in run_az.call_args_list]
+        self.assertEqual(len(commands), 2)
+        create_command = commands[0]
+        self.assertEqual(create_command[:3], ["storage", "account", "create"])
+        self.assertEqual(create_command[create_command.index("--allow-blob-public-access") + 1], "false")
+        self.assertEqual(create_command[create_command.index("--public-network-access") + 1], "Enabled")
+        self.assertEqual(create_command[create_command.index("--default-action") + 1], "Allow")
+        container_command = commands[1]
+        self.assertEqual(container_command[:3], ["storage", "container-rm", "create"])
+        self.assertEqual(container_command[container_command.index("--public-access") + 1], "off")
+        self.assertFalse(any(command[:3] == ["storage", "account", "network-rule"] for command in commands))
+        self.assertFalse(
+            any(
+                "--default-action" in command
+                and command[command.index("--default-action") + 1] == "Deny"
+                for command in commands
+            )
+        )
+
+    def test_sql_firewall_uses_only_static_egress_ip(self):
         with patch.object(DEPLOY, "run_az") as run_az:
-            DEPLOY.configure_data_plane_network_access(
+            DEPLOY.configure_sql_network_access(
                 resource_group=RESOURCE_GROUP,
                 sql_server_name=f"{RESOURCE_GROUP}-sql",
-                storage_account_name="copyritauditdemosa",
                 egress_ip="20.30.40.50",
             )
 
         commands = [call.kwargs["args"] for call in run_az.call_args_list]
+        self.assertEqual(len(commands), 1)
         sql_command = commands[0]
+        self.assertEqual(sql_command[:3], ["sql", "server", "firewall-rule"])
         self.assertEqual(sql_command[sql_command.index("--start-ip-address") + 1], "20.30.40.50")
         self.assertEqual(sql_command[sql_command.index("--end-ip-address") + 1], "20.30.40.50")
         self.assertNotIn("0.0.0.0", sql_command)
-        self.assertIn("--default-action", commands[2])
-        self.assertEqual(commands[2][commands[2].index("--default-action") + 1], "Deny")
-        self.assertEqual(commands[2][commands[2].index("--bypass") + 1], "None")
 
 
 class TeardownInstanceContractTests(unittest.TestCase):

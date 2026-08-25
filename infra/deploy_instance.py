@@ -15,8 +15,8 @@ Automates the full deployment of an isolated CoPyRIT GUI instance:
   7. Managed identity + RBAC role assignments (AcrPull, Storage Blob Data Contributor)
   7b. AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
   8. Bicep deployment (Container App, VNet, NAT, static egress, logging)
-  9. Restrict SQL and Storage network access to the static egress IP
- 10. Post-deploy: SPA redirect URI
+    9. Restrict SQL network access to the static egress IP
+    10. Post-deploy: SPA redirect URI
 
 Usage:
     python infra/deploy_instance.py \\
@@ -515,7 +515,10 @@ def create_storage_account(
     (the ``AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`` env var). Container
     access is set to ``off`` (private) — the managed identity authenticates
     via ``Storage Blob Data Contributor``, granted in
-    :func:`create_managed_identity_and_grant_roles`.
+    :func:`create_managed_identity_and_grant_roles`. The public endpoint stays
+    network-reachable because Azure media is delivered directly to authorized
+    browsers through short-lived user-delegation SAS URLs. Anonymous blob
+    access remains disabled.
 
     Args:
         resource_group (str): The resource group name.
@@ -545,6 +548,10 @@ def create_storage_account(
         "StorageV2",
         "--allow-blob-public-access",
         "false",
+        "--public-network-access",
+        "Enabled",
+        "--default-action",
+        "Allow",
         "--min-tls-version",
         "TLS1_2",
     ]
@@ -599,14 +606,13 @@ def create_storage_account(
     return {"account_id": account_id, "container_url": container_url}
 
 
-def configure_data_plane_network_access(
+def configure_sql_network_access(
     *,
     resource_group: str,
     sql_server_name: str,
-    storage_account_name: str,
     egress_ip: str,
 ) -> None:
-    """Restrict per-instance SQL and Storage public endpoints to the static NAT IP."""
+    """Restrict the per-instance SQL public endpoint to the static NAT IP."""
     try:
         ipaddress.IPv4Address(egress_ip)
     except ipaddress.AddressValueError as error:
@@ -629,39 +635,6 @@ def configure_data_plane_network_access(
             egress_ip,
             "--end-ip-address",
             egress_ip,
-        ]
-    )
-
-    logger.info("Restricting Storage to static egress IP %s", egress_ip)
-    run_az(
-        args=[
-            "storage",
-            "account",
-            "network-rule",
-            "add",
-            "--resource-group",
-            resource_group,
-            "--account-name",
-            storage_account_name,
-            "--ip-address",
-            egress_ip,
-        ]
-    )
-    run_az(
-        args=[
-            "storage",
-            "account",
-            "update",
-            "--resource-group",
-            resource_group,
-            "--name",
-            storage_account_name,
-            "--public-network-access",
-            "Enabled",
-            "--default-action",
-            "Deny",
-            "--bypass",
-            "None",
         ]
     )
 
@@ -1488,11 +1461,10 @@ def main(args: list[str] | None = None) -> int:
         fqdn = _expect_string(app_fqdn_output.get("value"), context="appFqdn output value")
         egress_ip = _expect_string(egress_ip_output.get("value"), context="egress IP output value")
 
-        # Step 9b: Restrict data-plane network access to the instance NAT IP.
-        configure_data_plane_network_access(
+        # Step 9b: Restrict SQL network access to the instance NAT IP.
+        configure_sql_network_access(
             resource_group=rg_name,
             sql_server_name=sql_server_name,
-            storage_account_name=storage_account_name,
             egress_ip=egress_ip,
         )
 

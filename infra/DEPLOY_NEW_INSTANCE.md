@@ -182,13 +182,15 @@ Do **not** rely solely on `/api/health` — it can pass on an old revision while
   ```
 - [ ] App loads in browser at `https://<FQDN>`
 - [ ] The static egress IP printed by the script is allowlisted by external providers
-- [ ] SQL and Storage network rules contain that egress IP and no `0.0.0.0` SQL rule
+- [ ] SQL network rules contain that egress IP and no `0.0.0.0` SQL rule
+- [ ] Storage has anonymous blob access disabled, and the `dbdata` container is private
 - [ ] Entra login works
 - [ ] Signed-in user name appears in the top bar
 - [ ] Operator label auto-populates from signed-in username
 - [ ] Targets are visible in Configuration view (one of each type)
 - [ ] Can select a chat target and send a message → receive a response
 - [ ] Attack history view loads
+- [ ] Blob-backed image, audio, or video media renders in the browser through its signed URL
 - [ ] Converter panel functions (requires unsafe target)
 - [ ] Data persists after page refresh (Azure SQL is working)
 - [ ] A different authorized user can also sign in and use it
@@ -407,13 +409,16 @@ If the container logs show 403/AuthorizationPermissionMismatch when reading or w
       -o table
   ```
 
-  - Verify the storage firewall default is `Deny`, bypass is `None`, and its IP rules contain the static egress IP:
-    ```bash
-    az storage account show \
-      -g copyrit-{instance-name} \
-      -n <storage-account-name> \
-      --query networkRuleSet -o json
-    ```
+- Verify anonymous blob access is disabled while the public endpoint remains network-reachable for signed browser media URLs:
+
+  ```bash
+  az storage account show \
+    -g copyrit-{instance-name} \
+    -n <storage-account-name> \
+    --query "{publicNetworkAccess:publicNetworkAccess,defaultAction:networkRuleSet.defaultAction,allowBlobPublicAccess:allowBlobPublicAccess}" -o json
+  ```
+
+  Expected values are `Enabled`, `Allow`, and `false`, respectively. The container remains private, so data access still requires managed identity RBAC or a valid SAS. A Storage firewall default of `Deny` requires a separate private media-delivery design; a same-region NAT public IP rule does not admit ACA traffic, and a subnet rule does not admit browsers following signed blob URLs.
 
 - Verify the deployed env content has the correct `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`. The safest way to check is to inspect the Key Vault backup snapshot from an approved vault network path:
   ```bash
