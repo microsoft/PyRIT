@@ -38,6 +38,7 @@ from pyrit.backend.models.targets import (
     TargetCatalogResponse,
     TargetListResponse,
 )
+from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.labels import get_label_options
 from pyrit.models import ConverterIdentifier, MessagePiece, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
@@ -1204,7 +1205,11 @@ class TestVersionRoutes:
             temp_path = f.name
 
         try:
-            with patch("pyrit.backend.routes.version.Path") as mock_path_class:
+            to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+            with (
+                patch("pyrit.backend.routes.version.Path") as mock_path_class,
+                patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
+            ):
                 mock_path_instance = MagicMock()
                 mock_path_instance.exists.return_value = True
                 mock_path_class.return_value = mock_path_instance
@@ -1223,6 +1228,7 @@ class TestVersionRoutes:
                     response = client.get("/api/version")
 
             assert response.status_code == status.HTTP_200_OK
+            to_thread_mock.assert_any_await(version_routes._load_build_info, mock_path_instance)
         finally:
             os.unlink(temp_path)
 

@@ -273,3 +273,27 @@ class TestSelectiveTextConverter:
             selection_strategy=IndexSelectionStrategy(start=0, end=20),
         )
         assert converter is not None
+
+    def test_identifier_includes_nested_word_strategy_params(self):
+        left = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=WordIndexSelectionStrategy(indices=[0]),
+        )
+        right = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=WordIndexSelectionStrategy(indices=[3]),
+        )
+        assert left.get_identifier() != right.get_identifier()
+        assert left.get_identifier().params["selection_strategy"] == "WordIndexSelectionStrategy"
+        assert left.get_identifier().params["selection_strategy_params"]["indices"] == [0]
+        assert right.get_identifier().params["selection_strategy_params"]["indices"] == [3]
+        assert "indices" not in left.get_identifier().params
+
+    def test_identifier_uses_empty_strategy_params_for_char_level_strategies(self):
+        converter = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=IndexSelectionStrategy(start=0, end=5),
+        )
+        params = converter.get_identifier().params
+        assert params["selection_strategy"] == "IndexSelectionStrategy"
+        assert params["selection_strategy_params"] == {}

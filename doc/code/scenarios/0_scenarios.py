@@ -85,7 +85,7 @@
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
 #    - `include_baseline`: Whether to prepend a baseline attack (defaults to the scenario type's
-#      `BASELINE_ATTACK_POLICY`; most scenarios default it on, `Jailbreak` defaults it off)
+#      `BASELINE_ATTACK_POLICY`; most scenarios, including `Jailbreak`, default it on)
 #
 # ### Example Structure
 #
@@ -180,8 +180,8 @@ print_scenario_list(items=response.items)
 # each objective directly to the target without any converters or multi-turn techniques. This is
 # controlled by the `include_baseline` scenario parameter, supplied through the CLI, config, or
 # `set_params_from_args` before `initialize_async`; when omitted, each scenario falls back to its
-# own `BASELINE_ATTACK_POLICY` class attribute (most scenarios default it on; `Jailbreak` defaults
-# it off). See
+# own `BASELINE_ATTACK_POLICY` class attribute (most scenarios, including `Jailbreak`, default it
+# on). See
 # [Common Scenario Parameters](./1_common_scenario_parameters.ipynb) for a worked example.
 #
 # Custom scenarios should choose their `BASELINE_ATTACK_POLICY` based on whether an unmodified
@@ -190,8 +190,7 @@ print_scenario_list(items=response.items)
 # - **`Enabled`** — the baseline is prepended by default and the caller can opt out. Use when an
 #   unmodified-prompt run is a meaningful comparison point (most scenarios).
 # - **`Disabled`** — the baseline is supported but omitted by default; the caller must opt in. Use
-#   when the scenario is already dominated by a large set of templates/techniques that already
-#   exercise the unmodified surface (e.g., `Jailbreak`).
+#   when an unmodified-prompt comparison is valid but not useful enough to run by default.
 # - **`Forbidden`** — the baseline is unavailable and passing `include_baseline=True` raises. Use
 #   when the scenario's semantics make a single-shot unmodified prompt meaningless as a comparator
 #   (e.g., benchmarks comparing across adversarial models, or multi-turn-only scenarios).

@@ -23,30 +23,11 @@ from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import (
-    LoadDefaultDatasets,
-    ScorerInitializer,
-    TargetInitializer,
-    TechniqueInitializer,
-)
-
-dataset_initializer = LoadDefaultDatasets()
-dataset_initializer.set_params_from_args(
-    args={
-        "dataset_names": [
-            "airt_hate",
-            "airt_imminent_crisis",
-            "airt_leakage",
-            "airt_malware",
-            "airt_scams",
-            "harmbench",
-        ]
-    }
-)
+from pyrit.setup.initializers import ScorerInitializer, TargetInitializer, TechniqueInitializer
 
 await initialize_pyrit_async(  # type: ignore
     memory_db_type=IN_MEMORY,
-    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer(), dataset_initializer],
+    initializers=[TargetInitializer(), ScorerInitializer(), TechniqueInitializer()],
 )
 
 objective_target = OpenAIChatTarget()
@@ -177,22 +158,24 @@ await output_scenario_async(scenario_result)
 # objective inline into the template as a request converter (target-agnostic), and
 # `jailbreak_system_prompt` sets the template as a native system prompt with the objective sent as
 # the user turn (only for targets that natively support editable history + system prompts — it is
-# skipped for incapable targets). Registry techniques like `role_play_*`, `many_shot`, and `tap` are
-# opt-in. Results are grouped by jailbreak template, and a baseline (the un-jailbroken objective) is
-# included by default so complying with the bare objective is itself visible.
+# skipped for incapable targets). These are the only delivery techniques exposed by Jailbreak.
+# Generic simulated, multi-turn, or non-composable registry techniques are intentionally excluded
+# because they cannot preserve Jailbreak's per-template delivery semantics. Results are grouped by
+# jailbreak template, and a baseline (the un-jailbroken objective) is included by default so
+# complying with the bare objective is itself visible.
 #
 # ```bash
 # pyrit_scan run airt.jailbreak \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --dataset-names harmbench \
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, DEFAULT (`prompt_sending` + `jailbreak_system_prompt`), plus registry
-# techniques (`role_play_*`, `many_shot`, `tap`, …). By default a small random sample of jailbreak
-# templates runs; pass `num_jailbreaks` (random count) or `jailbreak_names` (explicit) to widen or
-# pin the selection.
+# **Available technique selectors:** ALL, DEFAULT, and SINGLE_TURN currently select both
+# `prompt_sending` and `jailbreak_system_prompt`; either concrete technique can also be selected
+# directly. By default a small random sample of jailbreak templates runs; pass `num_jailbreaks`
+# (random count) or `jailbreak_names` (explicit) to widen or pin the selection.
 
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
@@ -226,7 +209,7 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan airt.multilingual \
-#   --initializers target load_default_datasets \
+#   --initializers target \
 #   --target openai_chat \
 #   --dataset-names harmbench \
 #   --max-dataset-size 1

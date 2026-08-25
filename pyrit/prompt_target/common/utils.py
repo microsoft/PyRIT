@@ -4,6 +4,7 @@
 import asyncio
 import logging
 from collections.abc import Callable
+from functools import wraps
 from typing import Any
 
 from pyrit.exceptions import PyritException
@@ -58,6 +59,7 @@ def limit_requests_per_minute(func: Callable[..., Any]) -> Callable[..., Any]:
         Callable: The decorated function with a sleep introduced.
     """
 
+    @wraps(func)
     async def set_max_rpm_async(*args: Any, **kwargs: Any) -> Any:
         self = args[0]
         rpm = getattr(self, "_max_requests_per_minute", None)
