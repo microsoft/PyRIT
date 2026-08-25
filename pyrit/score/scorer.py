@@ -761,12 +761,12 @@ class Scorer(Identifiable, abc.ABC):
             list[Score]: Scores from the scorer, or an empty list when policy skips the response.
         """
         # Local import: the message family builds on Scorer, so it cannot be imported at module level.
-        from pyrit.score.message_scorer import MessageScorer, message_should_skip_on_error
+        from pyrit.score.message_scorer import MessageScorer, message_has_readable_content
 
         if response.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
-        if skip_on_error_result and message_should_skip_on_error(
+        if skip_on_error_result and not message_has_readable_content(
             message=response,
             score_blocked_content=isinstance(scorer, MessageScorer) and scorer.score_blocked_content,
         ):

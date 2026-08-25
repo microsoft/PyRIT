@@ -132,14 +132,18 @@ class TrueFalseScorer(Scorer):
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
         if first_piece.is_blocked():
-            rationale = (
-                "The request was blocked by the target "
-                "(score_blocked_content is False or no partial content available); returning false."
-            )
+            rationale = "The response was blocked with no content to score; returning false."
             description = "Blocked response; returning false."
         elif first_piece.has_error():
-            rationale = f"Response had an error: {first_piece.response_error}; returning false."
-            description = "Error response; returning false."
+            # A transport or protocol failure is not the target's answer, so there is no verdict.
+            return [
+                self._build_undetermined_score(
+                    rationale=f"Response had an error: {first_piece.response_error}; no verdict was reachable.",
+                    description="Error response; no verdict was reachable.",
+                    message_piece_id=piece_id,
+                    objective=objective,
+                )
+            ]
         else:
             # this can happen with multi-modal responses if no supported pieces are present
             rationale = "No supported pieces to score after filtering; returning false."

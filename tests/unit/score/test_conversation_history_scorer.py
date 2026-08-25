@@ -556,7 +556,7 @@ async def test_conversation_scorer_uses_partial_content_when_score_blocked_conte
 
 
 async def test_conversation_scorer_uses_error_json_when_score_blocked_content_disabled(patch_central_database):
-    """When score_blocked_content is False (default), blocked pieces use converted_value (error JSON)."""
+    """When score_blocked_content is False, blocked pieces use converted_value (error JSON)."""
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
 
@@ -605,7 +605,7 @@ async def test_conversation_scorer_uses_error_json_when_score_blocked_content_di
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    # score_blocked_content defaults to False
+    scorer.score_blocked_content = False
     scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
     assert len(scores) == 1

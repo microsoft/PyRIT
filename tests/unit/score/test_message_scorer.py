@@ -288,6 +288,31 @@ class TestScorableFilters:
         assert scores == []
         assert scorer.scored_messages == []
 
+    async def test_skip_on_error_result_scores_a_partly_errored_message(self):
+        """One bad piece must not discard the pieces that came through beside it."""
+        scorer = RecordingScorer()
+        conversation_id = str(uuid.uuid4())
+        message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="blocked",
+                    original_value_data_type="error",
+                    response_error="blocked",
+                    conversation_id=conversation_id,
+                ),
+                MessagePiece(role="assistant", original_value="usable text", conversation_id=conversation_id),
+            ]
+        )
+        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+
+        scores = await scorer.score_async(
+            scorable=MessageScorable.from_message(message),
+            message_options=MessageScoringOptions(skip_on_error_result=True),
+        )
+
+        assert len(scores) == 1
+
     async def test_error_message_is_scored_when_not_skipping(self):
         scorer = RecordingScorer()
         message = _error_message()

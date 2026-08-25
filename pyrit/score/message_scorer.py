@@ -88,37 +88,42 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     )
 
 
-def message_should_skip_on_error(*, message: Message, score_blocked_content: bool) -> bool:
+def message_has_readable_content(*, message: Message, score_blocked_content: bool) -> bool:
     """
-    Decide whether an errored message is evidence or noise.
+    Decide whether a message carries anything a scorer can read.
 
     Message error state is message-family policy, so it is stated here rather than on the
-    generic scorer base. A structured refusal is evidence, and so is partial content when the
-    caller opted into scoring it; anything else is a target failure with nothing to read.
+    generic scorer base. An error is not automatically noise, and a single bad piece does not
+    discard the pieces that came through beside it, so a message is unreadable only when every
+    one of its pieces is.
 
     Args:
         message (Message): The message to judge.
-        score_blocked_content (bool): Whether partial content behind a block counts as evidence.
+        score_blocked_content (bool): Whether content emitted before a block counts as readable.
 
     Returns:
-        bool: True when the message should not be scored.
+        bool: True when at least one piece is worth scoring.
     """
-    if not message.is_error():
-        return False
-
-    error_pieces = [
-        piece for piece in message.message_pieces if piece.has_error() or piece.converted_value_data_type == "error"
-    ]
-    # SDK-provided structured refusals stay scoreable: the refusal text is the evidence.
-    only_structured_refusals = all(piece.structured_refusal is not None for piece in error_pieces)
-    all_errors_have_partial_content = all(
-        piece.is_blocked() and piece.prompt_metadata.get("partial_content") for piece in error_pieces
+    return any(
+        _piece_has_readable_content(piece=piece, score_blocked_content=score_blocked_content)
+        for piece in message.message_pieces
     )
-    if only_structured_refusals or (score_blocked_content and all_errors_have_partial_content):
-        return False
 
-    logger.debug("Skipping scoring due to error in message and skip_on_error=True.")
-    return True
+
+def _piece_has_readable_content(*, piece: MessagePiece, score_blocked_content: bool) -> bool:
+    """
+    Decide whether a single piece carries anything a scorer can read.
+
+    Returns:
+        bool: True when the piece did not error, or errored with content still behind it.
+    """
+    if not piece.has_error() and piece.converted_value_data_type != "error":
+        return True
+    # An SDK-provided structured refusal is the model's own account of why it refused.
+    if piece.structured_refusal is not None:
+        return True
+    # Content the target emitted before the block is real output, when the caller opted in.
+    return score_blocked_content and piece.is_blocked() and bool(piece.prompt_metadata.get("partial_content"))
 
 
 class MessageScorer(Scorer):
@@ -138,9 +143,9 @@ class MessageScorer(Scorer):
     #: family's neutral fallback score instead of raising.
     raise_if_scorer_blocks: bool = True
 
-    #: When True, blocked responses that contain partial content are scored using that
-    #: content instead of being filtered out or short-circuited.
-    score_blocked_content: bool = False
+    #: When True, a blocked response that still carries content the target emitted before the
+    #: block is scored on that content. Turn off to treat any block as unreadable.
+    score_blocked_content: bool = True
 
     def __init__(
         self,
@@ -463,25 +468,17 @@ class MessageScorer(Scorer):
         """
         objective = expectation.objective if expectation else None
 
-        # Structured refusals are persisted as blocked error pieces, but scorers should
-        # receive the refusal explanation as text. Keep response_error="blocked" so
-        # refusal scorers can still use their deterministic blocked-response path.
-        scoring_message = self._apply_structured_refusal_substitution(message)
-
-        # When score_blocked_content is enabled, blocked pieces with partial content
-        # take precedence and are replaced with text substitutes (response_error="none").
-        if self.score_blocked_content:
-            scoring_message = self._apply_blocked_content_substitution(scoring_message)
+        scoring_message = self._build_scoring_message(
+            message=message,
+            skip_on_error_result=options.skip_on_error_result,
+        )
+        if scoring_message is None:
+            return []
 
         self._validator.validate(scoring_message, objective=objective)
 
         if options.role_filter is not None and message.get_piece().role != options.role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
-            return []
-
-        if options.skip_on_error_result and message_should_skip_on_error(
-            message=message, score_blocked_content=self.score_blocked_content
-        ):
             return []
 
         if infer_objective_from_request and (not objective):
@@ -599,6 +596,34 @@ class MessageScorer(Scorer):
     @abstractmethod
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         raise NotImplementedError
+
+    def _build_scoring_message(self, *, message: Message, skip_on_error_result: bool) -> Message | None:
+        """
+        Build the view of a message this scorer reads, or nothing when there is none.
+
+        Substitution and the error filter are one policy seen twice: a blocked piece is worth
+        keeping only when readable content sits behind it, and that content is exactly what the
+        scorer is handed. A structured refusal becomes its refusal text but stays marked
+        blocked, so refusal scorers keep their deterministic path; content emitted before a
+        block becomes ordinary text once the scorer opts into reading it.
+
+        Args:
+            message (Message): The acquired message.
+            skip_on_error_result (bool): Whether the caller asked to drop unreadable messages.
+
+        Returns:
+            Message | None: The message to score, or None when no piece is readable.
+        """
+        if skip_on_error_result and not message_has_readable_content(
+            message=message, score_blocked_content=self.score_blocked_content
+        ):
+            logger.debug("Skipping scoring: every piece of the message errored with nothing behind it.")
+            return None
+
+        scoring_message = self._apply_structured_refusal_substitution(message)
+        if self.score_blocked_content:
+            scoring_message = self._apply_blocked_content_substitution(scoring_message)
+        return scoring_message
 
     def _get_supported_pieces(self, message: Message) -> list[MessagePiece]:
         """

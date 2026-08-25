@@ -1455,13 +1455,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 or if parameters are invalid.
 
         Note:
-            Blocked or errored target responses (e.g. content filter triggers from image
-            generation targets) are scored ``0.0`` via the unified
-            ``FloatScaleScorer`` default,
-            which prevents premature pruning without any attack-level error mapping. To
-            score partial content from blocked responses, set
-            ``score_blocked_content=True`` on the objective scorer (requires
-            ``prompt_metadata["partial_content"]`` on the blocked piece).
+            A blocked response that still carries ``prompt_metadata["partial_content"]`` is
+            scored on that content. A block with nothing behind it is scored ``0.0`` via the
+            unified ``FloatScaleScorer`` default, which prevents premature pruning without any
+            attack-level error mapping. Set ``score_blocked_content=False`` on the objective
+            scorer to treat every block that way.
         """
         self._configuration = _TAPAttackConfiguration(
             tree_width=tree_width,
