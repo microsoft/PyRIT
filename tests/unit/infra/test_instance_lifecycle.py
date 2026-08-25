@@ -133,9 +133,7 @@ class DeployInstanceContractTests(unittest.TestCase):
             patch.object(
                 DEPLOY,
                 "run_az_json",
-                return_value=(
-                    f"{RESOURCE_GROUP_ID}/providers/Microsoft.Storage/storageAccounts/copyritauditdemosa"
-                ),
+                return_value=(f"{RESOURCE_GROUP_ID}/providers/Microsoft.Storage/storageAccounts/copyritauditdemosa"),
             ),
         ):
             DEPLOY.create_storage_account(
@@ -157,8 +155,7 @@ class DeployInstanceContractTests(unittest.TestCase):
         self.assertFalse(any(command[:3] == ["storage", "account", "network-rule"] for command in commands))
         self.assertFalse(
             any(
-                "--default-action" in command
-                and command[command.index("--default-action") + 1] == "Deny"
+                "--default-action" in command and command[command.index("--default-action") + 1] == "Deny"
                 for command in commands
             )
         )
