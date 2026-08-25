@@ -26,6 +26,7 @@ from pyrit.executor.attack.multi_turn.cot_hijacking import (
     SUPPORTED_PUZZLE_TYPES,
     StreamState,
 )
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
@@ -37,7 +38,7 @@ from pyrit.models import (
     Score,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import Scorer, TrueFalseScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
@@ -48,13 +49,18 @@ def _component_identifier(name: str) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="tests.unit")
 
 
-def _mock_target(*, name: str, supports_required_capabilities: bool = True) -> MagicMock:
+def _mock_target(
+    *,
+    name: str,
+    supported_capabilities: set[CapabilityName] | None = None,
+) -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock()
     target.set_system_prompt = MagicMock()
     target.get_identifier.return_value = _component_identifier(name)
     target.configuration = MagicMock()
-    target.configuration.includes.return_value = supports_required_capabilities
+    effective_capabilities = supported_capabilities if supported_capabilities is not None else set(CapabilityName)
+    target.configuration.includes.side_effect = lambda *, capability: capability in effective_capabilities
     target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
     target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
     return target
@@ -351,7 +357,7 @@ def test_init_requires_native_adversarial_chat_capabilities(
 ) -> None:
     unsupported_adversarial_chat = _mock_target(
         name="UnsupportedAdversarialChat",
-        supports_required_capabilities=False,
+        supported_capabilities=set(),
     )
 
     with pytest.raises(ValueError, match="must natively support"):
@@ -361,12 +367,30 @@ def test_init_requires_native_adversarial_chat_capabilities(
         )
 
 
+def test_init_requires_editable_adversarial_history(
+    mock_objective_target: MagicMock,
+) -> None:
+    adversarial_chat = _mock_target(
+        name="NonEditableAdversarialChat",
+        supported_capabilities={
+            CapabilityName.MULTI_TURN,
+            CapabilityName.SYSTEM_PROMPT,
+        },
+    )
+
+    with pytest.raises(ValueError, match="supports_editable_history"):
+        _create_attack(
+            objective_target=mock_objective_target,
+            adversarial_chat=adversarial_chat,
+        )
+
+
 def test_init_accepts_single_turn_objective_target(
     mock_adversarial_chat: MagicMock,
 ) -> None:
     single_turn_target = _mock_target(
         name="SingleTurnObjectiveTarget",
-        supports_required_capabilities=False,
+        supported_capabilities=set(),
     )
 
     attack = _create_attack(
@@ -637,7 +661,7 @@ async def test_target_sends_use_fresh_ids_across_parallel_streams_and_turns_asyn
 ) -> None:
     single_turn_target = _mock_target(
         name="SingleTurnObjectiveTarget",
-        supports_required_capabilities=False,
+        supported_capabilities=set(),
     )
     attack = _create_attack(
         objective_target=single_turn_target,
@@ -677,7 +701,7 @@ async def test_target_sends_use_fresh_ids_across_parallel_streams_and_turns_asyn
     assert None not in conversation_ids
     assert len(conversation_ids) == 4
     assert context.objective_target_conversation_ids == conversation_ids
-    assert context.session.conversation_id not in conversation_ids
+    assert context.session.conversation_id in conversation_ids
 
 
 async def test_target_send_raises_when_no_response_async(
@@ -699,7 +723,10 @@ async def test_target_send_raises_when_no_response_async(
             context=basic_context,
         )
 
-    assert not basic_context.objective_target_conversation_ids
+    assert len(basic_context.objective_target_conversation_ids) == 1
+    attempted_id = next(iter(basic_context.objective_target_conversation_ids))
+    assert basic_context.session.conversation_id == attempted_id
+    assert not basic_context.related_conversations
 
 
 async def test_prepended_conversation_is_seeded_for_each_fresh_target_conversation_async(
@@ -1029,15 +1056,58 @@ async def test_perform_keeps_global_best_across_iterations_async(
     }
 
 
-async def test_execute_async_propagates_target_failure_and_runs_teardown_async(
+async def test_parallel_failure_cancels_sibling_work_async(
     mock_objective_target: MagicMock,
     mock_adversarial_chat: MagicMock,
 ) -> None:
     attack = _create_attack(
         objective_target=mock_objective_target,
         adversarial_chat=mock_adversarial_chat,
+        n_streams=2,
+    )
+    context = _context(stream_count=2)
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+
+    async def generate_async(
+        *,
+        stream_state: StreamState,
+        **_: Any,
+    ) -> Message:
+        if stream_state.stream_id == 0:
+            await sibling_started.wait()
+            raise RuntimeError("stream failed")
+
+        sibling_started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            sibling_cancelled.set()
+            raise
+        raise AssertionError("The sibling task should have been cancelled")
+
+    with (
+        patch.object(attack, "_generate_attack_prompt_async", side_effect=generate_async),
+        pytest.raises(RuntimeError, match="stream failed"),
+    ):
+        await attack._perform_async(context=context)
+
+    assert sibling_cancelled.is_set()
+
+
+async def test_execute_async_propagates_target_failure_and_runs_teardown_async(
+    mock_objective_target: MagicMock,
+    mock_adversarial_chat: MagicMock,
+    mock_prompt_normalizer: MagicMock,
+) -> None:
+    attack = _create_attack(
+        objective_target=mock_objective_target,
+        adversarial_chat=mock_adversarial_chat,
+        prompt_normalizer=mock_prompt_normalizer,
         max_iterations=1,
     )
+    context = _context()
+    mock_prompt_normalizer.send_prompt_async.side_effect = RuntimeError("objective target unavailable")
 
     with (
         patch.object(
@@ -1048,18 +1118,20 @@ async def test_execute_async_propagates_target_failure_and_runs_teardown_async(
         ),
         patch.object(
             attack,
-            "_send_prompt_to_target_async",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("objective target unavailable"),
-        ),
-        patch.object(
-            attack,
             "_teardown_async",
             new_callable=AsyncMock,
             wraps=attack._teardown_async,
         ) as teardown,
         pytest.raises(RuntimeError, match="objective target unavailable"),
     ):
-        await attack.execute_async(objective="Test objective")
+        await attack.execute_with_context_async(context=context)
 
     teardown.assert_awaited_once()
+    assert len(context.objective_target_conversation_ids) == 1
+    attempted_id = next(iter(context.objective_target_conversation_ids))
+    stored_results = CentralMemory.get_memory_instance().get_attack_results(objective=context.objective)
+    assert len(stored_results) == 1
+    error_result = stored_results[0]
+    assert error_result.outcome == AttackOutcome.ERROR
+    assert error_result.conversation_id == attempted_id
+    assert error_result.includes_conversation(attempted_id)

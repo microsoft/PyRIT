@@ -24,9 +24,10 @@ The attack uses multi-turn conversation where:
 import asyncio
 import logging
 import uuid
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
@@ -71,10 +72,39 @@ from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 
 logger = logging.getLogger(__name__)
 
-# The adversarial model maintains a separate multi-turn conversation per stream.
+# The adversarial model maintains an editable multi-turn conversation per stream.
 _ADVERSARIAL_REQUIREMENTS = TargetRequirements(
-    native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}),
+    native_required=frozenset(
+        {
+            CapabilityName.EDITABLE_HISTORY,
+            CapabilityName.MULTI_TURN,
+            CapabilityName.SYSTEM_PROMPT,
+        }
+    ),
 )
+
+_GatherResultT = TypeVar("_GatherResultT")
+
+
+async def _gather_with_cancellation_async(
+    *coroutines: Coroutine[Any, Any, _GatherResultT],
+) -> list[_GatherResultT]:
+    """
+    Gather concurrent work while cancelling and draining siblings after a failure.
+
+    Returns:
+        Results in the same order as the supplied coroutines.
+    """
+    tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
+    try:
+        return list(await asyncio.gather(*tasks))
+    finally:
+        pending_tasks = [task for task in tasks if not task.done()]
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+
 
 CoTHijackingAttackParameters = AttackParameters.excluding("next_message")
 
@@ -395,7 +425,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
             context.iteration = iteration + 1
             self._logger.info(f"Iteration {context.iteration}/{self._max_iterations}")
 
-            stream_prompts = await asyncio.gather(
+            stream_prompts = await _gather_with_cancellation_async(
                 *[
                     self._generate_attack_prompt_async(
                         context=context,
@@ -406,7 +436,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
                 ]
             )
 
-            stream_responses = await asyncio.gather(
+            stream_responses = await _gather_with_cancellation_async(
                 *[
                     self._send_prompt_to_target_async(
                         message=prompt,
@@ -416,7 +446,7 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
                 ]
             )
 
-            stream_scores = await asyncio.gather(
+            stream_scores = await _gather_with_cancellation_async(
                 *[self._score_response_async(message=response, context=context) for response in stream_responses]
             )
 
@@ -499,12 +529,14 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         if not conversation_id:
             raise RuntimeError("The best target response is missing a conversation ID")
 
-        related_conversations = set(context.related_conversations)
+        related_conversations = {
+            reference for reference in context.related_conversations if reference.conversation_id != conversation_id
+        }
         related_conversations.update(
             ConversationReference(
                 conversation_id=candidate_id,
                 conversation_type=ConversationType.PRUNED,
-                description="non-selected CoT Hijacking candidate",
+                description="CoT Hijacking candidate",
             )
             for candidate_id in context.objective_target_conversation_ids
             if candidate_id != conversation_id
@@ -655,6 +687,18 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         self._logger.debug(f"Sending prompt to {objective_target_type}: {prompt_preview}...")
 
         conversation_id = str(uuid.uuid4())
+        is_primary_conversation = not context.objective_target_conversation_ids
+        if is_primary_conversation:
+            context.session.conversation_id = conversation_id
+        context.objective_target_conversation_ids.add(conversation_id)
+        if not is_primary_conversation:
+            context.related_conversations.add(
+                ConversationReference(
+                    conversation_id=conversation_id,
+                    conversation_type=ConversationType.PRUNED,
+                    description="CoT Hijacking candidate",
+                )
+            )
         send_context = await self._prepare_target_conversation_async(
             context=context,
             conversation_id=conversation_id,
@@ -681,7 +725,6 @@ class CoTHijackingAttack(MultiTurnAttackStrategy[CoTHijackingAttackContext, Atta
         if not response:
             raise ValueError("No response received from objective target")
 
-        context.objective_target_conversation_ids.add(conversation_id)
         return response
 
     async def _prepare_target_conversation_async(
