@@ -11,6 +11,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score import (
     ContentScorable,
+    ConversationScoringMode,
     MessageScorable,
     MessageScorer,
     Scorer,
@@ -358,6 +359,114 @@ def test_factory_returns_instance_of_float_scale_scorer():
     assert isinstance(conv_scorer, FloatScaleScorer)
     assert isinstance(conv_scorer, ConversationScorer)
     assert isinstance(conv_scorer, Scorer)
+    assert "conversation_scoring_mode" not in conv_scorer.get_identifier().params
+
+
+async def test_per_turn_scorer_aggregates_max_by_category_for_trigger_role(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="That was a fun game.",
+            conversation_id=conversation_id,
+            sequence=0,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="Let's move this conversation to Discord.",
+            conversation_id=conversation_id,
+            sequence=1,
+        ),
+        MessagePiece(
+            role="user",
+            original_value="Why should we move there?",
+            conversation_id=conversation_id,
+            sequence=2,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="Add me there; my username is skyfox_4821.",
+            conversation_id=conversation_id,
+            sequence=3,
+        ),
+    ]
+    memory.add_message_pieces_to_memory(message_pieces=pieces)
+    scored_sequences: list[int] = []
+
+    class CategorizedTurnScorer(FloatScaleScorer):
+        def __init__(self) -> None:
+            super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return self._create_identifier()
+
+        async def _score_piece_async(
+            self,
+            message_piece: MessagePiece,
+            *,
+            objective: str | None = None,
+        ) -> list[Score]:
+            scored_sequences.append(message_piece.sequence)
+            values = {
+                1: {"asking": 0.2, "giving": 0.8},
+                3: {"asking": 0.9, "giving": 0.3},
+            }[message_piece.sequence]
+            return [
+                Score(
+                    score_value=str(value),
+                    score_value_description=f"{category} probability",
+                    score_type="float_scale",
+                    score_category=[category],
+                    score_metadata={"source_sequence": message_piece.sequence},
+                    score_rationale=f"Sequence {message_piece.sequence}",
+                    scorer_class_identifier=self.get_identifier(),
+                    message_piece_id=message_piece.id,
+                    objective=objective,
+                )
+                for category, value in values.items()
+            ]
+
+    scorer = create_conversation_scorer(
+        scorer=CategorizedTurnScorer(),
+        mode=ConversationScoringMode.PER_TURN,
+    )
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(pieces[1].to_message()))
+
+    scores_by_category = {score.score_category[0]: score for score in scores}
+    assert scored_sequences == [1, 3]
+    assert scores_by_category["asking"].get_value() == 0.9
+    assert scores_by_category["giving"].get_value() == 0.8
+    assert scores_by_category["asking"].score_metadata["source_sequence"] == 3
+    assert scores_by_category["asking"].score_metadata["winning_message_piece_id"] == str(pieces[3].id)
+    assert scores_by_category["giving"].score_metadata["source_sequence"] == 1
+    assert scores_by_category["giving"].score_metadata["winning_message_piece_id"] == str(pieces[1].id)
+    assert all(score.message_piece_id == pieces[1].id for score in scores)
+    assert all(score.score_metadata["scored_turn_count"] == 2 for score in scores)
+    assert scorer.get_identifier().params["conversation_scoring_mode"] == "per_turn"
+    assert len(list(memory.get_scores(score_type="float_scale"))) == 2
+
+
+def test_per_turn_scorer_rejects_true_false_scorer():
+    with pytest.raises(ValueError, match="requires a FloatScaleScorer"):
+        create_conversation_scorer(
+            scorer=MockTrueFalseScorer(),
+            mode=ConversationScoringMode.PER_TURN,
+        )
+
+
+def test_conversation_scorer_delegates_message_scoring_policies():
+    wrapped_scorer = MockFloatScaleScorer()
+    conversation_scorer = create_conversation_scorer(
+        scorer=wrapped_scorer,
+        mode=ConversationScoringMode.PER_TURN,
+    )
+
+    conversation_scorer.score_blocked_content = True
+    conversation_scorer.raise_if_scorer_blocks = False
+
+    assert wrapped_scorer.score_blocked_content is True
+    assert wrapped_scorer.raise_if_scorer_blocks is False
 
 
 def test_factory_returns_instance_of_true_false_scorer():

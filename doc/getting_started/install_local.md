@@ -18,6 +18,25 @@ Or with uv:
 uv pip install pyrit
 ```
 
+### Optional Local Hugging Face Inference
+
+Local Hugging Face model execution requires PyTorch and model-specific tokenizer dependencies.
+Install the `huggingface` extra when using components such as `RobloxPiiScorer` or
+`HuggingFaceChatTarget`:
+
+```bash
+pip install "pyrit[huggingface]"
+```
+
+Or with uv:
+
+```bash
+uv pip install "pyrit[huggingface]"
+```
+
+Model weights are not bundled with PyRIT. They are downloaded on first use and reused from
+the standard Hugging Face cache.
+
 ## Matching Notebooks to Your Version
 
 ```{important}

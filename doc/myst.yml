@@ -202,6 +202,7 @@ project:
         - file: api/pyrit_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md
+        - file: api/pyrit_providers.md
         - file: api/pyrit_registry.md
         - file: api/pyrit_scenario.md
         - file: api/pyrit_score.md

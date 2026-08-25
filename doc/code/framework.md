@@ -283,6 +283,20 @@ The below talks about responsibilities of most modules in the PyRIT library
 
 - Components that need credentials should go through these helpers rather than handling tokens themselves.
 
+## [Providers](../api/pyrit_providers)
+
+**Responsibility**: Hold provider-specific runtime adapters shared by multiple component families. A provider adapter handles an external SDK or local model runtime without claiming ownership of target, scorer, or attack semantics.
+
+The Hugging Face adapters under `pyrit.providers` support local sequence classification:
+
+- `HuggingFaceModelSource` describes either a Hub model and optional revision or a local model directory. It also carries optional authentication, cache, offline, and remote-code settings.
+- `HuggingFaceSequenceClassifier` lazily loads `AutoTokenizer` and `AutoModelForSequenceClassification`, uses the standard Hugging Face cache, moves blocking load/inference work off the event loop, and serializes access to one model instance.
+- `HuggingFaceSequenceClassificationResult` returns raw logits and the model configuration's label order. The consuming scorer owns activation functions, thresholds, policy categories, prompt formatting, and conversion to PyRIT `Score` objects.
+
+Install local model dependencies with `pip install "pyrit[huggingface]"` or, in a source checkout, `uv sync --extra huggingface`. A Hub model is downloaded during the first load or inference call unless it is already cached; call `load_model_async()` explicitly to warm it during application startup.
+
+**Does not own**: PyRIT message/conversation formatting, score interpretation, policy thresholds, generation settings, or attack decisions. Those remain with the target, scorer, or attack using the adapter.
+
 ## [Exceptions](../contributing/9_exception)
 
 **Responsibility**: Define PyRIT's exception hierarchy and the retry behavior built around it.

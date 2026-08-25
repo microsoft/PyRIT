@@ -6,13 +6,15 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
 # # HuggingFace Chat Target - optional
 #
-# This notebook is designed to demonstrate **instruction models** that use a **chat template**, allowing users to experiment with structured chat-based interactions.  Non-instruct models are excluded to ensure consistency and reliability in the chat-based interactions. More instruct models can be explored on Hugging Face.
+# This notebook is designed to demonstrate **instruction models** that use a **chat template**, allowing users to experiment with structured chat-based interactions. Non-instruct models are excluded to ensure consistency and reliability in the chat-based interactions. More instruct models can be explored on Hugging Face.
+#
+# `HuggingFaceChatTarget` is generation-specific: it loads a causal language model and calls `generate()`. For reusable local sequence classification, use `HuggingFaceModelSource` and `HuggingFaceSequenceClassifier` from `pyrit.providers`; scorers such as `RobloxPiiScorer` build on those adapters and own their label and threshold semantics.
 #
 # ## Key Points:
 #
@@ -36,7 +38,6 @@
 #      - `Qwen/Qwen2-1.5B-Instruct`: 2.96 seconds
 #      - `stabilityai/stablelm-2-zephyr-1_6b`: 5.31 seconds
 #      - `stabilityai/stablelm-zephyr-3b`: 8.37 seconds
-#
 # %%
 import time
 

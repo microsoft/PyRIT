@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
 from pyrit.score.batch_scorer import BatchScorer
-from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
+from pyrit.score.conversation_scorer import ConversationScorer, ConversationScoringMode, create_conversation_scorer
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScoreAggregator,
@@ -26,6 +26,7 @@ from pyrit.score.float_scale.insecure_code_scorer import (
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
 from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
 from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
+from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
 from pyrit.score.float_scale.self_ask_likert_scorer import (
     LikertScaleEvalFiles,
@@ -185,6 +186,7 @@ __all__ = [
     "ContentClassifierCategory",
     "ContentClassifierPaths",
     "ConversationScorer",
+    "ConversationScoringMode",
     "CredentialLeakScorer",
     "DecodingScorer",
     "FentanylKeywordScorer",
@@ -245,6 +247,8 @@ __all__ = [
     "render_shieldgemma_prompt",
     "render_true_false_system_prompt",
     "ResponseHandler",
+    "RobloxPiiCategory",
+    "RobloxPiiScorer",
     "Scorer",
     "Scorable",
     "ScorerEvalDatasetFiles",
