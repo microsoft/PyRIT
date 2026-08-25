@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# ruff: noqa: F401
 
 """
 Catalog sub-package - registry/wire-format types for scenarios, initializers,
@@ -13,26 +14,52 @@ envelopes, RFC 7807 problem details, GUI-only request bodies) stay in
 ``pyrit.backend.models``
 """
 
-from pyrit.models.catalog.initializer import (
-    RegisteredInitializer,
-)
-from pyrit.models.catalog.scenario import (
-    AttackErrorSummary,
-    AttackRetrySummary,
-    RegisteredScenario,
-    RunScenarioRequest,
-    ScenarioRunSummary,
-)
-from pyrit.models.catalog.target import (
-    TargetInstance,
-)
+from typing import TYPE_CHECKING
 
-__all__ = [
-    "AttackErrorSummary",
-    "AttackRetrySummary",
-    "RegisteredInitializer",
-    "RegisteredScenario",
-    "RunScenarioRequest",
-    "ScenarioRunSummary",
-    "TargetInstance",
-]
+from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+if TYPE_CHECKING:
+    from pyrit.models.catalog.initializer import RegisteredInitializer
+    from pyrit.models.catalog.scenario import (
+        AttackErrorSummary,
+        AttackRetrySummary,
+        RegisteredScenario,
+        RunScenarioRequest,
+        ScenarioRunSummary,
+    )
+    from pyrit.models.catalog.target import TargetInstance
+
+_LAZY_EXPORTS: dict[str, str] = {
+    "AttackErrorSummary": "pyrit.models.catalog.scenario",
+    "AttackRetrySummary": "pyrit.models.catalog.scenario",
+    "RegisteredInitializer": "pyrit.models.catalog.initializer",
+    "RegisteredScenario": "pyrit.models.catalog.scenario",
+    "RunScenarioRequest": "pyrit.models.catalog.scenario",
+    "ScenarioRunSummary": "pyrit.models.catalog.scenario",
+    "TargetInstance": "pyrit.models.catalog.target",
+}
+
+__all__ = list(_LAZY_EXPORTS)
+
+
+def __getattr__(name: str) -> object:
+    """
+    Resolve a public catalog export on first access.
+
+    Args:
+        name (str): The requested public name.
+
+    Returns:
+        object: The resolved export.
+    """
+    return resolve_lazy_export(
+        name=name,
+        module_name=__name__,
+        module_globals=globals(),
+        exports=_LAZY_EXPORTS,
+    )
+
+
+def __dir__() -> list[str]:
+    """Return package attributes, including unresolved exports."""
+    return get_lazy_dir(module_globals=globals(), exports=_LAZY_EXPORTS)

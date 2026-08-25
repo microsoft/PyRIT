@@ -901,6 +901,38 @@ class TestDoScenarioResults:
         s.do_scenario_results("rid-1 --view attacks --limit 1")
         assert "Showing 1 of 2" in capsys.readouterr().out
 
+    def test_conversations_view_fetches_and_prints(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        client.get_conversation_messages_async = AsyncMock(
+            return_value={
+                "messages": [
+                    {"role": "user", "turn_number": 0, "message_pieces": [{"converted_value": "do it"}]},
+                ]
+            }
+        )
+        s.do_scenario_results("rid-1 --view conversations")
+        out = capsys.readouterr().out
+        assert "Conversations" in out
+        assert "do it" in out
+        assert client.get_conversation_messages_async.await_count == 2
+
+    def test_full_view_prints_table_then_transcripts(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        client.get_conversation_messages_async = AsyncMock(return_value={"messages": []})
+        s.do_scenario_results("rid-1 --view full")
+        out = capsys.readouterr().out
+        assert "Attack Results" in out
+        assert "Conversations" in out
+
+    def test_conversations_view_reports_fetch_error(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        client.get_conversation_messages_async = AsyncMock(side_effect=RuntimeError("nope"))
+        s.do_scenario_results("rid-1 --view conversations")
+        assert "Error: nope" in capsys.readouterr().out
+
     def test_fetch_error_is_reported(self, shell, capsys):
         s, client = shell
         client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("nope"))

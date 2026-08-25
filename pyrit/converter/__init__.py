@@ -35,6 +35,7 @@ from pyrit.converter.braille_converter import BrailleConverter
 from pyrit.converter.caesar_converter import CaesarConverter
 from pyrit.converter.character_space_converter import CharacterSpaceConverter
 from pyrit.converter.charswap_attack_converter import CharSwapConverter
+from pyrit.converter.code_attack_converter import CodeAttackConverter
 from pyrit.converter.codechameleon_converter import CodeChameleonConverter
 from pyrit.converter.colloquial_wordswap_converter import ColloquialWordswapConverter
 from pyrit.converter.converter import Converter, ConverterResult, get_converter_modalities
@@ -71,6 +72,7 @@ from pyrit.converter.random_capital_letters_converter import RandomCapitalLetter
 from pyrit.converter.random_translation_converter import RandomTranslationConverter
 from pyrit.converter.repeat_token_converter import RepeatTokenConverter
 from pyrit.converter.rot13_converter import ROT13Converter
+from pyrit.converter.sata_masking_converter import SATA_TASK_TEMPLATE, SATAMaskingConverter
 from pyrit.converter.scientific_translation_converter import ScientificTranslationConverter
 from pyrit.converter.search_replace_converter import SearchReplaceConverter
 from pyrit.converter.selective_text_converter import SelectiveTextConverter
@@ -83,6 +85,7 @@ from pyrit.converter.template_segment_converter import TemplateSegmentConverter
 from pyrit.converter.tense_converter import TenseConverter
 from pyrit.converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
+    ContentWordSelectionStrategy,
     IndexSelectionStrategy,
     KeywordSelectionStrategy,
     PositionSelectionStrategy,
@@ -176,8 +179,10 @@ __all__ = [
     "CaesarConverter",
     "CharSwapConverter",
     "CharacterSpaceConverter",
+    "CodeAttackConverter",
     "CodeChameleonConverter",
     "ColloquialWordswapConverter",
+    "ContentWordSelectionStrategy",
     "ConverterResult",
     "DecompositionConverter",
     "DenylistConverter",
@@ -220,6 +225,8 @@ __all__ = [
     "RangeSelectionStrategy",
     "RegexSelectionStrategy",
     "RepeatTokenConverter",
+    "SATA_TASK_TEMPLATE",
+    "SATAMaskingConverter",
     "ScientificTranslationConverter",
     "SearchReplaceConverter",
     "SelectiveTextConverter",

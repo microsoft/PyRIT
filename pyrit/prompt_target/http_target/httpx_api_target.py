@@ -163,7 +163,6 @@ class HTTPXAPITarget(HTTPTarget):
                         file_bytes = await fp.read()
 
                     files = {"file": (filename, file_bytes, mime_type)}
-
                     logger.info(f"HTTPXApiTarget: uploading file={filename} via {self.method} to {self.http_url}")
 
                     response = await client.request(
