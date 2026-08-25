@@ -5,9 +5,21 @@ import abc
 import random
 import re
 import string
+from typing import Protocol
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
+
+
+class _TokenizerWithVocab(Protocol):
+    def get_vocab(self) -> dict[str, int]:
+        """
+        Return the tokenizer vocabulary.
+
+        Returns:
+            dict[str, int]: Vocabulary mapping tokens to token ids.
+        """
+        ...
 
 
 class BijectionConverter(Converter, abc.ABC):
@@ -52,7 +64,7 @@ class BijectionConverter(Converter, abc.ABC):
 
     @property
     def mapping(self) -> dict[str, str]:
-        """Return the character-to-character mapping used for encoding."""
+        """The character-to-character mapping used for encoding."""
         return self._mapping
 
     def get_teaching_instructions(self) -> str:
@@ -68,8 +80,29 @@ class BijectionConverter(Converter, abc.ABC):
 
     @property
     def inverse_mapping(self) -> dict[str, str]:
-        """Return the inverse mapping used for decoding."""
+        """The inverse mapping used for decoding."""
         return self._inverse_mapping
+
+    def encode(self, *, prompt: str) -> str:
+        """
+        Encode text using the bijection mapping.
+
+        Args:
+            prompt (str): The prompt to encode.
+
+        Returns:
+            str: The encoded prompt.
+        """
+        encoded = ""
+        for char in prompt:
+            if char.lower() in self._mapping:
+                if char.isupper():
+                    encoded += self._mapping[char.lower()].upper()
+                else:
+                    encoded += self._mapping[char]
+            else:
+                encoded += char
+        return encoded
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
@@ -95,17 +128,7 @@ class BijectionConverter(Converter, abc.ABC):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        encoded = ""
-        for char in prompt:
-            if char.lower() in self._mapping:
-                if char.isupper():
-                    encoded += self._mapping[char.lower()].upper()
-                else:
-                    encoded += self._mapping[char]
-            else:
-                encoded += char
-
-        return ConverterResult(output_text=encoded, output_type="text")
+        return ConverterResult(output_text=self.encode(prompt=prompt), output_type="text")
 
     def decode(self, encoded_text: str) -> str:
         """
@@ -167,7 +190,7 @@ class LetterBijectionConverter(BijectionConverter):
 
     @property
     def fixed_size(self) -> int:
-        """Return the number of leading letters kept unchanged."""
+        """The number of leading letters kept unchanged."""
         return self._fixed_size
 
     def _generate_mapping(self, rng: random.Random) -> dict[str, str]:
@@ -222,7 +245,7 @@ class DigitBijectionConverter(BijectionConverter):
 
     @property
     def num_digits(self) -> int:
-        """Return the length of digit strings letters are mapped to."""
+        """The length of digit strings letters are mapped to."""
         return self._num_digits
 
     def _generate_mapping(self, rng: random.Random) -> dict[str, str]:
@@ -247,10 +270,16 @@ class DigitBijectionConverter(BijectionConverter):
     # at decode.
     _CASE_MARKER = "'"
 
-    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        if not self.input_supported(input_type):
-            raise ValueError("Input type not supported")
+    def encode(self, *, prompt: str) -> str:
+        """
+        Encode text using digit tokens and uppercase markers.
 
+        Args:
+            prompt (str): The prompt to encode.
+
+        Returns:
+            str: The encoded prompt.
+        """
         encoded = ""
         for char in prompt:
             if char.lower() in self._mapping:
@@ -258,10 +287,37 @@ class DigitBijectionConverter(BijectionConverter):
                 encoded += (self._CASE_MARKER + token) if char.isupper() else token
             else:
                 encoded += char
+        return encoded
 
-        return ConverterResult(output_text=encoded, output_type="text")
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        """
+        Encode the prompt using digit tokens.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the encoded prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
+        if not self.input_supported(input_type):
+            raise ValueError("Input type not supported")
+
+        return ConverterResult(output_text=self.encode(prompt=prompt), output_type="text")
 
     def decode(self, encoded_text: str) -> str:
+        """
+        Decode digit-token text back to plaintext.
+
+        Args:
+            encoded_text (str): The encoded text to decode.
+
+        Returns:
+            str: The decoded plain text.
+        """
         decoded = ""
         i = 0
         while i < len(encoded_text):
@@ -307,7 +363,7 @@ class TokenBijectionConverter(BijectionConverter):
     def __init__(
         self,
         *,
-        tokenizer: object,
+        tokenizer: _TokenizerWithVocab,
         mapping: dict[str, str] | None = None,
         seed: int | None = None,
     ) -> None:
@@ -342,7 +398,7 @@ class TokenBijectionConverter(BijectionConverter):
                 # in these vocabularies are word-internal continuation fragments.
                 if not token.startswith(word_initial_marker):
                     continue
-                normalized = token[len(word_initial_marker):]
+                normalized = token[len(word_initial_marker) :]
             elif uses_wordpiece_continuation:
                 # WordPiece marks continuation pieces with "##"; anything else is
                 # already word-initial/standalone.
@@ -352,25 +408,24 @@ class TokenBijectionConverter(BijectionConverter):
             else:
                 normalized = token
 
-            if (
-                3 <= len(normalized) <= 10
-                and normalized.isalpha()
-                and normalized.islower()
-                and normalized not in seen
-            ):
+            if 3 <= len(normalized) <= 10 and normalized.isalpha() and normalized.islower() and normalized not in seen:
                 seen.add(normalized)
                 candidates.append(normalized)
 
         if len(candidates) < 26:
-            raise ValueError(
-                f"Not enough valid word-initial tokens in vocabulary. Found {len(candidates)}, need 26."
-            )
+            raise ValueError(f"Not enough valid word-initial tokens in vocabulary. Found {len(candidates)}, need 26.")
 
         selected = rng.sample(candidates, 26)
         letters = list(string.ascii_lowercase)
-        return dict(zip(letters, selected))
+        return dict(zip(letters, selected, strict=True))
 
     def get_teaching_instructions(self) -> str:
+        """
+        Return the token-mode setup instructions.
+
+        Returns:
+            str: Instructions for using this token mapping.
+        """
         mapping_str = ", ".join(f"{key}={value}" for key, value in self._mapping.items())
         return (
             "Use this notation table for the rest of the conversation. Each lowercase English letter is written "
@@ -380,10 +435,16 @@ class TokenBijectionConverter(BijectionConverter):
             f"Do not write the decoded instruction, explanation, or plaintext. {self.FINAL_ANSWER_GUIDANCE}"
         )
 
-    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        if not self.input_supported(input_type):
-            raise ValueError("Input type not supported")
+    def encode(self, *, prompt: str) -> str:
+        """
+        Encode text using token words and hyphen-delimited word runs.
 
+        Args:
+            prompt (str): The prompt to encode.
+
+        Returns:
+            str: The encoded prompt.
+        """
         encoded_parts: list[str] = []
         current_run: list[str] = []
 
@@ -401,9 +462,38 @@ class TokenBijectionConverter(BijectionConverter):
                 encoded_parts.append(char)
 
         flush_run()
-        return ConverterResult(output_text="".join(encoded_parts), output_type="text")
+        return "".join(encoded_parts)
+
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        """
+        Encode the prompt using token words.
+
+        Args:
+            prompt (str): The prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the encoded prompt.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
+        if not self.input_supported(input_type):
+            raise ValueError("Input type not supported")
+
+        return ConverterResult(output_text=self.encode(prompt=prompt), output_type="text")
 
     def decode(self, encoded_text: str) -> str:
+        """
+        Decode token-word text back to plaintext.
+
+        Args:
+            encoded_text (str): The encoded text to decode.
+
+        Returns:
+            str: The decoded plain text.
+        """
+
         def replace(match: "re.Match[str]") -> str:
             letters = []
             for piece in match.group(0).split(self._TOKEN_DELIMITER):

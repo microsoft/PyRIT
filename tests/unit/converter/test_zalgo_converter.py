@@ -60,30 +60,27 @@ async def test_zalgo_unseeded_converters_stay_independent():
     assert len(outputs) > 1
 
 
-async def test_zalgo_seed_is_component_scoped_when_composed_with_random_selection():
+async def test_zalgo_seed_is_inherited_by_unseeded_random_selection():
     """
-    Seeds are component-scoped: seeding the converter alone does not seed a randomized
-    word selection strategy, but seeding both makes the composition reproducible.
+    An outer converter seed is the root for nested components unless they override it.
     """
-    # Eight words at proportion 0.5 gives C(8,4)=70 possible selections, so five draws
-    # collapsing to one output by chance is ~4e-8 -- not a realistic flake.
     prompt = "alpha bravo charlie delta echo foxtrot golf hotel"
 
-    unseeded_selection = ZalgoConverter(
+    inherited_selection = ZalgoConverter(
         intensity=3,
         seed=42,
         word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5),
     )
-    varied = {(await unseeded_selection.convert_async(prompt=prompt)).output_text for _ in range(5)}
-    assert len(varied) > 1
+    repeated = {(await inherited_selection.convert_async(prompt=prompt)).output_text for _ in range(5)}
+    assert len(repeated) == 1
 
-    seeded_selection = ZalgoConverter(
+    explicit_selection = ZalgoConverter(
         intensity=3,
         seed=42,
         word_selection_strategy=WordProportionSelectionStrategy(proportion=0.5, seed=7),
     )
-    repeated = {(await seeded_selection.convert_async(prompt=prompt)).output_text for _ in range(5)}
-    assert len(repeated) == 1
+    explicitly_repeated = {(await explicit_selection.convert_async(prompt=prompt)).output_text for _ in range(5)}
+    assert len(explicitly_repeated) == 1
 
 
 async def test_zalgo_zero_intensity_returns_original():

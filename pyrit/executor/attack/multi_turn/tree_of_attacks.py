@@ -43,6 +43,7 @@ from pyrit.executor.attack.core.attack_config import (
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
+from pyrit.message_normalizer._helpers import get_unflattenable_converter_output_types
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -112,16 +113,7 @@ def _validate_stateful_clone_history_compatibility(
     ) or objective_target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY):
         return
 
-    non_text_output_types = {
-        piece.converted_value_data_type
-        for message in messages
-        for piece in message.message_pieces
-        if piece.converted_value_data_type != "text"
-        and (
-            piece.original_value != piece.converted_value
-            or piece.original_value_data_type != piece.converted_value_data_type
-        )
-    }
+    non_text_output_types = get_unflattenable_converter_output_types(converted_messages=messages)
     if non_text_output_types:
         raise ValueError(
             "Tree of Attacks cannot clone a stateful objective-target conversation without editable history "
