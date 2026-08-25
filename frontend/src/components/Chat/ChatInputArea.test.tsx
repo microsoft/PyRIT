@@ -753,7 +753,8 @@ describe("ChatInputArea", () => {
     expect(screen.getByTestId("converted-indicator")).toBeInTheDocument();
 
     // Edit the converted value
-    const convertedInput = screen.getByTestId("converted-value-input");
+    const convertedInput = screen.getByRole("textbox", { name: /converted prompt/i });
+    expect(convertedInput).toHaveValue("aGVsbG8=");
     await user.clear(convertedInput);
     await user.type(convertedInput, "new");
     expect(onConvertedValueChange).toHaveBeenCalled();

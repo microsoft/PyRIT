@@ -166,7 +166,7 @@ await output_attack_async(result)
 # Beyond the call arguments, attacks are tuned at construction time with three configuration objects:
 #
 # - **`AttackConverterConfig`** — request/response [converters](../converters/0_converters.ipynb)
-#   applied to every prompt and response.
+#   applied to live attack prompts and responses, plus selected roles in prepended history.
 # - **`AttackScoringConfig`** — the objective scorer plus any auxiliary
 #   [scorers](../scoring/0_scoring.ipynb).
 # - **`AttackAdversarialConfig`** — the adversarial target (a model PyRIT controls) that multi-turn
@@ -175,6 +175,27 @@ await output_attack_async(result)
 # Converter and scoring configs apply to single- and multi-turn attacks alike; the adversarial config
 # only applies to attacks that drive a conversation. Below builds a converter config — it's just a
 # plain object you hand to the attack constructor.
+#
+# Request converters apply only to prepended `user` messages by default. PyRIT leaves every other
+# role, including `system`, `developer`, `tool`, and `assistant` / `simulated_assistant`, unchanged
+# unless the attack explicitly opts in. `simulated_assistant` is accepted as an alias for
+# `assistant`. For example:
+#
+# ```python
+# from pyrit.executor.attack import PrependedConversationConfig
+#
+# attack = PromptSendingAttack(
+#     objective_target=target,
+#     attack_converter_config=converter_config,
+#     prepended_conversation_config=PrependedConversationConfig(
+#         apply_converters_to_roles=["user", "assistant"],
+#     ),
+# )
+# ```
+#
+# PyRIT applies these role-specific conversions while the prepended messages are still structured.
+# If the target cannot accept editable history, target normalization then formats the converted and
+# unconverted history with the first live request without broadening the selected converter scope.
 
 # %%
 from pyrit.converter import Base64Converter

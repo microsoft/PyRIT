@@ -15,8 +15,8 @@ state is mutated.
 These tests cover the new contract:
 * Class metadata (VERSION, BASELINE policy, defaults).
 * Technique enum is built from registered factories with ``uses_adversarial=True``
-  that do not bake their own ``adversarial_chat``; ``light`` aggregate preserves the
-  source ``light`` tag (excludes ``tap`` / ``crescendo_simulated``).
+  that do not bake their own ``adversarial_chat``; the default expands to the exact
+  benchmark set while the ``light`` aggregate remains selectable.
 * ``supported_parameters`` declares ``adversarial_targets: list[str]``.
 * ``_resolve_adversarial_targets`` raises with available names on typos.
 * ``_build_atomic_attacks_async`` produces ``N × M × D`` atomic attacks
@@ -30,12 +30,14 @@ These tests cover the new contract:
   persistence -> SQL filter -> objective-target filter -> outcome filter.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.executor.attack import AttackScoringConfig, TreeOfAttacksWithPruningAttack
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
@@ -80,10 +82,12 @@ def _build_benchmarkable_factories_snapshot() -> list:
 
 
 _BENCHMARKABLE_FACTORIES = _build_benchmarkable_factories_snapshot()
-_NUM_ADVERSARIAL_TECHNIQUES = len(_BENCHMARKABLE_FACTORIES)
 _BENCHMARKABLE_TECHNIQUE_NAMES = {f.name for f in _BENCHMARKABLE_FACTORIES}
-_LIGHT_BENCHMARKABLE_FACTORIES = [f for f in _BENCHMARKABLE_FACTORIES if "light" in f.technique_tags]
-_NUM_LIGHT_BENCHMARKABLE = len(_LIGHT_BENCHMARKABLE_FACTORIES)
+_DEFAULT_BENCHMARK_TECHNIQUE_NAMES = {
+    "role_play_video_game",
+    "crescendo_simulated",
+    "tap",
+}
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -155,9 +159,9 @@ async def _build_atomic_attacks(bench: AdversarialBenchmark) -> list:
 class TestAdversarialBenchmarkMetadata:
     """Tests for class-level metadata that doesn't depend on any runtime state."""
 
-    def test_version_is_3(self):
-        """VERSION bumped to 3 when the ``core`` pool gate was dropped so cached v2 results don't suppress v3 runs."""
-        assert AdversarialBenchmark.VERSION == 3
+    def test_version_is_4(self):
+        """VERSION 4 identifies runs using the evidence-backed default technique set."""
+        assert AdversarialBenchmark.VERSION == 4
 
     def test_baseline_attack_policy_is_forbidden(self):
         """A baseline contributes no signal to a model-comparison benchmark, so it is forbidden."""
@@ -250,6 +254,12 @@ class TestAdversarialBenchmarkTechnique:
         assert "single_turn" in aggregates
         assert "multi_turn" in aggregates
 
+    def test_default_expands_to_exact_benchmark_techniques(self):
+        """The synthetic default contains only the evidence-backed benchmark techniques."""
+        technique_cls = _build_benchmark_technique()
+        resolved_values = {child.value for child in technique_cls.expand({technique_cls.default()})}
+        assert resolved_values == _DEFAULT_BENCHMARK_TECHNIQUE_NAMES
+
     def test_light_aggregate_excludes_non_light_techniques(self):
         """Techniques without the ``light`` tag must not appear in the ``light`` aggregate."""
         technique_cls = _build_benchmark_technique()
@@ -308,16 +318,61 @@ class TestAdversarialBenchmarkInit:
         )
         assert bench._use_cached is True
 
-    def test_construct_without_light_factory_falls_back_to_all(self):
-        """A pool with no ``light``-tagged factory must still construct, defaulting to ``all``."""
+    def test_construct_without_named_default_factory_falls_back_to_all(self):
+        """A pool with none of the named defaults must still construct, defaulting to ``all``."""
         AttackTechniqueRegistry.reset_registry_singleton()
         _build_benchmark_technique.cache_clear()
-        _register_mock_factory(name="narrow_tap", tags=["airt_internal", "multi_turn"])
+        _register_mock_factory(name="custom_technique", tags=["custom", "multi_turn"])
 
         bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
 
         assert "light" not in bench._technique_class.get_aggregate_tags()
         assert bench._default_technique.value == "all"
+
+    async def test_initialize_without_selection_resolves_exact_default(self):
+        """Omitting ``scenario_techniques`` resolves exactly the approved benchmark defaults."""
+        objective_target = MagicMock(spec=PromptTarget)
+        objective_target.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveTarget", class_module="pyrit.test"
+        )
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = ComponentIdentifier(
+            class_name="MockObjectiveScorer", class_module="pyrit.test"
+        )
+        bench = AdversarialBenchmark(objective_scorer=objective_scorer)
+        bench.set_params_from_args(
+            args={
+                "objective_target": objective_target,
+                "adversarial_targets": ["adversarial_chat"],
+            }
+        )
+
+        with (
+            patch.object(bench, "_resolve_seed_groups_by_dataset_async", new_callable=AsyncMock, return_value={}),
+            patch.object(bench, "_build_atomic_attacks_async", new_callable=AsyncMock, return_value=[]),
+        ):
+            await bench.initialize_async()
+
+        assert {technique.value for technique in bench._scenario_techniques} == _DEFAULT_BENCHMARK_TECHNIQUE_NAMES
+
+    def test_tap_constructs_with_benchmark_scorer_policy(self, caplog):
+        """The benchmark's generic scorer is skipped under TAP's WARN policy so TAP can use its own scorer."""
+        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()["tap"]
+
+        objective_target = MagicMock(spec=PromptTarget)
+        objective_target.configuration.capabilities.output_modalities = [{"text"}]
+        adversarial_target = TargetRegistry.get_registry_singleton().instances.get("adversarial_chat")
+        scoring_config = AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer))
+
+        with caplog.at_level(logging.WARNING):
+            technique = factory.create(
+                objective_target=objective_target,
+                attack_scoring_config=scoring_config,
+                adversarial_chat=adversarial_target,
+            )
+
+        assert isinstance(technique.attack, TreeOfAttacksWithPruningAttack)
+        assert any("incompatible" in record.message for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------
