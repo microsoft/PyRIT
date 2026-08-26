@@ -410,13 +410,33 @@ that CIDR range can reach the app.
 
 ## Configuration: .pyrit_conf and .env
 
-The template replaces `.pyrit_conf` and `.env` with Bicep parameters — no files
-needed in the container.
+The backend can load `.pyrit_conf` directly from Azure Blob Storage. Set
+`pyritConfigFileUri` to a blob HTTPS URI such as
+`https://<account>.blob.core.windows.net/config/.pyrit_conf`. `start.sh` passes
+the URI to `pyrit_backend --config-file`; the backend downloads it with the
+Container App's user-assigned managed identity. Leave the parameter empty to
+generate the existing minimal config from `sqlServerFqdn` and
+`pyritInitializer` at container startup.
+
+Grant the managed identity `Storage Blob Data Contributor` on the config blob,
+container, or storage account. Contributor access is needed because the GUI's
+configuration API can update the same blob; `Storage Blob Data Reader` is
+sufficient only for read-only startup. The storage firewall must also allow the
+Container App's network path. Prefer an identity-protected URI without a SAS
+token.
+
+The template accepts an existing blob URI rather than creating or seeding a
+storage account. `infra/deploy_instance.py` already creates per-instance blob
+storage and grants storage RBAC, but its `dbdata` container is intended for
+result data. Create a separate private `config` container when reusing that
+account, upload `.pyrit_conf`, and pass its URI with
+`--pyrit-config-file-uri`.
 
 ### .pyrit_conf fields → Bicep params
 
 | .pyrit_conf field | Bicep param | Env var | Notes |
 |-------------------|-------------|---------|-------|
+| Complete file | `pyritConfigFileUri` | `PYRIT_CONFIG_FILE` | Preferred; Azure Blob URI loaded with managed identity |
 | `initializers` | `pyritInitializer` | `PYRIT_INITIALIZER` | Default `target`: `target` populates the TargetRegistry (read by the GUI);|
 | `operator` | — | Set per-user in the GUI | |
 | `operation` | — | Set per-user in the GUI | |

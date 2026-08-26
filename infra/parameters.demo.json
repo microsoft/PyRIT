@@ -31,6 +31,9 @@
     "pyritInitializer": {
       "value": "target"
     },
+    "pyritConfigFileUri": {
+      "value": ""
+    },
     "envFileContents": {
       "value": "PYRIT_REPLACE_ME=set-via-secure-channel"
     },

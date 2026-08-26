@@ -57,28 +57,33 @@ if [ "$PYRIT_MODE" = "jupyter" ]; then
     exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
 elif [ "$PYRIT_MODE" = "gui" ]; then
     echo "Starting PyRIT GUI on port 8000..."
-    # The thin backend only takes --host/--port/--config-file/--log-level.
-    # Translate AZURE_SQL_SERVER and PYRIT_INITIALIZER into a runtime config file
-    # so the FastAPI lifespan (ConfigurationLoader) picks them up on startup.
-    RUNTIME_CONFIG=/tmp/pyrit_runtime.yaml
-    {
-        if [ -n "$AZURE_SQL_SERVER" ]; then
-            echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)" >&2
-            echo "memory_db_type: AzureSQL"
-        else
-            echo "Using SQLite database (AZURE_SQL_SERVER not set)" >&2
-            echo "memory_db_type: SQLite"
-        fi
-        if [ -n "$PYRIT_INITIALIZER" ]; then
-            echo "Using initializer: $PYRIT_INITIALIZER" >&2
-            echo "initializers:"
-            # Split comma-separated initializer names into a YAML list.
-            IFS=',' read -ra INIT_NAMES <<<"$PYRIT_INITIALIZER"
-            for name in "${INIT_NAMES[@]}"; do
-                echo "  - $(echo "$name" | xargs)"
-            done
-        fi
-    } >"$RUNTIME_CONFIG"
+    BACKEND_ARGS=(--host 0.0.0.0 --port 8000)
+    if [ -n "$PYRIT_CONFIG_FILE" ]; then
+        echo "Using configured PyRIT configuration source"
+        BACKEND_ARGS+=(--config-file "$PYRIT_CONFIG_FILE")
+    else
+        # Preserve the deployment-parameter fallback when no complete config is supplied.
+        RUNTIME_CONFIG=/tmp/pyrit_runtime.yaml
+        {
+            if [ -n "$AZURE_SQL_SERVER" ]; then
+                echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)" >&2
+                echo "memory_db_type: AzureSQL"
+            else
+                echo "Using SQLite database (AZURE_SQL_SERVER not set)" >&2
+                echo "memory_db_type: SQLite"
+            fi
+            if [ -n "$PYRIT_INITIALIZER" ]; then
+                echo "Using initializer: $PYRIT_INITIALIZER" >&2
+                echo "initializers:"
+                # Split comma-separated initializer names into a YAML list.
+                IFS=',' read -ra INIT_NAMES <<<"$PYRIT_INITIALIZER"
+                for name in "${INIT_NAMES[@]}"; do
+                    echo "  - $(echo "$name" | xargs)"
+                done
+            fi
+        } >"$RUNTIME_CONFIG"
+        BACKEND_ARGS+=(--config-file "$RUNTIME_CONFIG")
+    fi
 
     # Pick the launcher module. PR #1753 moved the launcher from
     # ``pyrit.cli.pyrit_backend`` to ``pyrit.backend.pyrit_backend``. The PyPI
@@ -96,10 +101,7 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
         exit 1
     fi
 
-    exec python -m "$BACKEND_MODULE" \
-        --host 0.0.0.0 \
-        --port 8000 \
-        --config-file "$RUNTIME_CONFIG"
+    exec python -m "$BACKEND_MODULE" "${BACKEND_ARGS[@]}"
 else
     echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter' or 'gui'"
     exit 1

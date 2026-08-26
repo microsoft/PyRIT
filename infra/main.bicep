@@ -77,6 +77,9 @@ param sqlDatabaseName string
 @description('PyRIT initializer to run. Default "target" registers target configs.')
 param pyritInitializer string = 'target'
 
+@description('Optional Azure Blob HTTPS URI for the backend .pyrit_conf. The container managed identity must have blob data access. When empty, start.sh generates config from the SQL and initializer parameters.')
+param pyritConfigFileUri string = ''
+
 @description('Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup.')
 param envSecretName string = 'env-global'
 
@@ -456,6 +459,12 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'PYRIT_INITIALIZER'
               value: pyritInitializer
+            }
+            // When set, start.sh passes this blob URI directly to pyrit_backend.
+            // DefaultAzureCredential uses the UAMI selected by AZURE_CLIENT_ID.
+            {
+              name: 'PYRIT_CONFIG_FILE'
+              value: pyritConfigFileUri
             }
             // .env file contents from Key Vault — PyRIT parses this at startup
             {

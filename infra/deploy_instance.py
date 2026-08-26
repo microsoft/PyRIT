@@ -767,6 +767,7 @@ def deploy_bicep(
     kv_resource_id: str,
     acr_name: str,
     env_file_contents: str,
+    pyrit_config_file_uri: str,
     owner_tag: str = "",
 ) -> dict:
     """
@@ -792,6 +793,8 @@ def deploy_bicep(
         acr_name (str): The ACR name.
         env_file_contents (str): The prepared .env content to inject as
             the Container App's `env-file` secret.
+        pyrit_config_file_uri (str): Optional Azure Blob URI for the backend
+            configuration file.
         owner_tag (str): Value for the Owner tag on Bicep-managed resources.
 
     Returns:
@@ -811,6 +814,7 @@ def deploy_bicep(
         "acrName": {"value": acr_name},
         "enablePrivateEndpoint": {"value": False},
         "envFileContents": {"value": env_file_contents},
+        "pyritConfigFileUri": {"value": pyrit_config_file_uri},
     }
     if owner_tag:
         parameters["tags"] = {"value": {"Service": "pyrit-gui", "Owner": owner_tag}}
@@ -1092,6 +1096,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Container image reference (e.g., myacr.azurecr.io/pyrit:abc1234)",
     )
     parser.add_argument(
+        "--pyrit-config-file-uri",
+        default="",
+        help="Azure Blob HTTPS URI for .pyrit_conf (optional)",
+    )
+    parser.add_argument(
         "--allowed-groups",
         required=True,
         help="Comma-separated Entra group object IDs to grant access",
@@ -1205,6 +1214,7 @@ def main(args: list[str] | None = None) -> int:
         logger.info("Allowed groups: %s", group_ids)
         logger.info("Env file: %s", env_file)
         logger.info("Container image: %s", parsed.container_image)
+        logger.info("PyRIT config file URI: %s", parsed.pyrit_config_file_uri or "(generated at startup)")
         logger.info("ACR: %s", parsed.acr_name)
         logger.info("Location: %s", parsed.location)
         logger.info("Subscription: %s", parsed.subscription)
@@ -1302,6 +1312,7 @@ def main(args: list[str] | None = None) -> int:
             kv_resource_id=kv_id,
             acr_name=parsed.acr_name,
             env_file_contents=env_content,
+            pyrit_config_file_uri=parsed.pyrit_config_file_uri,
             owner_tag=parsed.owner_tag,
         )
 

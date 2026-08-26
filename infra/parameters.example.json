@@ -29,6 +29,9 @@
     "pyritInitializer": {
       "value": "target"
     },
+    "pyritConfigFileUri": {
+      "value": ""
+    },
     "envSecretName": {
       "value": "env-global"
     },
