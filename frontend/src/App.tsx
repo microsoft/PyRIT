@@ -17,6 +17,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
+import { readStoredGlobalLabels, persistGlobalLabels } from './components/Labels/labelStorage'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInfo } from './types'
@@ -106,7 +107,27 @@ function App() {
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
 
-  const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
+  // Read once, before the effect below can overwrite what the user picked.
+  const [storedLabels] = useState(readStoredGlobalLabels)
+  const [globalLabels, setGlobalLabels] = useState<Record<string, string>>(
+    () => ({ ...DEFAULT_GLOBAL_LABELS, ...storedLabels }),
+  )
+
+  // What the app would show if the user had never touched anything: the
+  // built-in placeholders, then whatever the backend hands out. Only labels
+  // that differ from this are the user's own, and only those are worth
+  // keeping — otherwise a value that merely came from the config gets stored
+  // as a choice and outranks that same config from then on.
+  const unchosenLabels = useRef<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
+
+  const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
+    setGlobalLabels(labels)
+    persistGlobalLabels(
+      Object.fromEntries(
+        Object.entries(labels).filter(([key, value]) => value !== unchosenLabels.current[key]),
+      ),
+    )
+  }, [])
 
   // History filters live in the URL query string so they are shareable and
   // survive refresh. The breadcrumb ref remembers the last /history query so
@@ -161,8 +182,25 @@ function App() {
       const account = instance.getActiveAccount?.()
       const alias = account?.username ? account.username.split('@')[0].toLowerCase() : null
 
+      unchosenLabels.current = {
+        ...DEFAULT_GLOBAL_LABELS,
+        ...defaultLabels,
+        ...(alias ? { operator: alias } : {}),
+      }
+
       setGlobalLabels(prev => {
-        const next = { ...prev, ...defaultLabels }
+        const next = { ...prev }
+        for (const [key, value] of Object.entries(defaultLabels)) {
+          // These defaults only fill in what you have not chosen. `prev`
+          // already carries what was stored and anything picked while this
+          // request was in flight, so neither gets overwritten by a late
+          // response.
+          const untouched = prev[key] === DEFAULT_GLOBAL_LABELS[key]
+          if (!(key in storedLabels) && untouched) {
+            next[key] = value
+          }
+        }
+        // The signed-in account still decides who the operator is.
         if (alias) {
           next.operator = alias
         }
@@ -172,7 +210,7 @@ function App() {
 
     initLabels()
     return () => { ignore = true }
-  }, [instance])
+  }, [instance, storedLabels])
 
   // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
   // ONLY, so switching conversations within an attack never refetches.
@@ -356,7 +394,7 @@ function App() {
       onConversationCreated={handleConversationCreated}
       onSelectConversation={handleSelectConversation}
       labels={globalLabels}
-      onLabelsChange={setGlobalLabels}
+      onLabelsChange={handleGlobalLabelsChange}
       onNavigate={handleNavigate}
       attackLabels={readyAttack ? readyAttack.labels : null}
       attackTarget={readyAttack ? readyAttack.target : null}
@@ -395,7 +433,7 @@ function App() {
                 element={
                   <Home
                     labels={globalLabels}
-                    onLabelsChange={setGlobalLabels}
+                    onLabelsChange={handleGlobalLabelsChange}
                     activeTarget={activeTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}
