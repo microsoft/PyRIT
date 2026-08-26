@@ -187,23 +187,28 @@ function ParameterField({ parameter, value, disabled, onChange }: ParameterField
     const selected = Array.isArray(value) ? value : []
     return (
       <Field label={label} hint={parameter.description ?? undefined}>
-        <div className={styles.checkboxGroup} role="group" aria-label={parameter.name}>
-          {(parameter.choices ?? []).map((choice) => (
-            <Checkbox
-              key={choice}
-              id={`param-${parameter.name}-${choice}`}
-              label={choice}
-              checked={selected.includes(choice)}
-              disabled={disabled}
-              onChange={(_, data) => {
-                const next = data.checked
-                  ? [...selected, choice]
-                  : selected.filter((entry) => entry !== choice)
-                onChange(parameter.name, next)
-              }}
-              data-testid={`param-${parameter.name}-${choice}`}
-            />
-          ))}
+        <div className={styles.checkboxGroup} role="group" aria-labelledby={`param-${parameter.name}-group-label`}>
+          <span id={`param-${parameter.name}-group-label`} className={styles.srOnly}>{label}</span>
+          {(parameter.choices ?? []).map((choice) => {
+            const choiceLabelId = `param-${encodeURIComponent(parameter.name)}-${encodeURIComponent(choice)}-label`
+            return (
+              <Checkbox
+                key={choice}
+                id={`param-${parameter.name}-${choice}`}
+                aria-labelledby={choiceLabelId}
+                label={{ children: choice, id: choiceLabelId }}
+                checked={selected.includes(choice)}
+                disabled={disabled}
+                onChange={(_, data) => {
+                  const next = data.checked
+                    ? [...selected, choice]
+                    : selected.filter((entry) => entry !== choice)
+                  onChange(parameter.name, next)
+                }}
+                data-testid={`param-${parameter.name}-${choice}`}
+              />
+            )
+          })}
         </div>
       </Field>
     )

@@ -5,10 +5,11 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import store_message
 
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.score import FloatScaleThresholdScorer
+from pyrit.score import FloatScaleThresholdScorer, MessageScorable
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -19,8 +20,8 @@ def create_mock_float_scorer(score_value: float):
         class_name="MockScorer",
         class_module="test.mock",
     )
-    scorer = AsyncMock()
-    scorer.score_async = AsyncMock(
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._score_nested_message_async = AsyncMock(
         return_value=[
             Score(
                 score_value=str(score_value),
@@ -72,9 +73,9 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
     )
 
     # Mock a scorer that returns multiple scores (like AzureContentFilterScorer)
-    scorer = AsyncMock()
+    scorer = MagicMock(spec=FloatScaleScorer)
     prompt_id = uuid.uuid4()
-    scorer.score_async = AsyncMock(
+    scorer._score_nested_message_async = AsyncMock(
         return_value=[
             Score(
                 score_value="0.2",
@@ -132,6 +133,83 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
         assert len(added_scores) == 1
 
 
+async def test_float_scale_threshold_scorer_attributes_result_to_aggregate_not_first_score():
+    """
+    The threshold decision is made on the aggregate, so the resulting score must be described
+    by the aggregate too. Previously the category, rationale and metadata were taken from
+    scores[0], so a scorer returning one score per harm category (AzureContentFilterScorer)
+    produced a True score labelled with whichever category happened to be first, even when
+    that category scored 0.0.
+    """
+
+    memory = MagicMock(MemoryInterface)
+    mock_identifier = ComponentIdentifier(class_name="MockScorer", class_module="test.mock")
+
+    prompt_id = uuid.uuid4()
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._score_nested_message_async = AsyncMock(
+        return_value=[
+            Score(
+                score_value="0.857",
+                score_type="float_scale",
+                score_category=["Violence"],
+                score_rationale="Violence rationale",
+                score_metadata={"azure_severity": 6},
+                message_piece_id=prompt_id,
+                score_value_description="",
+                scorer_class_identifier=mock_identifier,
+                id=uuid.uuid4(),
+            ),
+            Score(
+                score_value="0.0",
+                score_type="float_scale",
+                score_category=["Hate"],
+                score_rationale="Hate rationale",
+                score_metadata={"azure_severity": 0},
+                message_piece_id=prompt_id,
+                score_value_description="",
+                scorer_class_identifier=mock_identifier,
+                id=uuid.uuid4(),
+            ),
+        ]
+    )
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+        score = (await threshold_scorer.score_text_async(text="mock example"))[0]
+
+    # Violence (0.857) is what crossed the threshold; Hate scored 0.0.
+    assert score.get_value() is True
+
+    # The category that fired must not be dropped in favour of the first score's.
+    assert "Violence" in (score.score_category or [])
+
+    # The rationale must mention the score that actually crossed, not only the first one.
+    assert "Violence rationale" in score.score_rationale
+
+    # The aggregate spans categories with different severities, so the ambiguous
+    # category-specific severity must not be paired with the aggregate value.
+    assert score.score_metadata["original_float_value"] == pytest.approx(0.857)
+    assert "azure_severity" not in score.score_metadata
+
+
+async def test_float_scale_threshold_scorer_single_score_attribution_unchanged():
+    """A single wrapped score must keep its own category and rationale, as before."""
+
+    memory = MagicMock(MemoryInterface)
+    scorer = create_mock_float_scorer(0.9)
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+        score = (await threshold_scorer.score_text_async(text="mock example"))[0]
+
+    assert score.get_value() is True
+    assert score.score_category == ["mock category"]
+    assert "A mock rationale" in score.score_rationale
+    assert score.score_metadata["original_float_value"] == pytest.approx(0.9)
+
+
 async def test_float_scale_threshold_scorer_handles_empty_scores():
     """
     Test that FloatScaleThresholdScorer gracefully handles when the underlying scorer
@@ -140,8 +218,8 @@ async def test_float_scale_threshold_scorer_handles_empty_scores():
     memory = MagicMock(MemoryInterface)
 
     # Mock a scorer that returns empty list (all pieces filtered)
-    scorer = AsyncMock()
-    scorer.score_async = AsyncMock(return_value=[])
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._score_nested_message_async = AsyncMock(return_value=[])
     # get_identifier() returns a ComponentIdentifier
     mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
@@ -170,15 +248,13 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
     Test that FloatScaleThresholdScorer raises ValueError when using RAISE_ON_EMPTY aggregator
     and the underlying scorer returns no scores.
     """
-    from pyrit.score.float_scale.float_scale_score_aggregator import (
-        FloatScaleScoreAggregator,
-    )
+    from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleScoreAggregator
 
     memory = MagicMock(MemoryInterface)
 
     # Mock a scorer that returns empty list (all pieces filtered)
-    scorer = AsyncMock()
-    scorer.score_async = AsyncMock(return_value=[])
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._score_nested_message_async = AsyncMock(return_value=[])
     # get_identifier() returns a ComponentIdentifier
     mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
@@ -262,10 +338,15 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     )
     blocked_message = Message(message_pieces=[blocked_piece])
 
-    scores = await threshold_scorer.score_async(blocked_message)
+    scores = await threshold_scorer.score_async(scorable=MessageScorable.from_message(store_message(blocked_message)))
 
     assert len(scores) == 1
     binary_score = scores[0]
     assert binary_score.score_type == "true_false"
     assert binary_score.get_value() is False
     assert "Normalized scale score: 0.0" in binary_score.score_rationale
+
+    memory = CentralMemory.get_memory_instance()
+    persisted_scores = memory.get_scores(score_type="true_false")
+    assert len(persisted_scores) == 1
+    assert memory.get_scores(score_type="float_scale") == []

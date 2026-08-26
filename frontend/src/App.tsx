@@ -62,6 +62,7 @@ interface LoadedAttack {
   labels: Record<string, string> | null
   target: TargetInfo | null
   relatedConversationIds: string[]
+  objective: string
   status: AttackLoadStatus
 }
 
@@ -237,6 +238,7 @@ function App() {
       labels: null,
       target: null,
       relatedConversationIds: [],
+      objective: '',
     })
     attacksApi
       .getAttack(routeAttackId)
@@ -250,6 +252,7 @@ function App() {
           labels: attack.labels ?? {},
           target: attack.target ?? null,
           relatedConversationIds: attack.related_conversation_ids ?? [],
+          objective: attack.objective ?? '',
           status: 'success',
         })
       })
@@ -268,6 +271,7 @@ function App() {
           labels: null,
           target: null,
           relatedConversationIds: [],
+          objective: '',
         })
       })
     // Drop a stale response once the route has moved on to another attack.
@@ -356,6 +360,7 @@ function App() {
       labels: null,
       target,
       relatedConversationIds: [],
+      objective: '',
       status: 'success',
     })
     // Replace when promoting an empty /chat to its attack url (first message);
@@ -397,6 +402,7 @@ function App() {
       onRetryTargetResolution={retryTargetResolution}
       isLoadingAttack={isLoadingAttack}
       relatedConversationCount={readyAttack ? readyAttack.relatedConversationIds.length : 0}
+      objective={readyAttack ? readyAttack.objective : ''}
     />
   )
 

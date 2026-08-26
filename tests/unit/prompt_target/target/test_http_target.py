@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from pyrit.models import Message
+from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_json_response_callback_function,
@@ -183,6 +183,132 @@ async def test_send_prompt_async_client_kwargs(patch_central_database):
             content="",
         )
         assert http_target._client is None
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_rejects_prompt_destination_change(mock_request, patch_central_database):
+    target = HTTPTarget(http_request="GET {PROMPT} HTTP/1.1\nHost: example.com\n\n")
+    message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="https://attacker.example/path",
+                converted_value="https://attacker.example/path",
+                converted_value_data_type="text",
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="cannot change the configured HTTP destination"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_awaited()
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_allows_configured_internal_destination(mock_request, patch_central_database):
+    target = HTTPTarget(http_request="POST /api/{PROMPT} HTTP/1.1\nHost: 10.0.0.8:8080\n\n")
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="jobs", converted_value="jobs")])
+    mock_response = MagicMock()
+    mock_response.content = b"ok"
+    mock_request.return_value = mock_response
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["url"] == "https://10.0.0.8:8080/api/jobs"
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_follows_redirects_when_enabled(mock_request, patch_central_database):
+    target = HTTPTarget(
+        http_request="POST /api HTTP/1.1\nHost: example.com\n\n",
+        follow_redirects=True,
+    )
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="prompt")])
+    mock_response = MagicMock()
+    mock_response.content = b"ok"
+    mock_request.return_value = mock_response
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["follow_redirects"] is True
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_disables_redirects_when_requested(mock_request, patch_central_database):
+    target = HTTPTarget(
+        http_request="POST /api HTTP/1.1\nHost: example.com\n\n",
+        follow_redirects=False,
+    )
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="prompt")])
+    mock_response = MagicMock()
+    mock_response.content = b"ok"
+    mock_request.return_value = mock_response
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["follow_redirects"] is False
+
+
+def test_http_target_omitted_redirect_setting_preserves_behavior(patch_central_database):
+    target = HTTPTarget(http_request="GET / HTTP/1.1\nHost: example.com\n\n")
+    assert target.follow_redirects is True
+
+
+@pytest.mark.parametrize(
+    ("http_request", "prompt"),
+    [
+        ("GET /search?q={PROMPT} HTTP/1.1\nHost: example.com\n\n", "first\nsecond"),
+        ("GET / HTTP/1.1\nHost: example.com\nX-Prompt: {PROMPT}\n\n", "first\nsecond"),
+        ("GET /search?q={PROMPT} HTTP/1.1\nHost: example.com\n\n", "first\rsecond"),
+        ("GET / HTTP/1.1\nHost: example.com\nX-Prompt: {PROMPT}\n\n", "first\rsecond"),
+    ],
+)
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_rejects_newlines_outside_body(
+    mock_request,
+    patch_central_database,
+    http_request,
+    prompt,
+):
+    target = HTTPTarget(http_request=http_request)
+    message = Message(message_pieces=[MessagePiece(role="user", original_value=prompt)])
+
+    with pytest.raises(ValueError, match="cannot contain CR or LF"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_awaited()
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_rejects_newline_when_placeholder_spans_header_and_body(
+    mock_request, patch_central_database
+):
+    target = HTTPTarget(
+        http_request="POST / HTTP/1.1\nHost: example.com\nX-Prompt: {PROMPT_HEADER}\n\n{PROMPT_BODY}",
+        prompt_regex_string=r"\{PROMPT_HEADER\}\n\n\{PROMPT_BODY\}",
+    )
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="first\nsecond")])
+
+    with pytest.raises(ValueError, match="cannot contain CR or LF"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_awaited()
+
+
+@patch("httpx.AsyncClient.request", new_callable=AsyncMock)
+async def test_send_prompt_async_allows_multiline_body_prompt(mock_request, patch_central_database):
+    target = HTTPTarget(
+        http_request="POST / HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n\nbefore:{PROMPT}:after"
+    )
+    message = Message(message_pieces=[MessagePiece(role="user", original_value="first\nsecond")])
+    mock_response = MagicMock()
+    mock_response.content = b"ok"
+    mock_request.return_value = mock_response
+
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["content"] == "before:first\nsecond:after"
 
 
 async def test_send_prompt_async_validation(mock_http_target):
@@ -368,12 +494,14 @@ def test_http_target_init_with_all_args():
         use_tls=False,
         callback_function=return_parsed,
         max_requests_per_minute=10,
+        follow_redirects=True,
         **client_kwargs,
     )
     assert target.http_request == http_request
     assert target.prompt_regex_string == "{PLACEHOLDER_PROMPT}"
     assert target.use_tls is False
     assert target.callback_function == return_parsed
+    assert target.follow_redirects is True
     assert target.httpx_client_kwargs == client_kwargs
     assert target._client is None
 

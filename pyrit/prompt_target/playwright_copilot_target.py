@@ -258,6 +258,8 @@ class PlaywrightCopilotTarget(PromptTarget):
                 either as a single text string or a list of (data, data_type) tuples.
         """
         selectors = self._get_selectors()
+        if any(piece.converted_value_data_type == "text" for piece in message.message_pieces):
+            await self._clear_text_input_async(input_selector=selectors.input_selector)
 
         # Handle multimodal input - process all pieces in the request
         for piece in message.message_pieces:
@@ -377,7 +379,7 @@ class PlaywrightCopilotTarget(PromptTarget):
         Returns:
             List of extracted text strings (may include placeholders)
         """
-        all_text_parts = []
+        all_text_parts: list[str] = []
 
         for group_idx, msg_group in enumerate(ai_message_groups):
             text_elements = await msg_group.query_selector_all(text_selector)
@@ -385,7 +387,7 @@ class PlaywrightCopilotTarget(PromptTarget):
 
             for text_elem in text_elements:
                 text = await text_elem.text_content()
-                if text:
+                if isinstance(text, str) and text:
                     all_text_parts.append(text.strip())
 
         return all_text_parts
@@ -712,10 +714,10 @@ class PlaywrightCopilotTarget(PromptTarget):
         Returns:
             Combined text content from all groups
         """
-        fallback_parts = []
+        fallback_parts: list[str] = []
         for msg_group in ai_message_groups:
             fallback_text = await msg_group.text_content()
-            if fallback_text:
+            if isinstance(fallback_text, str) and fallback_text:
                 fallback_parts.append(fallback_text.strip())
         fallback_result = "\n".join(fallback_parts).strip()
         logger.debug(f"Using fallback text: '{fallback_result}'")
@@ -796,6 +798,13 @@ class PlaywrightCopilotTarget(PromptTarget):
         # For M365 Copilot's contenteditable span, use type() instead of fill()
         await self._page.locator(input_selector).click()  # Focus first
         await self._page.locator(input_selector).type(text)
+
+    async def _clear_text_input_async(self, *, input_selector: str) -> None:
+        """Clear locally staged text so a cancelled send can be retried safely."""
+        input_locator = self._page.locator(input_selector)
+        await input_locator.click()
+        await input_locator.press("ControlOrMeta+A")
+        await input_locator.press("Backspace")
 
     async def _upload_image_async(self, image_path: str) -> None:
         """

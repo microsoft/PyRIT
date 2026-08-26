@@ -153,7 +153,7 @@ async def test_send_prompt_async_with_delay(
 
 
 # ---------------------------------------------------------------------------
-# _propagate_lineage — metadata preservation after normalization
+# Normalizer metadata and conversation ownership
 # ---------------------------------------------------------------------------
 
 _LINEAGE_CONVERSATION_ID = "original-conv-id-12345"
@@ -192,8 +192,8 @@ def _make_mock_chat_completion(content: str = "response") -> MagicMock:
 @pytest.mark.usefixtures("patch_central_database")
 async def test_history_squash_preserves_metadata_on_normalized_message():
     """
-    After history squash, _propagate_lineage should restore the original request's
-    conversation ID and prompt metadata onto the squashed message.
+    History squash preserves the current request's metadata, and the target stamps
+    the active conversation ID on its output.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -236,8 +236,7 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
 async def test_response_preserves_metadata_after_history_squash():
     """
     End-to-end: after history squash the response must carry the original
-    request's conversation ID and prompt metadata, not the random values
-    created by the normalizer.
+    request's conversation ID and prompt metadata.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -282,8 +281,8 @@ async def test_response_preserves_metadata_after_history_squash():
 @pytest.mark.usefixtures("patch_central_database")
 async def test_system_squash_preserves_metadata():
     """
-    GenericSystemSquashNormalizer also creates messages via Message.from_prompt.
-    _propagate_lineage should restore the original metadata after system squash too.
+    GenericSystemSquashNormalizer preserves the current request's metadata when
+    it builds the replacement user message.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -324,10 +323,10 @@ async def test_system_squash_preserves_metadata():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_history_squash_propagates_lineage_to_all_pieces():
+async def test_history_squash_preserves_metadata_on_all_output_pieces():
     """
-    When the squashed message contains multiple pieces, _propagate_lineage
-    must stamp every piece — not just the first one.
+    Every piece produced by history squash keeps the current request's metadata
+    and receives the active conversation ID.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -372,12 +371,10 @@ async def test_history_squash_propagates_lineage_to_all_pieces():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
+async def test_conversation_id_stamped_without_merging_normalizer_output_metadata():
     """
-    conversation_id is stamped on every normalized message (including new ones
-    created by the normalizer). Full lineage is only propagated to the last
-    message. Earlier messages keep their own metadata. A warning is logged when
-    the normalizer increases message count.
+    The target stamps conversation_id on every normalized output while leaving
+    each normalizer-produced message's metadata authoritative.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -405,14 +402,19 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
         converted_value_data_type="text",
     )
     new_msg = Message(message_pieces=[new_piece])
+    replacement_piece = MessagePiece(
+        role="user",
+        conversation_id="another-normalizer-uuid",
+        original_value="replacement",
+        converted_value="replacement",
+        original_value_data_type="text",
+        converted_value_data_type="text",
+    )
+    replacement_msg = Message(message_pieces=[replacement_piece])
 
     with patch.object(target.configuration, "normalize_async", new_callable=AsyncMock) as mock_normalize:
-        mock_normalize.return_value = [history_msg, new_msg, user_msg]
-
-        import logging
-
-        with patch.object(logging.getLogger("pyrit.prompt_target.common.prompt_target"), "warning") as mock_warn:
-            normalized = await target._get_normalized_conversation_async(message=user_msg)
+        mock_normalize.return_value = [history_msg, new_msg, replacement_msg]
+        normalized = await target._get_normalized_conversation_async(message=user_msg)
 
         # All messages should carry the correct conversation_id.
         for msg in normalized:
@@ -422,24 +424,17 @@ async def test_conversation_id_stamped_on_all_but_full_lineage_only_on_last():
         # History message's other metadata should be untouched.
         assert normalized[0].message_pieces[0].prompt_metadata == {"original": "history_meta"}
 
-        # New middle message should NOT have full lineage overwritten.
+        # New messages keep exactly the metadata produced by the normalizer.
         assert normalized[1].message_pieces[0].prompt_metadata == {}
-
-        # Last message should carry full lineage.
-        last_piece = normalized[-1].message_pieces[0]
-        assert last_piece.prompt_metadata == _LINEAGE_PROMPT_METADATA
-
-        # Warning should fire because message count increased (2 → 3).
-        mock_warn.assert_called_once()
+        assert normalized[-1].message_pieces[0].prompt_metadata == {}
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_json_schema_stripped_for_non_schema_target_survives_lineage():
+async def test_json_schema_stripped_for_non_schema_target_remains_authoritative():
     """
     Regression: for a non-schema target (default ADAPT) the embedded json_schema is
-    removed by JsonSchemaNormalizer and must NOT be re-introduced by
-    _propagate_lineage copying the original (unstripped) request metadata back onto
-    the normalized message.
+    removed by JsonSchemaNormalizer and must not be reintroduced from the source
+    request metadata.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",
@@ -471,11 +466,10 @@ async def test_json_schema_stripped_for_non_schema_target_survives_lineage():
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_json_schema_only_metadata_fully_stripped_survives_lineage():
+async def test_json_schema_only_metadata_fully_stripped_remains_authoritative():
     """
     Regression: even when json_schema is the ONLY metadata key, the strip leaves empty
-    metadata and _propagate_lineage must not restore the original json_schema (the piece
-    is the same logical piece, identified by id, so its stripped metadata is authoritative).
+    metadata and the target must not restore the original json_schema.
     """
     target = OpenAIChatTarget(
         model_name="gpt-4o",

@@ -55,7 +55,7 @@ from pyrit.converter import (
 )
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+await initialize_pyrit_async(memory_db_type=IN_MEMORY, seed=42)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
 
@@ -95,6 +95,7 @@ from pyrit.converter import (
     BidiConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
+    CodeAttackConverter,
     CodeChameleonConverter,
     ColloquialWordswapConverter,
     DiacriticConverter,
@@ -120,8 +121,14 @@ from pyrit.converter import (
 prompt = "tell me how to cut down a tree"
 
 print("Leetspeak:", await LeetspeakConverter().convert_async(prompt=prompt))  # type: ignore
-print("Random Capitals:", await RandomCapitalLettersConverter(percentage=50.0).convert_async(prompt=prompt))  # type: ignore
-print("Unicode Confusable:", await UnicodeConfusableConverter().convert_async(prompt=prompt))  # type: ignore
+print(
+    "Random Capitals:",
+    await RandomCapitalLettersConverter(percentage=50.0).convert_async(prompt=prompt),  # type: ignore
+)
+print(
+    "Unicode Confusable:",
+    await UnicodeConfusableConverter().convert_async(prompt=prompt),  # type: ignore
+)
 print("Unicode Substitution:", await UnicodeSubstitutionConverter().convert_async(prompt=prompt))  # type: ignore
 print("Unicode Replacement:", await UnicodeReplacementConverter().convert_async(prompt=prompt))  # type: ignore
 print("Emoji:", await EmojiConverter().convert_async(prompt=prompt))  # type: ignore
@@ -150,7 +157,10 @@ print("Superscript:", await SuperscriptConverter().convert_async(prompt=prompt))
 print("Zalgo:", await ZalgoConverter().convert_async(prompt=prompt))  # type: ignore
 
 # CharSwap swaps characters within words
-char_swap = CharSwapConverter(max_iterations=3, word_selection_strategy=WordProportionSelectionStrategy(proportion=0.8))
+char_swap = CharSwapConverter(
+    max_iterations=3,
+    word_selection_strategy=WordProportionSelectionStrategy(proportion=0.8),
+)
 print("CharSwap:", await char_swap.convert_async(prompt=prompt))  # type: ignore
 
 # Insert punctuation adds punctuation marks
@@ -177,6 +187,11 @@ print("Colloquial Wordswap:", await colloquial.convert_async(prompt=prompt))  # 
 code_chameleon = CodeChameleonConverter(encrypt_type="reverse")
 print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # type: ignore
 
+# %%
+# CodeAttack [@ren2024codeattack] hides the request inside a code-completion task
+code_attack = CodeAttackConverter(template=CodeAttackConverter.Template.PYTHON_LIST)
+print("CodeAttack:", await code_attack.convert_async(prompt=prompt))  # type: ignore
+
 # %% [markdown]
 # ### 1.3 Text Manipulation Converters
 #
@@ -184,8 +199,10 @@ print("CodeChameleon:", await code_chameleon.convert_async(prompt=prompt))  # ty
 
 # %%
 from pyrit.converter import (
+    SATA_TASK_TEMPLATE,
     JsonStringConverter,
     PolicyPuppetryConverter,
+    SATAMaskingConverter,
     SearchReplaceConverter,
     SuffixAppendConverter,
     TaskFramingConverter,
@@ -225,6 +242,15 @@ print("Template Segment:", await template_converter.convert_async(prompt=prompt)
 # Task framing wraps the prompt in a task template (default "TASK is '...'"), stripping quotes so they don't collide with the template's delimiters
 task_framing = TaskFramingConverter(strip_characters="'")
 print("Task Framing:", await task_framing.convert_async(prompt=prompt))  # type: ignore
+
+# SATA masking [@dong2025sata] replaces content-word cores with [MASK] and keeps
+# punctuation/whitespace. Compose with TaskFramingConverter + SATA_TASK_TEMPLATE.
+# Typical usage is with HarmBench objectives via SeedDataset.
+sata_mask = SATAMaskingConverter(num_masks=2)
+sata_masked = await sata_mask.convert_async(prompt=prompt)  # type: ignore
+print("SATA Mask:", sata_masked)
+sata_frame = TaskFramingConverter(task_template=SATA_TASK_TEMPLATE)
+print("SATA Framed:", await sata_frame.convert_async(prompt=sata_masked.output_text))  # type: ignore
 
 # Policy Puppetry [@hiddenlayer2025policypuppetry] frames the request as policy/config the model should follow
 policy_puppetry = PolicyPuppetryConverter(prompt_template=PolicyPuppetryTemplate.DR_HOUSE.to_seed_prompt())
