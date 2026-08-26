@@ -3,7 +3,6 @@
 
 import asyncio
 import json
-import logging
 import pathlib
 import random
 import uuid
@@ -18,10 +17,10 @@ from pyrit.converter.puzzled.puzzle_builders import (
     build_word_search,
     crossword_symbol_map,
 )
+from pyrit.exceptions import EmptyResponseException
+from pyrit.exceptions.exceptions_helpers import remove_markdown_json
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-
-logger = logging.getLogger(__name__)
 
 # Instruction for the optional clue-generation model. It produces the paper's "indirect
 # semantic description" (Ahn & Lee, arXiv:2508.01306): a short euphemistic definition that lets
@@ -125,7 +124,7 @@ class PuzzledConverter(Converter):
             raise ValueError(f"num_to_mask must be a positive integer or None, got {num_to_mask}.")
 
         self._num_to_mask = num_to_mask
-        self._essential_words = essential_words
+        self._essential_words = list(essential_words) if essential_words else []
         self._seed = seed
         self._converter_target = converter_target
         # Cache each word's generated clue, as the paper prescribes, so a later conversion
@@ -141,13 +140,18 @@ class PuzzledConverter(Converter):
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
-        Build the identifier with the puzzle type and (if any) the clue-generation target.
+        Build the identifier with all conversion behavior and any clue-generation target.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
         return self._create_identifier(
-            params={"puzzle_type": self._puzzle_type.value},
+            params={
+                "puzzle_type": self._puzzle_type.value,
+                "num_to_mask": self._num_to_mask,
+                "essential_words": sorted({word.lower() for word in self._essential_words}),
+                "seed": self._seed,
+            },
             converter_target=self._converter_target.get_identifier() if self._converter_target else None,
         )
 
@@ -228,16 +232,18 @@ class PuzzledConverter(Converter):
 
         Only words with no cached clue are requested, and every requested word is then cached
         (with an empty string when the model returned nothing usable for it) so it is asked for
-        at most once. A failed request caches nothing, so a later conversion can retry after a
-        transient target error. Returns an empty mapping when no clue-generation target is
-        configured, and any failure degrades to an empty or partial mapping, so the converter
-        always falls back to the deterministic length/POS clue.
+        at most once. Invalid clue content falls back to deterministic length/POS clues. Target
+        errors propagate so configuration, authentication, and service failures remain visible.
+        Returns an empty mapping when no clue-generation target is configured.
 
         Args:
             words (list[str]): The masked words needing clues.
 
         Returns:
             dict[str, str]: Lowercased word to semantic description (may be empty or partial).
+
+        Raises:
+            EmptyResponseException: If the clue-generation target returns no response.
         """
         target = self._converter_target
         missing = [word for word in words if word.lower() not in self._clue_cache]
@@ -257,14 +263,14 @@ class PuzzledConverter(Converter):
                     )
                 ]
             )
-            try:
-                response = await target.send_prompt_async(message=request)
-            except Exception as exc:  # noqa: BLE001 - clue generation is best-effort; fall back on any error
-                logger.warning("PuzzledConverter clue generation failed (%s); using deterministic clues.", exc)
-            else:
-                parsed = self._parse_semantic_clues(response[0].get_value(), missing)
-                for word in missing:
-                    self._clue_cache[word.lower()] = parsed.get(word.lower(), "")
+            response = await target.send_prompt_async(message=request)
+            if not response:
+                raise EmptyResponseException(
+                    message="The PuzzledConverter clue-generation target returned no response."
+                )
+            parsed = self._parse_semantic_clues(response[0].get_value(), missing)
+            for word in missing:
+                self._clue_cache[word.lower()] = parsed.get(word.lower(), "")
 
         return {word.lower(): clue for word in words if (clue := self._clue_cache.get(word.lower()))}
 
@@ -284,16 +290,11 @@ class PuzzledConverter(Converter):
         Returns:
             dict[str, str]: Lowercased word to semantic description (may be empty or partial).
         """
-        text = raw or ""
-        start = text.find("{")
-        if start == -1:
-            return {}
         try:
-            # raw_decode stops at the end of the first complete JSON object, so trailing
-            # prose or extra braces in the response cannot make a valid object fail to parse.
-            # Decoding from a "{" either yields an object or raises, so no type check is needed.
-            parsed, _ = json.JSONDecoder().raw_decode(text[start:])
-        except ValueError:
+            parsed = json.loads(remove_markdown_json(raw or ""))
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        if not isinstance(parsed, dict):
             return {}
         requested = {w.lower() for w in words}
         # JSON object keys are always strings, but a value can be any JSON type, so only

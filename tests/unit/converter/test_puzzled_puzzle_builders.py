@@ -47,6 +47,13 @@ class _NeverFits(random.Random):
         return args[0] - 1
 
 
+class _NeverShuffles(random.Random):
+    """An rng that leaves the anagram source unchanged."""
+
+    def shuffle(self, x):
+        return None
+
+
 def test_puzzle_type_values():
     assert PuzzleType.WORD_SEARCH.value == "word_search"
     assert PuzzleType.ANAGRAM.value == "anagram"
@@ -75,6 +82,20 @@ def test_anagram_is_reproducible_with_same_seed():
     assert build_anagram(words, random.Random(42)) == build_anagram(words, random.Random(42))
 
 
+def test_anagram_retries_when_first_shuffle_is_unchanged():
+    assert build_anagram(["AB"], random.Random(0)) == "BA"
+
+
+def test_anagram_returns_only_possible_arrangement():
+    assert build_anagram(["AA"], random.Random(0)) == "AA"
+
+
+def test_anagram_uses_fallback_when_shuffles_never_change_source():
+    result = build_anagram(["ABC"], _NeverShuffles())
+
+    assert result == "BCA"
+
+
 def test_anagram_empty_list_raises():
     with pytest.raises(ValueError):
         build_anagram([], random.Random(0))
@@ -97,6 +118,11 @@ def test_crossword_symbol_map_picks_top_three_shared_letters():
 def test_crossword_symbol_map_ignores_unshared_letters():
     # No letter is shared across two of these words, so nothing is masked.
     assert crossword_symbol_map(["cat", "dog"]) == {}
+
+
+def test_crossword_symbol_map_prioritizes_number_of_words_before_total_frequency():
+    mapping = crossword_symbol_map(["AAAAAAAAAB", "AB", "B"])
+    assert mapping == {"B": "#", "A": "*"}
 
 
 def test_crossword_build_applies_mapping_per_word():

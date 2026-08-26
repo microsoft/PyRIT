@@ -34,6 +34,9 @@ _CROSSWORD_SYMBOLS = ("#", "*", "@")
 # How many placement attempts to make per word before growing the grid.
 _MAX_PLACEMENT_ATTEMPTS = 200
 
+# How many shuffles to try before using a deterministic non-identity permutation.
+_MAX_ANAGRAM_SHUFFLES = 100
+
 # How many times the grid may grow before the build is abandoned. The paper's word-search
 # algorithm (Ahn & Lee, arXiv:2508.01306, Appendix A.3) is likewise a bounded retry loop
 # that raises when placement keeps failing, rather than an unbounded one.
@@ -90,9 +93,17 @@ def build_anagram(words: list[str], rng: random.Random) -> str:
     Raises:
         ValueError: If ``words`` is empty or any word has no letters after cleaning.
     """
-    letters = list("".join(_normalize(words)))
-    rng.shuffle(letters)
-    return "".join(letters)
+    source = "".join(_normalize(words))
+    if len(source) <= 1 or len(set(source)) == 1:
+        return source
+
+    letters = list(source)
+    for _ in range(_MAX_ANAGRAM_SHUFFLES):
+        rng.shuffle(letters)
+        result = "".join(letters)
+        if result != source:
+            return result
+    return source[1:] + source[0]
 
 
 def crossword_symbol_map(words: list[str]) -> dict[str, str]:
@@ -100,9 +111,9 @@ def crossword_symbol_map(words: list[str]) -> dict[str, str]:
     Choose which letters to mask in the crossword and map them to symbols.
 
     A letter is eligible when it appears in at least two different words (the shared
-    intersections a solver uses to deduce the mapping). The up-to-three most frequent
-    eligible letters are mapped to ``#``, ``*`` and ``@``. Ties break alphabetically so
-    the result is deterministic.
+    intersections a solver uses to deduce the mapping). Eligible letters rank first by
+    how many words contain them, then by total frequency. The top three are mapped to
+    ``#``, ``*`` and ``@``; remaining ties break alphabetically for determinism.
 
     Args:
         words (list[str]): The masked keywords to encode.
@@ -121,7 +132,7 @@ def crossword_symbol_map(words: list[str]) -> dict[str, str]:
     total_frequency = Counter("".join(normalized))
 
     shared = [letter for letter, count in words_per_letter.items() if count >= 2]
-    shared.sort(key=lambda letter: (-total_frequency[letter], letter))
+    shared.sort(key=lambda letter: (-words_per_letter[letter], -total_frequency[letter], letter))
 
     return {letter: _CROSSWORD_SYMBOLS[i] for i, letter in enumerate(shared[: len(_CROSSWORD_SYMBOLS)])}
 

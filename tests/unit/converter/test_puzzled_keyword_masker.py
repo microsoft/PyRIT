@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 import sys
+import threading
 import types
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
@@ -215,3 +217,29 @@ def test_get_nlp_caches_loaded_pipeline():
 
         fake_spacy.load = _raise  # type: ignore[attr-defined]
         assert keyword_masker._get_nlp() is sentinel
+
+
+def test_get_nlp_waits_for_concurrent_initialization():
+    sentinel = object()
+    load_started = threading.Event()
+    release_load = threading.Event()
+    load_count = 0
+    fake_spacy = types.ModuleType("spacy")
+
+    def _load(_name: str) -> object:
+        nonlocal load_count
+        load_count += 1
+        load_started.set()
+        release_load.wait(timeout=5)
+        return sentinel
+
+    fake_spacy.load = _load  # type: ignore[attr-defined]
+    with patch.dict(sys.modules, {"spacy": fake_spacy}), ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(keyword_masker._get_nlp)
+        assert load_started.wait(timeout=5)
+        second = executor.submit(keyword_masker._get_nlp)
+        release_load.set()
+
+        assert first.result(timeout=5) is sentinel
+        assert second.result(timeout=5) is sentinel
+    assert load_count == 1

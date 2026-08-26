@@ -16,6 +16,7 @@ selection; without it, keywords are chosen by length alone.
 
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -93,6 +94,7 @@ _SUPPLEMENTARY_WORDS = frozenset(
 # Module-level spaCy pipeline, loaded once on first use.
 _nlp = None
 _nlp_loaded = False
+_nlp_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -151,15 +153,19 @@ def _get_nlp() -> Any:
     global _nlp, _nlp_loaded
     if _nlp_loaded:
         return _nlp
-    _nlp_loaded = True
-    try:
-        import spacy  # type: ignore[ty:unresolved-import]
 
-        _nlp = spacy.load("en_core_web_sm")
-    except Exception:
-        logger.info("spaCy model 'en_core_web_sm' unavailable; using length-based keyword selection instead.")
-        _nlp = None
-    return _nlp
+    with _nlp_lock:
+        if _nlp_loaded:
+            return _nlp
+        try:
+            import spacy  # type: ignore[ty:unresolved-import]
+
+            _nlp = spacy.load("en_core_web_sm")
+        except (ImportError, OSError):
+            logger.info("spaCy model 'en_core_web_sm' unavailable; using length-based keyword selection instead.")
+            _nlp = None
+        _nlp_loaded = True
+        return _nlp
 
 
 def _pos_lookup(prompt: str) -> dict[str, str]:
