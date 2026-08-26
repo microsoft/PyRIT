@@ -5,6 +5,7 @@
 Tests for backend initializer service and routes.
 """
 
+import asyncio
 from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,12 +18,14 @@ from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
     ApplyInitializerResponse,
     BaselineInitializerSetting,
+    CustomInitializerListResponse,
+    CustomInitializerResponse,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisteredInitializer,
 )
 from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
-from pyrit.models import AdditionalInitializer, CustomInitializer, Parameter
+from pyrit.models import AdditionalInitializer, Parameter
 from pyrit.registry import InitializerMetadata
 
 
@@ -876,9 +879,6 @@ class TestInitializerServiceRegister:
             result = await service.register_initializer_async(name="my_custom", script_content=_SAMPLE_SCRIPT)
 
             mock_registry.register_from_content.assert_called_once_with(name="my_custom", script_content=_SAMPLE_SCRIPT)
-            service._memory.add_custom_initializer.assert_called_once_with(
-                initializer=CustomInitializer(initializer_name="my_custom", script_content=_SAMPLE_SCRIPT)
-            )
             assert result.initializer_name == "my_custom"
 
     async def test_register_initializer_propagates_value_error(self) -> None:
@@ -892,57 +892,101 @@ class TestInitializerServiceRegister:
             with pytest.raises(ValueError):
                 await service.register_initializer_async(name="bad", script_content="x = 1")
 
-    async def test_register_initializer_rolls_back_registry_when_persistence_fails(self) -> None:
+    async def test_register_initializer_propagates_storage_failure(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._memory = MagicMock()
-            service._memory.add_custom_initializer.side_effect = RuntimeError("database unavailable")
+            service._registry.register_from_content.side_effect = RuntimeError("storage unavailable")
 
-            with pytest.raises(RuntimeError, match="database unavailable"):
+            with pytest.raises(RuntimeError, match="storage unavailable"):
                 await service.register_initializer_async(name="my_custom", script_content=_SAMPLE_SCRIPT)
 
-            service._registry.unregister_and_cleanup.assert_called_once_with("my_custom")
-
-    async def test_list_custom_initializers_returns_persisted_sources(self) -> None:
-        custom = CustomInitializer(initializer_name="my_custom", script_content=_SAMPLE_SCRIPT)
+    async def test_list_custom_initializers_returns_stored_sources(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
-            service._memory = MagicMock()
-            service._memory.get_custom_initializers.return_value = [custom]
+            service._registry = MagicMock()
+            service._custom_initializers_cache = None
+            service._custom_cache_expires_at = 0.0
+            service._custom_cache_lock = asyncio.Lock()
+            service._custom_refresh_task = None
+            service._registry.custom_scripts_source = "C:/custom"
+            service._registry.list_custom_initializer_sources.return_value = {"my_custom": _SAMPLE_SCRIPT}
+            service._registry.get_custom_initializer_source.return_value = "C:/custom/my_custom.py"
 
             result = await service.list_custom_initializers_async()
 
-            assert result == [custom]
+            assert result.source == "C:/custom"
+            assert result.items == [
+                CustomInitializerResponse(
+                    initializer_name="my_custom",
+                    script_content=_SAMPLE_SCRIPT,
+                    source="C:/custom/my_custom.py",
+                )
+            ]
 
-    async def test_register_persisted_custom_initializers_restores_all_sources(self) -> None:
-        first = CustomInitializer(initializer_name="first", script_content="first source")
-        second = CustomInitializer(initializer_name="second", script_content="second source")
+    async def test_list_custom_initializers_refreshes_expired_cache_in_background(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._memory = MagicMock()
-            service._memory.get_custom_initializers.return_value = [first, second]
+            service._custom_initializers_cache = None
+            service._custom_cache_expires_at = 0.0
+            service._custom_cache_lock = asyncio.Lock()
+            service._custom_refresh_task = None
+            service._registry.custom_scripts_source = "C:/custom"
+            service._registry.list_custom_initializer_sources.side_effect = [
+                {"my_custom": "VALUE = 1\n"},
+                {"my_custom": "VALUE = 2\n"},
+            ]
+            service._registry.get_custom_initializer_source.return_value = "C:/custom/my_custom.py"
 
-            await service.register_persisted_custom_initializers_async()
+            with patch(
+                "pyrit.backend.services.initializer_service.time.monotonic", return_value=100.0
+            ) as monotonic_mock:
+                first = await service.list_custom_initializers_async()
+                monotonic_mock.return_value = 111.0
+                stale = await service.list_custom_initializers_async()
+                assert service._custom_refresh_task is not None
+                await service._custom_refresh_task
+                refreshed = await service.list_custom_initializers_async()
 
-            calls = service._registry.register_from_content.call_args_list
-            assert calls[0].kwargs == {"name": "first", "script_content": "first source"}
-            assert calls[1].kwargs == {"name": "second", "script_content": "second source"}
+            assert first.items[0].script_content == "VALUE = 1\n"
+            assert stale.items[0].script_content == "VALUE = 1\n"
+            assert refreshed.items[0].script_content == "VALUE = 2\n"
+            assert service._registry.list_custom_initializer_sources.call_count == 2
 
-    async def test_register_persisted_custom_initializers_isolates_failures(self) -> None:
-        first = CustomInitializer(initializer_name="first", script_content="bad source")
-        second = CustomInitializer(initializer_name="second", script_content="good source")
+    async def test_restore_custom_initializers_delegates_to_registry(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._registry.register_from_content.side_effect = [ValueError("bad source"), "second"]
-            service._memory = MagicMock()
-            service._memory.get_custom_initializers.return_value = [first, second]
+            service._registry.custom_scripts_source = "C:/custom"
+            service._registry.list_custom_initializer_sources.return_value = {"my_custom": _SAMPLE_SCRIPT}
+            service._registry.get_custom_initializer_source.return_value = "C:/custom/my_custom.py"
+            service._custom_initializers_cache = None
+            service._custom_cache_expires_at = 0.0
+            service._custom_cache_lock = asyncio.Lock()
+            service._custom_refresh_task = None
 
-            await service.register_persisted_custom_initializers_async()
+            await service.restore_custom_initializers_async()
 
-            assert service._registry.register_from_content.call_count == 2
+            service._registry.restore_custom_initializers.assert_called_once_with()
+            assert service._custom_initializers_cache is not None
+            assert service._custom_initializers_cache.items[0].script_content == _SAMPLE_SCRIPT
+
+    async def test_update_initializer_calls_registry(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = [
+                _make_initializer_metadata(registry_name="my_custom", class_name="UpdatedInitializer")
+            ]
+
+            result = await service.update_initializer_async(name="my_custom", script_content=_SAMPLE_SCRIPT)
+
+            service._registry.update_from_content.assert_called_once_with(
+                name="my_custom",
+                script_content=_SAMPLE_SCRIPT,
+            )
+            assert result.initializer_name == "my_custom"
 
 
 class TestInitializerServiceUnregister:
@@ -958,7 +1002,6 @@ class TestInitializerServiceUnregister:
             await service.unregister_initializer_async(initializer_name="target")
 
             mock_registry.unregister_and_cleanup.assert_called_once_with("target")
-            service._memory.delete_custom_initializer.assert_called_once_with(initializer_name="target")
 
     async def test_unregister_initializer_propagates_key_error(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
@@ -995,7 +1038,6 @@ class TestInitializerServiceUnregister:
                 await service.unregister_initializer_async(initializer_name="custom")
 
             service._registry.unregister_and_cleanup.assert_not_called()
-            service._memory.delete_custom_initializer.assert_not_called()
 
 
 # ============================================================================
@@ -1006,17 +1048,31 @@ class TestInitializerServiceUnregister:
 class TestRegisterInitializerRoute:
     """Tests for POST /api/initializers route."""
 
-    def test_get_custom_initializers_returns_persisted_sources(self, client: TestClient) -> None:
-        custom = CustomInitializer(initializer_name="my_custom", script_content=_SAMPLE_SCRIPT)
+    def test_get_custom_initializers_returns_403_when_disabled(self, client: TestClient) -> None:
+        app.state.allow_custom_initializers = False
+
+        response = client.get("/api/initializers/custom")
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_get_custom_initializers_returns_storage_source_and_items(
+        self, client_with_custom_initializers_enabled: TestClient
+    ) -> None:
+        custom = CustomInitializerResponse(
+            initializer_name="my_custom",
+            script_content=_SAMPLE_SCRIPT,
+            source="C:/custom/my_custom.py",
+        )
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.list_custom_initializers_async = AsyncMock(return_value=[custom])
+            response_model = CustomInitializerListResponse(source="C:/custom", items=[custom])
+            mock_service.list_custom_initializers_async = AsyncMock(return_value=response_model)
             mock_get_service.return_value = mock_service
 
-            response = client.get("/api/initializers/custom")
+            response = client_with_custom_initializers_enabled.get("/api/initializers/custom")
 
             assert response.status_code == status.HTTP_200_OK
-            assert response.json() == [custom.model_dump()]
+            assert response.json() == response_model.model_dump()
 
     def test_post_returns_403_when_custom_initializers_disabled(self, client: TestClient) -> None:
         app.state.allow_custom_initializers = False
@@ -1159,3 +1215,58 @@ class TestUnregisterInitializerRoute:
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
             assert "additional initializer settings reference it" in response.json()["detail"]
+
+
+class TestUpdateInitializerRoute:
+    """Tests for PUT /api/initializers/{name} route."""
+
+    def test_put_returns_403_when_custom_initializers_disabled(self, client: TestClient) -> None:
+        app.state.allow_custom_initializers = False
+
+        response = client.put("/api/initializers/custom", json={"script_content": _SAMPLE_SCRIPT})
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_put_updates_custom_initializer(self, client_with_custom_initializers_enabled: TestClient) -> None:
+        summary = RegisteredInitializer(
+            initializer_name="custom",
+            initializer_type="UpdatedInitializer",
+            description="Updated custom initializer",
+        )
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.update_initializer_async = AsyncMock(return_value=summary)
+            mock_get_service.return_value = mock_service
+
+            response = client_with_custom_initializers_enabled.put(
+                "/api/initializers/custom",
+                json={"script_content": _SAMPLE_SCRIPT},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_service.update_initializer_async.assert_awaited_once_with(
+            name="custom",
+            script_content=_SAMPLE_SCRIPT,
+        )
+
+    @pytest.mark.parametrize(
+        ("error", "expected_status"),
+        [(KeyError("custom"), status.HTTP_404_NOT_FOUND), (ValueError("invalid source"), status.HTTP_400_BAD_REQUEST)],
+    )
+    def test_put_maps_update_errors(
+        self,
+        client_with_custom_initializers_enabled: TestClient,
+        error: Exception,
+        expected_status: int,
+    ) -> None:
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.update_initializer_async = AsyncMock(side_effect=error)
+            mock_get_service.return_value = mock_service
+
+            response = client_with_custom_initializers_enabled.put(
+                "/api/initializers/custom",
+                json={"script_content": _SAMPLE_SCRIPT},
+            )
+
+        assert response.status_code == expected_status

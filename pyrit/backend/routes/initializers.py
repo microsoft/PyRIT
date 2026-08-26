@@ -26,13 +26,15 @@ from pyrit.backend.models.initializers import (
     ApplyInitializerResponse,
     BaselineInitializerSetting,
     CreateAdditionalInitializerRequest,
+    CustomInitializerListResponse,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisterInitializerRequest,
     UpdateAdditionalInitializerRequest,
+    UpdateCustomInitializerRequest,
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
-from pyrit.models import AdditionalInitializer, CustomInitializer
+from pyrit.models import AdditionalInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
 
 router = APIRouter(prefix="/initializers", tags=["initializers"])
@@ -251,17 +253,21 @@ async def apply_initializer(  # pyrit-async-suffix-exempt
 
 @router.get(
     "/custom",
-    response_model=list[CustomInitializer],
+    response_model=CustomInitializerListResponse,
 )
-async def list_custom_initializers() -> list[CustomInitializer]:  # pyrit-async-suffix-exempt
+async def list_custom_initializers(request: Request) -> CustomInitializerListResponse:  # pyrit-async-suffix-exempt
     """
-    List user-defined initializer source persisted in Central Memory.
+    List user-defined initializer source from configured script storage.
+
+    Args:
+        request: The incoming FastAPI request.
 
     Returns:
-        list[CustomInitializer]: Persisted custom initializer definitions.
+        CustomInitializerListResponse: Storage source and stored custom initializer definitions.
     """
+    _check_custom_initializers_allowed(request)
     service = get_initializer_service()
-    return list(await service.list_custom_initializers_async())
+    return await service.list_custom_initializers_async()
 
 
 @router.get(
@@ -329,6 +335,44 @@ async def register_initializer(  # pyrit-async-suffix-exempt
         if "already registered" in detail:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from None
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from None
+
+
+@router.put(
+    "/{initializer_name}",
+    response_model=RegisteredInitializer,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid initializer source"},
+        403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
+        404: {"model": ProblemDetail, "description": "Initializer not found"},
+    },
+)
+async def update_initializer(  # pyrit-async-suffix-exempt
+    request: Request,
+    initializer_name: str,
+    body: UpdateCustomInitializerRequest,
+) -> RegisteredInitializer:
+    """
+    Replace a custom initializer's stored Python source.
+
+    Args:
+        request: The incoming FastAPI request.
+        initializer_name: Registry name of the custom initializer.
+        body: Replacement Python source.
+
+    Returns:
+        RegisteredInitializer: Updated initializer metadata.
+    """
+    _check_custom_initializers_allowed(request)
+    service = get_initializer_service()
+    try:
+        return await service.update_initializer_async(name=initializer_name, script_content=body.script_content)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Initializer '{initializer_name}' not found",
+        ) from None
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from None
 
 
 @router.delete(

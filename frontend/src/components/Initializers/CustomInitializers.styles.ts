@@ -4,36 +4,22 @@ export const useCustomInitializersStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',
+    flex: 1,
     gap: tokens.spacingVerticalM,
     minWidth: 0,
+    minHeight: 0,
   },
-  header: {
+  editorField: {
     display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: tokens.spacingVerticalM,
+    flexDirection: 'column',
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
   },
-  tableWrap: {
-    overflowX: 'auto',
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: tokens.colorNeutralBackground1,
-  },
-  nameCell: {
-    verticalAlign: 'top',
-  },
-  clickableRow: {
-    cursor: 'pointer',
-    '&:hover': {
-      backgroundColor: tokens.colorNeutralBackground1Hover,
-    },
-    '&:focus-within': {
-      backgroundColor: tokens.colorNeutralBackground1Hover,
-    },
-  },
-  actionCell: {
-    width: '7rem',
-    verticalAlign: 'top',
+  editorActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: tokens.spacingHorizontalS,
   },
   dialogBody: {
     display: 'flex',
@@ -43,9 +29,5 @@ export const useCustomInitializersStyles = makeStyles({
   sourceDialog: {
     width: 'min(60rem, 90vw)',
     maxWidth: 'none',
-  },
-  emptyState: {
-    padding: tokens.spacingVerticalXL,
-    color: tokens.colorNeutralForeground3,
   },
 })

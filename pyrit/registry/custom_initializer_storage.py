@@ -1,0 +1,225 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""Storage backends for custom initializer Python source."""
+
+from __future__ import annotations
+
+import time
+from contextlib import contextmanager, suppress
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, unquote, urlparse
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from azure.storage.blob import ContainerClient
+
+_AZURE_BLOB_HOST_SUFFIXES = (
+    ".blob.core.windows.net",
+    ".blob.core.chinacloudapi.cn",
+    ".blob.core.usgovcloudapi.net",
+    ".blob.core.cloudapi.de",
+)
+_CACHE_TTL_SECONDS = 10.0
+
+
+def is_azure_blob_source_uri(value: str) -> bool:
+    """Return whether a value is an Azure Blob container URI with an optional blob prefix."""
+    parsed_uri = urlparse(value)
+    hostname = parsed_uri.hostname or ""
+    return (
+        parsed_uri.scheme == "https"
+        and any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in _AZURE_BLOB_HOST_SUFFIXES)
+        and parsed_uri.username is None
+        and parsed_uri.password is None
+        and parsed_uri.port is None
+        and bool(parsed_uri.path.strip("/"))
+    )
+
+
+class CustomInitializerStorage:
+    """Read and write custom initializer scripts in a directory or blob container."""
+
+    def __init__(self, *, source: str) -> None:
+        """
+        Initialize storage from a local directory or Azure Blob source URI.
+
+        Raises:
+            ValueError: If the source has an unsupported URI scheme.
+        """
+        self._source = source
+        self._is_blob = is_azure_blob_source_uri(source)
+        if not self._is_blob and urlparse(source).scheme and not Path(source).drive:
+            raise ValueError(
+                "Custom initializer source must be a local directory or Azure Blob container URI "
+                "with an optional blob prefix"
+            )
+        self._container_url, self._blob_prefix = self._parse_blob_source() if self._is_blob else (None, "")
+        self._cached_scripts: dict[str, str] | None = None
+        self._cache_expires_at = 0.0
+
+    @property
+    def display_source(self) -> str:
+        """Storage source without Azure Blob credentials."""
+        if not self._is_blob:
+            return self._source
+        parsed_uri = urlparse(self._source)
+        return parsed_uri._replace(query="", fragment="").geturl()
+
+    def get_script_source(self, name: str) -> str:
+        """
+        Get the credential-free location of a custom initializer script.
+
+        Returns:
+            str: Local file path or Azure Blob URI for the script.
+        """
+        if self._is_blob:
+            return f"{self.display_source.rstrip('/')}/{name}.py"
+        return str(Path(self._source).expanduser() / f"{name}.py")
+
+    def list_scripts(self) -> dict[str, str]:
+        """
+        List stored Python scripts by registry name.
+
+        Returns:
+            dict[str, str]: Script content keyed by registry name.
+        """
+        if self._cached_scripts is not None and time.monotonic() < self._cache_expires_at:
+            return dict(self._cached_scripts)
+
+        if self._is_blob:
+            scripts = self._list_blob_scripts()
+        else:
+            directory = Path(self._source).expanduser()
+            directory.mkdir(parents=True, exist_ok=True)
+            scripts = {path.stem: path.read_text(encoding="utf-8") for path in sorted(directory.glob("*.py"))}
+
+        self._cached_scripts = scripts
+        self._cache_expires_at = time.monotonic() + _CACHE_TTL_SECONDS
+        return dict(scripts)
+
+    def save_script(self, *, name: str, content: str) -> None:
+        """Persist one custom initializer script."""
+        if self._is_blob:
+            with self._open_container_client() as client:
+                client.upload_blob(name=self._get_blob_name(name), data=content.encode("utf-8"), overwrite=True)
+        else:
+            directory = Path(self._source).expanduser()
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"{name}.py").write_text(content, encoding="utf-8")
+
+        self._update_cached_script(name=name, content=content)
+
+    def delete_script(self, name: str) -> None:
+        """Delete one custom initializer script if it exists."""
+        if self._is_blob:
+            from azure.core.exceptions import ResourceNotFoundError
+
+            with self._open_container_client() as client:
+                with suppress(ResourceNotFoundError):
+                    client.delete_blob(self._get_blob_name(name))
+        else:
+            (Path(self._source).expanduser() / f"{name}.py").unlink(missing_ok=True)
+
+        self._delete_cached_script(name)
+
+    def _update_cached_script(self, *, name: str, content: str) -> None:
+        """Update a fresh cache after a successful write, or invalidate a stale cache."""
+        now = time.monotonic()
+        if self._cached_scripts is None or now >= self._cache_expires_at:
+            self._cached_scripts = None
+            self._cache_expires_at = 0.0
+            return
+        self._cached_scripts[name] = content
+        self._cache_expires_at = now + _CACHE_TTL_SECONDS
+
+    def _delete_cached_script(self, name: str) -> None:
+        """Update a fresh cache after a successful delete, or invalidate a stale cache."""
+        now = time.monotonic()
+        if self._cached_scripts is None or now >= self._cache_expires_at:
+            self._cached_scripts = None
+            self._cache_expires_at = 0.0
+            return
+        self._cached_scripts.pop(name, None)
+        self._cache_expires_at = now + _CACHE_TTL_SECONDS
+
+    def _list_blob_scripts(self) -> dict[str, str]:
+        """
+        Read Python scripts from the configured Azure Blob container.
+
+        Returns:
+            dict[str, str]: Script content keyed by blob stem.
+        """
+        scripts: dict[str, str] = {}
+        with self._open_container_client() as client:
+            prefix = f"{self._blob_prefix}/" if self._blob_prefix else None
+            blobs = client.list_blobs(name_starts_with=prefix) if prefix else client.list_blobs()
+            blob_names = sorted(
+                blob.name for blob in blobs if self._is_direct_python_blob(blob_name=blob.name, prefix=prefix)
+            )
+            for blob_name in blob_names:
+                relative_name = blob_name.removeprefix(prefix or "")
+                scripts[PurePosixPath(relative_name).stem] = client.download_blob(blob_name).readall().decode("utf-8")
+        return scripts
+
+    def _parse_blob_source(self) -> tuple[str, str]:
+        """
+        Split the configured source into a container URL and blob prefix.
+
+        Returns:
+            tuple[str, str]: The container URL and decoded blob prefix.
+        """
+        parsed_uri = urlparse(self._source)
+        container_path, _, prefix = parsed_uri.path.strip("/").partition("/")
+        container_url = parsed_uri._replace(path=f"/{container_path}", fragment="").geturl()
+        return container_url, unquote(prefix).strip("/")
+
+    def _get_blob_name(self, name: str) -> str:
+        """
+        Build the blob name for a registry entry.
+
+        Returns:
+            str: The prefixed Python blob name.
+        """
+        file_name = f"{name}.py"
+        return f"{self._blob_prefix}/{file_name}" if self._blob_prefix else file_name
+
+    @staticmethod
+    def _is_direct_python_blob(*, blob_name: str, prefix: str | None) -> bool:
+        """Return whether a blob is a direct Python child of the configured prefix."""
+        if prefix and not blob_name.startswith(prefix):
+            return False
+        relative_name = blob_name.removeprefix(prefix or "")
+        return "/" not in relative_name and PurePosixPath(relative_name).suffix == ".py"
+
+    @contextmanager
+    def _open_container_client(self) -> Generator[ContainerClient, None, None]:
+        """
+        Yield an Azure Blob container client and close its credential.
+
+        Yields:
+            ContainerClient: A client scoped to the configured container.
+
+        Raises:
+            RuntimeError: If called for a non-Blob source.
+        """
+        from azure.identity import DefaultAzureCredential
+        from azure.storage.blob import ContainerClient
+
+        if self._container_url is None:
+            raise RuntimeError("Azure Blob container URL is not configured")
+
+        parsed_uri = urlparse(self._container_url)
+        if "sig" in parse_qs(parsed_uri.query):
+            with ContainerClient.from_container_url(container_url=self._container_url) as client:
+                yield client
+            return
+
+        with DefaultAzureCredential() as credential:
+            with ContainerClient.from_container_url(
+                container_url=self._container_url,
+                credential=credential,
+            ) as client:
+                yield client

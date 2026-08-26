@@ -23,10 +23,13 @@ __all__ = [
     "ApplyInitializerResponse",
     "BaselineInitializerSetting",
     "CreateAdditionalInitializerRequest",
+    "CustomInitializerListResponse",
+    "CustomInitializerResponse",
     "InitializerSettingsResponse",
     "ListRegisteredInitializersResponse",
     "RegisterInitializerRequest",
     "UpdateAdditionalInitializerRequest",
+    "UpdateCustomInitializerRequest",
 ]
 
 
@@ -46,6 +49,30 @@ class RegisterInitializerRequest(BaseModel):
         description="Registry name for the initializer (e.g., 'my_custom')",
     )
     script_content: str = Field(..., description="Python source code containing a PyRITInitializer subclass")
+
+
+class UpdateCustomInitializerRequest(BaseModel):
+    """Request body for replacing a custom initializer's Python source."""
+
+    script_content: str = Field(..., description="Replacement Python source containing a PyRITInitializer subclass")
+
+
+class CustomInitializerResponse(BaseModel):
+    """Stored custom initializer source returned by the backend API."""
+
+    initializer_name: str = Field(..., description="Initializer registry name.")
+    script_content: str = Field(..., description="Stored Python source code.")
+    source: str = Field(..., description="Credential-free local file path or Azure Blob URI.")
+
+
+class CustomInitializerListResponse(BaseModel):
+    """Custom initializer storage source and its Python definitions."""
+
+    source: str = Field(
+        ...,
+        description="Credential-free local directory or Azure Blob container URI with an optional blob prefix.",
+    )
+    items: list[CustomInitializerResponse] = Field(..., description="Stored custom initializer definitions.")
 
 
 class BaselineInitializerSetting(BaseModel):

@@ -1,30 +1,21 @@
 import { useEffect, useState } from 'react'
 
-import { Button, MessageBar, MessageBarBody, Spinner, Tab, TabList, Text } from '@fluentui/react-components'
-import type { SelectTabData, SelectTabEvent } from '@fluentui/react-components'
+import { Button, MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-components'
 import { ArrowSyncRegular } from '@fluentui/react-icons'
 
 import { initializersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type {
-  CustomInitializer,
-  InitializerSettingsResponse,
-  RegisteredInitializer,
-  UpdateAdditionalInitializerRequest,
-} from '@/types'
+import type { InitializerSettingsResponse, RegisteredInitializer, UpdateAdditionalInitializerRequest } from '@/types'
 
 import AdditionalInitializers from './AdditionalInitializers'
 import AvailableInitializersDialog from './AvailableInitializersDialog'
 import BaselineInitializers from './BaselineInitializers'
-import CustomInitializers from './CustomInitializers'
 import { useInitializersStyles } from './Initializers.styles'
 
 interface StatusMessage {
   intent: 'success' | 'error'
   text: string
 }
-
-type InitializerTab = 'startup' | 'custom'
 
 const EMPTY_SETTINGS: InitializerSettingsResponse = {
   baseline: [],
@@ -35,8 +26,6 @@ export default function Initializers() {
   const styles = useInitializersStyles()
   const [settings, setSettings] = useState<InitializerSettingsResponse>(EMPTY_SETTINGS)
   const [registeredInitializers, setRegisteredInitializers] = useState<RegisteredInitializer[]>([])
-  const [customInitializers, setCustomInitializers] = useState<CustomInitializer[]>([])
-  const [selectedTab, setSelectedTab] = useState<InitializerTab>('startup')
   const [loading, setLoading] = useState(true)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
@@ -45,17 +34,14 @@ export default function Initializers() {
   const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
   const [applyingInitializerId, setApplyingInitializerId] = useState<string | null>(null)
   const [deletingInitializerId, setDeletingInitializerId] = useState<string | null>(null)
-  const [registeringCustom, setRegisteringCustom] = useState(false)
-  const [deletingCustomName, setDeletingCustomName] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
 
     const loadInitializersAsync = async (): Promise<void> => {
-      const [settingsResult, registeredResult, customResult] = await Promise.allSettled([
+      const [settingsResult, registeredResult] = await Promise.allSettled([
         initializersApi.getSettings(),
         initializersApi.listRegistered(),
-        initializersApi.listCustom(),
       ])
       if (cancelled) {
         return
@@ -78,12 +64,6 @@ export default function Initializers() {
         )
       }
 
-      if (customResult.status === 'fulfilled') {
-        setCustomInitializers(customResult.value)
-      } else {
-        setStatusMessage({ intent: 'error', text: toApiError(customResult.reason).detail })
-      }
-
       setLoading(false)
     }
 
@@ -102,49 +82,6 @@ export default function Initializers() {
   const refetchSettingsOnly = async (): Promise<void> => {
     const response = await initializersApi.getSettings()
     setSettings(response)
-  }
-
-  const refetchCustomCatalog = async (): Promise<void> => {
-    const [custom, registered] = await Promise.all([
-      initializersApi.listCustom(),
-      initializersApi.listRegistered(),
-    ])
-    setCustomInitializers(custom)
-    setRegisteredInitializers(registered.items)
-  }
-
-  const handleTabSelect = (_: SelectTabEvent, data: SelectTabData): void => {
-    if (data.value === 'startup' || data.value === 'custom') {
-      setSelectedTab(data.value)
-    }
-  }
-
-  const handleRegisterCustom = async (name: string, scriptContent: string): Promise<boolean> => {
-    setRegisteringCustom(true)
-    try {
-      await initializersApi.register({ name, script_content: scriptContent })
-      await refetchCustomCatalog()
-      setStatusMessage({ intent: 'success', text: `Registered ${name}.` })
-      return true
-    } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
-      return false
-    } finally {
-      setRegisteringCustom(false)
-    }
-  }
-
-  const handleDeleteCustom = async (name: string): Promise<void> => {
-    setDeletingCustomName(name)
-    try {
-      await initializersApi.unregister(name)
-      await refetchCustomCatalog()
-      setStatusMessage({ intent: 'success', text: `Removed ${name}.` })
-    } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
-    } finally {
-      setDeletingCustomName(null)
-    }
   }
 
   const handleAdd = async (
@@ -234,16 +171,15 @@ export default function Initializers() {
         <div className={styles.headerText}>
           <Text as="h1" size={600} weight="semibold">Initializers</Text>
           <Text size={300}>
-            Manage startup initializer invocations and persisted custom initializer definitions.
+            Browse every registered initializer, review the read-only baseline that ran at startup, and manage
+            additional initializer invocations that run after it.
           </Text>
         </div>
         <div className={styles.headerActions}>
-          {selectedTab === 'startup' && (
-            <AvailableInitializersDialog
-              registeredInitializers={registeredInitializers}
-              disabled={loading}
-            />
-          )}
+          <AvailableInitializersDialog
+            registeredInitializers={registeredInitializers}
+            disabled={loading}
+          />
           <Button
             appearance="subtle"
             icon={<ArrowSyncRegular />}
@@ -262,46 +198,31 @@ export default function Initializers() {
         </MessageBar>
       )}
 
-      <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
-        <Tab value="startup">Startup</Tab>
-        <Tab value="custom">Custom</Tab>
-      </TabList>
-
       {loading ? (
         <div className={styles.loadingState}>
           <Spinner label="Loading initializer settings..." />
         </div>
       ) : (
-        selectedTab === 'startup' ? (
-          <>
-            <BaselineInitializers
-              items={settings.baseline}
-              registeredInitializers={registeredInitializers}
-            />
-            <AdditionalInitializers
-              items={settings.additional}
-              registeredInitializers={registeredInitializers}
-              creating={creating}
-              savingInitializerId={savingInitializerId}
-              saveErrors={saveErrors}
-              applyingInitializerId={applyingInitializerId}
-              deletingInitializerId={deletingInitializerId}
-              onAdd={handleAdd}
-              onSave={handleSave}
-              onClearSaveError={clearSaveError}
-              onApply={handleApply}
-              onRemove={handleRemove}
-            />
-          </>
-        ) : (
-          <CustomInitializers
-            items={customInitializers}
-            registering={registeringCustom}
-            deletingName={deletingCustomName}
-            onRegister={handleRegisterCustom}
-            onDelete={handleDeleteCustom}
+        <>
+          <BaselineInitializers
+            items={settings.baseline}
+            registeredInitializers={registeredInitializers}
           />
-        )
+          <AdditionalInitializers
+            items={settings.additional}
+            registeredInitializers={registeredInitializers}
+            creating={creating}
+            savingInitializerId={savingInitializerId}
+            saveErrors={saveErrors}
+            applyingInitializerId={applyingInitializerId}
+            deletingInitializerId={deletingInitializerId}
+            onAdd={handleAdd}
+            onSave={handleSave}
+            onClearSaveError={clearSaveError}
+            onApply={handleApply}
+            onRemove={handleRemove}
+          />
+        </>
       )}
     </main>
   )

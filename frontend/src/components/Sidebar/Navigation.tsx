@@ -18,12 +18,13 @@ import {
   OpenRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
+  DocumentSettingsRegular,
 } from '@fluentui/react-icons'
 import { useTheme } from '../../hooks/useTheme'
 import type { ThemeMode } from '../../hooks/useTheme'
 import { useNavigationStyles } from './Navigation.styles'
 
-export type ViewName = 'home' | 'chat' | 'history' | 'config' | 'initializers'
+export type ViewName = 'home' | 'chat' | 'history' | 'config' | 'initializers' | 'backendConfig'
 
 interface NavigationProps {
   currentView: ViewName
@@ -114,6 +115,17 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
           aria-label="Initializers"
           aria-current={currentView === 'initializers' ? 'page' : undefined}
           onClick={() => onNavigate('initializers')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'backendConfig'}
+          appearance="subtle"
+          icon={<DocumentSettingsRegular />}
+          title="Backend Configuration"
+          aria-label="Backend Configuration"
+          aria-current={currentView === 'backendConfig' ? 'page' : undefined}
+          onClick={() => onNavigate('backendConfig')}
         />
 
       </nav>

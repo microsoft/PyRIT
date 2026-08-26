@@ -8,7 +8,6 @@ import type {
   BaselineInitializerSetting,
   InitializerSettingsResponse,
   RegisteredInitializer,
-  CustomInitializer,
 } from '@/types'
 
 import Initializers from './Initializers'
@@ -17,9 +16,6 @@ jest.mock('@/services/api', () => ({
   initializersApi: {
     getSettings: jest.fn(),
     listRegistered: jest.fn(),
-    listCustom: jest.fn(),
-    register: jest.fn(),
-    unregister: jest.fn(),
     createAdditional: jest.fn(),
     updateAdditional: jest.fn(),
     deleteAdditional: jest.fn(),
@@ -100,11 +96,6 @@ const sampleSettings: InitializerSettingsResponse = {
   additional: [additionalItem],
 }
 
-const customInitializer: CustomInitializer = {
-  initializer_name: 'custom_target',
-  script_content: 'class CustomTargetInitializer: pass',
-}
-
 function renderInitializers(): void {
   render(
     <TestWrapper>
@@ -121,15 +112,6 @@ describe('Initializers', () => {
       items: [targetInitializer, scorerInitializer],
       pagination: { limit: 200, has_more: false },
     })
-    mockedInitializersApi.listCustom.mockResolvedValue([customInitializer])
-    mockedInitializersApi.register.mockResolvedValue({
-      initializer_name: 'new_custom',
-      initializer_type: 'NewCustomInitializer',
-      description: 'New custom initializer.',
-      required_env_vars: [],
-      supported_parameters: [],
-    })
-    mockedInitializersApi.unregister.mockResolvedValue()
     mockedInitializersApi.createAdditional.mockResolvedValue({
       id: 'additional-2',
       initializer_name: 'target',
@@ -166,47 +148,6 @@ describe('Initializers', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'Additional initializers' })).toBeInTheDocument()
     expect(screen.getByTestId('baseline-initializer-row-target')).toHaveTextContent('Registers targets.')
     expect(screen.getByTestId('initializer-row-additional-1')).toHaveTextContent('scorer')
-  })
-
-  it('should list and register persisted custom initializers in the custom tab', async () => {
-    const user = userEvent.setup()
-    const writeText = jest.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
-    renderInitializers()
-
-    await user.click(await screen.findByRole('tab', { name: 'Custom' }))
-    const customRow = await screen.findByTestId('custom-initializer-custom_target')
-    expect(customRow).not.toHaveTextContent('class CustomTargetInitializer: pass')
-    fireEvent.click(within(customRow).getByRole('button', { name: /custom_target/ }))
-    const sourceDialog = await screen.findByRole('dialog')
-    const sourceBlock = within(sourceDialog).getByLabelText('Python source')
-    expect(sourceBlock).toHaveTextContent(
-      'class CustomTargetInitializer: pass',
-    )
-    expect(sourceBlock.querySelector('.token.keyword')).toHaveTextContent('class')
-    fireEvent.click(within(sourceDialog).getByRole('button', { name: 'Copy Python source', hidden: true }))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('class CustomTargetInitializer: pass'))
-    await user.click(within(sourceDialog).getByRole('button', { name: 'Close', hidden: true }))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Register initializer' }))
-    const dialog = await screen.findByRole('dialog')
-    fireEvent.change(within(dialog).getByLabelText(/Initializer name/), { target: { value: 'new_custom' } })
-    fireEvent.change(within(dialog).getByLabelText('Python source', { selector: 'textarea' }), {
-      target: { value: 'class NewCustom: pass' },
-    })
-    expect(within(dialog).getAllByRole('textbox')).toHaveLength(2)
-    expect(dialog.querySelector('pre[aria-hidden="true"] .token.keyword')).toHaveTextContent('class')
-    const form = dialog.querySelector('form')
-    expect(form).not.toBeNull()
-    fireEvent.submit(form as HTMLFormElement)
-
-    await waitFor(() => {
-      expect(mockedInitializersApi.register).toHaveBeenCalledWith({
-        name: 'new_custom',
-        script_content: 'class NewCustom: pass',
-      })
-      expect(screen.getByText('Registered new_custom.')).toBeInTheDocument()
-    })
   })
 
   it('should refresh settings when the refresh button is clicked', async () => {

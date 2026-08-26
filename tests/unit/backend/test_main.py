@@ -28,7 +28,7 @@ class TestLifespan:
         """Test that lifespan delegates to ConfigurationLoader and yields."""
         fake_config = ConfigurationLoader()
         service = MagicMock(
-            register_persisted_custom_initializers_async=AsyncMock(),
+            restore_custom_initializers_async=AsyncMock(),
             run_additional_initializers_async=AsyncMock(),
         )
         with (
@@ -44,7 +44,7 @@ class TestLifespan:
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
-            service.register_persisted_custom_initializers_async.assert_not_awaited()
+            service.restore_custom_initializers_async.assert_not_awaited()
             service.run_additional_initializers_async.assert_awaited_once_with(allow_custom_initializers=False)
 
     async def test_lifespan_registers_custom_initializers_before_running_additional(self) -> None:
@@ -59,7 +59,7 @@ class TestLifespan:
             call_order.append("additional")
 
         service = MagicMock(
-            register_persisted_custom_initializers_async=AsyncMock(side_effect=register_custom_async),
+            restore_custom_initializers_async=AsyncMock(side_effect=register_custom_async),
             run_additional_initializers_async=AsyncMock(side_effect=run_additional_async),
         )
         with (
@@ -82,7 +82,7 @@ class TestLifespan:
             patch(
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(
-                    register_persisted_custom_initializers_async=AsyncMock(),
+                    restore_custom_initializers_async=AsyncMock(),
                     run_additional_initializers_async=AsyncMock(),
                 ),
             ),
@@ -103,7 +103,7 @@ class TestLifespan:
             patch(
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(
-                    register_persisted_custom_initializers_async=AsyncMock(),
+                    restore_custom_initializers_async=AsyncMock(),
                     run_additional_initializers_async=AsyncMock(),
                 ),
             ),
@@ -124,7 +124,7 @@ class TestLifespan:
             patch(
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(
-                    register_persisted_custom_initializers_async=AsyncMock(),
+                    restore_custom_initializers_async=AsyncMock(),
                     run_additional_initializers_async=AsyncMock(),
                 ),
             ),
@@ -135,6 +135,66 @@ class TestLifespan:
 
             call_kwargs = load_mock.call_args.kwargs
             assert str(call_kwargs["config_file"]).endswith("foo.yaml")
+
+    async def test_lifespan_configures_custom_initializer_source_from_config(self) -> None:
+        """Test that YAML config determines the custom script source."""
+        fake_config = ConfigurationLoader(custom_initializers_source="C:/yaml/initializers")
+        registry = MagicMock()
+        service = MagicMock(
+            restore_custom_initializers_async=AsyncMock(),
+            run_additional_initializers_async=AsyncMock(),
+        )
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.InitializerRegistry.get_registry_singleton", return_value=registry),
+            patch("pyrit.backend.main.get_initializer_service", return_value=service),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        registry.configure_custom_scripts_source.assert_called_once_with("C:/yaml/initializers")
+
+    async def test_lifespan_downloads_blob_config_to_temporary_file(self) -> None:
+        """Test that an Azure Blob config URI is materialized and removed after loading."""
+        fake_config = ConfigurationLoader()
+        config_content = b"operator: blob-user\n"
+        loaded_path: Path | None = None
+
+        def load_config(*, config_file: Path) -> ConfigurationLoader:
+            nonlocal loaded_path
+            loaded_path = config_file
+            assert config_file.suffix == ".yaml"
+            assert config_file.read_bytes() == config_content
+            return fake_config
+
+        with (
+            patch.dict(
+                os.environ,
+                {"PYRIT_CONFIG_FILE": "https://account.blob.core.windows.net/config/config.yaml"},
+                clear=False,
+            ),
+            patch(
+                "pyrit.backend.services.configuration_file_service._download_blob_config_async",
+                new=AsyncMock(return_value=config_content),
+            ),
+            patch.object(ConfigurationLoader, "load_with_overrides", side_effect=load_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch(
+                "pyrit.backend.main.get_initializer_service",
+                return_value=MagicMock(
+                    restore_custom_initializers_async=AsyncMock(),
+                    run_additional_initializers_async=AsyncMock(),
+                ),
+            ),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        assert loaded_path is not None
+        assert not loaded_path.exists()
 
 
 class TestSetupFrontend:

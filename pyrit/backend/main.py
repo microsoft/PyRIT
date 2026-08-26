@@ -25,6 +25,7 @@ from pyrit.backend.models.initializers import BaselineInitializerSetting
 from pyrit.backend.routes import (
     attacks,
     auth,
+    configuration,
     converters,
     datasets,
     health,
@@ -35,7 +36,10 @@ from pyrit.backend.routes import (
     targets,
     version,
 )
+from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.initializer_service import get_initializer_service
+from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 # Check for development mode from environment variable
@@ -50,14 +54,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Initialize PyRIT on startup using the config file, then yield.
 
     Config resolution order:
-    1. ``PYRIT_CONFIG_FILE`` env var (if set)
+    1. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI (if set)
     2. ``~/.pyrit/.pyrit_conf`` (if it exists)
     3. Built-in defaults (SQLite, no initializers)
     """
-    config_file_env = os.getenv("PYRIT_CONFIG_FILE")
-    config_file = Path(config_file_env) if config_file_env else None
-
-    config = ConfigurationLoader.load_with_overrides(config_file=config_file)
+    configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
+    app.state.configuration_file_service = configuration_file_service
+    async with configuration_file_service.resolve_async() as config_file:
+        config = ConfigurationLoader.load_with_overrides(config_file=config_file)
+    resolved_env_files = config.resolve_env_files()
+    app.state.environment_file_service = EnvironmentFileService(
+        resolved_env_files=list(resolved_env_files) if resolved_env_files is not None else None,
+        env_akv_ref=config.resolve_env_akv_ref(),
+        env_akv_strict=config.env_akv_strict,
+    )
+    initializer_registry = InitializerRegistry.get_registry_singleton()
+    initializer_registry.configure_custom_scripts_source(config.custom_initializers_source)
     await config.initialize_pyrit_async()
 
     # Persisted additional initializers run after the .pyrit_conf baseline, in stored order.
@@ -71,7 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     ]
     initializer_service = get_initializer_service()
     if config.allow_custom_initializers:
-        await initializer_service.register_persisted_custom_initializers_async()
+        await initializer_service.restore_custom_initializers_async()
     await initializer_service.run_additional_initializers_async(
         allow_custom_initializers=config.allow_custom_initializers
     )
@@ -137,6 +149,7 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
+app.include_router(configuration.router, prefix="/api", tags=["config"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])

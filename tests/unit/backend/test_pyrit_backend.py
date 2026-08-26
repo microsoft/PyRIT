@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +20,14 @@ class TestParseArgs:
 
     def test_parse_args_accepts_config_file(self) -> None:
         args = pyrit_backend.parse_args(args=["--config-file", "./custom_conf.yaml"])
-        assert args.config_file == Path("./custom_conf.yaml")
+        assert args.config_file == "./custom_conf.yaml"
+
+    def test_parse_args_preserves_blob_config_uri(self) -> None:
+        blob_uri = "https://behnamousatairtsa.blob.core.windows.net/copyrit/.pyrit_conf"
+
+        args = pyrit_backend.parse_args(args=["--config-file", blob_uri])
+
+        assert args.config_file == blob_uri
 
     def test_parse_args_accepts_host_port(self) -> None:
         args = pyrit_backend.parse_args(args=["--host", "0.0.0.0", "--port", "9000"])
@@ -51,6 +57,16 @@ class TestMain:
             pyrit_backend.main(args=["--config-file", "./custom.yaml"])
             assert os.environ.get("PYRIT_CONFIG_FILE") is not None
             assert "custom.yaml" in os.environ["PYRIT_CONFIG_FILE"]
+
+    @patch("uvicorn.run")
+    def test_main_forwards_blob_config_uri_via_env(self, mock_run: MagicMock) -> None:
+        import os
+
+        blob_uri = "https://behnamousatairtsa.blob.core.windows.net/copyrit/.pyrit_conf"
+        with patch.dict(os.environ, {}, clear=False):
+            pyrit_backend.main(args=["--config-file", blob_uri])
+
+            assert os.environ["PYRIT_CONFIG_FILE"] == blob_uri
 
     @patch("uvicorn.run")
     def test_main_passes_host_and_port(self, mock_run: MagicMock) -> None:

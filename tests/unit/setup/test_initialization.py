@@ -13,6 +13,21 @@ from pyrit.common.random_context import get_configured_random_seed
 from pyrit.common.singleton import Singleton
 from pyrit.registry import InitializerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup.initialization import is_azure_blob_script_uri
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "https://account.blob.attacker.example/scripts/example.py",
+        "https://user@account.blob.core.windows.net/scripts/example.py",
+        "https://account.blob.core.windows.net:8443/scripts/example.py",
+        "https://blob.core.windows.net/scripts/example.py",
+    ],
+)
+def test_is_azure_blob_script_uri_rejects_untrusted_authorities(source: str) -> None:
+    """Test rejecting Blob lookalikes before Azure credentials are acquired."""
+    assert not is_azure_blob_script_uri(source)
 
 
 class TestLoadInitializersFromScripts:
@@ -178,6 +193,69 @@ class ScriptInit(PyRITInitializer):
             mock_set_memory.assert_called_once()
         finally:
             os.unlink(script_path)
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
+    async def test_initialize_with_azure_blob_script(self, mock_load_environment, mock_set_memory):
+        """Test downloading a SAS-authenticated initialization script for registry loading."""
+        source = "https://account.blob.core.windows.net/scripts/example.py?sp=r&sig=secret"
+        client = mock.MagicMock()
+        client.__enter__.return_value = client
+        client.download_blob.return_value.readall.return_value = b"script content"
+        captured_path: pathlib.Path | None = None
+
+        def capture_script_path(*, script_paths):
+            nonlocal captured_path
+            captured_path = pathlib.Path(script_paths[0])
+            assert captured_path.read_bytes() == b"script content"
+            return []
+
+        registry = InitializerRegistry.get_registry_singleton()
+        with (
+            mock.patch("azure.storage.blob.BlobClient.from_blob_url", return_value=client) as client_factory,
+            mock.patch.object(registry, "create_from_script_paths", side_effect=capture_script_path),
+        ):
+            await initialize_pyrit_async(
+                memory_db_type=IN_MEMORY,
+                initialization_scripts=[source],
+                load_defaults=False,
+            )
+
+        assert captured_path is not None
+        assert not captured_path.exists()
+        client_factory.assert_called_once_with(blob_url=source)
+        mock_load_environment.assert_awaited_once()
+        mock_set_memory.assert_called_once()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
+    async def test_initialize_with_azure_blob_script_uses_default_credential(
+        self, mock_load_environment, mock_set_memory
+    ):
+        """Test authenticating a Blob URI without SAS using DefaultAzureCredential."""
+        source = "https://account.blob.core.windows.net/scripts/example.py"
+        credential = mock.MagicMock()
+        credential.__enter__.return_value = credential
+        client = mock.MagicMock()
+        client.__enter__.return_value = client
+        client.download_blob.return_value.readall.return_value = b"script content"
+        registry = InitializerRegistry.get_registry_singleton()
+
+        with (
+            mock.patch("azure.identity.DefaultAzureCredential", return_value=credential) as credential_factory,
+            mock.patch("azure.storage.blob.BlobClient.from_blob_url", return_value=client) as client_factory,
+            mock.patch.object(registry, "create_from_script_paths", return_value=[]),
+        ):
+            await initialize_pyrit_async(
+                memory_db_type=IN_MEMORY,
+                initialization_scripts=[source],
+                load_defaults=False,
+            )
+
+        credential_factory.assert_called_once_with()
+        client_factory.assert_called_once_with(blob_url=source, credential=credential)
+        mock_load_environment.assert_awaited_once()
+        mock_set_memory.assert_called_once()
 
     @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
     async def test_invalid_memory_type_raises_error(self, mock_load_environment):

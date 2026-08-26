@@ -56,6 +56,27 @@ export interface PaginationInfo {
   prev_cursor?: string | null
 }
 
+export interface ConfigurationFileContent {
+  content: string
+  source: string
+}
+
+export interface UpdateConfigurationFileRequest {
+  content: string
+}
+
+export interface EnvironmentFileContent {
+  id: string
+  name: string
+  path: string
+  content: string
+  exists: boolean
+}
+
+export interface EnvironmentFileListResponse {
+  items: EnvironmentFileContent[]
+}
+
 // --- Targets ---
 
 export interface TargetCapabilities {
@@ -169,9 +190,19 @@ export interface RegisterInitializerRequest {
   script_content: string
 }
 
+export interface UpdateCustomInitializerRequest {
+  script_content: string
+}
+
 export interface CustomInitializer {
   initializer_name: string
   script_content: string
+  source: string
+}
+
+export interface CustomInitializerListResponse {
+  source: string
+  items: CustomInitializer[]
 }
 
 export interface ApplyInitializerRequest {

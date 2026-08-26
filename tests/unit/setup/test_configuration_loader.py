@@ -43,7 +43,26 @@ class TestConfigurationLoader:
         assert config.env_files is None  # None means "use defaults"
         assert config.env_akv_ref is None
         assert config.env_akv_strict is True
+        assert config.custom_initializers_source is None
         assert config.silent is False
+
+    def test_custom_initializers_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
+        """Test loading an Azure Blob container URI for custom initializer scripts."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "custom_initializers_source: https://account.blob.core.windows.net/initializers\n",
+            encoding="utf-8",
+        )
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+
+        assert config.custom_initializers_source == "https://account.blob.core.windows.net/initializers"
+
+    @pytest.mark.parametrize("invalid_value", ["", "   ", 42])
+    def test_custom_initializers_source_rejects_invalid_value(self, invalid_value: object) -> None:
+        """Test rejecting empty or non-string custom initializer sources."""
+        with pytest.raises(ValueError, match="custom_initializers_source"):
+            ConfigurationLoader(custom_initializers_source=invalid_value)  # type: ignore[arg-type]
 
     @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
     def test_rejects_non_boolean_env_akv_strict(self, invalid_value):
@@ -316,6 +335,13 @@ class TestConfigurationLoaderResolvers:
         assert resolved[0].is_absolute()
         # Check path ends with expected components (works on both Unix and Windows)
         assert resolved[0].parts[-2:] == ("relative", "script.py")
+
+    def testresolve_initialization_scripts_preserves_azure_blob_uri(self):
+        """Test preserving an Azure Blob URI for initialization-time download."""
+        source = "https://account.blob.core.windows.net/scripts/example.py?sp=r&sig=secret"
+        config = ConfigurationLoader(initialization_scripts=[source])
+
+        assert config.resolve_initialization_scripts() == [source]
 
     def testresolve_env_files_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""

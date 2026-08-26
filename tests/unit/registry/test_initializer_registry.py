@@ -2,7 +2,10 @@
 # Licensed under the MIT license.
 
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 from unittest.mock import patch
 
 import pytest
@@ -136,6 +139,46 @@ def test_register_from_content_rejects_duplicate_name(lazy_registry):
             lazy_registry.register_from_content(name="dup", script_content=_VALID_SCRIPT)
 
 
+def test_register_from_content_serializes_concurrent_writes(tmp_path: Path) -> None:
+    """Test concurrent registration keeps storage and the runtime catalog consistent."""
+    registry = InitializerRegistry(lazy_discovery=True, custom_scripts_source=str(tmp_path))
+    registry._discovered = True
+    original_load = registry._load_custom_initializer_class
+    state_lock = Lock()
+    active_loads = 0
+    maximum_active_loads = 0
+
+    def delayed_load(*, name: str, script_content: str) -> type[PyRITInitializer]:
+        nonlocal active_loads, maximum_active_loads
+        with state_lock:
+            active_loads += 1
+            maximum_active_loads = max(maximum_active_loads, active_loads)
+        time.sleep(0.05)
+        try:
+            return original_load(name=name, script_content=script_content)
+        finally:
+            with state_lock:
+                active_loads -= 1
+
+    def register() -> str:
+        try:
+            registry.register_from_content(name="race", script_content=_VALID_SCRIPT)
+            return "registered"
+        except ValueError:
+            return "duplicate"
+
+    with (
+        patch.object(registry, "_load_custom_initializer_class", side_effect=delayed_load),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        results = list(executor.map(lambda _: register(), range(2)))
+
+    assert sorted(results) == ["duplicate", "registered"]
+    assert maximum_active_loads == 1
+    assert registry.list_custom_initializer_sources() == {"race": _VALID_SCRIPT}
+    assert registry.get_class("race").__name__ == "ScriptTestInitializer"
+
+
 def test_register_from_content_ignores_imported_classes(lazy_registry):
     """Test that imported base classes are not registered."""
     script = """
@@ -169,6 +212,62 @@ def test_unregister_and_cleanup_removes_entry_and_file(lazy_registry):
         lazy_registry.unregister_and_cleanup("cleanup_test")
         assert "cleanup_test" not in lazy_registry
         assert not (tmp_dir / "cleanup_test.py").exists()
+
+
+def test_update_from_content_replaces_class_and_persisted_source(tmp_path: Path) -> None:
+    """Test replacing a custom initializer without changing its registry name."""
+    updated_script = _VALID_SCRIPT.replace("ScriptTestInitializer", "UpdatedInitializer")
+    registry = InitializerRegistry(lazy_discovery=True, custom_scripts_source=str(tmp_path))
+    registry._discovered = True
+    registry.register_from_content(name="custom", script_content=_VALID_SCRIPT)
+
+    registry.update_from_content(name="custom", script_content=updated_script)
+
+    assert registry.get_class("custom").__name__ == "UpdatedInitializer"
+    assert registry.list_custom_initializer_sources() == {"custom": updated_script}
+
+
+def test_restore_custom_initializers_loads_persisted_scripts(tmp_path: Path) -> None:
+    """Test loading custom initializers from the configured source at startup."""
+    (tmp_path / "restored.py").write_text(_VALID_SCRIPT, encoding="utf-8")
+    registry = InitializerRegistry(lazy_discovery=True, custom_scripts_source=str(tmp_path))
+    registry._discovered = True
+
+    registry.restore_custom_initializers()
+
+    assert registry.get_class("restored").__name__ == "ScriptTestInitializer"
+
+
+def test_custom_initializer_storage_is_reused_until_source_changes(tmp_path: Path) -> None:
+    """Test that startup and GUI reads share one cache-bearing storage instance."""
+    registry = InitializerRegistry(lazy_discovery=True, custom_scripts_source=str(tmp_path))
+
+    first_storage = registry._get_custom_storage()
+    assert registry._get_custom_storage() is first_storage
+
+    registry.configure_custom_scripts_source(str(tmp_path / "other"))
+    assert registry._get_custom_storage() is not first_storage
+
+
+def test_restore_custom_initializers_does_not_replace_lazy_builtin(tmp_path: Path) -> None:
+    """Test built-ins are discovered before stored scripts are restored."""
+
+    class BuiltinInit(PyRITInitializer):
+        async def initialize_async(self) -> None:
+            pass
+
+    (tmp_path / "builtin.py").write_text(_VALID_SCRIPT, encoding="utf-8")
+    registry = InitializerRegistry(lazy_discovery=True, custom_scripts_source=str(tmp_path))
+
+    def discover_builtin() -> None:
+        registry._classes["builtin"] = BuiltinInit
+        registry._builtin_names.add("builtin")
+
+    with patch.object(registry, "_discover", side_effect=discover_builtin) as discover:
+        registry.restore_custom_initializers()
+
+    discover.assert_called_once_with()
+    assert registry.get_class("builtin") is BuiltinInit
 
 
 def test_unregister_and_cleanup_rejects_builtin(lazy_registry):

@@ -27,6 +27,7 @@ from pyrit.setup.initialization import (
     IN_MEMORY,
     SQLITE,
     initialize_pyrit_async,
+    is_azure_blob_script_uri,
 )
 
 if TYPE_CHECKING:
@@ -101,6 +102,8 @@ class ConfigurationLoader(YamlLoadable):
         env_akv_ref: List containing at most one Key Vault bootstrap secret URL.
         env_akv_strict: Whether malformed or valueless entries in a Key Vault
             bootstrap document should fail initialization.
+        custom_initializers_source: Local directory or Azure Blob container URI,
+            optionally followed by a blob prefix, used to persist custom initializer Python scripts.
         silent: Whether to suppress initialization messages.
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
@@ -148,6 +151,7 @@ class ConfigurationLoader(YamlLoadable):
     operation: str | None = None
     max_concurrent_scenario_runs: int = 3
     allow_custom_initializers: bool = False
+    custom_initializers_source: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
@@ -157,7 +161,20 @@ class ConfigurationLoader(YamlLoadable):
         self._normalize_memory_db_type()
         self._normalize_initializers()
         self._validate_env_akv_ref()
+        self._validate_custom_initializers_source()
         self._normalize_server()
+
+    def _validate_custom_initializers_source(self) -> None:
+        """
+        Validate the optional custom initializer storage source.
+
+        Raises:
+            ValueError: If the source is not a non-empty string.
+        """
+        if self.custom_initializers_source is not None and (
+            not isinstance(self.custom_initializers_source, str) or not self.custom_initializers_source.strip()
+        ):
+            raise ValueError("custom_initializers_source must be a non-empty local directory or container URI.")
 
     def _validate_env_akv_ref(self) -> None:
         """
@@ -563,13 +580,13 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def resolve_initialization_scripts(self) -> Sequence[pathlib.Path] | None:
+    def resolve_initialization_scripts(self) -> Sequence[str | pathlib.Path] | None:
         """
         Resolve initialization script paths.
 
         Returns:
             None if field is None (use defaults), empty list if field is [],
-            or Sequence of resolved Path objects if paths are specified.
+            or a sequence of resolved Path objects and preserved Azure Blob URIs.
         """
         # None means "use defaults" - return None to signal this
         if self.initialization_scripts is None:
@@ -579,8 +596,12 @@ class ConfigurationLoader(YamlLoadable):
         if len(self.initialization_scripts) == 0:
             return list[pathlib.Path]()
 
-        resolved: list[pathlib.Path] = []
+        resolved: list[str | pathlib.Path] = []
         for script_str in self.initialization_scripts:
+            if is_azure_blob_script_uri(script_str):
+                resolved.append(script_str)
+                continue
+
             script_path = pathlib.Path(script_str)
             if not script_path.is_absolute():
                 script_path = pathlib.Path.cwd() / script_path

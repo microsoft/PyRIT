@@ -1,20 +1,6 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
 export const usePythonCodeStyles = makeStyles({
-  codeHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: '2rem',
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderBottom: 0,
-    borderRadius: `${tokens.borderRadiusMedium} ${tokens.borderRadiusMedium} 0 0`,
-    backgroundColor: tokens.colorNeutralBackground3,
-    color: tokens.colorNeutralForeground2,
-    fontSize: tokens.fontSizeBase200,
-    fontWeight: tokens.fontWeightSemibold,
-  },
   codeBlock: {
     maxHeight: '65vh',
     margin: 0,
@@ -54,6 +40,7 @@ export const usePythonCodeStyles = makeStyles({
   },
   editor: {
     position: 'relative',
+    flex: 1,
     minHeight: '22rem',
   },
   editorHighlight: {
@@ -69,6 +56,7 @@ export const usePythonCodeStyles = makeStyles({
     display: 'block',
     boxSizing: 'border-box',
     width: '100%',
+    height: '100%',
     minHeight: '22rem',
     margin: 0,
     padding: tokens.spacingHorizontalL,

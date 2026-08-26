@@ -24,7 +24,6 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 if TYPE_CHECKING:
     from pyrit.models.additional_initializer import AdditionalInitializer
     from pyrit.models.conversation_stats import ConversationStats
-    from pyrit.models.custom_initializer import CustomInitializer
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
     from pyrit.models.identifiers import (
@@ -167,7 +166,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationStats": "pyrit.models.conversation_stats",
     "ConversationType": "pyrit.models.messages.conversation_reference",
     "ContentScorable": "pyrit.models.score",
-    "CustomInitializer": "pyrit.models.custom_initializer",
     "construct_response_from_request": "pyrit.models.messages.conversations",
     "display_choices": "pyrit.models.parameter",
     "EmbeddingData": "pyrit.models.embeddings",

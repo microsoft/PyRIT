@@ -90,6 +90,17 @@ describe("Navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("config");
   });
 
+  it("navigates to backend configuration", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Backend Configuration" }));
+    expect(onNavigate).toHaveBeenCalledWith("backendConfig");
+  });
+
   it("renders the attack history button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     expect(

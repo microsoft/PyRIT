@@ -9,6 +9,7 @@ import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import Initializers from './components/Initializers/Initializers'
+import BackendConfiguration from './components/BackendConfiguration/BackendConfiguration'
 import AttackHistory from './components/History/AttackHistory'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
@@ -39,6 +40,7 @@ const VIEW_PATHS: Record<ViewName, string> = {
   history: '/history',
   config: '/config',
   initializers: '/initializers',
+  backendConfig: '/backend-config',
 }
 
 /** Resolves the active view from a URL path, defaulting to home for unknown paths. */
@@ -418,6 +420,7 @@ function App() {
                 }
               />
               <Route path="/initializers" element={<Initializers />} />
+              <Route path="/backend-config" element={<BackendConfiguration />} />
               <Route
                 path="/history"
                 element={
