@@ -5,6 +5,7 @@
 
 import os
 from collections.abc import Callable
+from typing import cast
 
 from azure.core.exceptions import ResourceNotFoundError
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
@@ -68,7 +69,7 @@ def _get_restart_callback(request: Request) -> Callable[[], None]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Backend restart is unavailable for this server process",
         )
-    return callback
+    return cast("Callable[[], None]", callback)
 
 
 @router.get(

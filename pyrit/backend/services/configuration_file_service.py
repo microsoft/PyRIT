@@ -119,7 +119,9 @@ class ConfigurationFileService:
         if _is_azure_blob_uri(self._source):
             return (await _download_blob_config_async(self._source)).decode("utf-8")
         async with aiofiles.open(self._source, encoding="utf-8") as config_file:
-            return await config_file.read()
+            content = await config_file.read()
+        assert isinstance(content, str)
+        return content
 
     async def update_async(self, content: str) -> None:
         """Replace the current configuration contents."""

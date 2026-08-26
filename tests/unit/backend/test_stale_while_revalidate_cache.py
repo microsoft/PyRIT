@@ -42,6 +42,7 @@ async def test_invalidation_during_refresh_prevents_stale_repopulation() -> None
 
 async def test_cached_mutable_values_are_copied() -> None:
     """Test that callers cannot mutate the value retained by the cache."""
+
     async def load_async(_: str) -> list[str]:
         return ["original"]
 
