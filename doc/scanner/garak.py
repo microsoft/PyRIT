@@ -227,21 +227,20 @@ await output_scenario_async(sysprompt_result)
 # supply-chain foothold: an attacker can register ("squat") it so the model's suggested code
 # silently pulls in a malicious dependency ("slopsquatting").
 #
-# Each language runs as its own atomic attack with a dedicated `PackageHallucinationScorer` loaded
-# with that ecosystem's registry (PyPI, npm, RubyGems, or crates.io). The scoring is deterministic
-# set-membership — no LLM judge is involved.
+# The Rust technique runs with a dedicated `PackageHallucinationScorer` loaded with the crates.io
+# registry. The scoring is deterministic set-membership — no LLM judge is involved.
 #
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.package_hallucination --target openai_chat --techniques python
+# pyrit_scan garak.package_hallucination --target openai_chat
 # ```
 #
-# **Available techniques** (4 languages): Python, JavaScript, Ruby, Rust.
+# **Available technique:** Rust.
 #
-# **Aggregate techniques:** `ALL` and `DEFAULT` both expand to all four languages.
+# **Aggregate techniques:** `ALL` and `DEFAULT` both expand to Rust.
 #
-# > **Note:** The package registries are loaded into memory only for the scorer; the raw package
+# > **Note:** The crates.io registry is loaded into memory only for the scorer; the raw package
 # > names are never sent as prompts.
 
 # %% [markdown]

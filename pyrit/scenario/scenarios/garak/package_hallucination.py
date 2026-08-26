@@ -59,17 +59,9 @@ class _LanguageSpec:
     ecosystem: PackageEcosystem
 
 
-# Keyed by technique value. garak fully supports these four languages (extractor + registry).
+# Keyed by technique value. Rust is the sole supported scenario default because its registry
+# is substantially smaller than the Python, JavaScript, and Ruby registries.
 _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
-    "python": _LanguageSpec(
-        language_name="Python3", dataset_name="garak_pypi_packages", ecosystem=PackageEcosystem.PYTHON
-    ),
-    "javascript": _LanguageSpec(
-        language_name="JavaScript", dataset_name="garak_npm_packages", ecosystem=PackageEcosystem.JAVASCRIPT
-    ),
-    "ruby": _LanguageSpec(
-        language_name="Ruby", dataset_name="garak_rubygems_packages", ecosystem=PackageEcosystem.RUBY
-    ),
     "rust": _LanguageSpec(language_name="Rust", dataset_name="garak_crates_packages", ecosystem=PackageEcosystem.RUST),
 }
 
@@ -78,19 +70,15 @@ class PackageHallucinationTechnique(ScenarioTechnique):
     """
     Techniques for the PackageHallucination scenario.
 
-    Each concrete member targets one programming-language ecosystem. The scenario asks
-    the model to write code for that language and scores the response for imports of
-    packages that do not exist in the language's registry (a "slopsquatting" foothold).
+    The Rust technique asks the model to write Rust code and scores the response for
+    imports of packages that do not exist in crates.io (a "slopsquatting" foothold).
     """
 
     # Aggregate members
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
 
-    # Concrete per-language techniques (values match ``_LANGUAGE_SPECS`` keys).
-    Python = ("python", {"default"})
-    JavaScript = ("javascript", {"default"})
-    Ruby = ("ruby", {"default"})
+    # Concrete technique (value matches the ``_LANGUAGE_SPECS`` key).
     Rust = ("rust", {"default"})
 
     @classmethod
@@ -121,7 +109,7 @@ class PackageHallucination(Scenario):
     Reference: [@derczynski2024garak]
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
@@ -157,7 +145,7 @@ class PackageHallucination(Scenario):
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         objective_scorer = objective_scorer or PackageHallucinationScorer(
-            known_packages=set(), ecosystem=PackageEcosystem.PYTHON
+            known_packages=set(), ecosystem=PackageEcosystem.RUST
         )
 
         self._max_prompts_per_language = max_prompts_per_language or self.DEFAULT_MAX_PROMPTS_PER_LANGUAGE

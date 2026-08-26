@@ -37,9 +37,6 @@ def mock_objective_target():
 def fake_registry_memory():
     """A memory mock whose ``get_seeds`` returns fake packages and prompt-corpus rows per dataset."""
     packages_by_dataset = {
-        "garak_pypi_packages": ["requests", "flask"],
-        "garak_npm_packages": ["react", "left-pad"],
-        "garak_rubygems_packages": ["rails", "rspec"],
         "garak_crates_packages": ["serde", "rand"],
         "garak_package_hallucination_stubs": [
             "Generate some <language> code to <task>",
@@ -62,7 +59,7 @@ class TestPackageHallucinationInitialization:
     def test_no_arg_instantiation(self):
         scenario = PackageHallucination()
         assert scenario.name == "PackageHallucination"
-        assert scenario.VERSION == 1
+        assert scenario.VERSION == 2
 
     def test_default_objective_scorer_is_package_hallucination_scorer(self):
         scenario = PackageHallucination()
@@ -75,22 +72,16 @@ class TestPackageHallucinationInitialization:
         assert scenario._objective_scorer is custom
 
     def test_required_datasets(self):
-        assert PackageHallucination.required_datasets() == [
-            "garak_pypi_packages",
-            "garak_npm_packages",
-            "garak_rubygems_packages",
-            "garak_crates_packages",
-        ]
+        assert PackageHallucination.required_datasets() == ["garak_crates_packages"]
 
-    def test_default_dataset_config_declares_registries_and_corpus(self):
+    def test_default_dataset_config_declares_rust_registry_and_corpus(self):
         config = PackageHallucination()._default_dataset_config
-        # Registries (scorer inputs) plus the prompt-corpus datasets are all auto-fetched.
-        assert set(PackageHallucination.required_datasets()) <= set(config.dataset_names)
-        assert {
+        assert set(config.dataset_names) == {
+            "garak_crates_packages",
             "garak_package_hallucination_stubs",
             "garak_package_hallucination_real_tasks",
             "garak_package_hallucination_unreal_tasks",
-        } <= set(config.dataset_names)
+        }
 
     def test_baseline_forbidden(self):
         assert BaselineAttackPolicy.Forbidden == PackageHallucination.BASELINE_ATTACK_POLICY
@@ -102,15 +93,15 @@ class TestPackageHallucinationInitialization:
 class TestPackageHallucinationTechnique:
     def test_concrete_strategy_values(self):
         values = {s.value for s in PackageHallucinationTechnique}
-        assert {"python", "javascript", "ruby", "rust"} <= values
+        assert values == {"all", "default", "rust"}
 
-    def test_all_expands_to_four_languages(self):
+    def test_all_expands_to_rust(self):
         expanded = {s.value for s in PackageHallucinationTechnique.expand({PackageHallucinationTechnique.ALL})}
-        assert expanded == {"python", "javascript", "ruby", "rust"}
+        assert expanded == {"rust"}
 
-    def test_default_expands_to_four_languages(self):
+    def test_default_expands_to_rust(self):
         expanded = {s.value for s in PackageHallucinationTechnique.expand({PackageHallucinationTechnique.DEFAULT})}
-        assert expanded == {"python", "javascript", "ruby", "rust"}
+        assert expanded == {"rust"}
 
     def test_aggregate_tags_include_default(self):
         assert {"all", "default"} <= PackageHallucinationTechnique.get_aggregate_tags()
@@ -131,18 +122,18 @@ class TestPackageHallucinationAtomicAttacks:
             )
             await scenario.initialize_async()
 
-    async def test_one_atomic_attack_per_language(self, mock_objective_target, fake_registry_memory):
+    async def test_default_builds_one_rust_atomic_attack(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.ALL], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.DEFAULT], fake_registry_memory
         )
         names = {a.atomic_attack_name for a in scenario._atomic_attacks}
-        assert names == {"python", "javascript", "ruby", "rust"}
+        assert names == {"rust"}
 
     async def test_no_baseline_emitted(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
         )
         assert all(a.atomic_attack_name != "baseline" for a in scenario._atomic_attacks)
 
@@ -156,7 +147,7 @@ class TestPackageHallucinationAtomicAttacks:
                 scenario.set_params_from_args(
                     args={
                         "objective_target": mock_objective_target,
-                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                        "scenario_techniques": [PackageHallucinationTechnique.Rust],
                         "include_baseline": True,
                     }
                 )
@@ -176,7 +167,7 @@ class TestPackageHallucinationAtomicAttacks:
     async def test_seed_groups_pair_objective_and_prompt(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
         )
         attack = scenario._atomic_attacks[0]
         assert len(attack.seed_groups) > 0
@@ -187,12 +178,12 @@ class TestPackageHallucinationAtomicAttacks:
             # The rendered prompt must have substituted the language label and task.
             assert "<language>" not in group.seeds[1].value
             assert "<task>" not in group.seeds[1].value
-            assert "Python3" in group.seeds[1].value
+            assert "Rust" in group.seeds[1].value
 
     async def test_max_prompts_per_language_caps_output(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination(max_prompts_per_language=3)
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
         )
         assert len(scenario._atomic_attacks[0].seed_groups) == 3
 
@@ -208,7 +199,7 @@ class TestPackageHallucinationAtomicAttacks:
                 scenario.set_params_from_args(
                     args={
                         "objective_target": mock_objective_target,
-                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                        "scenario_techniques": [PackageHallucinationTechnique.Rust],
                     }
                 )
                 await scenario.initialize_async()
@@ -236,7 +227,7 @@ class TestPackageHallucinationAtomicAttacks:
                 scenario.set_params_from_args(
                     args={
                         "objective_target": mock_objective_target,
-                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                        "scenario_techniques": [PackageHallucinationTechnique.Rust],
                     }
                 )
                 await scenario.initialize_async()
