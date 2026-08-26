@@ -472,20 +472,36 @@ async function resolveAttachment(
     }
     const response = await fetch(attachment.url)
     if (!response.ok) {
+      await discardBody(response)
       return { source: null, reason: 'unreadable' }
     }
     // Check the advertised length before reading the body, so an oversized
-    // response is abandoned instead of downloaded only to be discarded.
+    // response is cancelled rather than downloaded only to be discarded.
     const declaredBytes = Number(response.headers?.get('content-length'))
     const declaredRefusal = Number.isFinite(declaredBytes)
       ? budgetRefusal(declaredBytes, dataUriLength(attachment.mimeType, declaredBytes), remaining)
       : null
     if (declaredBytes > 0 && declaredRefusal) {
+      await discardBody(response)
       return { source: null, reason: declaredRefusal }
     }
     return await blobToDataUri(await response.blob(), attachment.mimeType, remaining)
   } catch {
     return { source: null, reason: 'unreadable' }
+  }
+}
+
+/**
+ * Close a response the export has decided not to read. Returning early only
+ * drops the reference, and the browser goes on pulling the whole body off the
+ * network. Cancelling can itself fail, which must not replace the reason the
+ * caller is about to report.
+ */
+async function discardBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel()
+  } catch {
+    // The body is being abandoned either way.
   }
 }
 

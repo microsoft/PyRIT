@@ -1112,11 +1112,13 @@ describe("conversationExport", () => {
       expect(html).toContain("Attachments: 2 of 2 embedded");
     });
 
-    it("does not read the body of a response that declares it is too large", async () => {
+    it("cancels the body of a response that declares it is too large", async () => {
       const blob = jest.fn();
+      const cancel = jest.fn().mockResolvedValue(undefined);
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         headers: { get: () => String(11 * 1024 * 1024) },
+        body: { cancel },
         blob,
       }) as unknown as typeof fetch;
       const html = await conversationToHtml(
@@ -1125,7 +1127,43 @@ describe("conversationExport", () => {
         FIXED_NOW,
       );
       expect(blob).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledTimes(1);
       expect(html).toContain("[Image: result.png (image/png) — too large to embed]");
+    });
+
+    it("keeps the size reason when cancelling the body fails", async () => {
+      const cancel = jest.fn().mockRejectedValue(new Error("already locked"));
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => String(11 * 1024 * 1024) },
+        body: { cancel },
+        blob: jest.fn(),
+      }) as unknown as typeof fetch;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(html).toContain("[Image: result.png (image/png) — too large to embed]");
+      expect(html).not.toContain("could not be read");
+    });
+
+    it("cancels the body of a failed response", async () => {
+      const cancel = jest.fn().mockResolvedValue(undefined);
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        headers: { get: () => null },
+        body: { cancel },
+        blob: jest.fn(),
+      }) as unknown as typeof fetch;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment()] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(html).toContain("[Image: result.png (image/png) — could not be read]");
     });
 
     it("gives audio and video players an accessible name", async () => {
