@@ -8,28 +8,29 @@ import pytest
 
 from pyrit.memory import CentralMemory
 from pyrit.models import ContentScorable, Message, MessagePiece, MessageScorable
-from pyrit.providers import (
-    HuggingFaceModelSource,
-    HuggingFaceSequenceClassificationResult,
-    HuggingFaceSequenceClassifier,
+from pyrit.score import RobloxPiiCategory, RobloxPiiScorer
+from pyrit.score._classifiers.hugging_face import (
+    _HuggingFaceSequenceClassificationResult,
+    _HuggingFaceSequenceClassifier,
 )
-from pyrit.score import (
-    ConversationScoringMode,
-    RobloxPiiCategory,
-    RobloxPiiScorer,
-    create_conversation_scorer,
-)
+from pyrit.score.float_scale.roblox_pii_scorer import _RobloxPiiClassifier
 
 LABELS = tuple(category.value for category in RobloxPiiCategory)
 
 
 def _classifier(*, logits: tuple[float, float, float] = (-1.0, 0.0, 1.0)) -> MagicMock:
-    classifier = MagicMock(spec=HuggingFaceSequenceClassifier)
+    classifier = MagicMock(spec=_HuggingFaceSequenceClassifier)
     classifier.predict_logits_async = AsyncMock(
-        return_value=HuggingFaceSequenceClassificationResult(logits=(logits,), labels=LABELS)
+        return_value=_HuggingFaceSequenceClassificationResult(logits=(logits,), labels=LABELS)
     )
     classifier.load_model_async = AsyncMock()
     return classifier
+
+
+def _scorer(*, classifier: MagicMock) -> RobloxPiiScorer:
+    scorer = RobloxPiiScorer()
+    scorer._classifier = classifier
+    return scorer
 
 
 def _piece(
@@ -51,7 +52,7 @@ def _piece(
 @pytest.mark.usefixtures("patch_central_database")
 async def test_score_text_async_formats_single_target_turn():
     classifier = _classifier()
-    scorer = RobloxPiiScorer(classifier=classifier)
+    scorer = _scorer(classifier=classifier)
 
     scores = await scorer.score_async(scorable=ContentScorable(value="share your email"))
 
@@ -64,11 +65,7 @@ async def test_score_text_async_formats_single_target_turn():
             "t: share your email"
         )
     ]
-    assert call["tokenization_options"] == {
-        "max_length": 512,
-        "padding": "max_length",
-        "truncation": True,
-    }
+    assert set(call) == {"texts"}
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -103,7 +100,7 @@ async def test_score_async_attributes_roles_and_excludes_future_turns():
     ]
     memory.add_message_pieces_to_memory(message_pieces=pieces)
     classifier = _classifier()
-    scorer = RobloxPiiScorer(classifier=classifier)
+    scorer = _scorer(classifier=classifier)
 
     await scorer.score_async(scorable=MessageScorable.from_message(Message(message_pieces=[pieces[1]])))
 
@@ -116,7 +113,7 @@ async def test_score_async_attributes_roles_and_excludes_future_turns():
 @pytest.mark.usefixtures("patch_central_database")
 async def test_score_async_returns_category_probabilities_without_prompt_metadata():
     classifier = _classifier()
-    scorer = RobloxPiiScorer(classifier=classifier)
+    scorer = _scorer(classifier=classifier)
 
     scores = await scorer.score_async(scorable=ContentScorable(value="private text"))
 
@@ -131,11 +128,11 @@ async def test_score_async_returns_category_probabilities_without_prompt_metadat
 @pytest.mark.usefixtures("patch_central_database")
 async def test_score_async_rejects_unexpected_label_order():
     classifier = _classifier()
-    classifier.predict_logits_async.return_value = HuggingFaceSequenceClassificationResult(
+    classifier.predict_logits_async.return_value = _HuggingFaceSequenceClassificationResult(
         logits=((0.0, 0.0, 0.0),),
         labels=tuple(reversed(LABELS)),
     )
-    scorer = RobloxPiiScorer(classifier=classifier)
+    scorer = _scorer(classifier=classifier)
 
     with pytest.raises(RuntimeError, match="Unexpected Roblox PII label order"):
         await scorer.score_async(scorable=ContentScorable(value="text"))
@@ -144,35 +141,29 @@ async def test_score_async_rejects_unexpected_label_order():
 @pytest.mark.usefixtures("patch_central_database")
 async def test_load_model_async_delegates_to_classifier():
     classifier = _classifier()
-    scorer = RobloxPiiScorer(classifier=classifier)
+    scorer = _scorer(classifier=classifier)
 
     await scorer.load_model_async()
 
     classifier.load_model_async.assert_awaited_once()
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        HuggingFaceModelSource(model_id="org/custom-pii", revision="revision"),
-        HuggingFaceModelSource(model_path="models/custom-pii"),
-    ],
-)
-def test_identifier_uses_injected_classifier_source(source: HuggingFaceModelSource) -> None:
-    classifier = _classifier()
-    classifier.source = source
+def test_model_configuration_belongs_to_private_classifier() -> None:
+    classifier = RobloxPiiScorer()._classifier
 
-    params = RobloxPiiScorer(classifier=classifier).get_identifier().params
-
-    assert params.get("model_id") == source.model_id
-    expected_model_path = str(source.model_path) if source.model_path is not None else None
-    assert params.get("model_path") == expected_model_path
-    assert params.get("revision") == source.revision
+    assert isinstance(classifier, _RobloxPiiClassifier)
+    assert classifier._model_name_or_path == "Roblox/roblox-pii-classifier-v2"
+    assert classifier._revision == "44a84be3eba4859a7e2a1f7b9cee8df61131f28b"
+    assert classifier._tokenization_options == {
+        "max_length": 512,
+        "padding": "max_length",
+        "truncation": True,
+    }
 
 
 @pytest.mark.usefixtures("patch_central_database")
 async def test_blocked_input_returns_zero_for_each_category():
-    scorer = RobloxPiiScorer(classifier=_classifier())
+    scorer = _scorer(classifier=_classifier())
     blocked = MessagePiece(
         role="assistant",
         original_value="",
@@ -189,96 +180,3 @@ async def test_blocked_input_returns_zero_for_each_category():
     assert [score.score_category for score in scores] == [[label] for label in LABELS]
     assert all(score.get_value() == 0.0 for score in scores)
     assert all("Blocked response" in score.score_value_description for score in scores)
-
-
-@pytest.mark.usefixtures("patch_central_database")
-async def test_per_turn_conversation_scorer_aggregates_contextual_roblox_scores():
-    memory = CentralMemory.get_memory_instance()
-    conversation_id = "conversation"
-    pieces = [
-        _piece(
-            role="user",
-            text="That was a fun game.",
-            conversation_id=conversation_id,
-            sequence=0,
-        ),
-        _piece(
-            role="assistant",
-            text="Let's move this conversation to Discord.",
-            conversation_id=conversation_id,
-            sequence=1,
-        ),
-        _piece(
-            role="user",
-            text="Why should we move there?",
-            conversation_id=conversation_id,
-            sequence=2,
-        ),
-        _piece(
-            role="assistant",
-            text="Add me there; my username is skyfox_4821.",
-            conversation_id=conversation_id,
-            sequence=3,
-        ),
-    ]
-    memory.add_message_pieces_to_memory(message_pieces=pieces)
-    classifier = _classifier()
-    classifier.predict_logits_async.return_value = HuggingFaceSequenceClassificationResult(
-        logits=((-2.0, 2.0, 0.0), (2.0, -2.0, 1.0)),
-        labels=LABELS,
-    )
-    scorer = create_conversation_scorer(
-        scorer=RobloxPiiScorer(classifier=classifier),
-        mode=ConversationScoringMode.PER_TURN,
-    )
-
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(pieces[1].to_message()))
-
-    classifier.predict_logits_async.assert_awaited_once()
-    formatted_inputs = classifier.predict_logits_async.await_args.kwargs["texts"]
-    assert len(formatted_inputs) == 2
-    assert "Why should we move there?" not in formatted_inputs[0]
-    assert "Why should we move there?" in formatted_inputs[1]
-    scores_by_category = {score.score_category[0]: score for score in scores}
-    assert scores_by_category[RobloxPiiCategory.ASKING_FOR_PII.value].get_value() == pytest.approx(
-        1 / (1 + math.exp(-2))
-    )
-    assert scores_by_category[RobloxPiiCategory.GIVING_PII.value].get_value() == pytest.approx(1 / (1 + math.exp(-2)))
-    assert scores_by_category[RobloxPiiCategory.DIRECTING_USERS_OFF_PLATFORM.value].get_value() == pytest.approx(
-        1 / (1 + math.exp(-1))
-    )
-    assert scores_by_category[RobloxPiiCategory.ASKING_FOR_PII.value].score_metadata["context_turn_count"] == 4
-    assert scores_by_category[RobloxPiiCategory.GIVING_PII.value].score_metadata["context_turn_count"] == 2
-    assert scores_by_category[RobloxPiiCategory.GIVING_PII.value].score_metadata["winning_message_piece_id"] == str(
-        pieces[1].id
-    )
-    assert all(score.message_piece_id == pieces[1].id for score in scores)
-
-
-@pytest.mark.usefixtures("patch_central_database")
-async def test_per_turn_conversation_scorer_scores_blocked_partial_content():
-    memory = CentralMemory.get_memory_instance()
-    blocked_piece = MessagePiece(
-        role="assistant",
-        original_value="blocked",
-        converted_value="blocked",
-        original_value_data_type="error",
-        converted_value_data_type="error",
-        conversation_id="blocked-conversation",
-        sequence=0,
-        response_error="blocked",
-        prompt_metadata={"partial_content": "my email is player@example.com"},
-    )
-    memory.add_message_pieces_to_memory(message_pieces=[blocked_piece])
-    classifier = _classifier()
-    scorer = create_conversation_scorer(
-        scorer=RobloxPiiScorer(classifier=classifier),
-        mode=ConversationScoringMode.PER_TURN,
-    )
-    scorer.score_blocked_content = True
-
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(blocked_piece.to_message()))
-
-    classifier.predict_logits_async.assert_awaited_once()
-    assert classifier.predict_logits_async.await_args.kwargs["texts"][0].endswith("t: my email is player@example.com")
-    assert len(scores) == 3

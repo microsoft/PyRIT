@@ -119,13 +119,13 @@ print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 # %% [markdown]
 # ### RobloxPiiScorer
 #
-# `RobloxPiiScorer` runs [Roblox PII Classifier v2](https://huggingface.co/Roblox/roblox-pii-classifier-v2) locally through PyRIT's reusable Hugging Face sequence-classification adapter. It emits one `float_scale` score for each model category:
+# `RobloxPiiScorer` runs [Roblox PII Classifier v2](https://huggingface.co/Roblox/roblox-pii-classifier-v2) locally and emits one `float_scale` score for each model category:
 #
 # - `privacy_asking_for_pii`
 # - `privacy_giving_pii`
 # - `directing_users_off_platform`
 #
-# Install the local runtime with `pip install "pyrit[huggingface]"` (or `uv sync --extra huggingface` in a source checkout). The default model revision is pinned. Construction is lightweight; the first scoring call downloads the roughly 2.2 GB model into the standard Hugging Face cache and loads it into memory. Applications can call `await scorer.load_model_async()` during startup to warm the model, and can set `local_files_only=True` after the revision is cached.
+# Install the local runtime with `pip install "pyrit[huggingface]"` (or `uv sync --extra huggingface` in a source checkout). The scorer uses a pinned model revision and reads `HUGGINGFACE_TOKEN` when authentication is needed. Construction is lightweight; the first scoring call downloads the roughly 2.2 GB model into the standard Hugging Face cache and loads it into memory. Applications can call `await scorer.load_model_async()` during startup to warm it.
 #
 # ```python
 # from pyrit.score import RobloxPiiScorer
@@ -140,7 +140,7 @@ print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 #
 # The values are uncalibrated sigmoid model scores in `[0, 1]`; this float scorer does not apply policy thresholds. The model card recommends `0.60` for asking, `0.55` for giving, and `0.10` for directing users off-platform. Validate those cutoffs against your own traffic before using them as decisions.
 #
-# For persisted `MessageScorable` evidence, the scorer formats chat history through the selected turn and treats that turn's role as target `t`. To evaluate every assistant turn and take the maximum score per category, use per-turn conversation scoring in [Combining & stacking scorers](3_combining_scorers.ipynb#per-turn-conversation-scoring).
+# For persisted `MessageScorable` evidence, the scorer formats chat history through the selected turn and treats that turn's role as target `t`. Later turns are excluded, so each score remains linked to one message and the context available at that point.
 #
 # Inspect all three categories rather than assuming that platform names map only to `directing_users_off_platform`: requests for handles often score as asking for PII, while sharing a handle often scores as giving PII.
 

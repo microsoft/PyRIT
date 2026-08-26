@@ -1,9 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import TYPE_CHECKING, cast
 
 from pyrit.models import ComponentIdentifier, Condition, Message, MessagePiece, Score, ScoringExpectation
@@ -15,24 +13,6 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 if TYPE_CHECKING:
     from uuid import UUID
-
-
-class ConversationScoringMode(str, Enum):
-    """Supported methods for evaluating a stored conversation."""
-
-    CONCATENATED = "concatenated"
-    PER_TURN = "per_turn"
-
-
-def _get_max_scores_by_category(scores: list[Score]) -> list[Score]:
-    scores_by_category: dict[str, list[Score]] = {}
-    for score in scores:
-        primary_category = (score.score_category or [""])[0]
-        scores_by_category.setdefault(primary_category, []).append(score)
-    return [
-        max(category_scores, key=lambda score: float(score.get_value()))
-        for _, category_scores in sorted(scores_by_category.items())
-    ]
 
 
 class ConversationScorer(MessageScorer, ABC):
@@ -213,15 +193,10 @@ class ConversationScorer(MessageScorer, ABC):
 def create_conversation_scorer(
     *,
     scorer: Scorer,
-    mode: ConversationScoringMode = ConversationScoringMode.CONCATENATED,
     validator: ScorerPromptValidator | None = None,
 ) -> Scorer:
     """
-    Create a conversation scorer using the selected scoring mode.
-
-    The default concatenated mode renders the full stored conversation as one text message
-    and scores it once. Per-turn mode scores every stored turn with the same API role as the
-    triggering message, then takes the maximum float score in each category.
+    Create a ConversationScorer that inherits from the same type as the wrapped scorer.
 
     This factory dynamically creates a ConversationScorer class that inherits from the wrapped scorer's
     base class (FloatScaleScorer or TrueFalseScorer), ensuring the returned scorer is an instance
@@ -230,7 +205,6 @@ def create_conversation_scorer(
     Args:
         scorer (Scorer): The scorer to wrap for conversation-level evaluation.
             Must be an instance of FloatScaleScorer or TrueFalseScorer.
-        mode (ConversationScoringMode): Conversation scoring behavior. Defaults to concatenated.
         validator (ScorerPromptValidator | None): Optional validator override.
             If not provided, uses the wrapped scorer's validator.
 
@@ -239,35 +213,13 @@ def create_conversation_scorer(
 
     Raises:
         TypeError: If the dynamic scorer does not inherit from ``Scorer``.
-        ValueError: If the scorer is incompatible with the selected mode.
+        ValueError: If the scorer is not an instance of FloatScaleScorer or TrueFalseScorer.
 
     Example:
         >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
         >>> conversation_scorer = create_conversation_scorer(scorer=float_scorer)
         >>> isinstance(conversation_scorer, FloatScaleScorer)  # True
         >>> isinstance(conversation_scorer, ConversationScorer)  # True
-    """
-    if mode is ConversationScoringMode.CONCATENATED:
-        return _create_concatenated_conversation_scorer(scorer=scorer, validator=validator)
-    if mode is ConversationScoringMode.PER_TURN:
-        return _create_per_turn_conversation_scorer(scorer=scorer, validator=validator)
-    raise ValueError(f"Unsupported conversation scoring mode: {mode!r}.")
-
-
-def _create_concatenated_conversation_scorer(
-    *,
-    scorer: Scorer,
-    validator: ScorerPromptValidator | None,
-) -> Scorer:
-    """
-    Create the original full-transcript conversation scorer.
-
-    Returns:
-        Scorer: Dynamic conversation scorer matching the wrapped scorer family.
-
-    Raises:
-        TypeError: If the dynamic scorer has an invalid type or identifier.
-        ValueError: If the wrapped scorer is not a float-scale or true/false scorer.
     """
     # Determine the base class of the wrapped scorer
     scorer_base_class: type[Scorer] | None = None
@@ -329,116 +281,4 @@ def _create_concatenated_conversation_scorer(
     conversation_scorer = DynamicConversationScorer()
     if not isinstance(conversation_scorer, Scorer):
         raise TypeError("Dynamic conversation scorer must inherit from Scorer")
-    return conversation_scorer
-
-
-def _create_per_turn_conversation_scorer(
-    *,
-    scorer: Scorer,
-    validator: ScorerPromptValidator | None,
-) -> Scorer:
-    """
-    Create a float scorer that takes the category-wise maximum across same-role turns.
-
-    Returns:
-        Scorer: Dynamic per-turn float-scale conversation scorer.
-
-    Raises:
-        TypeError: If the dynamic scorer has an invalid type.
-        ValueError: If the wrapped scorer is not a float-scale scorer.
-    """
-    if not isinstance(scorer, FloatScaleScorer):
-        raise ValueError("Per-turn conversation scoring currently requires a FloatScaleScorer.")
-
-    wrapped_scorer: FloatScaleScorer = scorer
-
-    class DynamicPerTurnConversationScorer(ConversationScorer, FloatScaleScorer):
-        """Score each same-role turn and aggregate the maximum value by category."""
-
-        def __init__(self) -> None:
-            MessageScorer.__init__(self, validator=validator or ConversationScorer._DEFAULT_VALIDATOR)
-            self._wrapped_scorer = wrapped_scorer
-
-        @property
-        def score_blocked_content(self) -> bool:
-            return self._wrapped_scorer.score_blocked_content
-
-        @score_blocked_content.setter
-        def score_blocked_content(self, value: bool) -> None:
-            self._wrapped_scorer.score_blocked_content = value
-
-        @property
-        def raise_if_scorer_blocks(self) -> bool:
-            return self._wrapped_scorer.raise_if_scorer_blocks
-
-        @raise_if_scorer_blocks.setter
-        def raise_if_scorer_blocks(self, value: bool) -> None:
-            self._wrapped_scorer.raise_if_scorer_blocks = value
-
-        def _get_wrapped_scorer(self) -> MessageScorer:
-            return self._wrapped_scorer
-
-        def _build_identifier(self) -> ComponentIdentifier:
-            return self._create_identifier(
-                params={"conversation_scoring_mode": ConversationScoringMode.PER_TURN.value},
-                sub_scorers=[self._wrapped_scorer.get_identifier()],
-            )
-
-        async def _score_prepared_message_async(
-            self,
-            *,
-            message: Message,
-            expectation: ScoringExpectation | None,
-        ) -> list[Score]:
-            trigger_piece = message.get_piece()
-            conversation_id = trigger_piece.conversation_id
-            conversation = (
-                await asyncio.to_thread(
-                    self._memory.get_conversation_messages,
-                    conversation_id=conversation_id,
-                )
-                if conversation_id
-                else []
-            )
-            if not conversation:
-                raise ValueError(f"Conversation with ID {conversation_id} not found in memory.")
-
-            selected_messages = [
-                candidate for candidate in conversation if candidate.get_piece().api_role == trigger_piece.api_role
-            ]
-            score_batches = await self._wrapped_scorer._score_nested_messages_async(
-                messages=selected_messages,
-                expectation=expectation,
-                context_messages=conversation,
-            )
-            child_scores = [score for batch in score_batches for score in batch]
-            winning_scores = _get_max_scores_by_category(child_scores)
-            objective = expectation.objective if expectation else None
-            aggregated_scores: list[Score] = []
-            for winner in winning_scores:
-                metadata = {
-                    **(winner.score_metadata or {}),
-                    "conversation_scoring_mode": ConversationScoringMode.PER_TURN.value,
-                    "scored_turn_count": len(selected_messages),
-                }
-                if winner.message_piece_id is not None:
-                    metadata["winning_message_piece_id"] = str(winner.message_piece_id)
-                aggregated_scores.append(
-                    Score(
-                        score_value=str(winner.get_value()),
-                        score_value_description=winner.score_value_description,
-                        score_type="float_scale",
-                        score_category=winner.score_category,
-                        score_metadata=metadata,
-                        score_rationale=winner.score_rationale,
-                        scorer_class_identifier=self.get_identifier(),
-                        message_piece_id=trigger_piece.id,
-                        objective=objective,
-                    )
-                )
-            return aggregated_scores
-
-    conversation_scorer = DynamicPerTurnConversationScorer()
-    if not isinstance(conversation_scorer, Scorer):
-        raise TypeError("Dynamic per-turn conversation scorer must inherit from Scorer")
     return conversation_scorer

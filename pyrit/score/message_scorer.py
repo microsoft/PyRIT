@@ -26,8 +26,6 @@ from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from pyrit.memory import MemoryInterface
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -268,28 +266,6 @@ class MessageScorer(Scorer):
         if scores:
             self.validate_return_scores(scores=scores)
         return scores
-
-    async def _score_nested_messages_async(
-        self,
-        *,
-        messages: Sequence[Message],
-        expectation: ScoringExpectation | None,
-        context_messages: Sequence[Message] | None = None,
-    ) -> list[list[Score]]:
-        """
-        Score multiple child messages, allowing batch-capable scorers to override.
-
-        Args:
-            messages (Sequence[Message]): Child messages to score.
-            expectation (ScoringExpectation | None): What the scorer should look for.
-            context_messages (Sequence[Message] | None): Optional surrounding conversation.
-
-        Returns:
-            list[list[Score]]: Scores corresponding to each child message.
-        """
-        return await asyncio.gather(
-            *[self._score_nested_message_async(message=message, expectation=expectation) for message in messages]
-        )
 
     async def score_message_async(
         self,

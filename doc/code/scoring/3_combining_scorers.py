@@ -1,12 +1,12 @@
 # ---
 # jupyter:
 #   jupytext:
-#     cell_metadata_filter: class,-all
+#     cell_metadata_filter: -all
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.5
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -27,6 +27,7 @@
 # a leaf scorer or an already composed wrapper with that base, which enables stacking.
 
 # %% [markdown] class="col-page-right"
+#
 # ```mermaid
 # flowchart LR
 #     subgraph inputs["Supported inputs"]
@@ -39,7 +40,7 @@
 #         direction TB
 #         COMP["TrueFalseCompositeScorer<br/>AND · OR · MAJORITY"]
 #         INV["TrueFalseInverterScorer<br/>negates one result"]
-#         CONV["create_conversation_scorer()<br/>concatenated or per-turn"]
+#         CONV["create_conversation_scorer()<br/>scores concatenated history"]
 #         THRESH["FloatScaleThresholdScorer<br/>score ≥ threshold"]
 #         CONV ~~~ THRESH
 #     end
@@ -71,9 +72,16 @@
 # ```
 
 # %% [markdown]
-# `TrueFalseCompositeScorer` requires at least one `TrueFalseScorer` and combines their single results with `AND`, `OR`, or `MAJORITY`; `TrueFalseInverterScorer` accepts one `TrueFalseScorer`. `FloatScaleThresholdScorer` is the cross-kind adapter: it accepts one `FloatScaleScorer` and produces a `TrueFalseScorer`. By default, `create_conversation_scorer()` accepts either base type and scores one concatenated transcript. Its opt-in per-turn mode currently accepts a `FloatScaleScorer`, scores same-role turns separately, and takes the maximum result in each category. Both modes return a dynamic wrapper that remains the same scorer kind as its input.
 #
-# For example, float-scale → conversation → threshold → inversion is supported; a generic `Scorer` outside those base types is not.
+# `TrueFalseCompositeScorer` requires at least one `TrueFalseScorer` and combines their
+# single results with `AND`, `OR`, or `MAJORITY`; `TrueFalseInverterScorer` accepts one
+# `TrueFalseScorer`. `FloatScaleThresholdScorer` is the cross-kind adapter: it accepts one
+# `FloatScaleScorer` and produces a `TrueFalseScorer`. `create_conversation_scorer()`
+# accepts only those two base types and returns a dynamic wrapper that remains the same
+# scorer kind as its input.
+#
+# For example, float-scale → conversation → threshold →
+# inversion is supported; a generic `Scorer` outside those base types is not.
 # %%
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -140,9 +148,14 @@ print(f"[threshold] independent -> {original.get_value()}")
 # %% [markdown]
 # ## Scoring a whole conversation
 #
-# Some signals only emerge across turns — persuasion, gradual persona breaks, escalation. In its default `ConversationScoringMode.CONCATENATED` mode, `create_conversation_scorer()` wraps any `TrueFalseScorer` or `FloatScaleScorer` and renders the entire stored conversation as one text message. The returned scorer is the same type as the one it wraps.
+# Some signals only emerge across turns — persuasion, gradual persona breaks, escalation.
+# `create_conversation_scorer()` wraps any `TrueFalseScorer` or `FloatScaleScorer` so it
+# scores the concatenated conversation instead of a single message. The returned scorer is
+# the same type as the one it wraps.
 #
-# Pass it any one message from the conversation; its `conversation_id` is used to pull the full history from memory. Below we build a short conversation by hand and wrap a local `SubStringScorer` to flag a persona breach.
+# Pass it any one message from the conversation; its `conversation_id` is used to pull the
+# full history from memory. Below we build a short conversation by hand and wrap a local
+# `SubStringScorer` to flag a persona breach.
 # %%
 import uuid
 
@@ -170,32 +183,6 @@ conversation_scorer = create_conversation_scorer(scorer=persona_breach_scorer)
 # Any message from the conversation works as the trigger.
 score = (await conversation_scorer.score_async(scorable=MessageScorable.from_message(turns[0])))[0]  # type: ignore
 print(f"[conversation] persona breach across turns -> {score.get_value()}")
-
-# %% [markdown]
-# ## Per-turn conversation scoring
-#
-# `ConversationScoringMode.PER_TURN` is intended for float scorers whose leaf implementation already understands one turn and its context. The triggering message selects an API role (`user` or `assistant`); the wrapper scores every stored turn with that role, groups child scores by category, and returns the maximum value in each category. Final scores are linked to the triggering message and persisted once by the outer wrapper.
-#
-# For `RobloxPiiScorer`, each assistant turn is formatted with conversation history only through that turn before inference. The wrapper then keeps the strongest asking, giving, and off-platform result across all assistant turns:
-#
-# ```python
-# from pyrit.models import MessageScorable
-# from pyrit.score import (
-#     ConversationScoringMode,
-#     RobloxPiiScorer,
-#     create_conversation_scorer,
-# )
-#
-# conversation_scorer = create_conversation_scorer(
-#     scorer=RobloxPiiScorer(),
-#     mode=ConversationScoringMode.PER_TURN,
-# )
-# scores = await conversation_scorer.score_async(
-#     scorable=MessageScorable.from_message(turns[-1]),  # selects assistant turns
-# )
-# ```
-#
-# Per-turn mode currently requires a `FloatScaleScorer` and always uses category-wise maximum aggregation. Use the default concatenated mode when a rubric must judge the transcript as one document or when wrapping a `TrueFalseScorer`.
 
 # %% [markdown]
 # For a richer, real-world example, wrap a `SelfAskLikertScorer` with the

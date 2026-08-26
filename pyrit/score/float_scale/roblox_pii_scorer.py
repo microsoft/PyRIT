@@ -8,20 +8,18 @@ from __future__ import annotations
 import asyncio
 import math
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
-from pyrit.providers import (
-    HuggingFaceModelSource,
-    HuggingFaceSequenceClassificationResult,
-    HuggingFaceSequenceClassifier,
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.score._classifiers.hugging_face import (
+    _HuggingFaceSequenceClassificationResult,
+    _HuggingFaceSequenceClassifier,
 )
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
 
 class RobloxPiiCategory(str, Enum):
@@ -32,12 +30,29 @@ class RobloxPiiCategory(str, Enum):
     DIRECTING_USERS_OFF_PLATFORM = "directing_users_off_platform"
 
 
-class RobloxPiiScorer(FloatScaleScorer):
-    """Return one Roblox PII Classifier v2 probability per PII behavior."""
+class _RobloxPiiClassifier(_HuggingFaceSequenceClassifier):
+    """Configure the private Hugging Face runtime for Roblox PII Classifier v2."""
 
     DEFAULT_MODEL_ID: ClassVar[str] = "Roblox/roblox-pii-classifier-v2"
     DEFAULT_MODEL_REVISION: ClassVar[str] = "44a84be3eba4859a7e2a1f7b9cee8df61131f28b"
     MAX_LENGTH: ClassVar[int] = 512
+
+    def __init__(self) -> None:
+        super().__init__(
+            model_id=self.DEFAULT_MODEL_ID,
+            revision=self.DEFAULT_MODEL_REVISION,
+            tokenizer_kwargs={"truncation_side": "left"},
+            tokenization_options={
+                "max_length": self.MAX_LENGTH,
+                "padding": "max_length",
+                "truncation": True,
+            },
+        )
+
+
+class RobloxPiiScorer(FloatScaleScorer):
+    """Return one Roblox PII Classifier v2 probability per PII behavior."""
+
     SPEAKER_ID_METADATA_KEY: ClassVar[str] = "speaker_id"
     _INSTRUCTION_PREFIX: ClassVar[str] = (
         "Instruct: In the following chat messages from target speaker t and possibly "
@@ -54,44 +69,15 @@ class RobloxPiiScorer(FloatScaleScorer):
     def __init__(
         self,
         *,
-        model_id: str = DEFAULT_MODEL_ID,
-        revision: str | None = DEFAULT_MODEL_REVISION,
-        hf_token: str | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        device: str | None = None,
-        torch_dtype: Any | None = None,
-        classifier: HuggingFaceSequenceClassifier | None = None,
         validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the Roblox PII scorer.
 
         Args:
-            model_id (str): Hugging Face model ID. Defaults to the Roblox v2 classifier.
-            revision (str | None): Model revision. Defaults to the reviewed v2 commit.
-            hf_token (str | None): Optional token for authenticated Hugging Face access.
-            cache_dir (str | Path | None): Optional Hugging Face cache directory.
-            local_files_only (bool): Require the model to exist in the local cache.
-            device (str | None): Torch device. Defaults to CUDA when available, otherwise CPU.
-            torch_dtype (Any | None): Optional model dtype forwarded to Transformers.
-            classifier (HuggingFaceSequenceClassifier | None): Injectable runtime for testing or customization.
             validator (ScorerPromptValidator | None): Custom message validator.
         """
-        requested_source = HuggingFaceModelSource(
-            model_id=model_id,
-            revision=revision,
-            token=hf_token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-        )
-        self._classifier = classifier or HuggingFaceSequenceClassifier(
-            source=requested_source,
-            device=device,
-            torch_dtype=torch_dtype,
-            tokenizer_kwargs={"truncation_side": "left"},
-        )
-        self._source = getattr(classifier, "source", None) or requested_source
+        self._classifier = _RobloxPiiClassifier()
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
     async def load_model_async(self) -> None:
@@ -103,19 +89,9 @@ class RobloxPiiScorer(FloatScaleScorer):
         Build the scorer identifier.
 
         Returns:
-            ComponentIdentifier: Identifier containing behaviorally relevant model settings.
+            ComponentIdentifier: Identifier containing the classifier's score categories.
         """
-        return self._create_identifier(
-            params={
-                "model_id": self._source.model_id,
-                "model_path": str(self._source.model_path) if self._source.model_path is not None else None,
-                "revision": self._source.revision,
-                "labels": list(self._LABELS),
-                "max_length": self.MAX_LENGTH,
-                "local_files_only": self._source.local_files_only,
-                "trust_remote_code": self._source.trust_remote_code,
-            }
-        )
+        return self._create_identifier(params={"labels": list(self._LABELS)})
 
     async def _score_piece_async(
         self,
@@ -125,14 +101,7 @@ class RobloxPiiScorer(FloatScaleScorer):
     ) -> list[Score]:
         context = await self._get_context_pieces_async(message_piece=message_piece)
         formatted_text, turn_count = self._format_context(message_piece=message_piece, context=context)
-        result = await self._classifier.predict_logits_async(
-            texts=[formatted_text],
-            tokenization_options={
-                "max_length": self.MAX_LENGTH,
-                "padding": "max_length",
-                "truncation": True,
-            },
-        )
+        result = await self._classifier.predict_logits_async(texts=[formatted_text])
         self._validate_classifier_result(result=result, expected_rows=1)
         return self._build_scores(
             message_piece=message_piece,
@@ -141,78 +110,10 @@ class RobloxPiiScorer(FloatScaleScorer):
             objective=objective,
         )
 
-    async def _score_nested_messages_async(
-        self,
-        *,
-        messages: Sequence[Message],
-        expectation: ScoringExpectation | None,
-        context_messages: Sequence[Message] | None = None,
-    ) -> list[list[Score]]:
-        if context_messages is None:
-            return await super()._score_nested_messages_async(
-                messages=messages,
-                expectation=expectation,
-            )
-
-        self._validate_expectation(expectation=expectation, allow_unmatched_conditions=True)
-        objective = expectation.objective if expectation else None
-        context = [piece for context_message in context_messages for piece in context_message.message_pieces]
-        prepared_messages: list[Message] = []
-        score_batches: list[list[Score]] = [[] for _ in messages]
-        pending_pieces: list[tuple[int, MessagePiece, int]] = []
-        formatted_texts: list[str] = []
-
-        for message_index, message in enumerate(messages):
-            prepared_message = self._apply_structured_refusal_substitution(message)
-            if self.score_blocked_content:
-                prepared_message = self._apply_blocked_content_substitution(prepared_message)
-            self._validator.validate(prepared_message, objective=objective)
-            prepared_messages.append(prepared_message)
-
-            supported_pieces = self._get_supported_pieces(prepared_message)
-            if not supported_pieces:
-                score_batches[message_index] = self._build_fallback_score(
-                    message=prepared_message,
-                    objective=objective,
-                )
-                continue
-
-            for piece in supported_pieces:
-                piece_context = self._select_context_pieces(message_piece=piece, pieces=context)
-                formatted_text, turn_count = self._format_context(message_piece=piece, context=piece_context)
-                formatted_texts.append(formatted_text)
-                pending_pieces.append((message_index, piece, turn_count))
-
-        if formatted_texts:
-            result = await self._classifier.predict_logits_async(
-                texts=formatted_texts,
-                tokenization_options={
-                    "max_length": self.MAX_LENGTH,
-                    "padding": "max_length",
-                    "truncation": True,
-                },
-            )
-            self._validate_classifier_result(result=result, expected_rows=len(pending_pieces))
-            for (message_index, piece, turn_count), logits in zip(pending_pieces, result.logits, strict=True):
-                score_batches[message_index].extend(
-                    self._build_scores(
-                        message_piece=piece,
-                        logits=logits,
-                        turn_count=turn_count,
-                        objective=objective,
-                    )
-                )
-
-        for prepared_message, scores in zip(prepared_messages, score_batches, strict=True):
-            self._drop_ephemeral_score_links(message=prepared_message, scores=scores)
-            if scores:
-                self.validate_return_scores(scores=scores)
-        return score_batches
-
     def _validate_classifier_result(
         self,
         *,
-        result: HuggingFaceSequenceClassificationResult,
+        result: _HuggingFaceSequenceClassificationResult,
         expected_rows: int,
     ) -> None:
         if result.labels != self._LABELS:
@@ -241,7 +142,6 @@ class RobloxPiiScorer(FloatScaleScorer):
                 score_metadata={
                     "label_index": index,
                     "context_turn_count": turn_count,
-                    "max_length": self.MAX_LENGTH,
                 },
                 score_rationale="Probability from Roblox PII Classifier v2.",
                 scorer_class_identifier=self.get_identifier(),
@@ -272,7 +172,6 @@ class RobloxPiiScorer(FloatScaleScorer):
                 score_metadata={
                     "label_index": index,
                     "context_turn_count": 0,
-                    "max_length": self.MAX_LENGTH,
                 },
                 score_rationale=fallback.score_rationale,
                 scorer_class_identifier=self.get_identifier(),

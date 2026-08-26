@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.output.scorer.base import ScorerPrinterBase as ScorerPrinter
 from pyrit.score.batch_scorer import BatchScorer
-from pyrit.score.conversation_scorer import ConversationScorer, ConversationScoringMode, create_conversation_scorer
+from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScoreAggregator,
@@ -186,7 +186,6 @@ __all__ = [
     "ContentClassifierCategory",
     "ContentClassifierPaths",
     "ConversationScorer",
-    "ConversationScoringMode",
     "CredentialLeakScorer",
     "DecodingScorer",
     "FentanylKeywordScorer",
