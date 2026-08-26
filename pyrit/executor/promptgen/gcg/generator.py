@@ -260,9 +260,11 @@ class GCGGenerator(
         self._ensure_spawn_start_method()
         context.memory_labels = combine_dict({}, context.memory_labels)
 
+        np_rng = np.random.default_rng(self._algorithm.random_seed)
         context.targets, context.test_targets = self._apply_target_augmentation(
             train_targets=context.targets,
             test_targets=context.test_targets,
+            np_rng=np_rng,
         )
 
         log_gpu_memory(step=0)
@@ -318,6 +320,7 @@ class GCGGenerator(
             verbose=self._output.verbose,
             filter_cand=self._algorithm.filter_cand,
             allow_non_ascii=self._algorithm.allow_non_ascii,
+            random_seed=self._algorithm.random_seed,
         )
 
         return self._read_result(logfile_path=context.logfile_path, memory_labels=context.memory_labels)
@@ -381,6 +384,7 @@ class GCGGenerator(
         *,
         train_targets: list[str],
         test_targets: list[str],
+        np_rng: np.random.Generator | None = None,
     ) -> tuple[list[str], list[str]]:
         """
         Randomly substitute equivalent target phrasings for diversity.
@@ -388,6 +392,8 @@ class GCGGenerator(
         Returns:
             tuple[list[str], list[str]]: Augmented training and held-out targets.
         """
+        if np_rng is None:
+            np_rng = np.random.default_rng()
 
         def _shorten(s: str) -> str:
             return s.replace("Sure, h", "H")
@@ -395,8 +401,8 @@ class GCGGenerator(
         def _contract(s: str) -> str:
             return s.replace("Sure, here is", "Sure, here's")
 
-        train_targets = [_shorten(t) if np.random.random() < 0.5 else _contract(t) for t in train_targets]
-        test_targets = [_shorten(t) if np.random.random() < 0.5 else _contract(t) for t in test_targets]
+        train_targets = [_shorten(t) if np_rng.random() < 0.5 else _contract(t) for t in train_targets]
+        test_targets = [_shorten(t) if np_rng.random() < 0.5 else _contract(t) for t in test_targets]
         return train_targets, test_targets
 
     def _to_attack_params(self, *, context: GCGContext) -> Any:
