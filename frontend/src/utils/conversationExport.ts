@@ -612,11 +612,7 @@ function renderMessage(message: Message, resolved: ResolvedMedia['perMessage'][n
     `<header><span class="role">${escapeHtml(ROLE_LABELS[message.role])}</span>` +
       `<span class="timestamp">${escapeHtml(message.timestamp)}</span></header>`,
   ]
-  // A media-only message has no text; an empty block would read as if the
-  // model answered with nothing.
-  if (message.content.trim() !== '') {
-    parts.push(`<pre>${escapeHtml(message.content)}</pre>`)
-  }
+  parts.push(...renderBody(message, resolved.attachments))
   if (message.originalContent != null && message.originalContent !== message.content) {
     parts.push(labelled('Original (before conversion):', `<pre>${escapeHtml(message.originalContent)}</pre>`))
   }
@@ -629,8 +625,68 @@ function renderMessage(message: Message, resolved: ResolvedMedia['perMessage'][n
   if (message.error) {
     parts.push(renderError(message.error))
   }
-  parts.push(renderAttachments('Attachments:', message.attachments, resolved.attachments))
   return `<article class="message">\n${parts.filter(Boolean).join('\n')}\n</article>`
+}
+
+/**
+ * Converted text and media in the order the chat shows them.
+ *
+ * Backend messages carry `displayPieces`, where text and media alternate; the
+ * flat `content` field has already joined every text piece together, so a
+ * message that reads "text, image, text" in the chat would otherwise export as
+ * both texts followed by the image. Messages the frontend builds itself — an
+ * optimistic send, awaiting its backend echo — have no pieces, so the flat
+ * fields remain the fallback rather than the primary path.
+ */
+function renderBody(message: Message, resolved: ResolvedAttachment[]): string[] {
+  const flat = () => [renderText(message.content), renderAttachments('Attachments:', message.attachments, resolved)]
+  const pieces = message.displayPieces
+  if (!pieces || pieces.length === 0) {
+    return flat()
+  }
+  // Every attachment resolved above was billed against the budget and counted
+  // in the summary, so the pieces have to account for exactly those. If they
+  // ever disagree, the flat list is the only rendering that still shows all of
+  // them, and an honest count matters more than the order.
+  const mediaPieces = pieces.filter((piece) => piece.type === 'media' && piece.attachment)
+  if (mediaPieces.length !== (message.attachments?.length ?? 0)) {
+    return flat()
+  }
+  const parts: string[] = []
+  let pending: string[] = []
+  // `message.attachments` lists piece attachments in piece order, so the nth
+  // media piece that has one is the nth entry — and the nth resolution.
+  let attachmentIndex = 0
+  const flushText = () => {
+    if (pending.length > 0) {
+      parts.push(renderText(pending.join('\n')))
+      pending = []
+    }
+  }
+  for (const piece of pieces) {
+    if (piece.type === 'text') {
+      // Consecutive text pieces stay in one block: splitting them would add
+      // paragraph breaks the chat never showed.
+      if (piece.content !== '') {
+        pending.push(piece.content)
+      }
+      continue
+    }
+    // A scores-only media piece has no bytes to show.
+    if (!piece.attachment) {
+      continue
+    }
+    flushText()
+    parts.push(renderAttachment(piece.attachment, resolved[attachmentIndex] ?? { source: null, reason: 'unreadable' }))
+    attachmentIndex += 1
+  }
+  flushText()
+  return parts
+}
+
+/** A media-only message has no text; an empty block would read as if the model answered with nothing. */
+function renderText(content: string): string {
+  return content.trim() === '' ? '' : `<pre>${escapeHtml(content)}</pre>`
 }
 
 function renderError(error: MessageError): string {

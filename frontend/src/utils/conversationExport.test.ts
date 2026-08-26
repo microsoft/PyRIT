@@ -8,9 +8,36 @@ import {
   EXPORT_MIME_TYPES,
   MAX_TOTAL_INLINE_CHARACTERS,
 } from "./conversationExport";
-import type { Message, MessageAttachment } from "../types";
+import type { Message, MessageAttachment, BackendMessage } from "../types";
+import { backendMessageToFrontend } from "./messageMapper";
 
 const FIXED_NOW = new Date("2026-07-22T02:34:01.059Z");
+
+function textPiece(id: string, value: string) {
+  return {
+    id,
+    original_value_data_type: "text",
+    converted_value_data_type: "text",
+    original_value: value,
+    converted_value: value,
+    scores: [],
+    response_error: "none",
+  };
+}
+
+function mediaPiece(id: string, value: string, filename: string) {
+  return {
+    id,
+    original_value_data_type: "image_path",
+    converted_value_data_type: "image_path",
+    original_value: value,
+    converted_value: value,
+    converted_value_mime_type: "image/png",
+    converted_filename: filename,
+    scores: [],
+    response_error: "none",
+  };
+}
 
 function message(overrides: Partial<Message> = {}): Message {
   return {
@@ -1291,6 +1318,159 @@ describe("conversationExport", () => {
       const html = await conversationToHtml([message()], "conv-1", FIXED_NOW);
       expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1" />');
     });
+
+    it("keeps text and media in the order the chat showed them", async () => {
+      const img = attachment({ name: "middle.png", url: "data:image/png;base64,AAAA" });
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "AAA_BEFORE\nZZZ_AFTER",
+            attachments: [img],
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "AAA_BEFORE" },
+              { type: "media", pieceId: "p2", pieceIndex: 1, attachment: img },
+              { type: "text", pieceId: "p3", pieceIndex: 2, content: "ZZZ_AFTER" },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html.indexOf("AAA_BEFORE")).toBeLessThan(html.indexOf("<img "));
+      expect(html.indexOf("<img ")).toBeLessThan(html.indexOf("ZZZ_AFTER"));
+      // The flattened pair would put both texts in one block ahead of the image.
+      expect(html).not.toContain("AAA_BEFORE\nZZZ_AFTER");
+    });
+
+    it("keeps consecutive text pieces in a single block", async () => {
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "FLATTENED_PAIR",
+            displayPieces: [
+              { type: "text", pieceId: "p1", pieceIndex: 0, content: "first" },
+              { type: "text", pieceId: "p2", pieceIndex: 1, content: "second" },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("<pre>first\nsecond</pre>");
+      // The flat field is deliberately different here, so rendering it instead
+      // of the pieces shows up rather than passing by coincidence.
+      expect(html).not.toContain("FLATTENED_PAIR");
+    });
+
+    it("renders a message that has no display pieces from its flat fields", async () => {
+      const html = await conversationToHtml(
+        [message({ content: "optimistic", attachments: [attachment({ url: "data:image/png;base64,AAAA" })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("<pre>optimistic</pre>");
+      // The per-message label, not the "Attachments: 1 of 1 embedded" summary.
+      expect(html).toContain('<p class="label">Attachments:</p>');
+      expect(html).toContain("<img ");
+    });
+
+    it("pairs each media piece with its own resolution", async () => {
+      const inline = attachment({ name: "inline.png", url: "data:image/png;base64,AAAA" });
+      const remote = attachment({
+        name: "remote.png",
+        url: "https://acct.blob.core.windows.net/c/remote.png?sv=2024&sig=SECRETSIG",
+      });
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "between",
+            attachments: [inline, remote],
+            displayPieces: [
+              { type: "media", pieceId: "p1", pieceIndex: 0, attachment: inline },
+              { type: "text", pieceId: "p2", pieceIndex: 1, content: "between" },
+              { type: "media", pieceId: "p3", pieceIndex: 2, attachment: remote },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      // Pairing the pieces with the wrong resolutions would embed the remote
+      // one and put the placeholder on the one that was actually read.
+      expect(html).toContain('<img src="data:image/png;base64,AAAA" alt="inline.png" />');
+      expect(html).toContain("[Image: remote.png (image/png) — kept in remote storage]");
+      expect(html).not.toContain("SECRETSIG");
+    });
+
+    it("keeps a backend message in piece order end to end", async () => {
+      // The export pairs pieces with resolutions by position, which only holds
+      // because the mapper fills both lists in the same pass. Pin that here so
+      // a change to either side has to fail a test.
+      const backend = {
+        turn_number: 1,
+        role: "assistant",
+        created_at: "2026-07-22T02:30:07.000Z",
+        message_pieces: [
+          textPiece("p1", "AAA_BEFORE"),
+          mediaPiece("p2", "data:image/png;base64,iVBORw0KGgo=", "embedded.png"),
+          textPiece("p3", "ZZZ_AFTER"),
+          mediaPiece("p4", "https://acct.blob.core.windows.net/c/late.png?sig=SECRETSIG", "late.png"),
+        ],
+      } as unknown as BackendMessage;
+
+      const html = await conversationToHtml([backendMessageToFrontend(backend)], "conv-1", FIXED_NOW);
+
+      expect(html.indexOf("AAA_BEFORE")).toBeLessThan(html.indexOf("<img "));
+      expect(html.indexOf("<img ")).toBeLessThan(html.indexOf("ZZZ_AFTER"));
+      expect(html.indexOf("ZZZ_AFTER")).toBeLessThan(html.indexOf("late.png (image/png)"));
+      expect(html).toContain("iVBORw0KGgo=");
+      expect(html).not.toContain("SECRETSIG");
+      expect(html).toContain("Attachments: 1 of 2 embedded");
+    });
+
+    it("skips a display piece that carries scores but no media", async () => {
+      const img = attachment({ name: "only.png", url: "data:image/png;base64,AAAA" });
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "text",
+            attachments: [img],
+            displayPieces: [
+              { type: "media", pieceId: "p1", pieceIndex: 0 },
+              { type: "text", pieceId: "p2", pieceIndex: 1, content: "text" },
+              { type: "media", pieceId: "p3", pieceIndex: 2, attachment: img },
+            ],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      // The scores-only piece must not consume the resolution meant for the real one.
+      expect((html.match(/<img /g) ?? []).length).toBe(1);
+      expect(html).toContain("only.png");
+      expect(html).toContain("Attachments: 1 of 1 embedded");
+    });
+
+    it("falls back to the flat list when the pieces do not account for every attachment", async () => {
+      const shown = attachment({ name: "shown.png", url: "data:image/png;base64,AAAA" });
+      const missing = attachment({ name: "missing.png", url: "data:image/png;base64,BBBB" });
+      const html = await conversationToHtml(
+        [
+          message({
+            content: "text",
+            attachments: [shown, missing],
+            displayPieces: [{ type: "media", pieceId: "p1", pieceIndex: 0, attachment: shown }],
+          }),
+        ],
+        "conv-1",
+        FIXED_NOW,
+      );
+      // Both were billed against the budget, so both have to appear.
+      expect(html).toContain("shown.png");
+      expect(html).toContain("missing.png");
+      expect(html).toContain("Attachments: 2 of 2 embedded");
+    });
+
   });
 
   describe("exportConversation", () => {
