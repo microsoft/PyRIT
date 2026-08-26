@@ -33,13 +33,20 @@ const MEDIA_LABELS: Record<MessageAttachment['type'], string> = {
 /** How each omission reads to whoever opens the file. */
 const OMISSION_REASONS: Record<OmissionReason, string> = {
   unreadable: 'could not be read',
+  remote: 'kept in remote storage',
   'too-large': 'too large to embed',
   'no-room': 'no room left in this file',
   'not-embeddable': 'not a media file',
 }
 
 /** Fixed order so the summary reads the same way for the same conversation. */
-const OMISSION_ORDER: OmissionReason[] = ['unreadable', 'too-large', 'no-room', 'not-embeddable']
+const OMISSION_ORDER: OmissionReason[] = [
+  'unreadable',
+  'remote',
+  'too-large',
+  'no-room',
+  'not-embeddable',
+]
 
 /**
  * Largest attachment inlined into an HTML export, measured in real bytes.
@@ -374,7 +381,7 @@ function longestBacktickRun(content: string): number {
 }
 
 /** Why an attachment is named in the document instead of embedded in it. */
-type OmissionReason = 'unreadable' | 'too-large' | 'no-room' | 'not-embeddable'
+type OmissionReason = 'unreadable' | 'remote' | 'too-large' | 'no-room' | 'not-embeddable'
 
 /** `source` is the escaped text written into the document, which is what it costs. */
 type ResolvedAttachment = { source: string } | { source: null; reason: OmissionReason }
@@ -478,7 +485,10 @@ async function resolveAttachment(
       return await blobToDataUri(attachment.file, attachment.mimeType, remaining)
     }
     if (!isMediaEndpointUrl(attachment.url)) {
-      return { source: null, reason: 'unreadable' }
+      return {
+        source: null,
+        reason: isRemoteStorageUrl(attachment.url) ? 'remote' : 'unreadable',
+      }
     }
     const response = await fetch(attachment.url)
     if (!response.ok) {
@@ -573,6 +583,24 @@ function isMediaEndpointUrl(url: string): boolean {
       (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
       parsed.origin === window.location.origin &&
       parsed.pathname === MEDIA_ENDPOINT_PATH
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * True when the value points at another origin, which is where a deployment
+ * backed by cloud storage keeps its media. Reading across origins is refused,
+ * so naming one of these is a deliberate choice rather than a failed read, and
+ * the reader is told so instead of being shown an error.
+ */
+function isRemoteStorageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.origin !== window.location.origin
     )
   } catch {
     return false

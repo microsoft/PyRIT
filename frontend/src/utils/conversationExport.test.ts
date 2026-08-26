@@ -752,7 +752,20 @@ describe("conversationExport", () => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(html).not.toContain("SECRETSIG");
       expect(html).not.toContain("blob.core.windows.net");
+      expect(html).toContain("[Image: result.png (image/png) — kept in remote storage]");
+      expect(html).not.toContain("could not be read");
+    });
+
+    it("keeps the read failure wording for a same-origin url it will not fetch", async () => {
+      const fetchMock = mockFetchOnce("hello");
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url: "/not-the-media-endpoint?path=x.png" })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
       expect(html).toContain("[Image: result.png (image/png) — could not be read]");
+      expect(html).not.toContain("kept in remote storage");
     });
 
     it("names but does not embed a blob url with no local file", async () => {
@@ -764,6 +777,7 @@ describe("conversationExport", () => {
       );
       expect(fetchMock).not.toHaveBeenCalled();
       expect(html).toContain("[Image: result.png (image/png) — could not be read]");
+      expect(html).not.toContain("kept in remote storage");
     });
 
     it("falls back to a placeholder when the media endpoint refuses the file", async () => {
@@ -993,7 +1007,7 @@ describe("conversationExport", () => {
       );
       expect(html).toContain("Attachments: 0 of 3 embedded");
       expect(html).toContain(
-        "3 not embedded (1 could not be read; 1 too large to embed; 1 not a media file)",
+        "3 not embedded (1 kept in remote storage; 1 too large to embed; 1 not a media file)",
       );
     });
 
