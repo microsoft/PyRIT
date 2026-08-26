@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from unit.mocks import store_message
@@ -432,6 +432,25 @@ def test_factory_creates_unique_instances():
     assert isinstance(conv_scorer2, MessageFloatScaleScorer)
     assert isinstance(conv_scorer1, ConversationScorer)
     assert isinstance(conv_scorer2, ConversationScorer)
+
+
+def test_get_wrapped_scorer_raises_when_wrapped_scorer_reassigned_to_non_scorer():
+    """_get_wrapped_scorer re-validates the stored scorer, not just at construction time."""
+    conv_scorer = create_conversation_scorer(scorer=MockFloatScaleScorer())
+
+    conv_scorer._wrapped_scorer = "not-a-scorer"  # type: ignore[assignment]
+
+    with pytest.raises(TypeError, match="Wrapped conversation scorer must inherit from MessageScorer"):
+        conv_scorer._get_wrapped_scorer()
+
+
+def test_build_identifier_raises_when_create_identifier_returns_non_component_identifier():
+    """_build_identifier re-validates the identifier produced by _create_identifier."""
+    conv_scorer = create_conversation_scorer(scorer=MockFloatScaleScorer())
+
+    with patch.object(type(conv_scorer), "_create_identifier", return_value="not-an-identifier"):
+        with pytest.raises(TypeError, match="Conversation scorer identifier must be a ComponentIdentifier"):
+            conv_scorer._build_identifier()
 
 
 def test_conversation_scorer_validates_float_scale_scores():

@@ -76,7 +76,8 @@ def _create_aggregator(
     """
 
     def aggregator(scores: Iterable[Score]) -> list[ScoreAggregatorResult]:
-        # Materialize before validating: scores may be a generator, and validating would drain it.
+        # Materialize before validating: `scores` is an Iterable, so validating by
+        # iterating it first would exhaust a generator and leave nothing to aggregate.
         scores_list = list(scores)
         for s in scores_list:
             if s.score_type != "float_scale":
@@ -208,7 +209,8 @@ def _create_aggregator_by_category(
     """
 
     def aggregator(scores: Iterable[Score]) -> list[ScoreAggregatorResult]:
-        # Materialize before validating: scores may be a generator, and validating would drain it.
+        # Materialize before validating: `scores` is an Iterable, so validating by
+        # iterating it first would exhaust a generator and leave nothing to aggregate.
         scores_list = list(scores)
         for s in scores_list:
             if s.score_type != "float_scale":

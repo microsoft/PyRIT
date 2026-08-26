@@ -175,14 +175,22 @@ paths stay fast.
 
 ### Lazy `__init__.py` Exports (PEP 562)
 
-Public API packages (`pyrit.prompt_target`, `pyrit.converter`, `pyrit.score`)
-use `__getattr__`-based lazy loading so heavy symbols can be imported from the
-package without paying the cost at package load time. See
-`pyrit/prompt_target/__init__.py` for the canonical example. Rules:
+Public API packages use `__getattr__`-based lazy loading so package imports do
+not load every implementation module. Use `pyrit.common.lazy_imports` and follow
+the standard contract:
 
-- Lazy names must remain in `__all__` and have a `TYPE_CHECKING` import for IDE support.
-- Internal utility packages (e.g., `pyrit.common`) simply omit heavy submodules
-  from `__init__.py` — consumers import directly from the specific file.
+- Add each public export to `_LAZY_EXPORTS`, which is the runtime source of truth.
+- Use a module string when the public and source attribute names match. Use the
+  tuple form only for aliases or module-valued exports.
+- Set `__all__ = list(_LAZY_EXPORTS)`.
+- Put every public export under `if TYPE_CHECKING:` for editor and static-analysis support.
+- Implement `__getattr__` with `resolve_lazy_export` and `__dir__` with `get_lazy_dir`.
+- Do not add eager implementation imports to package initializers.
+
+The package contract tests in `tests/unit/common/test_lazy_package_imports.py`
+enforce these rules. Internal heavy submodules that are not public exports
+should remain omitted from `__init__.py`; consumers import them from the
+specific module.
 
 ### Import Paths
 

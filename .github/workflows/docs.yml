@@ -93,7 +93,7 @@ jobs:
       - name: Checkout ${{ matrix.ref }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ github.event_name == 'pull_request' && matrix.slug == 'latest' && github.event.pull_request.head.sha || matrix.ref }}
 
       - name: Resolve commit SHA
         # matrix.ref is a branch name (e.g. "releases/v0.13.0") that can move,

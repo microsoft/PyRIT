@@ -13,8 +13,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pyrit.exceptions import (
+    BadRequestException,
     ComponentRole,
+    EmptyResponseException,
     InvalidJsonException,
+    PyritException,
     execution_context,
     remove_markdown_json,
 )
@@ -29,6 +32,7 @@ from pyrit.models import (
     JsonResponseConfig,
     JsonSchemaDefinition,
     Message,
+    MessagePiece,
     Score,
     SeedPrompt,
     get_common_json_schema,
@@ -138,6 +142,22 @@ def _joined_text_value(message: Message) -> str:
     return "\n".join(piece.converted_value for piece in pieces if piece.converted_value)
 
 
+def _first_error_piece(message: Message) -> MessagePiece | None:
+    """
+    Find the first piece that represents an error.
+
+    Args:
+        message: The message to scan for an errored piece.
+
+    Returns:
+        The first errored piece, or None when no piece represents an error.
+    """
+    for piece in message.message_pieces:
+        if piece.has_error() or piece.converted_value_data_type == "error":
+            return piece
+    return None
+
+
 def _first_response_error(message: Message) -> str:
     """
     Find the response-error code of the first errored piece.
@@ -148,10 +168,67 @@ def _first_response_error(message: Message) -> str:
     Returns:
         The first errored piece's response-error code, or ``"none"`` when no piece errored.
     """
-    for piece in message.message_pieces:
-        if piece.has_error():
-            return piece.response_error
-    return "none"
+    error_piece = _first_error_piece(message)
+    return error_piece.response_error if error_piece else "none"
+
+
+def _get_error_payload(response_value: str) -> tuple[int | None, str]:
+    """
+    Extract a serialized exception's status code and message from a response.
+
+    Args:
+        response_value: The errored response value to inspect.
+
+    Returns:
+        The optional status code and human-readable message. Non-object or non-JSON
+        payloads are returned unchanged as the message.
+    """
+    try:
+        payload = json.loads(response_value)
+    except json.JSONDecodeError:
+        return None, response_value
+
+    if not isinstance(payload, dict):
+        return None, response_value
+
+    raw_status_code = payload.get("status_code")
+    status_code = (
+        raw_status_code if isinstance(raw_status_code, int) and not isinstance(raw_status_code, bool) else None
+    )
+    raw_message = payload.get("message")
+    message = raw_message if isinstance(raw_message, str) else response_value
+    return status_code, message
+
+
+def _raise_for_adversarial_error(response: Message) -> None:
+    """
+    Raise a terminal exception that preserves the adversarial response's error category.
+
+    Args:
+        response: The adversarial-chat response to inspect.
+
+    Raises:
+        BadRequestException: If the response was blocked.
+        EmptyResponseException: If the response was empty.
+        PyritException: If the response carries another error category.
+    """
+    if not response.is_error():
+        return
+
+    error_piece = _first_error_piece(response)
+    if error_piece is None:
+        raise PyritException(message="Adversarial chat returned an unknown error.")
+
+    response_error = error_piece.response_error
+    response_value = error_piece.converted_value
+    if response_error == "blocked":
+        status_code, message = _get_error_payload(response_value)
+        raise BadRequestException(status_code=status_code if status_code is not None else 400, message=message)
+    if response_error == "empty":
+        raise EmptyResponseException(message="The adversarial chat returned an empty response.")
+
+    normalized_error = response_error if response_error != "none" else "unknown"
+    raise PyritException(message=f"Adversarial chat returned a {normalized_error} error: {response_value}")
 
 
 def _build_adversarial_feedback_text(
@@ -755,6 +832,7 @@ class _AdversarialConversationManager:
             AdversarialReply: ``next_message`` plus the parsed ``rationale`` / ``last_response_summary``.
 
         Raises:
+            PyritException: If the adversarial chat returns an errored response.
             ValueError: If no response is received from the adversarial chat.
             InvalidJsonException: If the reply is not valid JSON after the retry budget is exhausted.
         """
@@ -831,6 +909,7 @@ class _AdversarialConversationManager:
             AdversarialReply: ``next_message`` plus the parsed ``rationale`` / ``last_response_summary``.
 
         Raises:
+            PyritException: If the adversarial chat returns an errored response.
             ValueError: If no response is received from the adversarial chat.
             InvalidJsonException: If the reply is not valid JSON after the retry budget is exhausted.
         """
@@ -853,6 +932,7 @@ class _AdversarialConversationManager:
         schema = self._response_json_schema
 
         def _parse(response: Message) -> AdversarialReply:
+            _raise_for_adversarial_error(response)
             return _parse_adversarial_reply(response.get_value(), schema=schema)
 
         with execution_context(

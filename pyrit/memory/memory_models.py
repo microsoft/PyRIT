@@ -1300,7 +1300,7 @@ class EmbeddingMessageWithSimilarity(BaseModel):
     """
     Represents an embedding message with its similarity score.
 
-    Parameters:
+    Attributes:
         uuid (uuid.UUID): The UUID of the embedding message.
         metric (str): The metric used to calculate the similarity score.
         score (float): The similarity score (default is 0.0).
@@ -1445,7 +1445,8 @@ class SeedEntry(Base):
         schema = getattr(entry, "response_json_schema", None)
 
         if not raw and schema is None:
-            return raw
+            no_schema_metadata: dict[str, str | int] | None = None if raw is None else {}
+            return no_schema_metadata
 
         packed: dict[str, str | int] = dict(raw) if raw else {}
         # Defensive strip — the reserved key is owned by this class.

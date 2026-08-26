@@ -116,7 +116,8 @@ def _create_aggregator(
     undetermined_msg = f"No verdict was reachable in a {name} composite scorer."
 
     def aggregator(scores: Iterable[Score]) -> ScoreAggregatorResult:
-        # Materialize before validating: scores may be a generator, and validating would drain it.
+        # Materialize before validating: `scores` is an Iterable, so validating by
+        # iterating it first would exhaust a generator and leave nothing to aggregate.
         scores_list = list(scores)
         for s in scores_list:
             if s.score_type != "true_false":

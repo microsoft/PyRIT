@@ -212,6 +212,7 @@ def create_conversation_scorer(
         Scorer: A ConversationScorer instance that is also an instance of the wrapped scorer's type.
 
     Raises:
+        TypeError: If the dynamic scorer does not inherit from ``Scorer``.
         ValueError: If the scorer is not an instance of FloatScaleScorer or TrueFalseScorer.
 
     Example:
@@ -243,11 +244,22 @@ def create_conversation_scorer(
         def __init__(self) -> None:
             # Initialize with the validator and wrapped scorer
             MessageScorer.__init__(self, validator=validator or ConversationScorer._DEFAULT_VALIDATOR)
-            self._wrapped_scorer = wrapped_scorer
+            self._wrapped_scorer: MessageScorer = wrapped_scorer
 
         def _get_wrapped_scorer(self) -> MessageScorer:
-            """Return the wrapped scorer."""
-            return self._wrapped_scorer
+            """
+            Return the wrapped scorer.
+
+            Returns:
+                MessageScorer: The scorer used for conversation-level evaluation.
+
+            Raises:
+                TypeError: If the stored wrapped scorer is not a ``MessageScorer``.
+            """
+            wrapped_scorer = self._wrapped_scorer
+            if not isinstance(wrapped_scorer, MessageScorer):
+                raise TypeError("Wrapped conversation scorer must inherit from MessageScorer")
+            return wrapped_scorer
 
         def _build_identifier(self) -> ComponentIdentifier:
             """
@@ -255,9 +267,18 @@ def create_conversation_scorer(
 
             Returns:
                 ComponentIdentifier: The identifier for this scorer.
+
+            Raises:
+                TypeError: If identifier construction returns an unexpected type.
             """
-            return self._create_identifier(
+            identifier = self._create_identifier(
                 sub_scorers=[self._wrapped_scorer.get_identifier()],
             )
+            if not isinstance(identifier, ComponentIdentifier):
+                raise TypeError("Conversation scorer identifier must be a ComponentIdentifier")
+            return identifier
 
-    return DynamicConversationScorer()
+    conversation_scorer = DynamicConversationScorer()
+    if not isinstance(conversation_scorer, Scorer):
+        raise TypeError("Dynamic conversation scorer must inherit from Scorer")
+    return conversation_scorer

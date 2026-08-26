@@ -70,7 +70,8 @@ async def _legacy_score_scorable_async(
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
     message = resolver.resolve(scorable=scorable, memory=self._memory)
     legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
-    return await legacy_score_async(message, objective=expectation.objective if expectation else None)
+    scores: list[Score] = await legacy_score_async(message, objective=expectation.objective if expectation else None)
+    return scores
 
 
 def _adapt_legacy_message_scorer(cls: type) -> None:
@@ -203,7 +204,8 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
         """
-        return getattr(self, "_prompt_target", None)
+        prompt_target: PromptTarget | None = getattr(self, "_prompt_target", None)
+        return prompt_target
 
     def get_identifier(self) -> ComponentIdentifier:
         """
