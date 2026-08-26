@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+lowercase() {
+  printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]'
+}
+
 required_variables=(
   PYRIT_SLOT
   PYRIT_BUILD_ID
@@ -98,28 +102,28 @@ then
 fi
 
 guid_pattern='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
-normalized_acr_resource_id=${PYRIT_ACR_RESOURCE_ID,,}
+normalized_acr_resource_id=$(lowercase "$PYRIT_ACR_RESOURCE_ID")
 if [[ ! "$normalized_acr_resource_id" =~ ^/subscriptions/($guid_pattern)/resourcegroups/[^/]+/providers/microsoft\.containerregistry/registries/([a-z0-9]{5,50})$ ]]; then
   echo "##vso[task.logissue type=error]PYRIT_ACR_RESOURCE_ID is not canonical"
   exit 1
 fi
-expected_subscription=${BASH_REMATCH[1],,}
+expected_subscription=$(lowercase "${BASH_REMATCH[1]}")
 acr_name=${BASH_REMATCH[2]}
-if [[ "$(az account show --query id -o tsv | tr '[:upper:]' '[:lower:]')" != "$expected_subscription" ]]; then
+if [[ "$(lowercase "$(az account show --query id -o tsv)")" != "$expected_subscription" ]]; then
   echo "##vso[task.logissue type=error]Azure subscription does not match ACR"
   exit 1
 fi
 
-normalized_managed_identity_resource_id=${PYRIT_MANAGED_IDENTITY_RESOURCE_ID,,}
+normalized_managed_identity_resource_id=$(lowercase "$PYRIT_MANAGED_IDENTITY_RESOURCE_ID")
 if [[ ! "$normalized_managed_identity_resource_id" =~ ^/subscriptions/($guid_pattern)/resourcegroups/[^/]+/providers/microsoft\.managedidentity/userassignedidentities/[a-z0-9_-]{3,128}$ ]] \
-  || [[ "${BASH_REMATCH[1],,}" != "$expected_subscription" ]]; then
+  || [[ "$(lowercase "${BASH_REMATCH[1]}")" != "$expected_subscription" ]]; then
   echo "##vso[task.logissue type=error]Managed identity resource ID is not canonical or is in another subscription"
   exit 1
 fi
 
-normalized_key_vault_resource_id=${PYRIT_KEY_VAULT_RESOURCE_ID,,}
+normalized_key_vault_resource_id=$(lowercase "$PYRIT_KEY_VAULT_RESOURCE_ID")
 if [[ ! "$normalized_key_vault_resource_id" =~ ^/subscriptions/($guid_pattern)/resourcegroups/[^/]+/providers/microsoft\.keyvault/vaults/[a-z0-9-]{3,24}$ ]] \
-  || [[ "${BASH_REMATCH[1],,}" != "$expected_subscription" ]]; then
+  || [[ "$(lowercase "${BASH_REMATCH[1]}")" != "$expected_subscription" ]]; then
   echo "##vso[task.logissue type=error]Key Vault resource ID is not canonical or is in another subscription"
   exit 1
 fi
@@ -140,7 +144,8 @@ if [[ -z "$deployment_resource_group_id" ]]; then
   echo "##vso[task.logissue type=error]Deployment resource group must already exist"
   exit 1
 fi
-if [[ "${deployment_resource_group_id,,}" != "/subscriptions/$expected_subscription/resourcegroups/"* ]]; then
+normalized_deployment_resource_group_id=$(lowercase "$deployment_resource_group_id")
+if [[ "$normalized_deployment_resource_group_id" != "/subscriptions/$expected_subscription/resourcegroups/"* ]]; then
   echo "##vso[task.logissue type=error]Deployment resource group is in another subscription"
   exit 1
 fi
@@ -151,6 +156,12 @@ expected_vnet_id="$deployment_resource_group_id/providers/Microsoft.Network/virt
 expected_subnet_id="$expected_vnet_id/subnets/$PYRIT_APP_NAME-aca-subnet"
 expected_nat_id="$deployment_resource_group_id/providers/Microsoft.Network/natGateways/$PYRIT_APP_NAME-nat"
 expected_pip_id="$deployment_resource_group_id/providers/Microsoft.Network/publicIPAddresses/$PYRIT_APP_NAME-egress-pip"
+normalized_expected_app_id=$(lowercase "$expected_app_id")
+normalized_expected_environment_id=$(lowercase "$expected_environment_id")
+normalized_expected_vnet_id=$(lowercase "$expected_vnet_id")
+normalized_expected_subnet_id=$(lowercase "$expected_subnet_id")
+normalized_expected_nat_id=$(lowercase "$expected_nat_id")
+normalized_expected_pip_id=$(lowercase "$expected_pip_id")
 
 existing_app=$(az containerapp show \
   --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
@@ -193,16 +204,16 @@ existing_pip_ip_tags=$(az network public-ip show \
   --name "$PYRIT_APP_NAME-egress-pip" --query 'ipTags || `[]`' -o json | jq -c .)
 expected_egress_ip=$(jq -r '.ip // empty' <<< "$existing_pip")
 
-if [[ "$(jq -r '.id | ascii_downcase' <<< "$existing_app")" != "${expected_app_id,,}" \
-  || "$(jq -r '.environmentId | ascii_downcase' <<< "$existing_app")" != "${expected_environment_id,,}" \
-  || "$(jq -r '.id | ascii_downcase' <<< "$existing_environment")" != "${expected_environment_id,,}" \
+if [[ "$(jq -r '.id | ascii_downcase' <<< "$existing_app")" != "$normalized_expected_app_id" \
+  || "$(jq -r '.environmentId | ascii_downcase' <<< "$existing_app")" != "$normalized_expected_environment_id" \
+  || "$(jq -r '.id | ascii_downcase' <<< "$existing_environment")" != "$normalized_expected_environment_id" \
   || ! "$(jq -r '.publicNetworkAccess' <<< "$existing_environment")" =~ ^(Enabled|Disabled)$ \
-  || "$(jq -r '.id | ascii_downcase' <<< "$existing_vnet")" != "${expected_vnet_id,,}" \
-  || "$(jq -r '.id | ascii_downcase' <<< "$existing_subnet")" != "${expected_subnet_id,,}" \
-  || "$(jq -r '.id | ascii_downcase' <<< "$existing_nat")" != "${expected_nat_id,,}" \
-  || "$(jq -r '.id | ascii_downcase' <<< "$existing_pip")" != "${expected_pip_id,,}" \
-  || "$(jq -r '.natId | ascii_downcase' <<< "$existing_subnet")" != "${expected_nat_id,,}" \
-  || "$(jq -r '.pipId | ascii_downcase' <<< "$existing_nat")" != "${expected_pip_id,,}" \
+  || "$(jq -r '.id | ascii_downcase' <<< "$existing_vnet")" != "$normalized_expected_vnet_id" \
+  || "$(jq -r '.id | ascii_downcase' <<< "$existing_subnet")" != "$normalized_expected_subnet_id" \
+  || "$(jq -r '.id | ascii_downcase' <<< "$existing_nat")" != "$normalized_expected_nat_id" \
+  || "$(jq -r '.id | ascii_downcase' <<< "$existing_pip")" != "$normalized_expected_pip_id" \
+  || "$(jq -r '.natId | ascii_downcase' <<< "$existing_subnet")" != "$normalized_expected_nat_id" \
+  || "$(jq -r '.pipId | ascii_downcase' <<< "$existing_nat")" != "$normalized_expected_pip_id" \
   || "$(jq -r '.prefix' <<< "$existing_vnet")" != "$PYRIT_VNET_ADDRESS_PREFIX" \
   || "$(jq -r '.prefix' <<< "$existing_subnet")" != "$PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX" \
   || "$(jq -r '.allocation' <<< "$existing_pip")" != "Static" \
@@ -320,6 +331,7 @@ rollback_public_origin() {
 
     local rollback_connections
     local rollback_connection_count=-1
+    local normalized_connection_id
     rollback_connections=$(az network private-endpoint-connection list \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
       --name "$PYRIT_APP_NAME-env" \
@@ -327,7 +339,8 @@ rollback_public_origin() {
     if [[ -n "$rollback_connections" ]]; then
       while IFS= read -r connection_id; do
         [[ -z "$connection_id" ]] && continue
-        if [[ "${connection_id,,}" == "${expected_environment_id,,}/privateendpointconnections/"* ]]; then
+        normalized_connection_id=$(lowercase "$connection_id")
+        if [[ "$normalized_connection_id" == "$normalized_expected_environment_id/privateendpointconnections/"* ]]; then
           az rest --method delete \
             --url "https://management.azure.com${connection_id}?api-version=2024-10-02-preview" || true
         fi
@@ -393,7 +406,7 @@ origin_private_link=$(az rest --method get --url "$origin_resource_url" \
   --query '{status:properties.sharedPrivateLinkResource.status,resourceId:properties.sharedPrivateLinkResource.privateLink.id}' -o json)
 private_link_status=$(jq -r '.status // empty' <<< "$origin_private_link")
 private_link_resource_id=$(jq -r '.resourceId // empty | ascii_downcase' <<< "$origin_private_link")
-if [[ "$private_link_resource_id" != "${expected_environment_id,,}" \
+if [[ "$private_link_resource_id" != "$normalized_expected_environment_id" \
   || ! "$private_link_status" =~ ^(Pending|Approved)$ ]]; then
   echo "##vso[task.logissue type=error]Front Door Private Link does not target the expected ACA environment"
   exit 1
@@ -421,7 +434,8 @@ if [[ "$(jq 'length' <<< "$matching_connections")" == "0" ]]; then
 fi
 
 while IFS=$'\t' read -r connection_id connection_status; do
-  if [[ "${connection_id,,}" != "${expected_environment_id,,}/privateendpointconnections/"* ]]; then
+  normalized_connection_id=$(lowercase "$connection_id")
+  if [[ "$normalized_connection_id" != "$normalized_expected_environment_id/privateendpointconnections/"* ]]; then
     echo "##vso[task.logissue type=error]Private Link request is outside the expected ACA environment"
     exit 1
   fi
@@ -497,8 +511,9 @@ egress_ip=$(az deployment group show \
 actual_pip_id=$(az network public-ip show \
   --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
   --name "$PYRIT_APP_NAME-egress-pip" --query id -o tsv)
+normalized_actual_pip_id=$(lowercase "$actual_pip_id")
 if [[ "$egress_ip" != "$expected_egress_ip" \
-  || "${actual_pip_id,,}" != "${expected_pip_id,,}" ]]; then
+  || "$normalized_actual_pip_id" != "$normalized_expected_pip_id" ]]; then
   echo "##vso[task.logissue type=error]Reserved egress PIP identity or address changed"
   exit 1
 fi

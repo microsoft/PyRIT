@@ -112,6 +112,10 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert "PYRIT_FALLBACK" not in deploy_yaml
 
     def test_deploy_validates_structured_inputs_before_arm(self):
+        assert re.search(r"\$\{[a-zA-Z_][a-zA-Z0-9_]*(?:\[[^]]*\])?(?:,,?|\^\^?)", self.deploy_script) is None
+        for unsupported_construct in ("declare -A", "mapfile", "readarray", "coproc", "&>>", ";;&"):
+            assert unsupported_construct not in self.deploy_script
+        assert "lowercase()" in self.deploy_script
         assert "ipaddress.ip_network" in self.deploy_script
         assert "subnet.subnet_of(vnet)" in self.deploy_script
         assert "subnet.prefixlen > 27" in self.deploy_script
@@ -180,9 +184,12 @@ class TestPipelineGuardrails(unittest.TestCase):
 
     def _run_cancellation_rollback(self, *, connection_count: int) -> tuple[subprocess.CompletedProcess[str], str]:
         assert BASH is not None
+        lowercase_start = self.deploy_script.index("lowercase() {")
+        lowercase_end = self.deploy_script.index("\n}\n", lowercase_start) + len("\n}\n")
         function_start = self.deploy_script.index("rollback_public_origin() {")
         trap_start = self.deploy_script.index("trap rollback_public_origin EXIT", function_start)
         trap_end = self.deploy_script.index("cutover_in_progress=true", trap_start)
+        lowercase_function = self.deploy_script[lowercase_start:lowercase_end]
         rollback_function = self.deploy_script[function_start:trap_start]
         trap_setup = self.deploy_script[trap_start:trap_end]
 
@@ -190,12 +197,14 @@ class TestPipelineGuardrails(unittest.TestCase):
             call_log = Path(directory) / "az-calls.log"
             harness = f"""
 set -euo pipefail
+{lowercase_function}
 cutover_in_progress=false
 private_link_request_message='Azure Front Door private access to copyrit-test'
 PYRIT_DEPLOYMENT_RESOURCE_GROUP='copyrit-test-rg'
 PYRIT_APP_NAME='copyrit-test'
 PYRIT_SOURCE_DIRECTORY='/repo'
 expected_environment_id='/subscriptions/test/resourceGroups/copyrit-test-rg/providers/Microsoft.App/managedEnvironments/copyrit-test-env'
+normalized_expected_environment_id=$(lowercase "$expected_environment_id")
 deployment_name='pyrit-test-1'
 deployment_tags='{{}}'
 rollback_parameters=()
