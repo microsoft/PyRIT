@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
@@ -119,6 +120,22 @@ describe('LabelsBar', () => {
     expect(remove).toHaveAccessibleName('Remove team label')
     // Required labels have nothing to nest in the first place.
     expect(screen.getByTestId('label-operator')).toHaveAttribute('role', 'button')
+  })
+
+  it('should start an edit when the chip is clicked beside the edit control', async () => {
+    // Moving the click onto an inner control left the pill's own padding
+    // showing a pointer and doing nothing, so the edges of a chip looked
+    // clickable but were not.
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS, team: 'red' }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-team').parentElement as HTMLElement)
+
+    expect(await screen.findByTestId('edit-label-team')).toBeInTheDocument()
   })
 
   it('should add a new label via popover', async () => {
@@ -445,6 +462,136 @@ describe('LabelsBar', () => {
       operator: 'dana',
       operation: 'op_2026_08_picked',
     })
+  })
+
+  it('should keep a suggestion you picked while the last value was still saving', async () => {
+    // Leaving the input schedules a save of what was typed. Picking a
+    // suggestion is that same edit finishing another way, so the save it left
+    // behind must not put the half-typed value back.
+    mockedLabelsApi.getLabels.mockResolvedValueOnce({
+      source: 'attacks',
+      labels: { operator: ['alice'] },
+    })
+
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-operator'))
+    const operatorInput = await screen.findByTestId('edit-label-operator')
+    fireEvent.change(operatorInput, { target: { value: 'al' } })
+
+    const suggestion = await screen.findByText('alice')
+    fireEvent.blur(operatorInput)
+    fireEvent.click(suggestion)
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS, operator: 'alice' })
+    expect(onChange).not.toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS, operator: 'al' })
+  })
+
+  it('should keep both values when two suggestions are picked in quick succession', async () => {
+    // Each edit leaves its own save behind, so remembering only the last one
+    // that finished early lets the one before it through with a stale value.
+    mockedLabelsApi.getLabels.mockResolvedValueOnce({
+      source: 'attacks',
+      labels: { operator: ['alice'], team: ['blue'] },
+    })
+
+    const onChange = jest.fn()
+    // The real bar is driven by state in App, so a value it commits is on its
+    // way back down as a prop while the next edit is already under way.
+    const Harness = () => {
+      const [labels, setLabels] = useState({ ...DEFAULT_GLOBAL_LABELS, team: 'bravo' })
+      return (
+        <TestWrapper>
+          <LabelsBar
+            labels={labels}
+            onLabelsChange={next => { onChange(next); setLabels(next) }}
+          />
+        </TestWrapper>
+      )
+    }
+    render(<Harness />)
+
+    // Wait for the suggestions once, then run the sequence without awaiting
+    // anything: both edits have to finish inside the same save delay.
+    fireEvent.click(screen.getByTestId('label-operator'))
+    const operatorInput = await screen.findByTestId('edit-label-operator')
+    fireEvent.change(operatorInput, { target: { value: 'al' } })
+    const alice = await screen.findByText('alice')
+    fireEvent.blur(operatorInput)
+    fireEvent.click(alice)
+
+    fireEvent.click(screen.getByTestId('label-team'))
+    const teamInput = await screen.findByTestId('edit-label-team')
+    fireEvent.change(teamInput, { target: { value: 'bl' } })
+    const blue = await screen.findByText('blue')
+    fireEvent.blur(teamInput)
+    fireEvent.click(blue)
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    const [last] = onChange.mock.calls[onChange.mock.calls.length - 1]
+    expect(last).toEqual({ ...DEFAULT_GLOBAL_LABELS, operator: 'alice', team: 'blue' })
+  })
+
+  it('should not bring back a label removed while another one was still saving', async () => {
+    const onChange = jest.fn()
+    render(
+      <TestWrapper>
+        <LabelsBar
+          labels={{ ...DEFAULT_GLOBAL_LABELS, team: 'blue' }}
+          onLabelsChange={onChange}
+        />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-operator'))
+    const operatorInput = await screen.findByTestId('edit-label-operator')
+    fireEvent.change(operatorInput, { target: { value: 'dana' } })
+    fireEvent.blur(operatorInput)
+    fireEvent.click(screen.getByTestId('remove-label-team'))
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    const [last] = onChange.mock.calls[onChange.mock.calls.length - 1]
+    expect(last).not.toHaveProperty('team')
+    expect(last).toHaveProperty('operator', 'dana')
+  })
+
+  it('should not bring back a label removed while it was the one being edited', async () => {
+    // The popover editor leaves the label's own chip on the bar, so the label
+    // can be taken away while its edit is still finishing.
+    const onChange = jest.fn()
+    const Harness = () => {
+      const [labels, setLabels] = useState({ ...DEFAULT_GLOBAL_LABELS, team: 'green' })
+      return (
+        <TestWrapper>
+          <LabelsBar
+            labels={labels}
+            onLabelsChange={next => { onChange(next); setLabels(next) }}
+          />
+        </TestWrapper>
+      )
+    }
+    render(<Harness />)
+
+    fireEvent.click(screen.getByTestId('labels-icon-btn'))
+    fireEvent.click(await screen.findByTestId('popover-label-team'))
+    const teamInput = await screen.findByTestId('edit-label-team')
+    fireEvent.change(teamInput, { target: { value: 'gr' } })
+    fireEvent.blur(teamInput)
+    fireEvent.click(screen.getByTestId('remove-label-team'))
+
+    await act(async () => { await new Promise(r => setTimeout(r, 400)) })
+
+    const [last] = onChange.mock.calls[onChange.mock.calls.length - 1]
+    expect(last).not.toHaveProperty('team')
   })
 
   it('should cancel edit on Escape key', async () => {

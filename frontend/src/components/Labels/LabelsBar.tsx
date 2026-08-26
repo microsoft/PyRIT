@@ -185,10 +185,31 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   // different edit, which this has to be able to notice. Counting the edits is
   // what tells them apart: the same label can be picked up again in between.
   const editSession = useRef(0)
+  // A save waits out the blur so focus can land first. If the edit it belongs
+  // to finishes another way in the meantime — a suggestion picked, the label
+  // removed — that save has to be called off, or it lands afterwards with the
+  // value it was typed with. Starting a different edit is not the same thing:
+  // that save is still the user's and still has to land.
+  const pendingSaves = useRef(new Map<number, ReturnType<typeof setTimeout>>())
+
+  const cancelPendingSave = (session: number) => {
+    const timer = pendingSaves.current.get(session)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    pendingSaves.current.delete(session)
+  }
   // That late save also has to write onto the labels as they are by then, not
   // the ones it was looking at when the blur happened.
   const labelsRef = useRef(labels)
   useEffect(() => { labelsRef.current = labels }, [labels])
+
+  // Writing through the ref as well means a save still waiting its turn works
+  // off the labels as this component last left them, rather than depending on
+  // the parent having re-rendered in the meantime.
+  const commitLabels = (next: Record<string, string>) => {
+    labelsRef.current = next
+    onLabelsChange(next)
+  }
 
   // Fetch existing label keys/values for suggestions
   useEffect(() => {
@@ -223,7 +244,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
     const valueError = validateValue(newValue)
     if (valueError) { setError(valueError); return }
 
-    onLabelsChange({ ...labels, [newKey]: newValue })
+    commitLabels({ ...labelsRef.current, [newKey]: newValue })
     setNewKey('')
     setNewValue('')
     setError('')
@@ -233,9 +254,16 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
   const handleRemoveLabel = (key: string) => {
     // Don't allow removing operator or operation — they're required
     if (key === 'operator' || key === 'operation') return
-    const next = { ...labels }
+    // The label may be open for editing in the popover while its chip is still
+    // on the bar, and that edit has a save on the way. Taking the label away
+    // has to take the save with it, or it comes back a moment later.
+    if (editingLabel === key) {
+      cancelPendingSave(editSession.current)
+      endEdit(editSession.current)
+    }
+    const next = { ...labelsRef.current }
     delete next[key]
-    onLabelsChange(next)
+    commitLabels(next)
   }
 
   const handleStartEdit = (key: string) => {
@@ -271,7 +299,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       if (editSession.current === session) setError(valueError)
       return
     }
-    onLabelsChange({ ...labelsRef.current, [key]: editValue })
+    commitLabels({ ...labelsRef.current, [key]: editValue })
     endEdit(session)
   }
 
@@ -296,7 +324,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         operation: [...(prev.operation || []), operation],
       }))
     }
-    onLabelsChange({ ...labels, operation })
+    commitLabels({ ...labelsRef.current, operation })
     setEditingLabel(null)
     setEditValue('')
     setError('')
@@ -419,7 +447,13 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
           value={editValue}
           onChange={(_, d) => { setEditValue(d.value.toLowerCase()); setError('') }}
           onKeyDown={e => handleEditKeyDown(e, key, session)}
-          onBlur={() => { setTimeout(() => saveEdit(key, session), 150) }}
+          onBlur={() => {
+            cancelPendingSave(session)
+            pendingSaves.current.set(session, setTimeout(() => {
+              pendingSaves.current.delete(session)
+              saveEdit(key, session)
+            }, 150))
+          }}
           style={{ width: '120px' }}
           data-testid={`edit-label-${key}`}
         />
@@ -432,7 +466,13 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
                 appearance="outline"
                 size="small"
                 className={styles.suggestionChip}
-                onClick={() => { onLabelsChange({ ...labels, [key]: v }); setEditingLabel(null); setEditValue('') }}
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => {
+                  cancelPendingSave(session)
+                  commitLabels({ ...labelsRef.current, [key]: v })
+                  setEditingLabel(null)
+                  setEditValue('')
+                }}
               >{v}</Badge>
             ))}
           </div>
@@ -474,6 +514,10 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
         data-label-idx={idx}
         className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
         style={{ flexShrink: 0 }}
+        // The pill's own padding sits outside the edit control, so a click that
+        // lands on it reaches nothing. Forward only those: anything on a child
+        // is that child's to handle.
+        onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
       >
         <Tooltip
           content={isDummy ? `Placeholder value — click to change` : `Click to edit`}
@@ -524,6 +568,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
             key={key}
             className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
             style={{ flexShrink: 0 }}
+            onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
           >
             <div
               className={styles.labelEdit}

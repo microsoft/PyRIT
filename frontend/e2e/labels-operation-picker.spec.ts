@@ -20,7 +20,11 @@ function operations(count: number): string[] {
 async function setupMocks(
   page: Page,
   operationLabels: string[],
-  options: { versionDelayMs?: number; defaultLabels?: Record<string, string> } = {},
+  options: {
+    versionDelayMs?: number;
+    defaultLabels?: Record<string, string>;
+    operatorLabels?: string[];
+  } = {},
 ): Promise<void> {
   // Everything the app calls while booting, so the run does not depend on a
   // dev-server proxy with no backend behind it.
@@ -46,7 +50,10 @@ async function setupMocks(
     if (path === "/labels") {
       return route.fulfill(json({
         source: "attacks",
-        labels: { operator: ["roakey"], operation: operationLabels },
+        labels: {
+          operator: options.operatorLabels ?? ["roakey"],
+          operation: operationLabels,
+        },
       }));
     }
     if (path === "/attacks") {
@@ -441,5 +448,45 @@ test.describe("switching between labels", () => {
     // The operator edit still went in; only its clean-up was skipped.
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("label-operator")).toContainText("alice");
+  });
+});
+
+test.describe("finishing an edit another way", () => {
+  test("keeps a suggestion picked while the typed value was still saving", async ({
+    page,
+  }) => {
+    // The input's blur schedules a save of what was typed, and only a browser
+    // orders that blur against the click that picked the suggestion.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, ["op_alpha"], { operatorLabels: ["roakey", "alice"] });
+    await page.goto("/");
+
+    await page.getByTestId("label-operator").click();
+    await page.getByTestId("edit-label-operator").fill("al");
+    await page.getByText("alice", { exact: true }).click();
+
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId("label-operator")).toContainText("alice");
+  });
+
+  test("starts an edit when the chip is clicked beside the edit control", async ({
+    page,
+  }) => {
+    // The pill's padding sits outside the control that opens the editor, and
+    // only a real layout says where that padding actually is.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupMocks(page, ["op_alpha"]);
+    await page.goto("/");
+
+    const chip = page.getByTestId("label-operator");
+    await expect(chip).toBeVisible();
+    const badge = chip.locator("xpath=..");
+    const box = await badge.boundingBox();
+    if (!box) throw new Error("chip has no layout");
+
+    // Two pixels in from the pill's left edge is padding, not the control.
+    await page.mouse.click(box.x + 2, box.y + box.height / 2);
+
+    await expect(page.getByTestId("edit-label-operator")).toBeVisible();
   });
 });
