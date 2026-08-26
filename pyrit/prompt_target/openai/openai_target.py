@@ -32,6 +32,7 @@ from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.openai._response_adapter import OpenAIResponseAdapter
 from pyrit.prompt_target.openai.openai_error_handling import (
     _extract_error_payload,
     _extract_request_id_from_exception,
@@ -56,6 +57,7 @@ class OpenAITarget(PromptTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(supports_multi_message_pieces=True)
     )
+    _response_adapter: OpenAIResponseAdapter[Any] = OpenAIResponseAdapter()
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
     # endpoint (see ``is_azure_openai_endpoint``), so they support both modes.
@@ -178,8 +180,9 @@ class OpenAITarget(PromptTarget):
         match = re.search(r"/deployments/([^/]+)/", url)
         if match:
             deployment = match.group(1)
-            logger.info(f"Extracted deployment name from URL: {deployment}")
-            return deployment
+            if isinstance(deployment, str):
+                logger.info(f"Extracted deployment name from URL: {deployment}")
+                return deployment
 
         return ""
 
@@ -432,10 +435,8 @@ class OpenAITarget(PromptTarget):
             if self._check_content_filter(response):
                 return self._handle_content_filter_response(response, request_piece)
 
-            # Validate response via subclass implementation
-            error_message = self._validate_response(response, request_piece)
-            if error_message:
-                return error_message
+            # Validate response via subclass implementation (raises on invalid responses)
+            self._validate_response(response, request_piece)
 
             # Construct and return Message from validated response
             return await self._construct_message_from_response_async(response, request_piece)
@@ -530,8 +531,9 @@ class OpenAITarget(PromptTarget):
         """
         Check if the response indicates content filtering.
 
-        Override this method in subclasses that need content filter detection.
-        Default implementation returns False (no content filter).
+        Response formats should implement this behavior in an ``OpenAIResponseAdapter`` and assign
+        it to ``_response_adapter``. Override this hook only for target-specific behavior that does
+        not belong to a reusable response format.
 
         Args:
             response: The response object from OpenAI SDK.
@@ -539,7 +541,7 @@ class OpenAITarget(PromptTarget):
         Returns:
             bool: True if content filter detected, False otherwise.
         """
-        return False
+        return self._response_adapter.is_content_filtered(response=response)
 
     def _handle_content_filter_response(self, response: Any, request: MessagePiece) -> Message:
         """
@@ -548,6 +550,9 @@ class OpenAITarget(PromptTarget):
         If the subclass provides partial content via ``_extract_partial_content``,
         it is attached to each response piece as ``prompt_metadata["partial_content"]``
         so that scorers with ``score_blocked_content=True`` can evaluate it.
+
+        Provider-reported metadata (token usage, stop reason) is captured via
+        ``_capture_response_metadata`` so a filtered response records what it consumed.
 
         Args:
             response: The response object from OpenAI SDK.
@@ -571,14 +576,17 @@ class OpenAITarget(PromptTarget):
             for piece in error_message.message_pieces:
                 piece.prompt_metadata["partial_content"] = partial_content
 
+        self._capture_response_metadata(response=response, pieces=error_message.message_pieces)
+
         return error_message
 
     def _extract_partial_content(self, response: Any) -> str | None:
         """
         Extract any partial content the model generated before the content filter triggered.
 
-        Override this in subclasses to extract partial content from API-specific response
-        structures. The base implementation returns None (no partial content).
+        Response formats should implement this behavior in an ``OpenAIResponseAdapter`` and assign
+        it to ``_response_adapter``. Override this hook only for target-specific behavior that does
+        not belong to a reusable response format.
 
         Args:
             response: The response object from OpenAI SDK.
@@ -586,26 +594,65 @@ class OpenAITarget(PromptTarget):
         Returns:
             The partial text content, or None if no content was generated.
         """
-        return None
+        return self._response_adapter.extract_partial_content(response=response)
 
-    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
+    def _capture_response_metadata(self, *, response: Any, pieces: list[MessagePiece]) -> None:
         """
-        Validate the response and return error Message if needed.
+        Record provider-reported response metadata (token usage, stop reason) onto the pieces.
 
-        Override this method in subclasses that need custom response validation.
-        Default implementation returns None (no validation errors).
+        Response formats should implement this behavior in an ``OpenAIResponseAdapter`` and assign
+        it to ``_response_adapter``. Override this hook only for target-specific behavior that does
+        not belong to a reusable response format.
+
+        Subclasses call this on their success path and the base class calls it on the
+        content-filter path, so a single override covers both. A filtered response still reports
+        the tokens it consumed, which would otherwise be lost precisely where a red teamer most
+        wants to see it.
+
+        Args:
+            response: The response object from OpenAI SDK. May be a synthetic stand-in that carries
+                no usage or completion data, so implementations must tolerate missing attributes.
+            pieces (list[MessagePiece]): The constructed response pieces.
+        """
+        self._response_adapter.capture_metadata(response=response, pieces=pieces)
+
+    def _validate_response(self, response: Any, request: MessagePiece) -> None:
+        """
+        Validate the response, raising if it is invalid.
+
+        Response formats should implement this behavior in an ``OpenAIResponseAdapter`` and assign
+        it to ``_response_adapter``. Override this hook only for target-specific behavior that does
+        not belong to a reusable response format. Validation only inspects the response; constructing
+        the resulting Message is the responsibility of ``_construct_message_from_response_async``.
 
         Args:
             response: The response object from OpenAI SDK.
             request: The original request MessagePiece.
 
-        Returns:
-            Message | None: Error Message if validation fails, None otherwise.
-
         Raises:
             Various exceptions for validation failures.
         """
-        return None
+        self._response_adapter.validate(response=response, is_truncated=self._is_truncated_response(response))
+
+    def _is_truncated_response(self, response: Any) -> bool:
+        """
+        Return True if the response was cut off by the output-token limit.
+
+        Every API shape signals truncation differently (Chat Completions
+        ``finish_reason == "length"``, Responses ``status == "incomplete"`` with
+        ``reason == "max_output_tokens"``). Response formats should implement this behavior in an
+        ``OpenAIResponseAdapter`` and assign it to ``_response_adapter``. Override this hook only
+        for target-specific behavior that does not belong to a reusable response format. A truncated
+        response is valid but incomplete: ``_validate_response`` warns instead of raising, and
+        ``_construct_message_from_response_async`` preserves whatever the model produced.
+
+        Args:
+            response: The response object from OpenAI SDK.
+
+        Returns:
+            bool: True if the response was truncated at the token limit, False otherwise.
+        """
+        return self._response_adapter.is_truncated(response=response)
 
     @abstractmethod
     def _set_openai_env_configuration_vars(self) -> None:

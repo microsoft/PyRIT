@@ -72,9 +72,22 @@ Each assistant message has four action buttons:
 
 Click the panel toggle in the ribbon to open the conversations sidebar. This panel shows all conversations within the current attack, including message counts and last-message previews. You can switch between conversations, create new ones, and promote a conversation to be the "main" conversation.
 
+#### Exporting a Conversation
+
+Click the **Export** button in the ribbon to download the conversation that is currently displayed. Two formats are offered from the button's menu:
+
+- **Markdown (`.md`):** A human-readable transcript with each message labeled by role. Best for reading, sharing, or pasting into reports.
+- **JSON (`.json`):** A structured record of the conversation for tooling and further processing.
+
+The export runs entirely in your browser and captures exactly what is shown in the chat, including the system prompt shown in the banner — no data is sent to the server. Export stays available for read-only historical conversations, and is disabled while a conversation is empty, still loading, or sending. The button is disabled until there is at least one user or model message to export.
+
+> **Note:** Exported files can contain adversarial prompts, model responses, and other sensitive material. Store and share them responsibly.
+
 #### Labels
 
 The labels bar in the ribbon displays the current attack's labels (e.g., `operator`, `operation`). Labels are key-value pairs that help organize and filter attacks. You can add, edit, and remove labels inline. The `operator` and `operation` labels are required and cannot be removed.
+
+Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. The operation you pick is applied to attacks you start from then on; it does not change attacks that already exist.
 
 #### Behavioral Guards
 
@@ -152,6 +165,17 @@ For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **
 #### Auto-Populating Targets
 
 Targets can also be auto-populated by adding the `target` initializer to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
+
+### Initializers
+
+The **Initializers** page (in the left navigation) lets you review and extend how PyRIT sets itself up at startup — for example, the `target` initializer's `tags` and `auto_group` settings.
+
+The page has two sections:
+
+- **Baseline initializers** are read-only. They come from your active configuration file (`~/.pyrit/.pyrit_conf`) and run first, in order.
+- **Additional initializers** are added in the GUI and saved to the memory database. They run after the baseline, in the order shown. You can add more than one initializer of the same type — each is its own invocation.
+
+Use **Apply now** to re-run a single initializer immediately against the running backend — handy for picking up an environment or setting change without a restart. Saved additional initializers and `.pyrit_conf` edits otherwise take effect the next time the backend starts.
 
 ---
 

@@ -60,10 +60,12 @@ async def test_openai_responses_gpt5(sqlite_instance, gpt5_args):
     assert result is not None
     assert len(result) == 1
     assert len(result[0].message_pieces) == 2
-    assert result[0].message_pieces[0].api_role == "assistant"
-    assert result[0].message_pieces[1].api_role == "assistant"
+    assert all(piece.api_role == "assistant" for piece in result[0].message_pieces)
+    assert result[0].get_piece_by_type(data_type="reasoning") is not None
+    text_piece = result[0].get_piece_by_type(data_type="text")
+    assert text_piece is not None
     # Hope that the model manages to give the correct answer somewhere (GPT-5 really should)
-    assert "Paris" in result[0].message_pieces[1].converted_value
+    assert "Paris" in text_piece.converted_value
 
 
 async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
@@ -110,7 +112,9 @@ async def test_openai_responses_gpt5_json_schema(sqlite_instance, gpt5_args):
 
     assert len(response) == 1
     assert len(response[0].message_pieces) == 2
-    response_piece = response[0].message_pieces[1]
+    assert response[0].get_piece_by_type(data_type="reasoning") is not None
+    response_piece = response[0].get_piece_by_type(data_type="text")
+    assert response_piece is not None
     assert response_piece.api_role == "assistant"
     response_json = json.loads(response_piece.converted_value)
     jsonschema.validate(instance=response_json, schema=cat_schema)
@@ -144,7 +148,9 @@ async def test_openai_responses_gpt5_json_object(sqlite_instance, gpt5_args):
 
     assert len(response) == 1
     assert len(response[0].message_pieces) == 2
-    response_piece = response[0].message_pieces[1]
+    assert response[0].get_piece_by_type(data_type="reasoning") is not None
+    response_piece = response[0].get_piece_by_type(data_type="text")
+    assert response_piece is not None
     assert response_piece.api_role == "assistant"
     _ = json.loads(response_piece.converted_value)
     # Can't assert more, since the failure could be due to a bad generation by the model

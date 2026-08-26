@@ -162,6 +162,43 @@ async def test_azure_blob_storage_io_write_file_with_relative_path():
         )
 
 
+@pytest.mark.parametrize(
+    ("path", "expected_content_type"),
+    [
+        ("notes.HTML", "text/html"),
+        ("photo.JPEG", "image/jpeg"),
+        ("recording.wav", "audio/wav"),
+        ("movie.mp4", "video/mp4"),
+        ("report.pdf", "application/pdf"),
+    ],
+)
+async def test_azure_blob_storage_io_write_file_sets_content_type_from_extension(path, expected_content_type):
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    mock_container_client = AsyncMock()
+    storage._client_async = mock_container_client
+
+    await storage.write_file_async(path, b"data")
+
+    upload_kwargs = mock_container_client.upload_blob.await_args.kwargs
+    assert upload_kwargs["name"] == path
+    assert upload_kwargs["content_settings"].content_type == expected_content_type
+
+
+@pytest.mark.parametrize("path", ["data.unknown", "README"])
+async def test_azure_blob_storage_io_write_file_uses_configured_fallback_content_type(path):
+    storage = AzureBlobStorageIO(
+        container_url="https://account.blob.core.windows.net/container",
+        blob_content_type=SupportedContentType.PLAIN_TEXT,
+    )
+    mock_container_client = AsyncMock()
+    storage._client_async = mock_container_client
+
+    await storage.write_file_async(path, b"data")
+
+    upload_kwargs = mock_container_client.upload_blob.await_args.kwargs
+    assert upload_kwargs["content_settings"].content_type == SupportedContentType.PLAIN_TEXT.value
+
+
 async def test_azure_blob_storage_io_create_container_client_uses_explicit_sas_token():
     container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
     sas_token = "explicit-sas-token"

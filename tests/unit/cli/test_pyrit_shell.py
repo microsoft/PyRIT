@@ -218,7 +218,32 @@ class TestPyRITShell:
         ):
             s.do_stop_server("")
         captured = capsys.readouterr()
-        assert "No server found" in captured.out
+        assert "could not be stopped" in captured.out
+
+    def test_do_stop_server_reports_owned_launcher_failure(self, shell, capsys):
+        s, _ = shell
+        s._launcher = MagicMock()
+        s._launcher.stop.return_value = False
+
+        s.do_stop_server("")
+
+        assert "could not be stopped" in capsys.readouterr().out
+
+    def test_do_stop_server_refuses_remote_url(self, shell, capsys):
+        s, _ = shell
+        s._base_url = "http://remote:8765"
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+            ) as probe_mock,
+            patch("pyrit.cli._server_launcher.stop_server_on_port") as stop_mock,
+        ):
+            s.do_stop_server("")
+
+        probe_mock.assert_not_called()
+        stop_mock.assert_not_called()
+        assert "Cannot stop non-local server" in capsys.readouterr().out
 
     def test_ensure_client_already_connected(self, shell):
         s, _ = shell
@@ -822,6 +847,108 @@ class TestServerManagement:
             s.do_stop_server("")
         mock_stop.assert_not_called()
         assert "not stopping" in capsys.readouterr().out
+
+
+def _attacks_scenario_result():
+    """Build a ScenarioResult carrying two attacks for the 'attacks' view tests."""
+    import uuid
+
+    from pyrit.models import AttackOutcome, AttackResult, ScenarioRunState
+
+    def _attack(objective, outcome):
+        return AttackResult(conversation_id=str(uuid.uuid4()), objective=objective, outcome=outcome)
+
+    return make_scenario_result(
+        scenario_name="foo",
+        objective_target_identifier=None,
+        objective_scorer_identifier=None,
+        attack_results={
+            "tech_a": [_attack("obj-alpha", AttackOutcome.SUCCESS)],
+            "tech_b": [_attack("obj-beta", AttackOutcome.FAILURE)],
+        },
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+
+
+class TestDoScenarioResults:
+    """Tests for the ``scenario-results`` command and its ``print-scenario`` alias."""
+
+    def test_no_args_prints_usage(self, shell, capsys):
+        s, _ = shell
+        s.do_scenario_results("")
+        assert "Usage: scenario-results" in capsys.readouterr().out
+
+    def test_overview_delegates_to_scenario_printer(self, shell):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        with patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock) as mock_print:
+            s.do_scenario_results("rid-1")
+        client.get_scenario_run_results_async.assert_awaited_once_with(scenario_result_id="rid-1")
+        mock_print.assert_awaited_once()
+
+    def test_attacks_view_prints_table(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        s.do_scenario_results("rid-1 --view attacks")
+        out = capsys.readouterr().out
+        assert "obj-alpha" in out
+        assert "obj-beta" in out
+        assert "tech_a" in out
+
+    def test_attacks_view_respects_limit(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        s.do_scenario_results("rid-1 --view attacks --limit 1")
+        assert "Showing 1 of 2" in capsys.readouterr().out
+
+    def test_conversations_view_fetches_and_prints(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        client.get_conversation_messages_async = AsyncMock(
+            return_value={
+                "messages": [
+                    {"role": "user", "turn_number": 0, "message_pieces": [{"converted_value": "do it"}]},
+                ]
+            }
+        )
+        s.do_scenario_results("rid-1 --view conversations")
+        out = capsys.readouterr().out
+        assert "Conversations" in out
+        assert "do it" in out
+        assert client.get_conversation_messages_async.await_count == 2
+
+    def test_full_view_prints_table_then_transcripts(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        client.get_conversation_messages_async = AsyncMock(return_value={"messages": []})
+        s.do_scenario_results("rid-1 --view full")
+        out = capsys.readouterr().out
+        assert "Attack Results" in out
+        assert "Conversations" in out
+
+    def test_conversations_view_reports_fetch_error(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        client.get_conversation_messages_async = AsyncMock(side_effect=RuntimeError("nope"))
+        s.do_scenario_results("rid-1 --view conversations")
+        assert "Error: nope" in capsys.readouterr().out
+
+    def test_fetch_error_is_reported(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("nope"))
+        s.do_scenario_results("rid-1")
+        assert "Error: nope" in capsys.readouterr().out
+
+    def test_print_scenario_alias_warns_and_delegates(self, shell, capsys):
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        with (
+            patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock) as mock_print,
+            pytest.warns(DeprecationWarning, match="print-scenario is deprecated.*Use scenario-results"),
+        ):
+            s.do_print_scenario("rid-1")
+        assert "deprecated" in capsys.readouterr().out.lower()
+        mock_print.assert_awaited_once()
 
     def test_stop_server_close_client_swallows_errors(self, shell):
         s, client = shell

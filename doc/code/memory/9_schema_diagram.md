@@ -2,6 +2,9 @@
 
 Our memory contains multiple components. This diagram  shows a mapping of our database schema and how our components map together! The arrows indicate the values that map one database to another.
 
+:::{div}
+:class: col-page-right
+
 ```{mermaid}
 flowchart LR
  subgraph EmbeddingData["EmbeddingData"]
@@ -74,3 +77,4 @@ flowchart LR
     linkStyle 0 stroke:#ff8800ff,fill:none
     linkStyle 1 stroke:#14a519ff
 ```
+:::

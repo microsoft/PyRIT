@@ -25,6 +25,8 @@
 # Solid arrows pass a scorer through `scorer=` or `scorers=`, while dashed arrows show
 # the scorer base implemented by the resulting wrapper. An "any" input can therefore be
 # a leaf scorer or an already composed wrapper with that base, which enables stacking.
+
+# %% [markdown] class="col-page-right"
 #
 # ```mermaid
 # flowchart LR
@@ -38,8 +40,9 @@
 #         direction TB
 #         COMP["TrueFalseCompositeScorer<br/>AND · OR · MAJORITY"]
 #         INV["TrueFalseInverterScorer<br/>negates one result"]
-#         THRESH["FloatScaleThresholdScorer<br/>score ≥ threshold"]
 #         CONV["create_conversation_scorer()<br/>scores concatenated history"]
+#         THRESH["FloatScaleThresholdScorer<br/>score ≥ threshold"]
+#         CONV ~~~ THRESH
 #     end
 #
 #     subgraph outputs["Resulting scorer kind"]
@@ -67,6 +70,8 @@
 #     class COMP,INV,THRESH,CONV wrapper;
 #     class TFOUT,FSOUT output;
 # ```
+
+# %% [markdown]
 #
 # `TrueFalseCompositeScorer` requires at least one `TrueFalseScorer` and combines their
 # single results with `AND`, `OR`, or `MAJORITY`; `TrueFalseInverterScorer` accepts one
@@ -155,7 +160,7 @@ print(f"[threshold] independent -> {original.get_value()}")
 import uuid
 
 from pyrit.memory import CentralMemory
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, MessageScorable
 from pyrit.score import create_conversation_scorer
 
 memory = CentralMemory.get_memory_instance()
@@ -176,7 +181,7 @@ persona_breach_scorer = SubStringScorer(substring="I am AI", categories=["person
 conversation_scorer = create_conversation_scorer(scorer=persona_breach_scorer)
 
 # Any message from the conversation works as the trigger.
-score = (await conversation_scorer.score_async(turns[0]))[0]  # type: ignore
+score = (await conversation_scorer.score_async(scorable=MessageScorable.from_message(turns[0])))[0]  # type: ignore
 print(f"[conversation] persona breach across turns -> {score.get_value()}")
 
 # %% [markdown]

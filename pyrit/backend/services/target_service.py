@@ -12,6 +12,7 @@ Targets can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import asyncio
 import logging
 from functools import lru_cache
 from typing import Any, Literal, cast
@@ -137,6 +138,7 @@ class TargetService:
         Returns:
             TargetCatalogResponse containing all available target classes.
         """
+        metadata_items = await asyncio.to_thread(self._registry.get_all_registered_class_metadata)
         items: list[TargetCatalogEntry] = [
             TargetCatalogEntry(
                 target_type=metadata.class_name,
@@ -144,7 +146,7 @@ class TargetService:
                 supported_auth_modes=cast("list[Literal['api_key', 'identity']]", list(metadata.supported_auth_modes)),
                 description=metadata.class_description or None,
             )
-            for metadata in self._registry.get_all_registered_class_metadata()
+            for metadata in metadata_items
         ]
         return TargetCatalogResponse(items=items)
 

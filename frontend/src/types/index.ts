@@ -20,11 +20,42 @@ export interface MessageAttachment {
   metadata?: Record<string, unknown>
 }
 
+export interface MessageTextDisplayPiece {
+  type: 'text'
+  pieceId: string
+  pieceIndex: number
+  content: string
+  scores?: DisplayScore[]
+}
+
+export interface MessageMediaDisplayPiece {
+  type: 'media'
+  pieceId: string
+  pieceIndex: number
+  /**
+   * Renderable media for this piece. Absent when the backend piece carries no
+   * usable media value (e.g. an empty or blocked response) but still has
+   * scores to present — such pieces must never enter copy/download/export
+   * paths, so they deliberately have no attachment.
+   */
+  attachment?: MessageAttachment
+  scores?: DisplayScore[]
+}
+
+export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
+
 export interface Message {
   role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
   content: string
   timestamp: string
+  /**
+   * Legacy scores for messages created directly by the frontend. Backend
+   * messages keep scores on their corresponding `displayPieces` entry.
+   */
+  scores?: DisplayScore[]
   attachments?: MessageAttachment[]
+  /** Converted text and media pieces in backend order, with piece-local scores. */
+  displayPieces?: MessageDisplayPiece[]
   /** If the backend returned an error for this message */
   error?: MessageError
   /** True while waiting for the backend response */
@@ -108,6 +139,72 @@ export interface CreateTargetRequest {
   auth_mode?: 'api_key' | 'identity'
 }
 
+// --- Initializers ---
+
+export interface RegisteredInitializer {
+  initializer_name: string
+  initializer_type: string
+  description: string
+  required_env_vars: string[]
+  supported_parameters: Parameter[]
+}
+
+/** A read-only initializer from the `.pyrit_conf` baseline, referenced by registry name. */
+export interface BaselineInitializerSetting {
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index: number
+}
+
+/** A persisted additional initializer, referenced by registry name. */
+export interface AdditionalInitializerSetting {
+  id: string
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface InitializerSettingsResponse {
+  /** Read-only initializers from the `.pyrit_conf` baseline, in run order. */
+  baseline: BaselineInitializerSetting[]
+  /** Persisted additional initializers that run after the baseline, in run order. */
+  additional: AdditionalInitializerSetting[]
+}
+
+/** The persisted domain row returned by create/update of an additional initializer. */
+export interface AdditionalInitializer {
+  id: string
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface CreateAdditionalInitializerRequest {
+  initializer_name: string
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface UpdateAdditionalInitializerRequest {
+  parameters?: Record<string, unknown> | null
+  order_index?: number | null
+}
+
+export interface ListRegisteredInitializersResponse {
+  items: RegisteredInitializer[]
+  pagination: PaginationInfo
+}
+
+export interface ApplyInitializerRequest {
+  parameters?: Record<string, unknown> | null
+}
+
+export interface ApplyInitializerResponse {
+  initializer_name: string
+  status: 'applied'
+  applied_parameters?: Record<string, unknown> | null
+}
+
 // --- Converters ---
 
 export interface ConverterIdentifier {
@@ -168,16 +265,28 @@ export interface TargetCatalogResponse {
 
 export interface TargetInfo {
   target_type: string
+  target_registry_name?: string | null
   endpoint?: string | null
   model_name?: string | null
   identifier_hash: string
 }
+
+export type AttackTargetResolutionStatus =
+  | 'idle'
+  | 'loading'
+  | 'resolved'
+  | 'explicit-mismatch'
+  | 'unavailable'
+  | 'ambiguous'
+  | 'error'
+  | 'legacy'
 
 export interface AttackSummary {
   attack_result_id: string
   conversation_id: string
   attack_type: string
   attack_specific_params?: Record<string, unknown> | null
+  objective: string
   target?: TargetInfo | null
   converters: string[]
   outcome?: 'undetermined' | 'success' | 'failure' | 'error' | null
@@ -207,14 +316,24 @@ export interface CreateAttackResponse {
 
 // --- Messages ---
 
+/** ScoreView payload returned by the backend. */
 export interface BackendScore {
   id: string
+  message_piece_id: string
   scorer_type: string
   score_type: string
   score_value: string
+  is_objective_score?: boolean
   score_category?: string[] | null
   score_rationale?: string | null
   timestamp: string
+}
+
+/** Score enriched with message-piece presentation fields for transcript rendering. */
+export interface DisplayScore extends BackendScore {
+  pieceIndex: number
+  pieceType: string
+  sourceLabel: string
 }
 
 export interface BackendMessagePiece {

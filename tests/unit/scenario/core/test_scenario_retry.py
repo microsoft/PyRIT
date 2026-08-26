@@ -3,16 +3,19 @@
 
 """Tests for Scenario retry functionality."""
 
+import asyncio
 from typing import ClassVar
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from pyrit.executor.attack import AttackParameters, AttackStrategy, SingleTurnAttackContext
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
+from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ComponentIdentifier, Message, SeedObjective
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, Scenario, ScenarioTechnique
 
 # Test constants
 TEST_ATTACK_TYPE = "TestAttack"
@@ -162,6 +165,33 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     return attack
 
 
+class _RetryLinkageAttack(AttackStrategy[SingleTurnAttackContext, AttackResult]):
+    """Minimal real strategy that exercises production result persistence."""
+
+    def __init__(self, *, objective_target: PromptTarget) -> None:
+        super().__init__(objective_target=objective_target, context_type=SingleTurnAttackContext)
+        self.executed_materializations: list[str] = []
+
+    def _validate_context(self, *, context: SingleTurnAttackContext) -> None:
+        pass
+
+    async def _setup_async(self, *, context: SingleTurnAttackContext) -> None:
+        pass
+
+    async def _perform_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
+        assert context.params.prepended_conversation is not None
+        self.executed_materializations.append(context.params.prepended_conversation[0].get_value())
+        return AttackResult(
+            conversation_id=f"outer-{context.params.objective}",
+            objective=context.params.objective,
+            outcome=AttackOutcome.SUCCESS,
+            executed_turns=1,
+        )
+
+    async def _teardown_async(self, *, context: SingleTurnAttackContext) -> None:
+        pass
+
+
 class ConcreteScenario(Scenario):
     """Concrete implementation of Scenario for testing."""
 
@@ -210,7 +240,7 @@ def mock_atomic_attacks():
 @pytest.fixture
 def mock_objective_target():
     """Create a mock objective target for testing."""
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = ComponentIdentifier(
         class_name="MockTarget",
         class_module=TEST_MODULE,
@@ -436,6 +466,72 @@ class TestScenarioRetry:
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioResumption:
     """Tests for Scenario resumption after partial failure."""
+
+    async def test_parameter_build_partial_result_persists_linkage_before_retry(
+        self,
+        mock_objective_target: MagicMock,
+    ) -> None:
+        """A successful build is executed, linked, and not materialized again on retry."""
+        target = MagicMock(spec=PromptTarget)
+        target.get_identifier.return_value = ComponentIdentifier(
+            class_name="RetryLinkageTarget",
+            class_module=TEST_MODULE,
+        )
+        attack = _RetryLinkageAttack(objective_target=target)
+        atomic_attack = AtomicAttack(
+            atomic_attack_name="retry_linkage",
+            attack_technique=AttackTechnique(attack=attack),
+            seed_groups=[
+                AttackSeedGroup(seeds=[SeedObjective(value="A")]),
+                AttackSeedGroup(seeds=[SeedObjective(value="B")]),
+            ],
+        )
+        scenario = ConcreteScenario(
+            name="Parameter Build Retry",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack],
+        )
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 2,
+                "max_retries": 1,
+            }
+        )
+        await scenario.initialize_async()
+
+        a_built = asyncio.Event()
+        build_counts = {"A": 0, "B": 0}
+        generated_conversations: list[str] = []
+
+        async def build_async(*, seed_group: AttackSeedGroup, **_: object) -> AttackParameters:
+            objective = seed_group.objective.value
+            build_counts[objective] += 1
+            if objective == "A":
+                a_built.set()
+            elif build_counts[objective] == 1:
+                await a_built.wait()
+                raise RuntimeError("build B failed")
+
+            conversation_id = f"conv-{objective}-{build_counts[objective]}"
+            generated_conversations.append(conversation_id)
+            return AttackParameters(
+                objective=objective,
+                prepended_conversation=[Message.from_prompt(role="user", prompt=conversation_id)],
+            )
+
+        with patch.object(AttackParameters, "from_seed_group_async", new=AsyncMock(side_effect=build_async)):
+            result = await scenario.run_async()
+
+        assert build_counts == {"A": 1, "B": 2}
+        assert generated_conversations == ["conv-A-1", "conv-B-2"]
+        assert attack.executed_materializations == generated_conversations
+        assert [item.objective for item in result.attack_results["retry_linkage"]] == ["A", "B"]
+
+        persisted_results = CentralMemory.get_memory_instance().get_attack_results(
+            scenario_result_id=scenario._scenario_result_id
+        )
+        assert [item.objective for item in persisted_results] == ["A", "B"]
 
     async def test_resumes_from_partial_completion_single_attack(self, mock_objective_target):
         """Test that scenario resumes from where it left off when an atomic attack partially completes."""

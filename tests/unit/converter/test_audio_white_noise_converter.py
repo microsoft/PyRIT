@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
+from pyrit.common.random_context import configure_random_seed
 from pyrit.converter.audio_white_noise_converter import AudioWhiteNoiseConverter
 
 
@@ -135,3 +136,37 @@ async def test_white_noise_unsupported_input_type(sqlite_instance):
     converter = AudioWhiteNoiseConverter(noise_scale=0.02)
     with pytest.raises(ValueError, match="Input type not supported"):
         await converter.convert_async(prompt="some_file.wav", input_type="text")
+
+
+async def test_white_noise_initialized_seed_is_repeatable_and_does_not_disturb_numpy(sqlite_instance):
+    sample_rate = 8000
+    input_data = np.zeros(100, dtype=np.int16)
+    numpy_state = np.random.get_state()
+    output_paths: set[str] = set()
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        input_path = f.name
+        wavfile.write(input_path, sample_rate, input_data)
+
+    try:
+        configure_random_seed(seed=42)
+        converter = AudioWhiteNoiseConverter(noise_scale=0.1)
+        first = await converter.convert_async(prompt=input_path)
+        output_paths.add(first.output_text)
+        _, first_data = wavfile.read(first.output_text)
+
+        second = await converter.convert_async(prompt=input_path)
+        output_paths.add(second.output_text)
+        _, second_data = wavfile.read(second.output_text)
+
+        assert np.array_equal(first_data, second_data)
+        current_numpy_state = np.random.get_state()
+        assert current_numpy_state[0] == numpy_state[0]
+        assert np.array_equal(current_numpy_state[1], numpy_state[1])
+        assert current_numpy_state[2:] == numpy_state[2:]
+    finally:
+        configure_random_seed(seed=None)
+        os.remove(input_path)
+        for output_path in output_paths:
+            if os.path.exists(output_path):
+                os.remove(output_path)

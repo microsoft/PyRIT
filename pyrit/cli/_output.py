@@ -16,6 +16,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pyrit.cli._results import AttacksTablePayload, ConversationsPayload, TranscriptMessage
     from pyrit.models import ScenarioResult
     from pyrit.models.catalog import (
         RegisteredInitializer,
@@ -186,7 +187,7 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
         print("\nNo targets found in registry.")
         print(
             "\nTargets are registered by initializers. Include an initializer that "
-            "registers targets, for example:\n  --initializers target\n"
+            "registers targets in your config file"
         )
         return
 
@@ -403,7 +404,7 @@ def print_scenario_run_summary(*, run: ScenarioRunSummary) -> None:
 
 async def print_scenario_result_async(*, result: ScenarioResult) -> None:
     """
-    Print detailed scenario results using the output module.
+    Print scenario overview using the output module.
 
     Args:
         result: Deserialized ``ScenarioResult`` from the REST API.
@@ -412,6 +413,105 @@ async def print_scenario_result_async(*, result: ScenarioResult) -> None:
 
     printer = PrettyScenarioResultMemoryPrinter()
     await printer.write_async(result)
+
+
+# Outcome -> color, mirroring the pretty printer's inverted palette (a
+# successful attack is a failure for the defender, so it is shown in red).
+_OUTCOME_COLORS = {
+    "success": "red",
+    "failure": "green",
+    "error": "yellow",
+    "undetermined": None,
+}
+
+# Per-role transcript colors, mirroring PrettyConversationPrinter's palette so the
+# thin-client transcript reads like the framework's own conversation output.
+_ROLE_COLORS = {
+    "user": "blue",
+    "assistant": "yellow",
+    "system": "magenta",
+}
+
+
+def print_attacks_table(*, payload: AttacksTablePayload) -> None:
+    """
+    Print the per-attack table for a scenario run.
+
+    Args:
+        payload (AttacksTablePayload): The rows to render plus the pre-limit total.
+    """
+    if not payload.rows:
+        print(f"\nNo attack results found for scenario {payload.scenario_result_id}.")
+        return
+
+    _header(f"Attack Results — scenario {payload.scenario_result_id}")
+    for index, row in enumerate(payload.rows, start=1):
+        outcome = row.outcome.upper()
+        score = row.score_value if row.score_value is not None else "—"
+        _cprint(
+            f"  {index}. [{outcome}] turns={row.executed_turns}  score={score}",
+            color=_OUTCOME_COLORS.get(row.outcome),
+            bold=True,
+        )
+        print(f"       id:        {row.attack_result_id}")
+        print(f"       technique: {row.atomic_attack_name}")
+        print(f"       objective: {row.objective}")
+
+    shown = len(payload.rows)
+    if shown < payload.total:
+        print(f"\nShowing {shown} of {payload.total} attacks (use --limit to change).")
+    else:
+        print(f"\nTotal attacks: {payload.total}")
+
+
+def print_conversations(*, payload: ConversationsPayload) -> None:
+    """
+    Print the per-attack main-conversation transcripts for a scenario run.
+
+    Args:
+        payload (ConversationsPayload): The transcripts to render plus the
+            pre-limit total.
+    """
+    if not payload.conversations:
+        print(f"\nNo conversations found for scenario {payload.scenario_result_id}.")
+        return
+
+    _header(f"Conversations — scenario {payload.scenario_result_id}")
+    for index, convo in enumerate(payload.conversations, start=1):
+        _cprint(
+            f"  {index}. [{convo.outcome.upper()}] {convo.atomic_attack_name}",
+            color=_OUTCOME_COLORS.get(convo.outcome),
+            bold=True,
+        )
+        print(f"       id:        {convo.attack_result_id}")
+        print(f"       objective: {convo.objective}")
+        _print_transcript(messages=convo.messages)
+
+    shown = len(payload.conversations)
+    if shown < payload.total:
+        print(f"\nShowing {shown} of {payload.total} attacks (use --limit or --attack-result-ids to change).")
+    else:
+        print(f"\nTotal attacks: {payload.total}")
+
+
+def _print_transcript(*, messages: list[TranscriptMessage]) -> None:
+    """Print one attack's ordered messages with their optional scores."""
+    if not messages:
+        print("       (no messages)")
+        return
+    for message in messages:
+        _cprint(
+            f"       [{message.role.upper()}] (turn {message.turn})",
+            color=_ROLE_COLORS.get(message.role.lower()),
+            bold=True,
+        )
+        print(_wrap(text=message.text, indent="         "))
+        if message.score is not None:
+            value = message.score.value if message.score.value is not None else "—"
+            label = f"SCORE [{message.score.scorer}]" if message.score.scorer else "SCORE"
+            _cprint(f"         {label}: {value}", color="magenta", bold=True)
+            if message.score.rationale:
+                print(_wrap(text=f"rationale: {message.score.rationale}", indent="           "))
 
 
 # ---------------------------------------------------------------------------
@@ -433,10 +533,9 @@ def print_scenario_runs_list(*, runs: list[ScenarioRunSummary]) -> None:
     print("\nScenario Run History:")
     print("=" * 80)
     for idx, run in enumerate(runs, start=1):
-        rid = run.scenario_result_id[:8]
         created = run.created_at.isoformat() if run.created_at else "?"
         print(
-            f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {rid}…) — "
+            f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {run.scenario_result_id}) — "
             f"{run.total_attacks} attacks, {run.objective_achieved_rate}% success — {created}"
         )
     print("=" * 80)

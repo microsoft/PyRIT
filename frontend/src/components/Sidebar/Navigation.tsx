@@ -14,6 +14,8 @@ import {
   SettingsRegular,
   HistoryRegular,
   PersonFeedbackRegular,
+  WrenchRegular,
+  OpenRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
 } from '@fluentui/react-icons'
@@ -21,7 +23,7 @@ import { useTheme } from '../../hooks/useTheme'
 import type { ThemeMode } from '../../hooks/useTheme'
 import { useNavigationStyles } from './Navigation.styles'
 
-export type ViewName = 'home' | 'chat' | 'history' | 'config'
+export type ViewName = 'home' | 'chat' | 'history' | 'config' | 'initializers'
 
 interface NavigationProps {
   currentView: ViewName
@@ -102,6 +104,17 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
           aria-current={currentView === 'config' ? 'page' : undefined}
           onClick={() => onNavigate('config')}
         />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'initializers'}
+          appearance="subtle"
+          icon={<WrenchRegular />}
+          title="Initializers"
+          aria-label="Initializers"
+          aria-current={currentView === 'initializers' ? 'page' : undefined}
+          onClick={() => onNavigate('initializers')}
+        />
       </nav>
 
       <div className={styles.spacer} />
@@ -114,6 +127,17 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
         title="Feedback"
         aria-label="Feedback"
         onClick={onOpenFeedback}
+      />
+      <Button
+        as="a"
+        className={styles.navButton}
+        appearance="subtle"
+        icon={<OpenRegular />}
+        title="Security"
+        aria-label="Security"
+        href="https://github.com/microsoft/PyRIT/security/policy"
+        target="_blank"
+        rel="noreferrer"
       />
       <Menu
         checkedValues={{ [THEME_MENU_NAME]: [mode] }}

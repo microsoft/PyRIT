@@ -8,6 +8,7 @@ All interactions in the UI are modeled as "attacks" - including manual conversat
 This is the attack-centric API design where every user interaction targets a model.
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
@@ -26,9 +27,10 @@ from pyrit.models import (
 
 
 class TargetInfo(BaseModel):
-    """Target information extracted from the stored attack-strategy identifier."""
+    """Target identity plus an optional persisted registry lookup hint."""
 
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
+    target_registry_name: str | None = Field(None, description="Registry alias used to create the attack")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
@@ -42,6 +44,11 @@ class ScoreView(Score):
     clients don't have to dig into ``scorer_class_identifier``.
     """
 
+    is_objective_score: bool = Field(
+        default=False,
+        description="Whether this is the score referenced by AttackResult.last_score.",
+    )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def scorer_type(self) -> str:
@@ -52,7 +59,7 @@ class ScoreView(Score):
         return "Unknown"
 
     @classmethod
-    def from_domain(cls, score: Score) -> "ScoreView":
+    def from_domain(cls, score: Score, *, is_objective_score: bool = False) -> "ScoreView":
         """
         Build a ``ScoreView`` from a domain ``Score`` without re-validating.
 
@@ -63,7 +70,10 @@ class ScoreView(Score):
         Returns:
             A ``ScoreView`` mirroring the domain score's fields.
         """
-        return cls.model_construct(**{name: getattr(score, name) for name in Score.model_fields})
+        return cls.model_construct(
+            **{name: getattr(score, name) for name in Score.model_fields},
+            is_objective_score=is_objective_score,
+        )
 
 
 class MessagePieceView(MessagePiece):
@@ -116,6 +126,7 @@ class MessagePieceView(MessagePiece):
         piece: MessagePiece,
         *,
         scores: list[Score] | None = None,
+        objective_score_id: uuid.UUID | str | None = None,
         original_value_url: str | None = None,
         converted_value_url: str | None = None,
     ) -> "MessagePieceView":
@@ -131,6 +142,7 @@ class MessagePieceView(MessagePiece):
         Args:
             piece: The domain message piece.
             scores: Domain scores attached to this piece, fetched from memory.
+            objective_score_id: ID of the attack's canonical objective score.
             original_value_url: Client-fetchable URL for ``piece.original_value``
                 when it's media; ``None`` for text.
             converted_value_url: Client-fetchable URL for ``piece.converted_value``
@@ -143,7 +155,13 @@ class MessagePieceView(MessagePiece):
         orig_dtype = piece.original_value_data_type or "text"
         conv_dtype = piece.converted_value_data_type or "text"
         data.update(
-            scores=[ScoreView.from_domain(score) for score in (scores or [])],
+            scores=[
+                ScoreView.from_domain(
+                    score,
+                    is_objective_score=objective_score_id is not None and str(score.id) == str(objective_score_id),
+                )
+                for score in (scores or [])
+            ],
             original_value_url=original_value_url,
             converted_value_url=converted_value_url,
             original_value_mime_type=infer_mime_type(value=piece.original_value, data_type=orig_dtype),
@@ -247,8 +265,10 @@ class AttackSummary(AttackResult):
         target_id = identifier.get_child("objective_target") if identifier else None
         if not target_id:
             return None
+        target_registry_name = self.metadata.get("target_registry_name")
         return TargetInfo(
             target_type=target_id.class_name,
+            target_registry_name=target_registry_name if isinstance(target_registry_name, str) else None,
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,

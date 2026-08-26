@@ -19,6 +19,7 @@ import inspect
 import json
 import logging
 import shlex
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args, get_origin
 
@@ -39,6 +40,55 @@ if TYPE_CHECKING:
 IN_MEMORY = "InMemory"
 SQLITE = "SQLite"
 AZURE_SQL = "AzureSQL"
+
+
+# ---------------------------------------------------------------------------
+# Scenario-results views
+# ---------------------------------------------------------------------------
+
+
+class ScenarioResultView(str, Enum):
+    """
+    Granularity of a ``scenario-results`` render.
+
+    Defined here (a lightweight, parse-time-safe module) rather than alongside
+    the Pydantic payload models in ``pyrit.cli._results`` so the argument parsers
+    can reference it without importing ``pydantic`` on the ``--help`` path.
+    Inherits from ``str`` so the value round-trips cleanly through argparse.
+    """
+
+    #: Scenario-level aggregate (totals + per-group success rates).
+    OVERVIEW = "overview"
+    #: One row per individual attack result.
+    ATTACKS = "attacks"
+    #: Individual messages for each attack result conversation.
+    CONVERSATIONS = "conversations"
+    #: All of the above.
+    FULL = "full"
+
+
+def parse_scenario_result_view(raw: str) -> ScenarioResultView:
+    """
+    Parse a ``--view`` token into a ``ScenarioResultView``.
+
+    Used as an argparse ``type=`` so an invalid value produces an error that
+    lists the valid view names (``ScenarioResultView(raw)`` alone would raise a
+    bare ``ValueError`` argparse renders without the choices).
+
+    Args:
+        raw (str): The raw ``--view`` token.
+
+    Returns:
+        ScenarioResultView: The matching view.
+
+    Raises:
+        argparse.ArgumentTypeError: If *raw* is not a valid view name.
+    """
+    try:
+        return ScenarioResultView(raw)
+    except ValueError:
+        valid = ", ".join(view.value for view in ScenarioResultView)
+        raise argparse.ArgumentTypeError(f"invalid view '{raw}' (choose from {valid})") from None
 
 
 # ---------------------------------------------------------------------------
@@ -239,12 +289,14 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
     if not isinstance(labels, dict):
         raise ValueError("Memory labels must be a JSON object (dictionary)")
 
-    # Validate all keys and values are strings
+    # Validate all keys and values are strings and build a precisely typed result
+    validated_labels: dict[str, str] = {}
     for key, value in labels.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise ValueError(f"All label keys and values must be strings. Got: {key}={value}")
+        validated_labels[key] = value
 
-    return labels
+    return validated_labels
 
 
 def parse_dataset_filter(arg: str) -> tuple[str, str]:
@@ -372,6 +424,65 @@ ARG_HELP = {
     "Targets are registered by initializers (e.g., 'target' initializer). "
     "Use --list-targets to see available target names after initializers have run",
 }
+
+
+def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
+    """
+    Add the shared ``scenario-results`` selection flags to *parser*.
+
+    Registers ``--view``, ``--attack-result-ids``, and ``--limit`` in a
+    ``scenario results`` group so that ``pyrit_scan`` (its ``scenario-results``
+    sub-parser) and ``pyrit_shell`` (``build_scenario_results_parser``) expose an
+    identical results interface. Both surfaces take the scenario-result id as a
+    positional, added by the caller.
+
+    ``--view`` defaults to ``None`` (not ``OVERVIEW``) so callers can tell an
+    explicit ``--view`` apart from an omitted one; resolve it with
+    ``pyrit.cli._results.resolve_view``.
+
+    Args:
+        parser (argparse.ArgumentParser): The parser to extend.
+    """
+    group = parser.add_argument_group("scenario results")
+    group.add_argument(
+        "--view",
+        type=parse_scenario_result_view,
+        default=None,
+        metavar="{" + ",".join(view.value for view in ScenarioResultView) + "}",
+        help="Result granularity: 'overview' (aggregate, default), 'attacks' (per-attack table), "
+        "'conversations' (per-attack message transcripts), or 'full' (attacks + conversations)",
+    )
+    group.add_argument(
+        "--attack-result-ids",
+        nargs="+",
+        metavar="ID",
+        help="Restrict the view to these attack result ids (default: all attacks in the run)",
+    )
+    group.add_argument(
+        "--limit",
+        type=positive_int,
+        metavar="N",
+        help="Show at most N attacks (ignored for --view overview; defaults to 5 for "
+        "--view conversations/full when no --attack-result-ids is given)",
+    )
+
+
+def build_scenario_results_parser() -> argparse.ArgumentParser:
+    """
+    Build the ``pyrit_shell`` parser for ``scenario-results <id> [flags]``.
+
+    The shell takes the scenario-result id positionally (scan takes it as the
+    ``--scenario-results`` value), then shares the remaining selection flags via
+    ``add_results_arguments``. ``add_help`` is disabled so a bad line raises
+    ``SystemExit`` for the caller to catch instead of printing argparse's help.
+
+    Returns:
+        argparse.ArgumentParser: The configured parser.
+    """
+    parser = argparse.ArgumentParser(prog="scenario-results", add_help=False)
+    parser.add_argument("scenario_result_id", help="Scenario result id to inspect")
+    add_results_arguments(parser=parser)
+    return parser
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +722,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
         always populated from the first positional token.
 
     Raises:
-        ValueError: Empty input, scenario-flag collision, or shell parser failure.
+        ValueError: Empty input or shell parser failure.
     """
     parts = shlex.split(args_string)
 
@@ -621,7 +732,7 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
     augmented_specs: list[_ArgSpec] = list(_RUN_ARG_SPECS)
     if declared_params:
         scenario_specs = [_arg_spec_from_parameter(param=p) for p in declared_params]
-        _validate_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
+        scenario_specs = _resolve_scenario_flag_collisions(scenario_specs=scenario_specs, base_specs=_RUN_ARG_SPECS)
         augmented_specs.extend(scenario_specs)
 
     result = _parse_shell_arguments(parts=parts[1:], arg_specs=augmented_specs)
@@ -707,29 +818,35 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
     )
 
 
-def _validate_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> None:
+def _resolve_scenario_flag_collisions(*, scenario_specs: list[_ArgSpec], base_specs: list[_ArgSpec]) -> list[_ArgSpec]:
     """
-    Reject scenario-vs-built-in and scenario-vs-scenario flag collisions.
+    Drop scenario specs whose flag is already taken; first declaration wins.
 
-    Raises:
-        ValueError: If a scenario flag duplicates a built-in flag, or two
-            scenario parameters normalize to the same CLI flag.
+    A scenario's ``supported_parameters`` (fetched from the API) include the framework's common
+    parameters — e.g. ``memory_labels``, ``max_concurrency``, ``max_retries`` — which normalize to
+    flags already provided as built-ins. A scenario could also declare two params that normalize to
+    the same flag. In both cases the colliding spec is silently dropped and the earlier owner (the
+    built-in, or the first-declared scenario param) keeps the flag. This mirrors
+    ``pyrit_scan._add_scenario_params_from_api``, which skips any flag already registered on the
+    parser, so the two entry points accept the same inputs.
+
+    Args:
+        scenario_specs: Specs built from scenario-declared parameters.
+        base_specs: Built-in run argument specs.
+
+    Returns:
+        list[_ArgSpec]: The scenario specs whose flags do not collide with a built-in flag or an
+            earlier scenario spec.
     """
-    base_flags = {flag for spec in base_specs for flag in spec.flags}
-    seen: set[str] = set()
+    seen: set[str] = {flag for spec in base_specs for flag in spec.flags}
+    resolved: list[_ArgSpec] = []
     for spec in scenario_specs:
-        for flag in spec.flags:
-            if flag in base_flags:
-                raise ValueError(
-                    f"Scenario parameter flag {flag!r} collides with a built-in flag. "
-                    f"Rename the parameter to avoid the collision."
-                )
-            if flag in seen:
-                raise ValueError(
-                    f"Scenario declares two parameters that normalize to the same CLI flag {flag!r}. "
-                    f"Rename one of them."
-                )
-            seen.add(flag)
+        if any(flag in seen for flag in spec.flags):
+            # Flag already owned by a built-in or an earlier scenario param; first wins.
+            continue
+        seen.update(spec.flags)
+        resolved.append(spec)
+    return resolved
 
 
 def extract_scenario_args(*, parsed: dict[str, Any]) -> dict[str, Any]:

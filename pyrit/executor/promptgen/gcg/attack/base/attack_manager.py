@@ -53,6 +53,55 @@ _DEFAULT_TEST_PREFIXES: list[str] = [
 ]
 
 
+class StopReason(str, Enum):
+    """Why an optimization run stopped iterating."""
+
+    MAX_STEPS_REACHED = "max_steps_reached"
+    ALL_PROMPTS_JAILBROKEN = "all_prompts_jailbroken"
+
+
+@dataclass
+class OptimizationRunState:
+    """
+    Typed iteration state for a single optimization run.
+
+    Captures the current suffix, losses, best result, counters, and stop reason
+    explicitly instead of leaving them as loose loop locals, so each phase of
+    the optimization loop has a stable contract that can be asserted under
+    seeded tests. ``loss`` is the loss of the *active* control suffix;
+    ``candidate_loss`` is the loss of the most recently evaluated candidate,
+    which annealing may have rejected. Exposed as ``MultiPromptAttack.last_run_state`` after a call
+    to ``MultiPromptAttack.run``.
+    """
+
+    control: str
+    best_control: str
+    loss: float
+    best_loss: float
+    candidate_loss: float | None = None
+    steps_completed: int = 0
+    runtime: float = 0.0
+    stop_reason: StopReason | None = None
+
+
+@dataclass
+class ProgressiveScheduleState:
+    """
+    Typed schedule state for ``ProgressiveMultiPromptAttack``.
+
+    Tracks how many goals and workers have been admitted so far, together with
+    the shared step counter and the loss carried between progressive rounds.
+    Exposed as ``ProgressiveMultiPromptAttack.last_schedule_state`` after a call
+    to ``ProgressiveMultiPromptAttack.run``.
+    """
+
+    goals_admitted: int
+    workers_admitted: int
+    steps_completed: int = 0
+    loss: float = float("inf")
+    stop_inner_on_success: bool = False
+
+
 class NpEncoder(json.JSONEncoder):
     """Encode NumPy scalar and array values for JSON output."""
 
@@ -70,6 +119,78 @@ class NpEncoder(json.JSONEncoder):
         if isinstance(o, np.ndarray):
             return o.tolist()
         return json.JSONEncoder.default(self, o)
+
+
+def _initialize_attack_log(
+    *,
+    logfile: str | None,
+    goals: list[str],
+    targets: list[str],
+    test_goals: list[str],
+    test_targets: list[str],
+    control_init: str,
+    test_prefixes: list[str],
+    workers: list[ModelWorker],
+    test_workers: list[ModelWorker],
+    additional_params: dict[str, Any] | None = None,
+) -> None:
+    """Initialize an attack log while preserving its established JSON schema."""
+    if logfile is None:
+        return
+
+    with open(logfile, "w") as f:
+        params: dict[str, Any] = {
+            "goals": goals,
+            "targets": targets,
+            "test_goals": test_goals,
+            "test_targets": test_targets,
+        }
+        if additional_params:
+            params.update(additional_params)
+        params.update(
+            {
+                "control_init": control_init,
+                "test_prefixes": test_prefixes,
+                "models": [_get_worker_log_params(worker) for worker in workers],
+                "test_models": [_get_worker_log_params(worker) for worker in test_workers],
+            }
+        )
+
+        json.dump(
+            {
+                "params": params,
+                "controls": [],
+                "losses": [],
+                "runtimes": [],
+                "tests": [],
+            },
+            f,
+            indent=4,
+        )
+
+
+def _update_attack_log_params(*, logfile: str | None, params: dict[str, Any]) -> None:
+    """Add run parameters to an initialized attack log."""
+    if logfile is None:
+        return
+
+    with open(logfile) as f:
+        log = json.load(f)
+
+    for key, value in params.items():
+        log["params"][key] = value
+
+    with open(logfile, "w") as f:
+        json.dump(log, f, indent=4)
+
+
+def _get_worker_log_params(worker: ModelWorker) -> dict[str, Any]:
+    """Return the model metadata recorded for one worker."""
+    return {
+        "model_path": worker.model.name_or_path,
+        "tokenizer_path": worker.tokenizer.name_or_path,
+        "chat_template": worker.tokenizer.chat_template,
+    }
 
 
 def get_embedding_layer(model: Any) -> Any:
@@ -235,14 +356,14 @@ class AttackPrompt:
         # token. Both are necessary for the slice arithmetic to remain valid
         # across tokenizers/templates.
         def end_tok(char_pos: int) -> int:
-            tok = encoding.char_to_token(char_pos)
+            tok: int | None = encoding.char_to_token(char_pos)
             return len(toks) if tok is None else tok
 
         def start_tok(char_pos: int) -> int:
             limit = len(prompt)
             cur = char_pos
             while cur < limit:
-                tok = encoding.char_to_token(cur)
+                tok: int | None = encoding.char_to_token(cur)
                 if tok is not None:
                     return tok
                 cur += 1
@@ -283,11 +404,11 @@ class AttackPrompt:
             logger.warning("max_new_tokens > 32 may cause testing to slow down.")
         input_ids = self.input_ids[: self._assistant_role_slice.stop].to(model.device).unsqueeze(0)
         attn_masks = torch.ones_like(input_ids).to(model.device)
-        output_ids = model.generate(
+        output_ids: torch.Tensor = model.generate(
             input_ids, attention_mask=attn_masks, generation_config=gen_config, pad_token_id=self.tokenizer.pad_token_id
         )[0]
 
-        return output_ids[self._assistant_role_slice.stop :]  # type: ignore[no-any-return, unused-ignore]
+        return output_ids[self._assistant_role_slice.stop :]
 
     def generate_str(self, model: Any, gen_config: Any = None) -> Any:
         """
@@ -492,11 +613,8 @@ class AttackPrompt:
     @property
     def eval_str(self) -> str:
         """The decoded input used for evaluation."""
-        return (  # type: ignore[no-any-return, unused-ignore]
-            self.tokenizer.decode(self.input_ids[: self._assistant_role_slice.stop])
-            .replace("<s>", "")
-            .replace("</s>", "")
-        )
+        decoded: str = self.tokenizer.decode(self.input_ids[: self._assistant_role_slice.stop])
+        return decoded.replace("<s>", "").replace("</s>", "")
 
 
 class PromptManager:
@@ -682,7 +800,8 @@ class PromptManager:
     @property
     def control_str(self) -> str:
         """The shared decoded control suffix."""
-        return self._prompts[0].control_str  # type: ignore[no-any-return, unused-ignore]
+        control: str = self._prompts[0].control_str
+        return control
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -697,6 +816,10 @@ class PromptManager:
 
 class MultiPromptAttack:
     """A class used to manage multiple prompt-based attacks."""
+
+    #: State of the most recent `run` call; ``None`` until one completes
+    #: and cleared at the start of each run so failed runs expose no stale data.
+    last_run_state: OptimizationRunState | None = None
 
     def __init__(
         self,
@@ -765,9 +888,10 @@ class MultiPromptAttack:
         self.managers = managers
 
     @property
-    def control_str(self) -> Any:
+    def control_str(self) -> str:
         """The shared decoded control suffix."""
-        return self.prompts[0].control_str
+        control: str = self.prompts[0].control_str
+        return control
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -799,7 +923,8 @@ class MultiPromptAttack:
         Returns:
             list[str]: Decoded candidate controls.
         """
-        cands, count = [], 0
+        cands: list[str] = []
+        count = 0
         worker = self.workers[worker_index]
 
         logger.info("Masking out of range token_id.")
@@ -827,6 +952,52 @@ class MultiPromptAttack:
     def step(self, *args: Any, **kwargs: Any) -> tuple[str, float]:
         """Execute one attack optimization step."""
         raise NotImplementedError("Attack step function not yet implemented")
+
+    def _all_training_prompts_jailbroken(self) -> bool:
+        """
+        Check whether every worker jailbreaks every training prompt.
+
+        This is the stopping phase of the optimization loop.
+
+        Returns:
+            bool: True when all jailbreak tests pass for every worker.
+        """
+        model_tests_jb, _, _ = self.test(self.workers, self.prompts)
+        return all(all(tests for tests in model_test) for model_test in model_tests_jb)
+
+    def _log_best_checkpoint(
+        self,
+        *,
+        global_step: int,
+        n_steps_total: int,
+        runtime: float,
+        verbose: bool,
+        state: OptimizationRunState,
+    ) -> None:
+        """
+        Test the best-known suffix and write one periodic log entry.
+
+        This is the logging phase of the optimization loop.
+
+        Temporarily swaps ``self.control_str`` to the best-known suffix so the
+        held-out evaluation reflects it, then restores the active suffix.
+
+        Args:
+            global_step (int): The step number used for logging (including ``anneal_from``).
+            n_steps_total (int): The total step budget used for logging.
+            runtime (float): Runtime of the most recent optimization step, in seconds.
+            verbose (bool): Whether the log entry should print progress output.
+            state (OptimizationRunState): The current run state to read from.
+        """
+        last_control = self.control_str
+        try:
+            self.control_str = state.best_control
+            model_tests = self.test_all()
+            self.log(
+                global_step, n_steps_total, self.control_str, state.best_loss, runtime, model_tests, verbose=verbose
+            )
+        finally:
+            self.control_str = last_control
 
     def run(
         self,
@@ -877,22 +1048,39 @@ class MultiPromptAttack:
             def control_weight_fn(_: int) -> float:
                 return control_weight
 
-        steps = 0
-        loss = best_loss = 1e6
-        best_control = self.control_str
-        runtime = 0.0
+        # Clear eagerly: a run that raises mid-loop must not leave the previous
+        # run's state looking current.
+        self.last_run_state = None
+
+        # Seed both losses from the incoming loss: a large sentinel would pair
+        # the starting suffix with a fake loss and let a rejected first
+        # candidate take over best-tracking. ``log()`` caps the seed for
+        # readability so infinite seeds stay renderable.
+        state = OptimizationRunState(
+            control=self.control_str,
+            best_control=self.control_str,
+            loss=prev_loss,
+            best_loss=prev_loss,
+        )
 
         if self.logfile is not None and log_first:
             model_tests = self.test_all()
-            self.log(anneal_from, n_steps + anneal_from, self.control_str, loss, runtime, model_tests, verbose=verbose)
+            self.log(
+                anneal_from,
+                n_steps + anneal_from,
+                self.control_str,
+                min(state.loss, 1e6),
+                state.runtime,
+                model_tests,
+                verbose=verbose,
+            )
 
         for i in range(n_steps):
-            if stop_on_success:
-                model_tests_jb, model_tests_mb, _ = self.test(self.workers, self.prompts)
-                if all(all(tests for tests in model_test) for model_test in model_tests_jb):
-                    break
+            if stop_on_success and self._all_training_prompts_jailbroken():
+                state.stop_reason = StopReason.ALL_PROMPTS_JAILBROKEN
+                break
 
-            steps += 1
+            state.steps_completed += 1
             start = time.time()
             control, loss = self.step(
                 batch_size=batch_size,
@@ -904,35 +1092,38 @@ class MultiPromptAttack:
                 filter_cand=filter_cand,
                 verbose=verbose,
             )
-            runtime = time.time() - start
+            state.runtime = time.time() - start
             keep_control = True if not anneal else acceptance_probability(prev_loss, loss, i + anneal_from)
             if keep_control:
                 self.control_str = control
+                state.control = control
+                state.loss = loss
 
+            # ``candidate_loss`` tracks what was just evaluated even when
+            # annealing rejects it, so ``state.loss`` always describes the
+            # suffix in ``state.control``.
+            state.candidate_loss = loss
             prev_loss = loss
-            if loss < best_loss:
-                best_loss = loss
-                best_control = control
-            logger.info(f"Current Loss: {loss}, Best Loss: {best_loss}")
+            if loss < state.best_loss:
+                state.best_loss = loss
+                state.best_control = control
+            logger.info(f"Current Loss: {loss}, Best Loss: {state.best_loss}")
 
             if self.logfile is not None and (i + 1 + anneal_from) % test_steps == 0:
-                last_control = self.control_str
-                self.control_str = best_control
-
-                model_tests = self.test_all()
-                self.log(
-                    i + 1 + anneal_from,
-                    n_steps + anneal_from,
-                    self.control_str,
-                    best_loss,
-                    runtime,
-                    model_tests,
+                self._log_best_checkpoint(
+                    global_step=i + 1 + anneal_from,
+                    n_steps_total=n_steps + anneal_from,
+                    runtime=state.runtime,
                     verbose=verbose,
+                    state=state,
                 )
 
-                self.control_str = last_control
+        if state.stop_reason is None:
+            state.stop_reason = StopReason.MAX_STEPS_REACHED
 
-        return self.control_str, loss, steps
+        self.last_run_state = state
+
+        return self.control_str, state.loss, state.steps_completed
 
     def test(
         self, workers: list[ModelWorker], prompts: list[PromptManager], include_loss: bool = False
@@ -947,8 +1138,8 @@ class MultiPromptAttack:
         for j, worker in enumerate(workers):
             worker(prompts[j], ModelWorkerOperation.TEST)
         model_tests = np.array([worker.results.get() for worker in workers])
-        model_tests_jb = model_tests[..., 0].tolist()
-        model_tests_mb = model_tests[..., 1].tolist()
+        model_tests_jb: list[list[bool]] = model_tests[..., 0].tolist()
+        model_tests_mb: list[list[int]] = model_tests[..., 1].tolist()
         model_tests_loss: list[list[float]] = []
         if include_loss:
             for j, worker in enumerate(workers):
@@ -1079,6 +1270,10 @@ class MultiPromptAttack:
 class ProgressiveMultiPromptAttack:
     """A class used to manage multiple progressive prompt-based attacks."""
 
+    #: State of the most recent `run` call; ``None`` until one completes
+    #: and cleared at the start of each run so failed runs expose no stale data.
+    last_schedule_state: ProgressiveScheduleState | None = None
+
     def __init__(
         self,
         goals: list[str],
@@ -1153,53 +1348,42 @@ class ProgressiveMultiPromptAttack:
         self.managers = managers
         self.mpa_kwargs = ProgressiveMultiPromptAttack.filter_mpa_kwargs(**kwargs)
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "progressive_goals": progressive_goals,
-                            "progressive_models": progressive_models,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+            additional_params={
+                "progressive_goals": progressive_goals,
+                "progressive_models": progressive_models,
+            },
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
+
+    def _finalize_progressive_run(
+        self, *, attack: MultiPromptAttack, step: int, n_steps: int, loss: float, verbose: bool
+    ) -> None:
+        """
+        Result-construction phase: run the final held-out evaluation and record the closing log entry.
+
+        Args:
+            attack (MultiPromptAttack): The fully-admitted inner attack that just finished.
+            step (int): The global step count reached by the progressive schedule.
+            n_steps (int): The total step budget of the progressive run.
+            loss (float): The final loss reported by the inner attack.
+            verbose (bool): Whether the closing log entry should print progress output.
+        """
+        model_tests = attack.test_all()
+        attack.log(step, n_steps, self.control, loss, 0.0, model_tests, verbose=verbose)
 
     def run(
         self,
@@ -1251,36 +1435,45 @@ class ProgressiveMultiPromptAttack:
         Returns:
             tuple[str, int]: The final control suffix and completed step count.
         """
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
+        # Clear eagerly, before any fallible setup work: if this rerun raises
+        # while opening or parsing the logfile, the previous run's state must
+        # not keep looking current.
+        self.last_schedule_state = None
 
-            log["params"]["n_steps"] = n_steps
-            log["params"]["test_steps"] = test_steps
-            log["params"]["batch_size"] = batch_size
-            log["params"]["topk"] = topk
-            log["params"]["temp"] = temp
-            log["params"]["allow_non_ascii"] = allow_non_ascii
-            log["params"]["target_weight"] = target_weight
-            log["params"]["control_weight"] = control_weight
-            log["params"]["anneal"] = anneal
-            log["params"]["incr_control"] = incr_control
-            log["params"]["stop_on_success"] = stop_on_success
+        _update_attack_log_params(
+            logfile=self.logfile,
+            params={
+                "n_steps": n_steps,
+                "test_steps": test_steps,
+                "batch_size": batch_size,
+                "topk": topk,
+                "temp": temp,
+                "allow_non_ascii": allow_non_ascii,
+                "target_weight": target_weight,
+                "control_weight": control_weight,
+                "anneal": anneal,
+                "incr_control": incr_control,
+                "stop_on_success": stop_on_success,
+            },
+        )
 
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
+        schedule = ProgressiveScheduleState(
+            goals_admitted=1 if self.progressive_goals else len(self.goals),
+            workers_admitted=1 if self.progressive_models else len(self.workers),
+            stop_inner_on_success=self.progressive_goals,
+        )
+        # Whether ``schedule.loss`` currently reflects an inner run's measured
+        # loss, as opposed to the ``inf`` sentinel written when a new round is
+        # admitted. Tracked explicitly so a legitimately non-finite inner loss
+        # (non-finite model loss or numeric overflow) is not mistaken for an
+        # unupdated sentinel value.
+        loss_is_measured = False
 
-        num_goals = 1 if self.progressive_goals else len(self.goals)
-        num_workers = 1 if self.progressive_models else len(self.workers)
-        step = 0
-        stop_inner_on_success = self.progressive_goals
-        loss = np.inf
-
-        while step < n_steps:
+        while schedule.steps_completed < n_steps:
             attack = self.managers["MPA"](
-                self.goals[:num_goals],
-                self.targets[:num_goals],
-                self.workers[:num_workers],
+                self.goals[: schedule.goals_admitted],
+                self.targets[: schedule.goals_admitted],
+                self.workers[: schedule.workers_admitted],
                 self.control,
                 self.test_prefixes,
                 self.logfile,
@@ -1289,10 +1482,10 @@ class ProgressiveMultiPromptAttack:
                 self.test_targets,
                 self.test_workers,
             )
-            if num_goals == len(self.goals) and num_workers == len(self.workers):
-                stop_inner_on_success = False
-            control, loss, inner_steps = attack.run(
-                n_steps=n_steps - step,
+            if schedule.goals_admitted == len(self.goals) and schedule.workers_admitted == len(self.workers):
+                schedule.stop_inner_on_success = False
+            inner_result: tuple[str, float, int] = attack.run(
+                n_steps=n_steps - schedule.steps_completed,
                 batch_size=batch_size,
                 topk=topk,
                 temp=temp,
@@ -1300,39 +1493,65 @@ class ProgressiveMultiPromptAttack:
                 target_weight=target_weight,
                 control_weight=control_weight,
                 anneal=anneal,
-                anneal_from=step,
-                prev_loss=loss,
-                stop_on_success=stop_inner_on_success,
+                anneal_from=schedule.steps_completed,
+                prev_loss=schedule.loss,
+                stop_on_success=schedule.stop_inner_on_success,
                 test_steps=test_steps,
                 filter_cand=filter_cand,
                 verbose=verbose,
             )
+            control, inner_loss, inner_steps = inner_result
+            schedule.loss = inner_loss
+            loss_is_measured = True
 
-            step += inner_steps
+            schedule.steps_completed += inner_steps
             self.control = control
 
-            if num_goals < len(self.goals):
-                num_goals += 1
-                loss = np.inf
-            elif num_goals == len(self.goals):
-                if num_workers < len(self.workers):
-                    num_workers += 1
-                    loss = np.inf
-                elif num_workers == len(self.workers) and stop_on_success:
-                    model_tests = attack.test_all()
-                    attack.log(step, n_steps, self.control, loss, 0.0, model_tests, verbose=verbose)
-                    break
-                else:
-                    if isinstance(control_weight, (int, float)) and incr_control:
-                        if control_weight <= 0.09:
-                            control_weight += 0.01
-                            loss = np.inf
-                            if verbose:
-                                logger.info(f"Control weight increased to {control_weight:.5}")
-                        else:
-                            stop_inner_on_success = False
+            # Once the step budget is spent, stop preparing further rounds:
+            # admissions and their sentinel resets would strand ``inf`` on
+            # ``schedule.loss`` for a run that legitimately ends right here.
+            prepare_next_round = schedule.steps_completed < n_steps
 
-        return self.control, step
+            if schedule.goals_admitted < len(self.goals):
+                if prepare_next_round:
+                    schedule.goals_admitted += 1
+                    schedule.loss = np.inf
+                    loss_is_measured = False
+            elif schedule.workers_admitted < len(self.workers):
+                if prepare_next_round:
+                    schedule.workers_admitted += 1
+                    schedule.loss = np.inf
+                    loss_is_measured = False
+            elif schedule.workers_admitted == len(self.workers) and stop_on_success:
+                self._finalize_progressive_run(
+                    attack=attack,
+                    step=schedule.steps_completed,
+                    n_steps=n_steps,
+                    loss=schedule.loss,
+                    verbose=verbose,
+                )
+                break
+            elif prepare_next_round and isinstance(control_weight, (int, float)) and incr_control:
+                if control_weight <= 0.09:
+                    control_weight += 0.01
+                    schedule.loss = np.inf
+                    loss_is_measured = False
+                    if verbose:
+                        logger.info(f"Control weight increased to {control_weight:.5}")
+                else:
+                    schedule.stop_inner_on_success = False
+
+        # The inner run must have produced a measured loss whenever any
+        # optimization happened; guards against silent carry-over regressions.
+        # Whether the loss was measured is tracked explicitly (a completed
+        # inner run may legitimately report a non-finite loss), never inferred
+        # from the numeric value.
+        if schedule.steps_completed > 0:
+            assert loss_is_measured, "schedule.loss was never updated by the inner run"
+
+        self.last_schedule_state = schedule
+
+        return self.control, schedule.steps_completed
 
 
 class IndividualPromptAttack:
@@ -1405,51 +1624,22 @@ class IndividualPromptAttack:
         self.managers = managers
         self.mpa_kwargs = IndividualPromptAttack.filter_mpa_kwargs(**kwargs)
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
 
     def run(
         self,
@@ -1501,24 +1691,22 @@ class IndividualPromptAttack:
         Returns:
             tuple[str, int]: The final control suffix and configured step count.
         """
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
-
-            log["params"]["n_steps"] = n_steps
-            log["params"]["test_steps"] = test_steps
-            log["params"]["batch_size"] = batch_size
-            log["params"]["topk"] = topk
-            log["params"]["temp"] = temp
-            log["params"]["allow_non_ascii"] = allow_non_ascii
-            log["params"]["target_weight"] = target_weight
-            log["params"]["control_weight"] = control_weight
-            log["params"]["anneal"] = anneal
-            log["params"]["incr_control"] = incr_control
-            log["params"]["stop_on_success"] = stop_on_success
-
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
+        _update_attack_log_params(
+            logfile=self.logfile,
+            params={
+                "n_steps": n_steps,
+                "test_steps": test_steps,
+                "batch_size": batch_size,
+                "topk": topk,
+                "temp": temp,
+                "allow_non_ascii": allow_non_ascii,
+                "target_weight": target_weight,
+                "control_weight": control_weight,
+                "anneal": anneal,
+                "incr_control": incr_control,
+                "stop_on_success": stop_on_success,
+            },
+        )
 
         stop_inner_on_success = stop_on_success
 
@@ -1630,51 +1818,22 @@ class EvaluateAttack:
         if len(self.workers) != 1:
             raise ValueError("EvaluateAttack requires exactly 1 worker")
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def run(
@@ -1698,17 +1857,14 @@ class EvaluateAttack:
         model, tokenizer = self.workers[0].model, self.workers[0].tokenizer
         tokenizer.padding_side = "left"
 
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
+        _update_attack_log_params(logfile=self.logfile, params={"num_tests": len(controls)})
 
-            log["params"]["num_tests"] = len(controls)
-
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
-
-        total_jb, total_em, total_outputs = [], [], []
-        test_total_jb, test_total_em, test_total_outputs = [], [], []
+        total_jb: list[list[bool]] = []
+        total_em: list[list[bool]] = []
+        total_outputs: list[list[str]] = []
+        test_total_jb: list[list[bool]] = []
+        test_total_em: list[list[bool]] = []
+        test_total_outputs: list[list[str]] = []
         curr_jb: list[bool] = []
         curr_em: list[bool] = []
         all_outputs: list[str] = []
@@ -1819,7 +1975,7 @@ class ModelWorker:
     def __init__(
         self,
         model_path: str,
-        token: str,
+        token: str | None,
         model_kwargs: dict[str, Any],
         tokenizer: Any,
         device: str,
@@ -1983,6 +2139,24 @@ def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker
     return workers[:num_train_models], workers[num_train_models:]
 
 
+def _read_string_column(*, data: Any, column: str, start: int = 0, end: int | None = None) -> list[str]:
+    """
+    Read a slice of a dataframe column as strings.
+
+    Returns:
+        list[str]: The requested column values.
+
+    Raises:
+        ValueError: If the requested column contains a non-string value.
+    """
+    values: list[str] = []
+    for value in data[column].tolist()[start:end]:
+        if not isinstance(value, str):
+            raise ValueError(f"Column '{column}' must contain only strings, got {type(value).__name__}")
+        values.append(value)
+    return values
+
+
 def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str], list[str]]:
     """
     Load training and held-out goals and targets from parameters or CSV files.
@@ -1994,10 +2168,10 @@ def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str],
     Raises:
         ValueError: If a goal list and its corresponding target list differ in length.
     """
-    train_goals = getattr(params, "goals", [])
-    train_targets = getattr(params, "targets", [])
-    test_goals = getattr(params, "test_goals", [])
-    test_targets = getattr(params, "test_targets", [])
+    train_goals: list[str] = getattr(params, "goals", [])
+    train_targets: list[str] = getattr(params, "targets", [])
+    test_goals: list[str] = getattr(params, "test_goals", [])
+    test_targets: list[str] = getattr(params, "test_targets", [])
 
     if params.train_data:
         train_data = pd.read_csv(params.train_data)
@@ -2005,22 +2179,32 @@ def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str],
         # this line shuffles the rows of train data randomly with a random seed
         train_data = train_data.sample(frac=1, random_state=params.random_seed).reset_index(drop=True)
 
-        train_targets = train_data["target"].tolist()[: params.n_train_data]
+        train_targets = _read_string_column(data=train_data, column="target", end=params.n_train_data)
         if "goal" in train_data.columns:
-            train_goals = train_data["goal"].tolist()[: params.n_train_data]
+            train_goals = _read_string_column(data=train_data, column="goal", end=params.n_train_data)
         else:
             train_goals = [""] * len(train_targets)
         if params.test_data and params.n_test_data > 0:
             test_data = pd.read_csv(params.test_data)
-            test_targets = test_data["target"].tolist()[: params.n_test_data]
+            test_targets = _read_string_column(data=test_data, column="target", end=params.n_test_data)
             if "goal" in test_data.columns:
-                test_goals = test_data["goal"].tolist()[: params.n_test_data]
+                test_goals = _read_string_column(data=test_data, column="goal", end=params.n_test_data)
             else:
                 test_goals = [""] * len(test_targets)
         elif params.n_test_data > 0:
-            test_targets = train_data["target"].tolist()[params.n_train_data : params.n_train_data + params.n_test_data]
+            test_targets = _read_string_column(
+                data=train_data,
+                column="target",
+                start=params.n_train_data,
+                end=params.n_train_data + params.n_test_data,
+            )
             if "goal" in train_data.columns:
-                test_goals = train_data["goal"].tolist()[params.n_train_data : params.n_train_data + params.n_test_data]
+                test_goals = _read_string_column(
+                    data=train_data,
+                    column="goal",
+                    start=params.n_train_data,
+                    end=params.n_train_data + params.n_test_data,
+                )
             else:
                 test_goals = [""] * len(test_targets)
 

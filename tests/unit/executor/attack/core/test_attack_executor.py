@@ -10,7 +10,8 @@ These tests verify the new API that uses AttackParameters and params_type.
 import asyncio
 import dataclasses
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -25,6 +26,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
+    Message,
     SeedObjective,
     SeedPrompt,
 )
@@ -58,6 +60,65 @@ def create_seed_group(objective: str) -> AttackSeedGroup:
             SeedPrompt(value=objective, data_type="text"),
         ]
     )
+
+
+class _ParameterBuildAbort(BaseException):
+    """Controlled fatal parameter-build failure."""
+
+
+class _ParameterBuildSchedule:
+    """Event-controlled parameter-build schedule with out-of-order failures."""
+
+    def __init__(self) -> None:
+        self.all_started = asyncio.Event()
+        self.a_materialized = asyncio.Event()
+        self.b_failed = asyncio.Event()
+        self.started_count = 0
+        self.failure_completion_order: list[str] = []
+        self.generated_conversation_ids: list[str] = []
+        self.successful_params: dict[str, AttackParameters] = {}
+        self.b_error = RuntimeError("build B failed")
+        self.c_error = ValueError("build C failed")
+
+    async def build_async(self, *, seed_group: AttackSeedGroup, **_: Any) -> AttackParameters:
+        objective = seed_group.objective.value
+        self.started_count += 1
+        if self.started_count == 3:
+            self.all_started.set()
+        await self.all_started.wait()
+
+        if objective == "A":
+            return await self._build_a_async()
+        if objective == "B":
+            await self.a_materialized.wait()
+            self.failure_completion_order.append("B")
+            self.b_failed.set()
+            raise self.b_error
+        if objective == "C":
+            await self.b_failed.wait()
+            self.failure_completion_order.append("C")
+            raise self.c_error
+        return await self._build_other_async(objective=objective)
+
+    async def _build_a_async(self) -> AttackParameters:
+        params = self._record_materialization(objective="A")
+        self.a_materialized.set()
+        await self.b_failed.wait()
+        return params
+
+    async def _build_other_async(self, *, objective: str) -> AttackParameters:
+        await self.b_failed.wait()
+        return self._record_materialization(objective=objective)
+
+    def _record_materialization(self, *, objective: str) -> AttackParameters:
+        conversation_id = f"conv-{objective}-1"
+        self.generated_conversation_ids.append(conversation_id)
+        params = AttackParameters(
+            objective=objective,
+            prepended_conversation=[Message.from_prompt(role="user", prompt=conversation_id)],
+        )
+        self.successful_params[objective] = params
+        return params
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -299,6 +360,78 @@ class TestExecuteAttackAsync:
         expected_order = ["start_A", "end_A", "start_B", "end_B", "start_C", "end_C"]
         assert execution_order == expected_order
 
+    async def test_outer_cancellation_cleans_execution_tasks_and_executor_is_reusable(self) -> None:
+        attack = create_mock_attack()
+        executor = AttackExecutor(max_concurrency=2)
+        all_slots_started = asyncio.Event()
+        release = asyncio.Event()
+        started: list[str] = []
+        cancelled: list[str] = []
+        finalized: list[str] = []
+        completed_writes: list[str] = []
+
+        async def block_execution_async(*, context: SingleTurnAttackContext) -> AttackResult:
+            objective = context.params.objective
+            started.append(objective)
+            if len(started) == 2:
+                all_slots_started.set()
+            try:
+                await release.wait()
+                completed_writes.append(objective)
+                return create_attack_result(objective)
+            except asyncio.CancelledError:
+                cancelled.append(objective)
+                raise
+            finally:
+                finalized.append(objective)
+
+        attack.execute_with_context_async.side_effect = block_execution_async
+        tasks_before_execution = asyncio.all_tasks()
+        execution_task = asyncio.create_task(
+            executor.execute_attack_async(
+                attack=attack,
+                objectives=["A", "B", "C"],
+            )
+        )
+        await asyncio.wait_for(all_slots_started.wait(), timeout=5.0)
+        execution_tasks = asyncio.all_tasks() - tasks_before_execution - {execution_task}
+
+        assert len(execution_tasks) == 3
+        assert started == ["A", "B"]
+        assert attack.execute_with_context_async.await_count == 2
+
+        execution_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await execution_task
+
+        assert cancelled == ["A", "B"]
+        assert finalized == ["A", "B"]
+        assert completed_writes == []
+        assert all(task.done() and task.cancelled() for task in execution_tasks)
+        assert executor._get_semaphore()._value == 2  # type: ignore[attr-defined]
+
+        release.set()
+        loop_turn_completed = asyncio.Event()
+        asyncio.get_running_loop().call_soon(loop_turn_completed.set)
+        await loop_turn_completed.wait()
+
+        assert started == ["A", "B"]
+        assert completed_writes == []
+
+        attack.execute_with_context_async.reset_mock()
+        attack.execute_with_context_async.side_effect = lambda *, context: create_attack_result(
+            context.params.objective
+        )
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["D", "E", "F"],
+        )
+
+        assert [item.objective for item in result.completed_results] == ["D", "E", "F"]
+        assert result.incomplete_objectives == []
+        assert result.input_indices == [0, 1, 2]
+        assert attack.execute_with_context_async.await_count == 3
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestExecuteAttackFromSeedGroupsAsync:
@@ -403,6 +536,129 @@ class TestExecuteAttackFromSeedGroupsAsync:
                 seed_groups=[sg1, sg2],
                 field_overrides=[],
             )
+
+    async def test_parameter_build_failure_returns_partial_results_in_input_order(self) -> None:
+        """Successful side-effectful builds execute while build failures retain input order."""
+        attack = create_mock_attack()
+        schedule = _ParameterBuildSchedule()
+        build_mock = AsyncMock(side_effect=schedule.build_async)
+        executed_params: list[AttackParameters] = []
+
+        async def execute_async(*, context: SingleTurnAttackContext) -> AttackResult:
+            executed_params.append(context.params)
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async.side_effect = execute_async
+        seed_groups = [create_seed_group(objective) for objective in ["C", "A", "B"]]
+
+        with patch.object(AttackParameters, "from_seed_group_async", new=build_mock):
+            result = await AttackExecutor(max_concurrency=3).execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=seed_groups,
+                return_partial_on_failure=True,
+            )
+
+        assert schedule.failure_completion_order == ["B", "C"]
+        assert schedule.generated_conversation_ids == ["conv-A-1"]
+        assert executed_params == [schedule.successful_params["A"]]
+        assert [completed.objective for completed in result.completed_results] == ["A"]
+        assert result.input_indices == [1]
+        assert [objective for objective, _ in result.incomplete_objectives] == ["C", "B"]
+        assert result.incomplete_objectives[0][1] is schedule.c_error
+        assert result.incomplete_objectives[1][1] is schedule.b_error
+
+    async def test_parameter_build_failure_strict_mode_suppresses_execution(self) -> None:
+        """Strict mode settles all builds and raises the first input-ordered failure."""
+        attack = create_mock_attack()
+        schedule = _ParameterBuildSchedule()
+        build_mock = AsyncMock(side_effect=schedule.build_async)
+        seed_groups = [create_seed_group(objective) for objective in ["C", "A", "B"]]
+
+        with (
+            patch.object(AttackParameters, "from_seed_group_async", new=build_mock),
+            pytest.raises(ValueError, match="build C failed") as exc_info,
+        ):
+            await AttackExecutor(max_concurrency=3).execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=seed_groups,
+            )
+
+        assert exc_info.value is schedule.c_error
+        assert schedule.started_count == 3
+        assert schedule.failure_completion_order == ["B", "C"]
+        assert schedule.generated_conversation_ids == ["conv-A-1"]
+        attack.execute_with_context_async.assert_not_awaited()
+
+    async def test_build_and_execution_failures_preserve_original_input_order(self) -> None:
+        """Build and execution failures merge by original seed-group position."""
+        attack = create_mock_attack()
+        schedule = _ParameterBuildSchedule()
+        build_mock = AsyncMock(side_effect=schedule.build_async)
+        a_execution_failed = asyncio.Event()
+        a_error = LookupError("execute A failed")
+
+        async def execute_async(*, context: SingleTurnAttackContext) -> AttackResult:
+            if context.params.objective == "A":
+                a_execution_failed.set()
+                raise a_error
+            await a_execution_failed.wait()
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async.side_effect = execute_async
+        seed_groups = [create_seed_group(objective) for objective in ["C", "A", "D", "B"]]
+
+        with patch.object(AttackParameters, "from_seed_group_async", new=build_mock):
+            result = await AttackExecutor(max_concurrency=4).execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=seed_groups,
+                return_partial_on_failure=True,
+            )
+
+        assert schedule.failure_completion_order == ["B", "C"]
+        assert schedule.generated_conversation_ids == ["conv-A-1", "conv-D-1"]
+        assert [completed.objective for completed in result.completed_results] == ["D"]
+        assert result.input_indices == [2]
+        assert [objective for objective, _ in result.incomplete_objectives] == ["C", "A", "B"]
+        assert result.incomplete_objectives[0][1] is schedule.c_error
+        assert result.incomplete_objectives[1][1] is a_error
+        assert result.incomplete_objectives[2][1] is schedule.b_error
+
+    @pytest.mark.parametrize("fatal_type", [asyncio.CancelledError, _ParameterBuildAbort])
+    async def test_parameter_build_base_exception_propagates(
+        self,
+        fatal_type: type[BaseException],
+    ) -> None:
+        """Cancellation and other fatal base exceptions are never partial results."""
+        attack = create_mock_attack()
+        all_started = asyncio.Event()
+        started_count = 0
+        fatal_error = fatal_type("fatal build")
+
+        async def build_async(*, seed_group: AttackSeedGroup, **_: Any) -> AttackParameters:
+            nonlocal started_count
+            started_count += 1
+            if started_count == 2:
+                all_started.set()
+            await all_started.wait()
+            if seed_group.objective.value == "B":
+                raise fatal_error
+            return AttackParameters(objective=seed_group.objective.value)
+
+        build_mock = AsyncMock(side_effect=build_async)
+        with (
+            patch.object(AttackParameters, "from_seed_group_async", new=build_mock),
+            pytest.raises(fatal_type) as exc_info,
+        ):
+            await AttackExecutor(max_concurrency=2).execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[create_seed_group("A"), create_seed_group("B")],
+                return_partial_on_failure=True,
+            )
+
+        if fatal_type is not asyncio.CancelledError:
+            assert exc_info.value is fatal_error
+        assert build_mock.await_count == 2
+        attack.execute_with_context_async.assert_not_awaited()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -575,6 +831,23 @@ class TestPartialFailureHandling:
             await executor.execute_attack_async(
                 attack=attack,
                 objectives=["Test"],
+            )
+
+    @pytest.mark.parametrize("fatal_type", [asyncio.CancelledError, _ParameterBuildAbort])
+    async def test_execution_base_exception_propagates(
+        self,
+        fatal_type: type[BaseException],
+    ) -> None:
+        """Cancellation and other fatal base exceptions are not incomplete objectives."""
+        attack = create_mock_attack()
+        fatal_error = fatal_type("fatal execution")
+        attack.execute_with_context_async.side_effect = fatal_error
+
+        with pytest.raises(fatal_type):
+            await AttackExecutor().execute_attack_async(
+                attack=attack,
+                objectives=["Test"],
+                return_partial_on_failure=True,
             )
 
 

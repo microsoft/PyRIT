@@ -163,6 +163,7 @@ class ScorerInitializer(PyRITInitializer):
                 name="tags",
                 description="Tags for filtering (e.g., ['default'])",
                 default=["default"],
+                param_type=list[str],
             ),
         ]
 

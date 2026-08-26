@@ -258,7 +258,7 @@ def _build_static_banner() -> StaticBannerData:
         "  • list-converters       - See all registered converter instances",
         "  • run <scenario> [opts] - Execute a security scenario",
         "  • scenario-history      - View your session history",
-        "  • print-scenario [N]    - Display detailed results",
+        "  • scenario-results [id] - Inspect a run's attack results",
         "  • help [command]        - Get help on any command",
         "  • clear                 - Clear the screen",
         "  • exit                  - Quit the shell",
@@ -298,7 +298,7 @@ def _build_static_banner() -> StaticBannerData:
     quick_start = [
         "Quick Start:",
         "  pyrit> list-scenarios",
-        "  pyrit> run foundry.red_team_agent --target my_target --initializers target load_default_datasets",
+        "  pyrit> run foundry.red_team_agent --target my_target --initializers target",
     ]
     for qs in quick_start:
         full_line = _box_line("  " + qs)

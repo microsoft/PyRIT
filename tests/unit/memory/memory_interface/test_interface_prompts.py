@@ -31,6 +31,7 @@ from pyrit.models import (
     SeedPrompt,
     TargetIdentifier,
 )
+from pyrit.prompt_target.common.utils import set_response_metadata
 
 
 def _test_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
@@ -946,6 +947,32 @@ def test_get_message_pieces_metadata(sqlite_instance: MemoryInterface):
     assert len(retrieved_entries) == 2  # Two entries should have the specific memory labels
     for retrieved_entry in retrieved_entries:
         assert "key2" in retrieved_entry.prompt_metadata
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [("finish_reason", "content_filter"), ("status", "incomplete"), ("incomplete_reason", "max_output_tokens")],
+)
+def test_get_message_pieces_captured_response_metadata(sqlite_instance: MemoryInterface, key: str, value: str):
+    """The response metadata captured by the targets must be queryable after a round trip."""
+    matching = MessagePiece(
+        conversation_id=str(uuid4()),
+        role="assistant",
+        original_value="blocked",
+    )
+    other = MessagePiece(
+        conversation_id=str(uuid4()),
+        role="assistant",
+        original_value="fine",
+    )
+    set_response_metadata(pieces=[matching], **{key: value})
+    set_response_metadata(pieces=[other], **{key: "something_else"})
+    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=matching), PromptMemoryEntry(entry=other)])
+
+    retrieved = sqlite_instance.get_message_pieces(prompt_metadata={key: value})
+
+    assert len(retrieved) == 1
+    assert retrieved[0].prompt_metadata[key] == value
 
 
 def test_get_message_pieces_id(sqlite_instance: MemoryInterface):

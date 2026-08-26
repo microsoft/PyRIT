@@ -2,15 +2,17 @@
 # Licensed under the MIT license.
 
 import asyncio
+import inspect
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import FrozenInstanceError, dataclass, field, replace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from treelib.tree import Tree
+from unit.mocks import store_message
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.executor.attack import (
@@ -25,6 +27,7 @@ from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRou
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     AttackScoringConfig,
     TAPAttackScoringConfig,
+    _TAPAttackConfiguration,
     _TreeOfAttacksNode,
 )
 from pyrit.models import (
@@ -40,7 +43,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
+from pyrit.score import FloatScaleThresholdScorer, MessageScorable, Scorer, TrueFalseScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
 
@@ -364,7 +367,7 @@ class TestHelpers:
                 class_module="test_module",
             ),
         )
-        mock_float_scorer.score_async = AsyncMock(return_value=[float_score])
+        mock_float_scorer._score_nested_message_async = AsyncMock(return_value=[float_score])
 
         # Create the actual FloatScaleThresholdScorer
         threshold_scorer = FloatScaleThresholdScorer(scorer=mock_float_scorer, threshold=threshold)
@@ -389,7 +392,7 @@ class TestHelpers:
         )
 
         # Score using the actual FloatScaleThresholdScorer
-        scores = await threshold_scorer.score_async(dummy_message)
+        scores = await threshold_scorer.score_async(scorable=MessageScorable.from_message(store_message(dummy_message)))
         return scores[0]
 
     @staticmethod
@@ -433,6 +436,26 @@ class TestHelpers:
             attack._load_adversarial_prompts()
 
 
+class TestTAPAttackContext:
+    """Tests for TAP conversation correlation."""
+
+    def test_conversation_id_uses_first_active_branch_before_best_is_selected(self, node_factory):
+        context = TestHelpers.create_basic_context()
+        context.nodes = [
+            node_factory.create_node(NodeMockConfig(objective_target_conversation_id="first-branch")),
+            node_factory.create_node(NodeMockConfig(objective_target_conversation_id="second-branch")),
+        ]
+
+        assert context.conversation_id == "first-branch"
+
+    def test_conversation_id_prefers_best_branch(self, node_factory):
+        context = TestHelpers.create_basic_context()
+        context.nodes = [node_factory.create_node(NodeMockConfig(objective_target_conversation_id="active-branch"))]
+        context.best_conversation_id = "best-branch"
+
+        assert context.conversation_id == "best-branch"
+
+
 @pytest.fixture
 def node_factory():
     """Fixture providing the MockNodeFactory."""
@@ -465,42 +488,91 @@ class TestTreeOfAttacksInitialization:
         """Test that attack initializes correctly with only required parameters."""
         attack = attack_builder.with_default_mocks().build()
 
-        assert attack._tree_width == 3
-        assert attack._tree_depth == 5
-        assert attack._branching_factor == 2
-        assert attack._on_topic_checking_enabled is True
-        assert attack._batch_size == 10
+        assert attack._configuration == _TAPAttackConfiguration(
+            tree_width=3,
+            tree_depth=5,
+            branching_factor=2,
+            on_topic_checking_enabled=True,
+            desired_response_prefix="Sure, here is",
+            batch_size=10,
+        )
 
     def test_init_with_custom_tree_parameters(self, attack_builder):
         """Test initialization with custom tree parameters."""
         attack = (
             attack_builder.with_default_mocks()
-            .with_tree_params(tree_width=5, tree_depth=10, branching_factor=3, batch_size=20)
+            .with_tree_params(
+                tree_width=5,
+                tree_depth=10,
+                branching_factor=3,
+                on_topic_checking_enabled=False,
+                desired_response_prefix="Absolutely",
+                batch_size=20,
+            )
             .build()
         )
 
-        assert attack._tree_width == 5
-        assert attack._tree_depth == 10
-        assert attack._branching_factor == 3
-        assert attack._batch_size == 20
+        assert attack._configuration == _TAPAttackConfiguration(
+            tree_width=5,
+            tree_depth=10,
+            branching_factor=3,
+            on_topic_checking_enabled=False,
+            desired_response_prefix="Absolutely",
+            batch_size=20,
+        )
+
+    def test_configuration_is_immutable(self, basic_attack):
+        with pytest.raises(FrozenInstanceError):
+            basic_attack._configuration.tree_width = 4  # type: ignore[misc]
+
+    def test_constructor_preserves_legacy_keyword_contract(self):
+        signature = inspect.signature(TreeOfAttacksWithPruningAttack.__init__)
+
+        assert list(signature.parameters) == [
+            "self",
+            "objective_target",
+            "attack_adversarial_config",
+            "attack_converter_config",
+            "attack_scoring_config",
+            "prompt_normalizer",
+            "tree_width",
+            "tree_depth",
+            "branching_factor",
+            "on_topic_checking_enabled",
+            "desired_response_prefix",
+            "batch_size",
+            "prepended_conversation_config",
+        ]
+        assert all(
+            parameter.kind is inspect.Parameter.KEYWORD_ONLY
+            for name, parameter in signature.parameters.items()
+            if name != "self"
+        )
+        assert signature.parameters["tree_width"].default == 3
+        assert signature.parameters["tree_depth"].default == 5
+        assert signature.parameters["branching_factor"].default == 2
+        assert signature.parameters["on_topic_checking_enabled"].default is True
+        assert signature.parameters["desired_response_prefix"].default == "Sure, here is"
+        assert signature.parameters["batch_size"].default == 10
 
     @pytest.mark.parametrize(
         "tree_params,expected_error",
         [
-            ({"tree_width": 0}, "tree width must be at least 1"),
-            ({"tree_depth": 0}, "tree depth must be at least 1"),
-            ({"branching_factor": 0}, "branching factor must be at least 1"),
-            ({"batch_size": 0}, "batch size must be at least 1"),
-            ({"tree_width": -1}, "tree width must be at least 1"),
-            ({"tree_depth": -1}, "tree depth must be at least 1"),
-            ({"branching_factor": -1}, "branching factor must be at least 1"),
-            ({"batch_size": -1}, "batch size must be at least 1"),
+            ({"tree_width": 0}, "The tree width must be at least 1."),
+            ({"tree_depth": 0}, "The tree depth must be at least 1."),
+            ({"branching_factor": 0}, "The branching factor must be at least 1."),
+            ({"batch_size": 0}, "The batch size must be at least 1."),
+            ({"tree_width": -1}, "The tree width must be at least 1."),
+            ({"tree_depth": -1}, "The tree depth must be at least 1."),
+            ({"branching_factor": -1}, "The branching factor must be at least 1."),
+            ({"batch_size": -1}, "The batch size must be at least 1."),
         ],
     )
     def test_init_with_invalid_tree_parameters(self, attack_builder, tree_params, expected_error):
         """Test that invalid tree parameters raise ValueError."""
-        with pytest.raises(ValueError, match=expected_error):
+        with pytest.raises(ValueError) as exc_info:
             attack_builder.with_default_mocks().with_tree_params(**tree_params).build()
+        assert str(exc_info.value) == expected_error
 
     def test_init_with_auxiliary_scorers(self, attack_builder):
         """Test initialization with auxiliary scorers."""
@@ -582,6 +654,43 @@ class TestTreeOfAttacksInitialization:
                 next_message=next_message,
             )
 
+    async def test_interleaved_contexts_keep_independent_visualization_roots(self, basic_attack, helpers):
+        prepended_context = helpers.create_basic_context()
+        prepended_context.prepended_conversation = [
+            Message.from_prompt(prompt="Hello", role="user"),
+            Message.from_prompt(prompt="Hi", role="assistant"),
+        ]
+        plain_context = helpers.create_basic_context()
+        first_setup_complete = asyncio.Event()
+        second_setup_complete = asyncio.Event()
+
+        def create_node(**_: Any) -> MagicMock:
+            node = MagicMock(spec=_TreeOfAttacksNode)
+            node.adversarial_chat_conversation_id = str(uuid.uuid4())
+            node.initialize_with_prepended_conversation_async = AsyncMock()
+            return node
+
+        async def initialize_context_async(*, context: TAPAttackContext, first: bool) -> None:
+            await basic_attack._setup_async(context=context)
+            if first:
+                first_setup_complete.set()
+                await second_setup_complete.wait()
+            else:
+                await first_setup_complete.wait()
+                second_setup_complete.set()
+            await basic_attack._initialize_first_level_nodes_async(context)
+
+        with patch.object(basic_attack, "_create_attack_node", side_effect=create_node):
+            await asyncio.gather(
+                initialize_context_async(context=prepended_context, first=True),
+                initialize_context_async(context=plain_context, first=False),
+            )
+
+        assert prepended_context.visualization_root_id == "prepended_1"
+        assert {node._vis_node_id for node in prepended_context.nodes} == {"prepended_1"}
+        assert plain_context.visualization_root_id == "root"
+        assert {node._vis_node_id for node in plain_context.nodes} == {"root"}
+
     def test_default_scorer_detects_text_output_modalities(self):
         """Test that default scorer detects text output modalities from target capabilities."""
         builder = AttackBuilder()
@@ -623,7 +732,7 @@ class TestPruningLogic:
         nodes = node_factory.create_nodes_with_scores([0.9, 0.7, 0.5, 0.3, 0.1])
         context.nodes = nodes
         helpers.add_nodes_to_tree(context, nodes)
-        basic_attack._tree_width = 3
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
 
         # Execute pruning
         basic_attack._prune_nodes_to_maintain_width(context=context)
@@ -901,7 +1010,7 @@ class TestPruningLogic:
 
     def test_no_pruning_when_below_width(self, basic_attack, node_factory, helpers):
         """Test that blocked nodes are not pruned when completed list is below tree_width."""
-        basic_attack._tree_width = 5
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=5)
 
         context = helpers.create_basic_context()
 
@@ -946,7 +1055,6 @@ class TestBlockedScoringDefaults:
     short-circuits at all in `_score_response_async`.
     """
 
-    @pytest.mark.asyncio
     async def test_score_response_delegates_to_scorer_for_blocked(self, attack_builder):
         """A blocked response goes straight through Scorer.score_response_async — no TAP-side
         short-circuit. The scorer is responsible for producing 0.0 via its unified fallback."""
@@ -1015,7 +1123,6 @@ class TestBlockedScoringDefaults:
         assert node.objective_score is not None
         assert node.objective_score.get_value() == 0.0
 
-    @pytest.mark.asyncio
     async def test_score_response_delegates_to_scorer_for_unknown_error(self, attack_builder):
         """Non-blocked errors (e.g. 'unknown') also flow through the scorer; no special-casing."""
         builder = attack_builder.with_default_mocks()
@@ -1085,7 +1192,7 @@ class TestBranchingLogic:
     def test_branch_existing_nodes(self, basic_attack, node_factory, helpers):
         """Test that nodes are branched correctly."""
         context = helpers.create_basic_context()
-        basic_attack._branching_factor = 3
+        basic_attack._configuration = replace(basic_attack._configuration, branching_factor=3)
 
         # Create initial nodes
         initial_nodes = node_factory.create_nodes_with_scores([0.8, 0.7])
@@ -1473,6 +1580,29 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores == {}
         assert node.error_message is None
 
+    async def test_subsequent_prompt_omits_score_when_feedback_disabled(self, node_components):
+        """A disabled score-feedback setting preserves response context without exposing the score."""
+        node = _TreeOfAttacksNode(**node_components, use_score_as_feedback=False)
+        response = MagicMock()
+        response.get_piece.return_value = MessagePiece(
+            role="assistant",
+            original_value="target response",
+            converted_value="target response",
+            conversation_id=node.objective_target_conversation_id,
+        )
+
+        with (
+            patch.object(node._memory, "get_conversation_messages", return_value=[response]),
+            patch.object(node, "_get_response_score_async", new_callable=AsyncMock) as get_score,
+        ):
+            result = await node._generate_subsequent_turn_prompt_async("test objective")
+
+        assert result == "rendered template"
+        get_score.assert_not_awaited()
+        render_kwargs = node_components["adversarial_chat_prompt_template"].render_template_value.call_args.kwargs
+        assert render_kwargs["target_response"] == "target response"
+        assert render_kwargs["score"] == ""
+
     def test_node_duplicate_creates_child(self, node_components):
         """Test that duplicate() creates a proper child node."""
         parent_node = _TreeOfAttacksNode(**node_components)
@@ -1643,6 +1773,85 @@ class TestTreeOfAttacksNode:
         assert node.error_message is not None
         assert "Execution error" in node.error_message
 
+    async def test_node_later_scorer_failure_clears_previous_turn_outcome(self, node_components, basic_attack):
+        """A later scorer failure must not leave the branch eligible under its previous score."""
+        node = _TreeOfAttacksNode(**node_components)
+        previous_score = Score(
+            score_value="0.7",
+            score_value_description="previous turn",
+            score_type="float_scale",
+            score_rationale="previous turn succeeded",
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=node._objective_scorer.get_identifier(),
+            objective="Test objective",
+        )
+        response = Message.from_prompt(prompt="unscored response", role="assistant")
+
+        node.completed = True
+        node.objective_score = previous_score
+        node.auxiliary_scores = {"previous": previous_score}
+        node.error_message = "previous error"
+
+        with (
+            patch.object(
+                node,
+                "_generate_adversarial_prompt_async",
+                new_callable=AsyncMock,
+                return_value="next prompt",
+            ),
+            patch.object(
+                node,
+                "_send_prompt_to_target_async",
+                new_callable=AsyncMock,
+                return_value=response,
+            ),
+            patch.object(
+                node,
+                "_score_response_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("scorer unavailable"),
+            ),
+        ):
+            await node.send_prompt_async(objective="Test objective")
+
+        assert node.completed is False
+        assert node.objective_score is None
+        assert node.auxiliary_scores == {}
+        assert node.error_message == "Execution error: scorer unavailable"
+        assert basic_attack._get_completed_nodes_sorted_by_score([node]) == []
+
+    async def test_node_empty_objective_scores_marks_turn_incomplete(self, node_components):
+        """A scorer response without an objective score must prune the branch."""
+        node = _TreeOfAttacksNode(**node_components)
+        response = Message.from_prompt(prompt="unscored response", role="assistant")
+
+        with (
+            patch.object(
+                node,
+                "_generate_adversarial_prompt_async",
+                new_callable=AsyncMock,
+                return_value="next prompt",
+            ),
+            patch.object(
+                node,
+                "_send_prompt_to_target_async",
+                new_callable=AsyncMock,
+                return_value=response,
+            ),
+            patch.object(
+                Scorer,
+                "score_response_async",
+                new_callable=AsyncMock,
+                return_value={"objective_scores": [], "auxiliary_scores": []},
+            ) as score_response,
+        ):
+            await node.send_prompt_async(objective="Test objective")
+
+        score_response.assert_awaited_once()
+        assert node.completed is False
+        assert node.objective_score is None
+        assert node.error_message == "Execution error: No objective scores returned from scoring process."
+
     async def test_node_off_topic_detection(self, node_components):
         """Test off-topic detection in nodes after retry exhaustion.
 
@@ -1791,9 +2000,8 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores["AuxScorer1"].get_value() == 0.8
         assert node.auxiliary_scores["AuxScorer2"].get_value() == 0.6
 
-    @pytest.mark.asyncio
-    async def test_node_single_turn_target_generates_new_conv_id(self, node_components):
-        """Test that single-turn targets get a fresh conversation_id before each send."""
+    async def test_node_unseeded_single_turn_target_rotates_conversation_id(self, node_components):
+        """An unseeded single-turn node keeps prior live history out of the next payload."""
         node_components["objective_target"].capabilities.supports_multi_turn = False
         node_components["objective_target"].configuration.includes.side_effect = lambda capability: False
         node = _TreeOfAttacksNode(**node_components)
@@ -1816,10 +2024,11 @@ class TestTreeOfAttacksNode:
             with patch.object(node, "_score_response_async", new_callable=AsyncMock):
                 await node._send_prompt_to_target_async("test prompt")
 
-        # Conversation ID should have changed for single-turn target
         assert node.objective_target_conversation_id != original_conv_id
+        send_kwargs = node._prompt_normalizer.send_prompt_async.await_args.kwargs
+        assert send_kwargs["conversation_id"] == node.objective_target_conversation_id
+        assert send_kwargs["send_context"] is None
 
-    @pytest.mark.asyncio
     async def test_node_multi_turn_target_keeps_conv_id(self, node_components):
         """Test that multi-turn targets keep the same conversation_id."""
         node_components["objective_target"].capabilities.supports_multi_turn = True
@@ -1845,6 +2054,48 @@ class TestTreeOfAttacksNode:
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksErrorHandling:
     """Tests for error handling in TreeOfAttacksWithPruningAttack."""
+
+    def test_attack_result_uses_response_linked_to_best_score(self, attack_builder, helpers):
+        """A later unscored response must not be paired with an earlier best score."""
+        attack = attack_builder.with_default_mocks().build()
+        context = helpers.create_basic_context()
+        conversation_id = str(uuid.uuid4())
+        original_response_id = uuid.uuid4()
+        scored_response = MessagePiece(
+            role="assistant",
+            original_value="scored response",
+            converted_value="scored response",
+            conversation_id=conversation_id,
+            original_prompt_id=original_response_id,
+        )
+        later_response = MessagePiece(
+            role="assistant",
+            original_value="later unscored response",
+            converted_value="later unscored response",
+            conversation_id=conversation_id,
+        )
+        best_score = Score(
+            score_value="0.7",
+            score_value_description="best score",
+            score_type="float_scale",
+            score_rationale="best scored response",
+            message_piece_id=str(original_response_id),
+            scorer_class_identifier=attack._objective_scorer.get_identifier(),
+            objective=context.objective,
+        )
+        context.best_conversation_id = conversation_id
+        context.best_objective_score = best_score
+
+        with patch.object(
+            attack._memory,
+            "get_message_pieces",
+            return_value=[scored_response, later_response],
+        ):
+            result = attack._create_failure_result(context)
+
+        assert result.last_response is scored_response
+        assert result.last_score is best_score
+        assert str(result.last_score.message_piece_id) == str(result.last_response.original_prompt_id)
 
     async def test_attack_handles_all_nodes_failing(self, attack_builder, helpers, node_factory):
         """Test attack behavior when all nodes fail."""
@@ -2055,7 +2306,6 @@ class TestTreeOfAttacksVisualization:
         assert context.tree_visualization.parent(node_0_child_1._vis_node_id).identifier == node_0._vis_node_id
         assert context.tree_visualization.parent(node_1_child_0._vis_node_id).identifier == node_1._vis_node_id
 
-    @pytest.mark.asyncio
     async def test_surviving_node_gets_child_vis_nodes_per_depth(self, attack_builder, node_factory, helpers):
         """Test that a surviving node gets a new child vis node at each depth (not appended scores)."""
         attack = (
@@ -2137,7 +2387,7 @@ class TestTreeOfAttacksConversationTracking:
         helpers.add_nodes_to_tree(context, nodes)
 
         # Set up branching factor to create additional nodes
-        basic_attack._branching_factor = 3
+        basic_attack._configuration = replace(basic_attack._configuration, branching_factor=3)
 
         # Branch the nodes
         basic_attack._branch_existing_nodes(context)
@@ -2171,7 +2421,7 @@ class TestTreeOfAttacksConversationTracking:
         context = helpers.create_basic_context()
 
         # Set tree width to create multiple nodes
-        basic_attack._tree_width = 3
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
 
         # Initialize first level nodes
         asyncio.run(basic_attack._initialize_first_level_nodes_async(context))
@@ -2217,7 +2467,7 @@ class TestTreeOfAttacksConversationTracking:
     def test_initialize_first_level_nodes_text_objective_keeps_seed_on_first_root_only(self, basic_attack, helpers):
         """Text-capable objectives keep historical behavior: node 0 consumes next_message."""
         context = helpers.create_basic_context()
-        basic_attack._tree_width = 3
+        basic_attack._configuration = replace(basic_attack._configuration, tree_width=3)
         context.next_message = Message(
             message_pieces=[
                 MessagePiece.adversarial_placeholder(),
@@ -2338,6 +2588,22 @@ def test_tap_init_raises_when_objective_scorer_is_none():
             ),
             attack_scoring_config=scoring_config,
         )
+
+
+def test_tap_scoring_config_threshold_raises_for_reassigned_invalid_scorer():
+    """threshold re-validates objective_scorer at access time, not just at construction.
+
+    __init__ already rejects a non-FloatScaleThresholdScorer objective_scorer, so this
+    exercises the defensive re-check by mutating the attribute after construction.
+    """
+    mock_threshold_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+    mock_threshold_scorer.threshold = 0.8
+    scoring_config = TAPAttackScoringConfig(objective_scorer=mock_threshold_scorer)
+
+    scoring_config.objective_scorer = MagicMock(spec=Scorer)
+
+    with pytest.raises(TypeError, match="TAP objective scorer must be a FloatScaleThresholdScorer"):
+        _ = scoring_config.threshold
 
 
 def test_tap_attack_result_tree_visualization_getter_returns_value():
@@ -2583,7 +2849,6 @@ class TestTAPScenarios:
     Each scenario is run twice: once with a multi-turn target and once with a single-turn target.
     """
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("supports_multi_turn", [True, False], ids=["multi_turn", "single_turn"])
     @pytest.mark.parametrize(
         "tree_width, tree_depth, branching_factor, threshold, "

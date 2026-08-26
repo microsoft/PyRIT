@@ -16,7 +16,8 @@ except ImportError:  # pragma: no cover - 3.10 only
 
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioRunState
+from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
@@ -116,7 +117,7 @@ def mock_atomic_attacks():
 @pytest.fixture
 def mock_objective_target():
     """Create a mock objective target for testing."""
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = ComponentIdentifier(
         class_name="MockTarget",
         class_module="test",
@@ -351,7 +352,6 @@ class TestScenarioInitialization2:
         assert scenario._max_concurrency == 4
         assert scenario._memory_labels == {}
 
-    @pytest.mark.asyncio
     async def test_initialize_async_validates_target_requirements(self, mock_objective_target):
         """Test that initialize_async validates objective_target against TARGET_REQUIREMENTS."""
         scenario = ConcreteScenario(name="Test Scenario", version=1)
@@ -362,7 +362,6 @@ class TestScenarioInitialization2:
 
         mock_validate.assert_called_once_with(target=mock_objective_target)
 
-    @pytest.mark.asyncio
     async def test_initialize_async_propagates_target_requirements_error(self, mock_objective_target):
         """Test that initialize_async surfaces errors from TARGET_REQUIREMENTS.validate."""
         scenario = ConcreteScenario(name="Test Scenario", version=1)
@@ -898,6 +897,13 @@ class TestScenarioBaselineOnlyExecution:
         # But running should fail because there are no atomic attacks
         with pytest.raises(ValueError, match="Cannot run scenario with no atomic attacks"):
             await scenario.run_async()
+
+        scenario_results = CentralMemory.get_memory_instance().get_scenario_results(
+            scenario_result_ids=[scenario._scenario_result_id]
+        )
+        assert scenario_results[0].scenario_run_state == ScenarioRunState.FAILED
+        assert scenario_results[0].error_type == "ValueError"
+        assert "Cannot run scenario with no atomic attacks" in scenario_results[0].error_message
 
     async def test_standalone_baseline_uses_dataset_config_seeds(self, mock_objective_target):
         """Test that standalone baseline uses seed groups from dataset_config."""

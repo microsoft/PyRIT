@@ -109,6 +109,9 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
         """
         Build the per-seed metadata dict from a raw row.
 
+        Values that are not natively JSON-serializable (e.g. ``datetime`` columns) are coerced
+        to ``str`` so the metadata can be persisted to memory.
+
         Args:
             item: A single raw HuggingFace row.
 
@@ -120,7 +123,8 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
         for out_key, candidates in self.METADATA_COLUMNS.items():
             for column in candidates:
                 if column in item and item[column] is not None:
-                    metadata[out_key] = item[column]
+                    value = item[column]
+                    metadata[out_key] = value if isinstance(value, (str, int, float, bool)) else str(value)
                     break
         return metadata
 
