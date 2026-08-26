@@ -53,15 +53,18 @@ async def test_configuration_file_service_refreshes_blob_after_cache_expires() -
             "pyrit.backend.services.configuration_file_service._download_blob_config_async",
             new=AsyncMock(side_effect=[b"operator: before\n", b"operator: external\n"]),
         ) as download_mock,
-        patch("pyrit.backend.services.configuration_file_service.time.monotonic", return_value=100.0) as monotonic_mock,
+        patch(
+            "pyrit.backend.services.stale_while_revalidate_cache.time.monotonic", return_value=100.0
+        ) as monotonic_mock,
     ):
         assert await service.read_async() == "operator: before\n"
         assert await service.read_async() == "operator: before\n"
 
         monotonic_mock.return_value = 111.0
         assert await service.read_async() == "operator: before\n"
-        assert service._refresh_task is not None
-        await service._refresh_task
+        refresh_task = service._cache.get_refresh_task("configuration")
+        assert refresh_task is not None
+        await refresh_task
         assert await service.read_async() == "operator: external\n"
 
     assert download_mock.await_count == 2

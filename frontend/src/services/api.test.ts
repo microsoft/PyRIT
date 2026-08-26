@@ -161,6 +161,13 @@ describe("api service", () => {
   });
 
   describe("configurationApi", () => {
+    it("should request a backend restart", async () => {
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ status: 202 });
+
+      await expect(configurationApi.restart()).resolves.toBeUndefined();
+      expect(apiClient.post).toHaveBeenCalledWith("/config/restart");
+    });
+
     it("should read configuration content", async () => {
       const response = {
         data: { content: "operator: alice\n", source: "C:/Users/test/.pyrit/config.yaml" },

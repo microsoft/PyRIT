@@ -12,10 +12,12 @@ The config file source is forwarded to the app via the ``PYRIT_CONFIG_FILE``
 environment variable.
 """
 
+import asyncio
 import logging
 import os
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
+from collections.abc import Callable
 
 from pyrit.common.cli_helpers import CONFIG_FILE_HELP, validate_log_level_argparse
 
@@ -94,6 +96,48 @@ Examples:
     return parser.parse_args(args)
 
 
+def _run_server(*, host: str, port: int, log_level: str, reload: bool) -> None:
+    """Run uvicorn, restarting when requested by the backend API."""
+    import uvicorn
+
+    if reload:
+        uvicorn.run(
+            "pyrit.backend.main:app",
+            host=host,
+            port=port,
+            log_level=log_level,
+            reload=True,
+        )
+        return
+
+    from pyrit.backend.main import app
+
+    config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
+    restart_requested = True
+
+    async def serve_with_restarts_async() -> None:
+        nonlocal restart_requested
+
+        def create_restart_callback(server: uvicorn.Server) -> Callable[[], None]:
+            def request_restart() -> None:
+                nonlocal restart_requested
+                restart_requested = True
+                server.should_exit = True
+
+            return request_restart
+
+        while restart_requested:
+            restart_requested = False
+            server = uvicorn.Server(config)
+            app.state.restart_backend = create_restart_callback(server)
+            await server.serve()
+
+    try:
+        asyncio.run(serve_with_restarts_async())
+    finally:
+        del app.state.restart_backend
+
+
 def main(*, args: list[str] | None = None) -> int:
     """
     Start the PyRIT backend server.
@@ -122,10 +166,7 @@ def main(*, args: list[str] | None = None) -> int:
         )
 
     try:
-        import uvicorn
-
-        uvicorn.run(
-            "pyrit.backend.main:app",
+        _run_server(
             host=parsed_args.host,
             port=parsed_args.port,
             log_level=logging.getLevelName(parsed_args.log_level).lower()

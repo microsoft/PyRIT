@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.backend import pyrit_backend
+from pyrit.backend.main import app
 
 
 class TestParseArgs:
@@ -42,15 +43,14 @@ class TestParseArgs:
 class TestMain:
     """Tests for pyrit_backend.main."""
 
-    @patch("uvicorn.run")
-    def test_main_starts_uvicorn(self, mock_run: MagicMock) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_starts_uvicorn(self, mock_run_server: MagicMock) -> None:
         result = pyrit_backend.main(args=[])
         assert result == 0
-        mock_run.assert_called_once()
-        assert mock_run.call_args[0][0] == "pyrit.backend.main:app"
+        mock_run_server.assert_called_once()
 
-    @patch("uvicorn.run")
-    def test_main_forwards_config_file_via_env(self, mock_run: MagicMock) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_forwards_config_file_via_env(self, mock_run_server: MagicMock) -> None:
         import os
 
         with patch.dict(os.environ, {}, clear=False):
@@ -58,8 +58,8 @@ class TestMain:
             assert os.environ.get("PYRIT_CONFIG_FILE") is not None
             assert "custom.yaml" in os.environ["PYRIT_CONFIG_FILE"]
 
-    @patch("uvicorn.run")
-    def test_main_forwards_blob_config_uri_via_env(self, mock_run: MagicMock) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_forwards_blob_config_uri_via_env(self, mock_run_server: MagicMock) -> None:
         import os
 
         blob_uri = "https://behnamousatairtsa.blob.core.windows.net/copyrit/.pyrit_conf"
@@ -68,10 +68,10 @@ class TestMain:
 
             assert os.environ["PYRIT_CONFIG_FILE"] == blob_uri
 
-    @patch("uvicorn.run")
-    def test_main_passes_host_and_port(self, mock_run: MagicMock) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_passes_host_and_port(self, mock_run_server: MagicMock) -> None:
         pyrit_backend.main(args=["--host", "0.0.0.0", "--port", "9000"])
-        call_kwargs = mock_run.call_args.kwargs
+        call_kwargs = mock_run_server.call_args.kwargs
         assert call_kwargs["host"] == "0.0.0.0"
         assert call_kwargs["port"] == 9000
 
@@ -79,49 +79,80 @@ class TestMain:
         result = pyrit_backend.main(args=["--invalid-flag"])
         assert result == 2
 
-    @patch("uvicorn.run", side_effect=KeyboardInterrupt())
-    def test_main_keyboard_interrupt_returns_zero(self, mock_run: MagicMock, capsys) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server", side_effect=KeyboardInterrupt())
+    def test_main_keyboard_interrupt_returns_zero(self, mock_run_server: MagicMock, capsys) -> None:
         result = pyrit_backend.main(args=[])
         assert result == 0
         captured = capsys.readouterr()
         assert "Backend stopped" in captured.out
 
-    @patch("uvicorn.run", side_effect=RuntimeError("boom"))
-    def test_main_unexpected_exception_returns_one(self, mock_run: MagicMock, capsys) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server", side_effect=RuntimeError("boom"))
+    def test_main_unexpected_exception_returns_one(self, mock_run_server: MagicMock, capsys) -> None:
         result = pyrit_backend.main(args=[])
         assert result == 1
         captured = capsys.readouterr()
         assert "boom" in captured.out
 
-    @patch("uvicorn.run")
-    def test_main_forwards_log_level(self, mock_run: MagicMock) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_forwards_log_level(self, mock_run_server: MagicMock) -> None:
         pyrit_backend.main(args=["--log-level", "DEBUG"])
-        assert mock_run.call_args.kwargs["log_level"] == "debug"
+        assert mock_run_server.call_args.kwargs["log_level"] == "debug"
 
-    @patch("uvicorn.run")
-    def test_main_forwards_reload_flag(self, mock_run: MagicMock) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_forwards_reload_flag(self, mock_run_server: MagicMock) -> None:
         pyrit_backend.main(args=["--reload"])
-        assert mock_run.call_args.kwargs["reload"] is True
+        assert mock_run_server.call_args.kwargs["reload"] is True
 
-    @patch("uvicorn.run")
-    def test_main_warns_when_binding_non_loopback(self, mock_run: MagicMock, capsys) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_warns_when_binding_non_loopback(self, mock_run_server: MagicMock, capsys) -> None:
         pyrit_backend.main(args=["--host", "0.0.0.0", "--port", "9000"])
         captured = capsys.readouterr()
         assert "WARNING" in captured.err
         assert "0.0.0.0" in captured.err
         assert "9000" in captured.err
 
-    @patch("uvicorn.run")
-    def test_main_no_warning_for_localhost(self, mock_run: MagicMock, capsys) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_no_warning_for_localhost(self, mock_run_server: MagicMock, capsys) -> None:
         pyrit_backend.main(args=["--host", "localhost"])
         captured = capsys.readouterr()
         assert "WARNING" not in captured.err
 
-    @patch("uvicorn.run")
-    def test_main_no_warning_for_127_0_0_1(self, mock_run: MagicMock, capsys) -> None:
+    @patch("pyrit.backend.pyrit_backend._run_server")
+    def test_main_no_warning_for_127_0_0_1(self, mock_run_server: MagicMock, capsys) -> None:
         pyrit_backend.main(args=["--host", "127.0.0.1"])
         captured = capsys.readouterr()
         assert "WARNING" not in captured.err
+
+
+class TestRunServer:
+    """Tests for the managed uvicorn server loop."""
+
+    @patch("uvicorn.Server")
+    def test_restart_callback_starts_new_server(self, mock_server_type: MagicMock) -> None:
+        first_server = MagicMock()
+        second_server = MagicMock()
+        first_server.serve = AsyncMock(side_effect=lambda: app.state.restart_backend())
+        second_server.serve = AsyncMock()
+        mock_server_type.side_effect = [first_server, second_server]
+
+        pyrit_backend._run_server(host="localhost", port=8000, log_level="warning", reload=False)
+
+        assert mock_server_type.call_count == 2
+        assert first_server.should_exit is True
+        first_server.serve.assert_awaited_once_with()
+        second_server.serve.assert_awaited_once_with()
+
+    @patch("uvicorn.run")
+    def test_reload_uses_uvicorn_reloader(self, mock_run: MagicMock) -> None:
+        pyrit_backend._run_server(host="localhost", port=8000, log_level="warning", reload=True)
+
+        mock_run.assert_called_once_with(
+            "pyrit.backend.main:app",
+            host="localhost",
+            port=8000,
+            log_level="warning",
+            reload=True,
+        )
 
 
 class TestParseArgsDoesNotAcceptLegacyFlags:

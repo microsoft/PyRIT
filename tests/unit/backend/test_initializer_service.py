@@ -5,7 +5,6 @@
 Tests for backend initializer service and routes.
 """
 
-import asyncio
 from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,6 +24,7 @@ from pyrit.backend.models.initializers import (
     RegisteredInitializer,
 )
 from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
+from pyrit.backend.services.stale_while_revalidate_cache import StaleWhileRevalidateCache
 from pyrit.models import AdditionalInitializer, Parameter
 from pyrit.registry import InitializerMetadata
 
@@ -862,6 +862,13 @@ class MyCustomInitializer(PyRITInitializer):
 """
 
 
+def _initialize_custom_cache(service: InitializerService) -> None:
+    service._custom_cache = StaleWhileRevalidateCache[CustomInitializerListResponse](
+        ttl_seconds=10.0,
+        load_async=lambda _: service._load_custom_initializers_async(),
+    )
+
+
 class TestInitializerServiceRegister:
     """Tests for InitializerService.register_initializer_async."""
 
@@ -875,6 +882,7 @@ class TestInitializerServiceRegister:
             ]
             service._registry = mock_registry
             service._memory = MagicMock()
+            _initialize_custom_cache(service)
 
             result = await service.register_initializer_async(name="my_custom", script_content=_SAMPLE_SCRIPT)
 
@@ -905,10 +913,7 @@ class TestInitializerServiceRegister:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._custom_initializers_cache = None
-            service._custom_cache_expires_at = 0.0
-            service._custom_cache_lock = asyncio.Lock()
-            service._custom_refresh_task = None
+            _initialize_custom_cache(service)
             service._registry.custom_scripts_source = "C:/custom"
             service._registry.list_custom_initializer_sources.return_value = {"my_custom": _SAMPLE_SCRIPT}
             service._registry.get_custom_initializer_source.return_value = "C:/custom/my_custom.py"
@@ -928,10 +933,7 @@ class TestInitializerServiceRegister:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
-            service._custom_initializers_cache = None
-            service._custom_cache_expires_at = 0.0
-            service._custom_cache_lock = asyncio.Lock()
-            service._custom_refresh_task = None
+            _initialize_custom_cache(service)
             service._registry.custom_scripts_source = "C:/custom"
             service._registry.list_custom_initializer_sources.side_effect = [
                 {"my_custom": "VALUE = 1\n"},
@@ -940,13 +942,14 @@ class TestInitializerServiceRegister:
             service._registry.get_custom_initializer_source.return_value = "C:/custom/my_custom.py"
 
             with patch(
-                "pyrit.backend.services.initializer_service.time.monotonic", return_value=100.0
+                "pyrit.backend.services.stale_while_revalidate_cache.time.monotonic", return_value=100.0
             ) as monotonic_mock:
                 first = await service.list_custom_initializers_async()
                 monotonic_mock.return_value = 111.0
                 stale = await service.list_custom_initializers_async()
-                assert service._custom_refresh_task is not None
-                await service._custom_refresh_task
+                refresh_task = service._custom_cache.get_refresh_task("custom-initializers")
+                assert refresh_task is not None
+                await refresh_task
                 refreshed = await service.list_custom_initializers_async()
 
             assert first.items[0].script_content == "VALUE = 1\n"
@@ -961,21 +964,19 @@ class TestInitializerServiceRegister:
             service._registry.custom_scripts_source = "C:/custom"
             service._registry.list_custom_initializer_sources.return_value = {"my_custom": _SAMPLE_SCRIPT}
             service._registry.get_custom_initializer_source.return_value = "C:/custom/my_custom.py"
-            service._custom_initializers_cache = None
-            service._custom_cache_expires_at = 0.0
-            service._custom_cache_lock = asyncio.Lock()
-            service._custom_refresh_task = None
+            _initialize_custom_cache(service)
 
             await service.restore_custom_initializers_async()
 
             service._registry.restore_custom_initializers.assert_called_once_with()
-            assert service._custom_initializers_cache is not None
-            assert service._custom_initializers_cache.items[0].script_content == _SAMPLE_SCRIPT
+            cached = await service.list_custom_initializers_async()
+            assert cached.items[0].script_content == _SAMPLE_SCRIPT
 
     async def test_update_initializer_calls_registry(self) -> None:
         with patch.object(InitializerService, "__init__", lambda self: None):
             service = InitializerService()
             service._registry = MagicMock()
+            _initialize_custom_cache(service)
             service._registry.get_all_registered_class_metadata.return_value = [
                 _make_initializer_metadata(registry_name="my_custom", class_name="UpdatedInitializer")
             ]
@@ -998,6 +999,7 @@ class TestInitializerServiceUnregister:
             mock_registry = MagicMock()
             service._registry = mock_registry
             service._memory = MagicMock()
+            _initialize_custom_cache(service)
 
             await service.unregister_initializer_async(initializer_name="target")
 

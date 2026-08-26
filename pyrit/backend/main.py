@@ -54,14 +54,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Initialize PyRIT on startup using the config file, then yield.
 
     Config resolution order:
-    1. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI (if set)
-    2. ``~/.pyrit/.pyrit_conf`` (if it exists)
-    3. Built-in defaults (SQLite, no initializers)
+    1. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI, used as a self-contained config
+    2. ``~/.pyrit/.pyrit_conf`` when no explicit source is set
+    3. Built-in defaults when neither source exists
     """
     configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
     app.state.configuration_file_service = configuration_file_service
     async with configuration_file_service.resolve_async() as config_file:
-        config = ConfigurationLoader.load_with_overrides(config_file=config_file)
+        config = (
+            ConfigurationLoader.from_yaml_file(config_file)
+            if config_file is not None
+            else ConfigurationLoader.load_with_overrides()
+        )
     resolved_env_files = config.resolve_env_files()
     app.state.environment_file_service = EnvironmentFileService(
         resolved_env_files=list(resolved_env_files) if resolved_env_files is not None else None,

@@ -162,6 +162,10 @@ export const configurationApi = {
     return response.data
   },
 
+  restart: async (): Promise<void> => {
+    await apiClient.post('/config/restart')
+  },
+
   updateContent: async (request: UpdateConfigurationFileRequest): Promise<ConfigurationFileContent> => {
     const response = await apiClient.put('/config', request)
     return response.data

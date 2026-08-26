@@ -4,9 +4,7 @@
 """Read, update, and locally materialize the backend configuration file."""
 
 import asyncio
-import logging
 import tempfile
-import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,10 +12,11 @@ from urllib.parse import parse_qs, urlparse
 
 import aiofiles
 
+from pyrit.backend.services.stale_while_revalidate_cache import StaleWhileRevalidateCache
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 _CACHE_TTL_SECONDS = 10.0
-logger = logging.getLogger(__name__)
+_CONFIG_CACHE_KEY = "configuration"
 
 
 def _is_azure_blob_uri(value: str) -> bool:
@@ -88,10 +87,10 @@ class ConfigurationFileService:
         """Initialize the service with an explicit source or the default configuration path."""
         self._config_file_value = config_file_value
         self._source = config_file_value or str(ConfigurationLoader.get_default_config_path())
-        self._cached_content: str | None = None
-        self._cache_expires_at = 0.0
-        self._cache_lock = asyncio.Lock()
-        self._refresh_task: asyncio.Task[None] | None = None
+        self._cache = StaleWhileRevalidateCache[str](
+            ttl_seconds=_CACHE_TTL_SECONDS,
+            load_async=lambda _: self._read_source_async(),
+        )
 
     @property
     def source(self) -> str:
@@ -108,52 +107,40 @@ class ConfigurationFileService:
         Returns:
             str: The UTF-8 configuration contents.
         """
-        if self._cached_content is not None:
-            if time.monotonic() >= self._cache_expires_at and (self._refresh_task is None or self._refresh_task.done()):
-                self._refresh_task = asyncio.create_task(self._refresh_in_background_async())
-            return self._cached_content
+        return await self._cache.get_async(key=_CONFIG_CACHE_KEY)
 
-        return await self._refresh_cache_async(force=False)
-
-    async def _refresh_cache_async(self, *, force: bool) -> str:
+    async def _read_source_async(self) -> str:
         """
         Read the source and replace the cached content.
 
         Returns:
             str: The current configuration contents.
         """
-        async with self._cache_lock:
-            if not force and self._cached_content is not None:
-                return self._cached_content
-
-            if _is_azure_blob_uri(self._source):
-                content = (await _download_blob_config_async(self._source)).decode("utf-8")
-            else:
-                async with aiofiles.open(self._source, encoding="utf-8") as config_file:
-                    content = await config_file.read()
-
-            self._cached_content = content
-            self._cache_expires_at = time.monotonic() + _CACHE_TTL_SECONDS
-            return content
-
-    async def _refresh_in_background_async(self) -> None:
-        """Refresh an expired cache without delaying the current request."""
-        try:
-            await self._refresh_cache_async(force=True)
-        except Exception:
-            logger.warning("Failed to refresh configuration file cache", exc_info=True)
+        if _is_azure_blob_uri(self._source):
+            return (await _download_blob_config_async(self._source)).decode("utf-8")
+        async with aiofiles.open(self._source, encoding="utf-8") as config_file:
+            return await config_file.read()
 
     async def update_async(self, content: str) -> None:
         """Replace the current configuration contents."""
-        async with self._cache_lock:
-            if _is_azure_blob_uri(self._source):
-                await _upload_blob_config_async(blob_uri=self._source, content=content.encode("utf-8"))
-            else:
-                async with aiofiles.open(self._source, mode="w", encoding="utf-8") as config_file:
-                    await config_file.write(content)
+        await self._cache.update_async(
+            key=_CONFIG_CACHE_KEY,
+            update_async=lambda: self._write_source_async(content),
+        )
 
-            self._cached_content = content
-            self._cache_expires_at = time.monotonic() + _CACHE_TTL_SECONDS
+    async def _write_source_async(self, content: str) -> str:
+        """
+        Persist configuration content.
+
+        Returns:
+            str: The persisted configuration content.
+        """
+        if _is_azure_blob_uri(self._source):
+            await _upload_blob_config_async(blob_uri=self._source, content=content.encode("utf-8"))
+        else:
+            async with aiofiles.open(self._source, mode="w", encoding="utf-8") as config_file:
+                await config_file.write(content)
+        return content
 
     @asynccontextmanager
     async def resolve_async(self) -> AsyncGenerator[Path | None, None]:

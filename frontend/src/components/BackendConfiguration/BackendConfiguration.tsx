@@ -36,6 +36,7 @@ export default function BackendConfiguration() {
   const [source, setSource] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [restarting, setRestarting] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [selectedTab, setSelectedTab] = useState<ConfigurationTab>('configuration')
@@ -93,6 +94,19 @@ export default function BackendConfiguration() {
     }
   }
 
+  const handleRestart = async (): Promise<void> => {
+    setRestarting(true)
+    setStatusMessage(null)
+    try {
+      await configurationApi.restart()
+      setStatusMessage({ intent: 'success', text: 'Backend restart requested.' })
+    } catch (error) {
+      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
+    } finally {
+      setRestarting(false)
+    }
+  }
+
   const hasUnsavedChanges = content !== savedContent
 
   const handleTabSelect = (_: SelectTabEvent, data: SelectTabData): void => {
@@ -109,6 +123,14 @@ export default function BackendConfiguration() {
     <main className={styles.root}>
       <div className={styles.header}>
         <Text as="h1" size={600} weight="semibold">Backend Configuration</Text>
+        <Button
+          appearance="secondary"
+          icon={<ArrowSyncRegular />}
+          disabled={restarting || saving}
+          onClick={() => void handleRestart()}
+        >
+          {restarting ? 'Restarting...' : 'Restart backend'}
+        </Button>
       </div>
 
       <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>

@@ -9,6 +9,7 @@ import BackendConfiguration from './BackendConfiguration'
 jest.mock('@/services/api', () => ({
   configurationApi: {
     getContent: jest.fn(),
+    restart: jest.fn(),
     updateContent: jest.fn(),
     listEnvironmentFiles: jest.fn(),
     getEnvironmentFile: jest.fn(),
@@ -40,6 +41,7 @@ describe('BackendConfiguration', () => {
       content: 'operator: alice\n',
       source: 'C:/Users/test/.pyrit/config.yaml',
     })
+    mockedConfigurationApi.restart.mockResolvedValue()
     mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({
       items: [
         { id: '0', name: '.env', path: 'C:/Users/test/.pyrit/.env', content: '', exists: true },
@@ -107,6 +109,16 @@ describe('BackendConfiguration', () => {
 
     expect(mockedConfigurationApi.updateContent).toHaveBeenCalledWith({ content: 'operator: bob\n' })
     expect(await screen.findByText(/restart the backend/i)).toBeInTheDocument()
+  })
+
+  it('should request a backend restart from the header', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(screen.getByRole('button', { name: 'Restart backend' }))
+
+    expect(mockedConfigurationApi.restart).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('Backend restart requested.')).toBeInTheDocument()
   })
 
   it('should show a load error', async () => {

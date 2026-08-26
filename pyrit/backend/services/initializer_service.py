@@ -12,7 +12,6 @@ initializer name (each is its own invocation, identified by ``id``).
 
 import asyncio
 import logging
-import time
 from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any
@@ -27,6 +26,7 @@ from pyrit.backend.models.initializers import (
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
 )
+from pyrit.backend.services.stale_while_revalidate_cache import StaleWhileRevalidateCache
 from pyrit.memory import CentralMemory
 from pyrit.models import AdditionalInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
@@ -35,6 +35,7 @@ from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 _CUSTOM_CACHE_TTL_SECONDS = 10.0
+_CUSTOM_CACHE_KEY = "custom-initializers"
 
 
 def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> RegisteredInitializer:
@@ -68,10 +69,10 @@ class InitializerService:
         """Initialize the initializer service."""
         self._registry = InitializerRegistry.get_registry_singleton()
         self._memory = CentralMemory.get_memory_instance()
-        self._custom_initializers_cache: CustomInitializerListResponse | None = None
-        self._custom_cache_expires_at = 0.0
-        self._custom_cache_lock = asyncio.Lock()
-        self._custom_refresh_task: asyncio.Task[None] | None = None
+        self._custom_cache = StaleWhileRevalidateCache[CustomInitializerListResponse](
+            ttl_seconds=_CUSTOM_CACHE_TTL_SECONDS,
+            load_async=lambda _: self._load_custom_initializers_async(),
+        )
 
     async def list_initializers_async(
         self,
@@ -358,57 +359,35 @@ class InitializerService:
         Returns:
             CustomInitializerListResponse: Credential-free source and stored definitions.
         """
-        if self._custom_initializers_cache is not None:
-            if time.monotonic() >= self._custom_cache_expires_at and (
-                self._custom_refresh_task is None or self._custom_refresh_task.done()
-            ):
-                self._custom_refresh_task = asyncio.create_task(self._refresh_custom_cache_in_background_async())
-            return self._custom_initializers_cache.model_copy(deep=True)
+        return await self._custom_cache.get_async(key=_CUSTOM_CACHE_KEY)
 
-        return await self._refresh_custom_cache_async(force=False)
-
-    async def _refresh_custom_cache_async(self, *, force: bool) -> CustomInitializerListResponse:
+    async def _load_custom_initializers_async(self) -> CustomInitializerListResponse:
         """
         Read custom initializer storage and replace the cached response.
 
         Returns:
             CustomInitializerListResponse: The current stored custom initializers.
         """
-        async with self._custom_cache_lock:
-            if not force and self._custom_initializers_cache is not None:
-                return self._custom_initializers_cache.model_copy(deep=True)
-
-            sources = await asyncio.to_thread(self._registry.list_custom_initializer_sources)
-            response = CustomInitializerListResponse(
-                source=self._registry.custom_scripts_source,
-                items=[
-                    CustomInitializerResponse(
-                        initializer_name=name,
-                        script_content=script_content,
-                        source=self._registry.get_custom_initializer_source(name),
-                    )
-                    for name, script_content in sources.items()
-                ],
-            )
-            self._custom_initializers_cache = response
-            self._custom_cache_expires_at = time.monotonic() + _CUSTOM_CACHE_TTL_SECONDS
-            return response.model_copy(deep=True)
-
-    async def _refresh_custom_cache_in_background_async(self) -> None:
-        """Refresh expired custom initializer data without delaying the request."""
-        try:
-            await self._refresh_custom_cache_async(force=True)
-        except Exception:
-            logger.warning("Failed to refresh custom initializer cache", exc_info=True)
+        sources = await asyncio.to_thread(self._registry.list_custom_initializer_sources)
+        return CustomInitializerListResponse(
+            source=self._registry.custom_scripts_source,
+            items=[
+                CustomInitializerResponse(
+                    initializer_name=name,
+                    script_content=script_content,
+                    source=self._registry.get_custom_initializer_source(name),
+                )
+                for name, script_content in sources.items()
+            ],
+        )
 
     def _invalidate_custom_initializers_cache(self) -> None:
         """Invalidate custom initializer data after a successful mutation."""
-        self._custom_initializers_cache = None
-        self._custom_cache_expires_at = 0.0
+        self._custom_cache.invalidate(_CUSTOM_CACHE_KEY)
 
     async def restore_custom_initializers_async(self) -> None:
         """Restore stored custom initializer definitions into the runtime registry."""
-        await self._refresh_custom_cache_async(force=True)
+        await self._custom_cache.refresh_async(key=_CUSTOM_CACHE_KEY)
         await asyncio.to_thread(self._registry.restore_custom_initializers)
 
     async def unregister_initializer_async(self, *, initializer_name: str) -> None:

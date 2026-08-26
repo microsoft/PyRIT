@@ -4,13 +4,12 @@
 """Read and update environment files selected by backend configuration."""
 
 import asyncio
-import logging
-import time
 from pathlib import Path
 
 import aiofiles
 
 from pyrit.backend.models.configuration import EnvironmentFileContent
+from pyrit.backend.services.stale_while_revalidate_cache import StaleWhileRevalidateCache
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.setup.environment_loading import (
     _create_akv_secret_client,
@@ -20,7 +19,6 @@ from pyrit.setup.environment_loading import (
 )
 
 _CACHE_TTL_SECONDS = 10.0
-logger = logging.getLogger(__name__)
 
 
 async def _update_akv_document_async(*, secret_url: str, content: str, strict: bool) -> str:
@@ -61,9 +59,10 @@ class EnvironmentFileService:
             if resolved_env_files is None
             else resolved_env_files
         )
-        self._content_cache: dict[str, tuple[float, EnvironmentFileContent]] = {}
-        self._cache_lock = asyncio.Lock()
-        self._refresh_tasks: dict[str, asyncio.Task[None]] = {}
+        self._cache = StaleWhileRevalidateCache[EnvironmentFileContent](
+            ttl_seconds=_CACHE_TTL_SECONDS,
+            load_async=lambda file_id: self._read_source_async(file_id=file_id),
+        )
 
     async def list_async(self) -> list[EnvironmentFileContent]:
         """
@@ -108,81 +107,18 @@ class EnvironmentFileService:
         Raises:
             KeyError: If the identifier does not name a configured environment source.
         """
-        cached = self._content_cache.get(file_id)
-        if cached is not None:
-            if time.monotonic() >= cached[0] and file_id not in self._refresh_tasks:
-                self._refresh_tasks[file_id] = asyncio.create_task(self._refresh_in_background_async(file_id=file_id))
-            return cached[1].model_copy()
+        return await self._cache.get_async(key=file_id)
 
-        return await self._refresh_cache_async(file_id=file_id, force=False)
-
-    async def _refresh_cache_async(self, *, file_id: str, force: bool) -> EnvironmentFileContent:
+    async def _read_source_async(self, *, file_id: str) -> EnvironmentFileContent:
         """
         Read one source and replace its cached content.
 
         Returns:
             EnvironmentFileContent: The selected source and its current contents.
         """
-        async with self._cache_lock:
-            cached = self._content_cache.get(file_id)
-            if not force and cached is not None:
-                return cached[1].model_copy()
-
-            if file_id.startswith("akv:"):
-                try:
-                    index = int(file_id.removeprefix("akv:"))
-                    secret_url = self._akv_refs[index]
-                except (ValueError, IndexError):
-                    raise KeyError(file_id) from None
-                if index < 0:
-                    raise KeyError(file_id)
-
-                content, _ = await _fetch_akv_document_async(
-                    secret_url=secret_url,
-                    strict=self._env_akv_strict,
-                    silent=True,
-                )
-                _, secret_name, _ = _parse_akv_secret_url(secret_url)
-                item = EnvironmentFileContent(
-                    id=file_id,
-                    name=f"AKV: {secret_name}",
-                    path=secret_url,
-                    content=content,
-                    exists=True,
-                )
-            else:
-                try:
-                    index = int(file_id)
-                    path = self._paths[index]
-                except (ValueError, IndexError):
-                    raise KeyError(file_id) from None
-                if index < 0:
-                    raise KeyError(file_id)
-
-                exists = await asyncio.to_thread(path.exists)
-                content = ""
-                if exists:
-                    async with aiofiles.open(path, encoding="utf-8") as environment_file:
-                        content = await environment_file.read()
-                item = EnvironmentFileContent(
-                    id=file_id,
-                    name=path.name,
-                    path=str(path),
-                    content=content,
-                    exists=exists,
-                )
-
-            self._content_cache[file_id] = (time.monotonic() + _CACHE_TTL_SECONDS, item)
-            return item.model_copy()
-
-    async def _refresh_in_background_async(self, *, file_id: str) -> None:
-        """Refresh an expired source without delaying the current request."""
-        try:
-            await self._refresh_cache_async(file_id=file_id, force=True)
-        except Exception:
-            logger.warning("Failed to refresh environment source %s", file_id, exc_info=True)
-        finally:
-            self._refresh_tasks.pop(file_id, None)
+        if file_id.startswith("akv:"):
+            return await self._read_akv_source_async(file_id=file_id)
+        return await self._read_file_source_async(file_id=file_id)
 
     async def update_async(self, *, file_id: str, content: str) -> EnvironmentFileContent:
         """
@@ -194,48 +130,73 @@ class EnvironmentFileService:
         Raises:
             KeyError: If the identifier does not name a configured environment file.
         """
-        async with self._cache_lock:
-            if file_id.startswith("akv:"):
-                try:
-                    index = int(file_id.removeprefix("akv:"))
-                    secret_url = self._akv_refs[index]
-                except (ValueError, IndexError):
-                    raise KeyError(file_id) from None
-                if index < 0:
-                    raise KeyError(file_id)
+        return await self._cache.update_async(
+            key=file_id,
+            update_async=lambda: self._write_source_async(file_id=file_id, content=content),
+        )
 
-                persisted_content = await _update_akv_document_async(
-                    secret_url=secret_url,
-                    content=content,
-                    strict=self._env_akv_strict,
-                )
-                _, secret_name, _ = _parse_akv_secret_url(secret_url)
-                item = EnvironmentFileContent(
-                    id=file_id,
-                    name=f"AKV: {secret_name}",
-                    path=secret_url,
-                    content=persisted_content,
-                    exists=True,
-                )
-            else:
-                try:
-                    index = int(file_id)
-                    path = self._paths[index]
-                except (ValueError, IndexError):
-                    raise KeyError(file_id) from None
-                if index < 0:
-                    raise KeyError(file_id)
+    async def _read_akv_source_async(self, *, file_id: str) -> EnvironmentFileContent:
+        index, secret_url = self._get_akv_source(file_id)
+        content, _ = await _fetch_akv_document_async(
+            secret_url=secret_url,
+            strict=self._env_akv_strict,
+            silent=True,
+        )
+        _, secret_name, _ = _parse_akv_secret_url(secret_url)
+        return EnvironmentFileContent(
+            id=f"akv:{index}", name=f"AKV: {secret_name}", path=secret_url, content=content, exists=True
+        )
 
-                await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
-                async with aiofiles.open(path, mode="w", encoding="utf-8") as environment_file:
-                    await environment_file.write(content)
-                item = EnvironmentFileContent(
-                    id=file_id,
-                    name=path.name,
-                    path=str(path),
-                    content=content,
-                    exists=True,
-                )
+    async def _read_file_source_async(self, *, file_id: str) -> EnvironmentFileContent:
+        path = self._get_file_path(file_id)
+        exists = await asyncio.to_thread(path.exists)
+        content = ""
+        if exists:
+            async with aiofiles.open(path, encoding="utf-8") as environment_file:
+                content = await environment_file.read()
+        return EnvironmentFileContent(id=file_id, name=path.name, path=str(path), content=content, exists=exists)
 
-            self._content_cache[file_id] = (time.monotonic() + _CACHE_TTL_SECONDS, item)
-            return item.model_copy()
+    async def _write_source_async(self, *, file_id: str, content: str) -> EnvironmentFileContent:
+        if file_id.startswith("akv:"):
+            return await self._write_akv_source_async(file_id=file_id, content=content)
+        path = self._get_file_path(file_id)
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        async with aiofiles.open(path, mode="w", encoding="utf-8") as environment_file:
+            await environment_file.write(content)
+        return EnvironmentFileContent(id=file_id, name=path.name, path=str(path), content=content, exists=True)
+
+    async def _write_akv_source_async(self, *, file_id: str, content: str) -> EnvironmentFileContent:
+        index, secret_url = self._get_akv_source(file_id)
+        persisted_content = await _update_akv_document_async(
+            secret_url=secret_url,
+            content=content,
+            strict=self._env_akv_strict,
+        )
+        _, secret_name, _ = _parse_akv_secret_url(secret_url)
+        return EnvironmentFileContent(
+            id=f"akv:{index}",
+            name=f"AKV: {secret_name}",
+            path=secret_url,
+            content=persisted_content,
+            exists=True,
+        )
+
+    def _get_akv_source(self, file_id: str) -> tuple[int, str]:
+        try:
+            index = int(file_id.removeprefix("akv:"))
+            secret_url = self._akv_refs[index]
+        except (ValueError, IndexError):
+            raise KeyError(file_id) from None
+        if index < 0:
+            raise KeyError(file_id)
+        return index, secret_url
+
+    def _get_file_path(self, file_id: str) -> Path:
+        try:
+            index = int(file_id)
+            path = self._paths[index]
+        except (ValueError, IndexError):
+            raise KeyError(file_id) from None
+        if index < 0:
+            raise KeyError(file_id)
+        return path

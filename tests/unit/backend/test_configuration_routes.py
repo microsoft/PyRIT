@@ -51,6 +51,27 @@ def test_update_configuration_file_persists_content(client: TestClient) -> None:
     service.update_async.assert_awaited_once_with("operator: bob\n")
 
 
+def test_restart_backend_schedules_managed_restart(client: TestClient) -> None:
+    """Test scheduling a restart through the configuration API."""
+    restart_backend = MagicMock()
+    app.state.restart_backend = restart_backend
+    try:
+        response = client.post("/api/config/restart")
+    finally:
+        del app.state.restart_backend
+
+    assert response.status_code == status.HTTP_202_ACCEPTED
+    restart_backend.assert_called_once_with()
+
+
+def test_restart_backend_returns_503_without_managed_server(client: TestClient) -> None:
+    """Test restart rejection when no server callback is installed."""
+    response = client.post("/api/config/restart")
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert response.json()["detail"] == "Backend restart is unavailable for this server process"
+
+
 def test_get_configuration_file_returns_404_when_missing(client: TestClient) -> None:
     """Test that a missing configuration source returns 404."""
     service = MagicMock(read_async=AsyncMock(side_effect=FileNotFoundError))

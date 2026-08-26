@@ -104,14 +104,18 @@ async def test_environment_file_service_caches_selected_akv_source_until_expiry(
             "pyrit.backend.services.environment_file_service._fetch_akv_document_async",
             new=AsyncMock(side_effect=[("FIRST=1\n", "vault"), ("SECOND=2\n", "vault")]),
         ) as fetch_mock,
-        patch("pyrit.backend.services.environment_file_service.time.monotonic", return_value=100.0) as monotonic_mock,
+        patch(
+            "pyrit.backend.services.stale_while_revalidate_cache.time.monotonic", return_value=100.0
+        ) as monotonic_mock,
     ):
         assert (await service.read_async(file_id="akv:0")).content == "FIRST=1\n"
         assert (await service.read_async(file_id="akv:0")).content == "FIRST=1\n"
 
         monotonic_mock.return_value = 111.0
         assert (await service.read_async(file_id="akv:0")).content == "FIRST=1\n"
-        await service._refresh_tasks["akv:0"]
+        refresh_task = service._cache.get_refresh_task("akv:0")
+        assert refresh_task is not None
+        await refresh_task
         assert (await service.read_async(file_id="akv:0")).content == "SECOND=2\n"
 
     assert fetch_mock.await_count == 2
