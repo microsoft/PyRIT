@@ -430,8 +430,7 @@ class PyRITApiClient:
         auth_config = BackendAuthConfig.from_payload(payload)
         if auth_config.enabled and not self._uses_secure_auth_transport():
             raise CliAuthenticationError(
-                "Refusing to send an Entra access token over a non-HTTPS connection. "
-                "Use HTTPS for remote backends."
+                "Refusing to send an Entra access token over a non-HTTPS connection. Use HTTPS for remote backends."
             )
         self._token_provider = await create_token_provider_async(
             auth_config=auth_config,

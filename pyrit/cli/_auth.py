@@ -77,8 +77,7 @@ class BackendAuthConfig:
         scopes = tuple(scope.strip() for scope in raw_scopes)
         if enabled and scopes != (_GRAPH_USER_READ_SCOPE,):
             raise CliAuthenticationError(
-                "The server requested an unsupported authentication scope. "
-                f"Only {_GRAPH_USER_READ_SCOPE} is allowed."
+                f"The server requested an unsupported authentication scope. Only {_GRAPH_USER_READ_SCOPE} is allowed."
             )
         tenant_id = tenant_id.strip()
         client_id = client_id.strip()
