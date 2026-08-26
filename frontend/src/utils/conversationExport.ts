@@ -293,16 +293,26 @@ function withoutLoadingPlaceholders(messages: Message[]): Message[] {
   return messages.filter((message) => !message.isLoading)
 }
 
+/**
+ * Strip every copy of an attachment a message carries. Media lives in two
+ * places: the flat `attachments` list and the `displayPieces` entry it was
+ * rendered from. They hold the same object, so sanitizing only the flat list
+ * leaves the signed URL sitting in the nested one.
+ */
 function messageForExport(message: Message): Message {
-  if (!message.attachments && !message.originalAttachments) {
-    return message
-  }
   const next: Message = { ...message }
   if (message.attachments) {
     next.attachments = message.attachments.map(attachmentWithoutFile)
   }
   if (message.originalAttachments) {
     next.originalAttachments = message.originalAttachments.map(attachmentWithoutFile)
+  }
+  if (message.displayPieces) {
+    next.displayPieces = message.displayPieces.map((piece) =>
+      piece.type === 'media' && piece.attachment
+        ? { ...piece, attachment: attachmentWithoutFile(piece.attachment) }
+        : piece,
+    )
   }
   return next
 }

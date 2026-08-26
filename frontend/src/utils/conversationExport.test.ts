@@ -375,6 +375,33 @@ describe("conversationExport", () => {
       expect(JSON.parse(json).messages[0].attachments[0].name).toBe("result.png");
     });
 
+    it("drops the signed storage url from the display piece it was rendered from", () => {
+      const signed = {
+        type: "image" as const,
+        name: "result.png",
+        url: "https://acct.blob.core.windows.net/c/result.png?sv=2024&sig=SECRETSIG",
+        mimeType: "image/png",
+      };
+      const json = conversationToJson(
+        [
+          message({
+            attachments: [signed],
+            displayPieces: [
+              { type: "media", pieceId: "piece-1", pieceIndex: 0, attachment: signed },
+              { type: "text", pieceId: "piece-2", pieceIndex: 1, content: "some text" },
+            ],
+          }),
+        ],
+        "conv-1"
+      );
+      expect(json).not.toContain("SECRETSIG");
+      expect(json).not.toContain("blob.core.windows.net");
+      const parsed = JSON.parse(json).messages[0];
+      expect(parsed.displayPieces[0].attachment.url).toBe("");
+      expect(parsed.displayPieces[0].attachment.name).toBe("result.png");
+      expect(parsed.displayPieces[1].content).toBe("some text");
+    });
+
     it("drops the local media path so a shared file does not expose the operator's disk", () => {
       const json = conversationToJson(
         [
