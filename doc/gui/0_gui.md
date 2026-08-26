@@ -87,6 +87,8 @@ The export runs entirely in your browser and captures exactly what is shown in t
 
 The labels bar in the ribbon displays the current attack's labels (e.g., `operator`, `operation`). Labels are key-value pairs that help organize and filter attacks. You can add, edit, and remove labels inline. The `operator` and `operation` labels are required and cannot be removed.
 
+Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. The operation you pick is applied to attacks you start from then on; it does not change attacks that already exist.
+
 #### Behavioral Guards
 
 CoPyRIT enforces several safety guards:

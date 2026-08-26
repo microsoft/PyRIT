@@ -13,6 +13,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
+try:
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
+except ImportError:  # pragma: no cover - exercised only on 3.10
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
+
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
     get_retry_collector,
@@ -95,6 +100,7 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _next_message_override: Message | None | _NextMessageOverrideState = _NextMessageOverrideState.UNSET
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
+    _error_result_persistence_error: Exception | None = field(default=None, init=False, repr=False)
 
     # Per-execution prepended-history boundary and send lifecycle. Never persisted.
     prepended_history_send_context: PrependedHistorySendContext | None = field(
@@ -240,7 +246,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Handle post-execution logic after the attack strategy has run.
 
-        Attaches retry events to the result and persists it to memory.
+        Attaches execution metadata to the result and logs its outcome.
 
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
@@ -271,7 +277,15 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
         self._log_attack_outcome(event_data.result)
-        self._memory.add_attack_results_to_memory(attack_results=[event_data.result])
+
+    def _persist_result(self, *, result: AttackStrategyResultT) -> None:
+        """
+        Persist a completed attack result.
+
+        Args:
+            result (AttackStrategyResultT): The completed result to persist.
+        """
+        self._memory.add_attack_results_to_memory(attack_results=[result])
 
     @staticmethod
     def _apply_attribution(
@@ -399,7 +413,10 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_attribution(context=context, result=error_result)
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
-        self._memory.add_attack_results_to_memory(attack_results=[error_result])
+        try:
+            self._memory.add_attack_results_to_memory(attack_results=[error_result])
+        except Exception as persistence_error:
+            context._error_result_persistence_error = persistence_error
 
         self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 
@@ -454,13 +471,13 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
                 history formatting.
             logger (logging.Logger): Logger instance for logging events.
         """
+        event_handler = _DefaultAttackStrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT](logger=logger)
         super().__init__(
             context_type=context_type,
-            event_handler=_DefaultAttackStrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT](
-                logger=logger
-            ),
+            event_handler=event_handler,
             logger=logger,
         )
+        self._default_event_handler = event_handler
         # Local import avoids the component package's import cycle through attack config.
         from pyrit.executor.attack.component.prepended_conversation_config import (
             PrependedConversationConfig,
@@ -667,6 +684,34 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             list[Any]: The list of request ConverterConfiguration objects.
         """
         return self._request_converters
+
+    async def execute_with_context_async(self, *, context: AttackStrategyContextT) -> AttackStrategyResultT:
+        """
+        Execute an attack and persist its completed result after teardown.
+
+        Args:
+            context (AttackStrategyContextT): The attack execution context.
+
+        Returns:
+            AttackStrategyResultT: The completed and persisted attack result.
+
+        Raises:
+            ExceptionGroup: If attack execution and recording its error result both fail.
+        """
+        context._error_result_persistence_error = None
+        try:
+            result = await super().execute_with_context_async(context=context)
+        except Exception as attack_error:
+            persistence_error = context._error_result_persistence_error
+            if persistence_error is not None:
+                raise ExceptionGroup(
+                    "Attack execution and error result persistence failed",
+                    [attack_error, persistence_error],
+                ) from None
+            raise
+
+        self._default_event_handler._persist_result(result=result)
+        return result
 
     @overload
     async def execute_async(

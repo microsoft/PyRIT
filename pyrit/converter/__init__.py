@@ -37,6 +37,11 @@ if TYPE_CHECKING:
     from pyrit.converter.base64_converter import Base64Converter
     from pyrit.converter.base2048_converter import Base2048Converter
     from pyrit.converter.bidi_converter import BidiConverter
+    from pyrit.converter.bijection_converter import (
+        DigitBijectionConverter,
+        LetterBijectionConverter,
+        TokenBijectionConverter,
+    )
     from pyrit.converter.bin_ascii_converter import BinAsciiConverter
     from pyrit.converter.binary_converter import BinaryConverter
     from pyrit.converter.braille_converter import BrailleConverter
@@ -152,6 +157,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "Base2048Converter": "pyrit.converter.base2048_converter",
     "Base64Converter": "pyrit.converter.base64_converter",
     "BidiConverter": "pyrit.converter.bidi_converter",
+    "DigitBijectionConverter": "pyrit.converter.bijection_converter",
+    "LetterBijectionConverter": "pyrit.converter.bijection_converter",
+    "TokenBijectionConverter": "pyrit.converter.bijection_converter",
     "BinAsciiConverter": "pyrit.converter.bin_ascii_converter",
     "BinaryConverter": "pyrit.converter.binary_converter",
     "BrailleConverter": "pyrit.converter.braille_converter",
