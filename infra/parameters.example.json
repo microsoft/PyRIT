@@ -48,6 +48,9 @@
     "enableFrontDoorPrivateLink": {
       "value": false
     },
+    "frontDoorPrivateLinkRequestMessage": {
+      "value": "Azure Front Door private access to pyrit-gui"
+    },
     "disableContainerAppsPublicAccess": {
       "value": false
     },

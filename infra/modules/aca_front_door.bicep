@@ -16,8 +16,10 @@ param originResourceId string = ''
 @description('ACA managed environment location used by Front Door Private Link')
 param originLocation string = ''
 
+@description('Deterministic message used to discover and approve the ACA Private Link request')
+param privateLinkRequestMessage string = 'Azure Front Door private access to ${namePrefix}'
+
 var endpointSuffix = take(uniqueString(subscription().id, resourceGroup().id, namePrefix), 8)
-var privateLinkRequestMessage = 'Azure Front Door private access to ${namePrefix}'
 var effectiveOriginResourceId = enablePrivateLink && empty(originResourceId)
   ? fail('originResourceId is required when enablePrivateLink is true')
   : originResourceId

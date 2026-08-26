@@ -46,6 +46,9 @@
     "enableFrontDoorPrivateLink": {
       "value": false
     },
+    "frontDoorPrivateLinkRequestMessage": {
+      "value": "Azure Front Door private access to copyrit-INSTANCE_NAME"
+    },
     "disableContainerAppsPublicAccess": {
       "value": false
     },

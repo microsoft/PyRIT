@@ -151,6 +151,9 @@ param enableFrontDoor bool = false
 @description('Connect Azure Front Door Premium to the ACA environment through Private Link')
 param enableFrontDoorPrivateLink bool = false
 
+@description('Deterministic message used to discover and approve the ACA Private Link request')
+param frontDoorPrivateLinkRequestMessage string = 'Azure Front Door private access to ${appName}'
+
 @description('Disable the ACA environment public endpoint after Front Door Private Link is configured')
 param disableContainerAppsPublicAccess bool = false
 
@@ -342,6 +345,7 @@ module acaFrontDoor './modules/aca_front_door.bicep' = if (enableFrontDoor) {
     enablePrivateLink: effectiveFrontDoorPrivateLink
     originResourceId: acaEnvironment.id
     originLocation: location
+    privateLinkRequestMessage: frontDoorPrivateLinkRequestMessage
   }
 }
 

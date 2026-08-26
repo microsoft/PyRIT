@@ -179,8 +179,25 @@ stages:
     variables:
       - group: copyrit-gui-prod
     jobs:
+      - job: ValidateProdConfiguration
+        displayName: 'Validate production authorization configuration'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: none
+          - bash: |
+              set -euo pipefail
+              if [[ -z "${PROD_APPROVERS:-}" || "$PROD_APPROVERS" == '$('* ]]; then
+                echo "##vso[task.logissue type=error]copyrit-gui-prod must define prodApprovers before production deployment"
+                exit 1
+              fi
+            displayName: 'Validate production approvers'
+            env:
+              PROD_APPROVERS: $(prodApprovers)
+
       - job: WaitForProdApproval
         displayName: 'Validate production readiness'
+        dependsOn: ValidateProdConfiguration
         pool: server
         timeoutInMinutes: 1440
         steps:

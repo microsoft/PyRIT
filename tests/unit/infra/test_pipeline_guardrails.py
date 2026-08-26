@@ -3,6 +3,9 @@
 """Guard the single-topology Azure DevOps deployment contract."""
 
 import json
+import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,7 +28,22 @@ SUBNET_ID = f"{VNET_ID}/subnets/copyrit-prod-v2-aca-subnet"
 ENVIRONMENT_ID = f"{RESOURCE_GROUP_ID}/providers/Microsoft.App/managedEnvironments/copyrit-prod-v2-env"
 
 
-class PipelineGuardrailTests(unittest.TestCase):
+def _find_bash() -> str | None:
+    """Find a native Bash executable without selecting the Windows WSL shim."""
+    if os.name != "nt":
+        return shutil.which("bash")
+
+    candidates = [
+        Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Git/bin/bash.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Git/bin/bash.exe",
+    ]
+    return next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+
+
+BASH = _find_bash()
+
+
+class TestPipelineGuardrails(unittest.TestCase):
     """Verify one preview-first test/prod deployment workflow."""
 
     @classmethod
@@ -45,10 +63,15 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert self.pipeline.count("scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'") == 2
 
     def test_production_remains_opt_in_and_independently_approved(self):
+        assert "job: ValidateProdConfiguration" in self.pipeline
+        assert "copyrit-gui-prod must define prodApprovers" in self.pipeline
+        assert "PROD_APPROVERS: $(prodApprovers)" in self.pipeline
+        assert '[[ -z "${PROD_APPROVERS:-}" || "$PROD_APPROVERS" == \'$(\'* ]]' in self.pipeline
         assert "task: ManualValidation@1" in self.pipeline
         assert "onTimeout: reject" in self.pipeline
         assert "approvers: '$(prodApprovers)'" in self.pipeline
         assert "allowApproversToApproveTheirOwnRuns: false" in self.pipeline
+        assert "dependsOn: ValidateProdConfiguration" in self.pipeline
         approval_stage = self.pipeline[
             self.pipeline.index("stage: ApproveProd") : self.pipeline.index("stage: DeployProd")
         ]
@@ -76,6 +99,7 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "enablePrivateEndpoint=" not in self.deploy_script
         assert '"enableFrontDoor=true"' in self.deploy_script
         assert '"enableFrontDoorPrivateLink=true"' in self.deploy_script
+        assert '"frontDoorPrivateLinkRequestMessage=$private_link_request_message"' in self.deploy_script
         assert '"disableContainerAppsPublicAccess=true"' in self.deploy_script
 
     def test_pipeline_passes_values_via_environment(self):
@@ -125,8 +149,11 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "connection_suffix=${connection_name:0:8}" in self.deploy_script
         assert '"$deployment_name-private-link-approval-$connection_suffix"' in self.deploy_script
         assert '"approvalDescription=$private_link_request_message"' in self.deploy_script
-        assert "sharedPrivateLinkResource.status" in self.deploy_script
-        assert "sharedPrivateLinkResource.privateLink.id" in self.deploy_script
+        assert "properties.sharedPrivateLinkResource.status" in self.deploy_script
+        assert "properties.sharedPrivateLinkResource.privateLink.id" in self.deploy_script
+        assert "providers/Microsoft.Cdn/profiles" in self.deploy_script
+        assert "api-version=2024-09-01" in self.deploy_script
+        assert "az afd" not in self.deploy_script
         assert "approved_connection_count=" in self.deploy_script
         assert "ACA approval and AFD health determine readiness" in self.deploy_script
         assert "cutover_in_progress=true" in self.deploy_script
@@ -134,8 +161,98 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert "az rest --method delete" in self.deploy_script
         assert '"$deployment_name-rollback"' in self.deploy_script
         assert '"${rollback_parameters[@]}"' in self.deploy_script
+        assert "trap 'exit 143' TERM" in self.deploy_script
+        assert "trap 'exit 130' INT" in self.deploy_script
+        assert "trap - EXIT TERM INT" in self.deploy_script
+        deletion_guard = 'if [[ "$rollback_connection_count" != "0" ]]'
+        assert deletion_guard in self.deploy_script
+        assert "public access remains disabled and manual recovery is required" in self.deploy_script
+        assert self.deploy_script.index(deletion_guard) < self.deploy_script.index(
+            'if az deployment group create \\\n      --name "$deployment_name-rollback"'
+        )
+        assert "front_door_health_timeout_seconds=1800" in self.deploy_script
+        assert "front_door_health_deadline=$((SECONDS + front_door_health_timeout_seconds))" in self.deploy_script
+        assert "while ((SECONDS < front_door_health_deadline))" in self.deploy_script
+        assert "budget before request" in self.deploy_script
+        assert "Front Door health attempt $attempt/60" not in self.deploy_script
         assert "Direct ACA public access remains reachable" in self.deploy_script
         assert "ACA public access: disabled" in self.deploy_script
+
+    def _run_cancellation_rollback(self, *, connection_count: int) -> tuple[subprocess.CompletedProcess[str], str]:
+        assert BASH is not None
+        function_start = self.deploy_script.index("rollback_public_origin() {")
+        trap_start = self.deploy_script.index("trap rollback_public_origin EXIT", function_start)
+        trap_end = self.deploy_script.index("cutover_in_progress=true", trap_start)
+        rollback_function = self.deploy_script[function_start:trap_start]
+        trap_setup = self.deploy_script[trap_start:trap_end]
+
+        with tempfile.TemporaryDirectory() as directory:
+            call_log = Path(directory) / "az-calls.log"
+            harness = f"""
+set -euo pipefail
+cutover_in_progress=false
+private_link_request_message='Azure Front Door private access to copyrit-test'
+PYRIT_DEPLOYMENT_RESOURCE_GROUP='copyrit-test-rg'
+PYRIT_APP_NAME='copyrit-test'
+PYRIT_SOURCE_DIRECTORY='/repo'
+expected_environment_id='/subscriptions/test/resourceGroups/copyrit-test-rg/providers/Microsoft.App/managedEnvironments/copyrit-test-env'
+deployment_name='pyrit-test-1'
+deployment_tags='{{}}'
+rollback_parameters=()
+
+az() {{
+    printf '%s\n' "$*" >> "$AZ_CALLS"
+    case "$1 $2 $3" in
+        'containerapp show --resource-group') printf '%s\n' 'copyrit-test.example' ;;
+        'network private-endpoint-connection list') printf '%s\n' '[]' ;;
+    esac
+}}
+jq() {{
+    if [[ " $* " == *' -r '* ]]; then
+        printf '%s\n' "$expected_environment_id/privateEndpointConnections/connection-1"
+    else
+        printf '%s\n' '{connection_count}'
+    fi
+}}
+sleep() {{ :; }}
+
+{rollback_function}
+{trap_setup}
+cutover_in_progress=true
+kill -TERM $$
+"""
+            environment = os.environ.copy()
+            environment["AZ_CALLS"] = str(call_log)
+            result = subprocess.run(
+                [BASH, "-s"],
+                input=harness,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+
+            calls = call_log.read_text(encoding="utf-8")
+
+        return result, calls
+
+    @unittest.skipIf(BASH is None, "Native Bash is not installed")
+    def test_cancellation_rolls_back_without_reenabling_public_access_while_connection_exists(self):
+        result, calls = self._run_cancellation_rollback(connection_count=1)
+
+        assert result.returncode == 143
+        assert "Private Link cutover failed" in result.stdout
+        assert "private endpoint connection deletion was not confirmed" in result.stdout
+        assert re.search(r"--name pyrit-test-1-rollback(?:\s|$)", calls) is None
+
+    @unittest.skipIf(BASH is None, "Native Bash is not installed")
+    def test_cancellation_reenables_public_access_after_connection_deletion(self):
+        result, calls = self._run_cancellation_rollback(connection_count=0)
+
+        assert result.returncode == 143
+        assert "Public ACA origin rollback completed" in result.stdout
+        assert "rest --method delete" in calls
+        assert re.search(r"--name pyrit-test-1-rollback(?:\s|$)", calls)
 
     def test_manual_parameter_files_use_the_single_topology(self):
         example = json.loads(EXAMPLE_PARAMETERS.read_text(encoding="utf-8"))
@@ -156,8 +273,14 @@ class PipelineGuardrailTests(unittest.TestCase):
         assert example["parameters"]["acrName"]["value"]
         assert example["parameters"]["existingManagedIdentityResourceId"]["value"]
         assert example["parameters"]["enableFrontDoorPrivateLink"]["value"] is False
+        assert example["parameters"]["frontDoorPrivateLinkRequestMessage"]["value"].endswith(
+            example["parameters"]["appName"]["value"]
+        )
         assert example["parameters"]["disableContainerAppsPublicAccess"]["value"] is False
         assert demo["parameters"]["enableFrontDoorPrivateLink"]["value"] is False
+        assert demo["parameters"]["frontDoorPrivateLinkRequestMessage"]["value"].endswith(
+            demo["parameters"]["appName"]["value"]
+        )
         assert demo["parameters"]["disableContainerAppsPublicAccess"]["value"] is False
         assert demo["parameters"]["existingManagedIdentityResourceId"]["value"]
 

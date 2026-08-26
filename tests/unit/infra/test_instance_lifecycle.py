@@ -36,7 +36,7 @@ RESOURCE_GROUP_ID = f"/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_
 GROUP_ID = "22222222-2222-2222-2222-222222222222"
 
 
-class DeployInstanceContractTests(unittest.TestCase):
+class TestDeployInstanceContract(unittest.TestCase):
     """Verify fail-fast inputs and ownership metadata for new instances."""
 
     def test_deployment_tags_identify_script_owned_instance(self):
@@ -177,7 +177,7 @@ class DeployInstanceContractTests(unittest.TestCase):
         self.assertNotIn("0.0.0.0", sql_command)
 
 
-class TeardownInstanceContractTests(unittest.TestCase):
+class TestTeardownInstanceContract(unittest.TestCase):
     """Verify teardown cannot bypass ownership and egress-release checks."""
 
     def _arguments(self) -> list[str]:

@@ -236,6 +236,7 @@ if [[ ! "$repository" =~ $repository_pattern ]]; then
   exit 1
 fi
 immutable_image="$registry_server/$repository@$digest"
+private_link_request_message="Azure Front Door private access to $PYRIT_APP_NAME"
 
 parameters=(
   "appName=$PYRIT_APP_NAME"
@@ -253,6 +254,7 @@ parameters=(
   "envSecretName=$PYRIT_ENV_SECRET_NAME"
   "enableFrontDoor=true"
   "enableFrontDoorPrivateLink=true"
+  "frontDoorPrivateLinkRequestMessage=$private_link_request_message"
   "disableContainerAppsPublicAccess=true"
   "vnetAddressPrefix=$PYRIT_VNET_ADDRESS_PREFIX"
   "infrastructureSubnetAddressPrefix=$PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX"
@@ -296,15 +298,13 @@ fi
 cutover_in_progress=false
 rollback_public_origin() {
   local exit_code=$?
-  trap - EXIT
+  trap - EXIT TERM INT
   if [[ "$cutover_in_progress" == "true" && "$exit_code" != "0" ]]; then
     echo "##vso[task.logissue type=warning]Private Link cutover failed; restoring the public ACA origin"
     local rollback_origin_host
-    local rollback_request_message
     rollback_origin_host=$(az containerapp show \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
       --name "$PYRIT_APP_NAME" --query properties.configuration.ingress.fqdn -o tsv || true)
-    rollback_request_message=${private_link_request_message:-"Azure Front Door private access to $PYRIT_APP_NAME"}
 
     if [[ -n "$rollback_origin_host" ]]; then
       az deployment group create \
@@ -319,31 +319,44 @@ rollback_public_origin() {
     fi
 
     local rollback_connections
+    local rollback_connection_count=-1
     rollback_connections=$(az network private-endpoint-connection list \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
       --name "$PYRIT_APP_NAME-env" \
-      --type Microsoft.App/managedEnvironments -o json || echo '[]')
-    while IFS= read -r connection_id; do
-      [[ -z "$connection_id" ]] && continue
-      if [[ "${connection_id,,}" == "${expected_environment_id,,}/privateendpointconnections/"* ]]; then
-        az rest --method delete \
-          --url "https://management.azure.com${connection_id}?api-version=2024-10-02-preview" || true
-      fi
-    done < <(jq -r --arg message "$rollback_request_message" \
-      '.[] | select(.properties.privateLinkServiceConnectionState.description == $message) | .id' \
-      <<< "$rollback_connections")
+      --type Microsoft.App/managedEnvironments -o json 2>/dev/null || true)
+    if [[ -n "$rollback_connections" ]]; then
+      while IFS= read -r connection_id; do
+        [[ -z "$connection_id" ]] && continue
+        if [[ "${connection_id,,}" == "${expected_environment_id,,}/privateendpointconnections/"* ]]; then
+          az rest --method delete \
+            --url "https://management.azure.com${connection_id}?api-version=2024-10-02-preview" || true
+        fi
+      done < <(jq -r --arg message "$private_link_request_message" \
+        '.[] | select(.properties.privateLinkServiceConnectionState.description == $message) | .id' \
+        <<< "$rollback_connections")
+    fi
 
     for attempt in {1..20}; do
       rollback_connections=$(az network private-endpoint-connection list \
         --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
         --name "$PYRIT_APP_NAME-env" \
-        --type Microsoft.App/managedEnvironments -o json || echo '[]')
-      rollback_connection_count=$(jq --arg message "$rollback_request_message" \
+        --type Microsoft.App/managedEnvironments -o json 2>/dev/null || true)
+      if [[ -z "$rollback_connections" ]]; then
+        rollback_connection_count=-1
+        [[ "$attempt" -lt 20 ]] && sleep 15
+        continue
+      fi
+      rollback_connection_count=$(jq --arg message "$private_link_request_message" \
         '[.[] | select(.properties.privateLinkServiceConnectionState.description == $message)] | length' \
         <<< "$rollback_connections")
       [[ "$rollback_connection_count" == "0" ]] && break
       [[ "$attempt" -lt 20 ]] && sleep 15
     done
+
+    if [[ "$rollback_connection_count" != "0" ]]; then
+      echo "##vso[task.logissue type=error]ACA private endpoint connection deletion was not confirmed; public access remains disabled and manual recovery is required"
+      exit "$exit_code"
+    fi
 
     if az deployment group create \
       --name "$deployment_name-rollback" \
@@ -358,6 +371,8 @@ rollback_public_origin() {
   exit "$exit_code"
 }
 trap rollback_public_origin EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 cutover_in_progress=true
 
 az deployment group create \
@@ -366,19 +381,16 @@ az deployment group create \
   --template-file "$PYRIT_SOURCE_DIRECTORY/infra/main.bicep" \
   --parameters "${parameters[@]}"
 
-private_link_request_message=$(az deployment group show \
+deployed_private_link_request_message=$(az deployment group show \
   --name "$deployment_name" --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
   --query properties.outputs.frontDoorPrivateLinkRequestMessage.value -o tsv)
-if [[ -z "$private_link_request_message" ]]; then
-  echo "##vso[task.logissue type=error]Deployment did not return a Private Link approval request message"
+if [[ "$deployed_private_link_request_message" != "$private_link_request_message" ]]; then
+  echo "##vso[task.logissue type=error]Deployment Private Link request message does not match the approved pipeline value"
   exit 1
 fi
-origin_private_link=$(az afd origin show \
-  --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
-  --profile-name "$PYRIT_APP_NAME-afd" \
-  --origin-group-name "$PYRIT_APP_NAME-origin-group" \
-  --origin-name "$PYRIT_APP_NAME-aca-origin" \
-  --query '{status:sharedPrivateLinkResource.status,resourceId:sharedPrivateLinkResource.privateLink.id}' -o json)
+origin_resource_url="https://management.azure.com${deployment_resource_group_id}/providers/Microsoft.Cdn/profiles/$PYRIT_APP_NAME-afd/originGroups/$PYRIT_APP_NAME-origin-group/origins/$PYRIT_APP_NAME-aca-origin?api-version=2024-09-01"
+origin_private_link=$(az rest --method get --url "$origin_resource_url" \
+  --query '{status:properties.sharedPrivateLinkResource.status,resourceId:properties.sharedPrivateLinkResource.privateLink.id}' -o json)
 private_link_status=$(jq -r '.status // empty' <<< "$origin_private_link")
 private_link_resource_id=$(jq -r '.resourceId // empty | ascii_downcase' <<< "$origin_private_link")
 if [[ "$private_link_resource_id" != "${expected_environment_id,,}" \
@@ -491,13 +503,22 @@ if [[ "$egress_ip" != "$expected_egress_ip" \
   exit 1
 fi
 front_door_health=""
-for attempt in {1..60}; do
+front_door_health_timeout_seconds=1800
+front_door_health_deadline=$((SECONDS + front_door_health_timeout_seconds))
+attempt=0
+while ((SECONDS < front_door_health_deadline)); do
+  ((attempt += 1))
+  remaining_seconds=$((front_door_health_deadline - SECONDS))
+  request_timeout=$((remaining_seconds < 30 ? remaining_seconds : 30))
   front_door_health=$(curl \
     --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    --max-time 30 "https://$front_door_fqdn/api/health" || true)
-  echo "Front Door health attempt $attempt/60: ${front_door_health:-<connection-failed>}"
+    --max-time "$request_timeout" "https://$front_door_fqdn/api/health" || true)
+  echo "Front Door health attempt $attempt (${remaining_seconds}s budget before request): ${front_door_health:-<connection-failed>}"
   [[ "$front_door_health" == "200" ]] && break
-  [[ "$attempt" -lt 60 ]] && sleep 30
+  remaining_seconds=$((front_door_health_deadline - SECONDS))
+  ((remaining_seconds > 0)) || break
+  sleep_seconds=$((remaining_seconds < 30 ? remaining_seconds : 30))
+  sleep "$sleep_seconds"
 done
 if [[ "$front_door_health" != "200" ]]; then
   echo "##vso[task.logissue type=error]Front Door did not route a healthy response"
@@ -511,5 +532,5 @@ if [[ "$direct_aca_health" == "200" ]]; then
   exit 1
 fi
 cutover_in_progress=false
-trap - EXIT
+trap - EXIT TERM INT
 echo "Deployment healthy; public URL: https://$front_door_fqdn; ACA public access: disabled; egress IPv4: $egress_ip"

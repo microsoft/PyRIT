@@ -18,15 +18,27 @@ MAIN_BICEP = REPO_ROOT / "infra" / "main.bicep"
 NETWORK_BICEP = REPO_ROOT / "infra" / "modules" / "aca_nat_network.bicep"
 FRONT_DOOR_BICEP = REPO_ROOT / "infra" / "modules" / "aca_front_door.bicep"
 PRIVATE_ENDPOINT_APPROVAL_BICEP = REPO_ROOT / "infra" / "modules" / "aca_private_endpoint_approval.bicep"
-AZ_CLI = shutil.which("az")
+
+
+def _find_bicep_cli() -> str | None:
+    """Return an already-installed Bicep binary without triggering a download."""
+    path_binary = shutil.which("bicep")
+    if path_binary:
+        return path_binary
+
+    azure_config_directory = Path(os.environ.get("AZURE_CONFIG_DIR", Path.home() / ".azure"))
+    managed_binary = azure_config_directory / "bin" / ("bicep.exe" if os.name == "nt" else "bicep")
+    return str(managed_binary) if managed_binary.is_file() else None
+
+
+BICEP_CLI = _find_bicep_cli()
 
 
 def _compile_bicep(source: Path, output: Path) -> dict[str, Any]:
     """Compile one Bicep file and return its generated ARM template."""
-    assert AZ_CLI is not None
-    command = [AZ_CLI, "bicep", "build", "--file", str(source), "--outfile", str(output)]
-    command_input: str | list[str] = subprocess.list2cmdline(command) if os.name == "nt" else command
-    result = subprocess.run(command_input, capture_output=True, text=True, check=False, shell=os.name == "nt")
+    assert BICEP_CLI is not None
+    command = [BICEP_CLI, "build", str(source), "--outfile", str(output)]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     return json.loads(output.read_text(encoding="utf-8"))
 
@@ -36,8 +48,8 @@ def _resources(template: dict[str, Any], resource_type: str) -> list[dict[str, A
     return [resource for resource in template["resources"] if resource["type"] == resource_type]
 
 
-@unittest.skipIf(AZ_CLI is None, "Azure CLI is not installed")
-class BicepTopologyTests(unittest.TestCase):
+@unittest.skipIf(BICEP_CLI is None, "Bicep CLI is not already installed")
+class TestBicepTopology(unittest.TestCase):
     """Verify the only supported public ACA topology with fixed NAT egress."""
 
     def setUp(self):
@@ -57,6 +69,7 @@ class BicepTopologyTests(unittest.TestCase):
         }
         assert unsupported_parameters.isdisjoint(template["parameters"])
         assert template["parameters"]["enableFrontDoorPrivateLink"]["defaultValue"] is False
+        assert "appName" in template["parameters"]["frontDoorPrivateLinkRequestMessage"]["defaultValue"]
         assert template["parameters"]["disableContainerAppsPublicAccess"]["defaultValue"] is False
 
         existing_identity = template["parameters"]["existingManagedIdentityResourceId"]
@@ -77,6 +90,10 @@ class BicepTopologyTests(unittest.TestCase):
         assert (
             "Microsoft.App/managedEnvironments"
             in front_door_module["properties"]["parameters"]["originResourceId"]["value"]
+        )
+        assert (
+            "frontDoorPrivateLinkRequestMessage"
+            in front_door_module["properties"]["parameters"]["privateLinkRequestMessage"]["value"]
         )
 
         nested_types = {
@@ -179,6 +196,7 @@ class BicepTopologyTests(unittest.TestCase):
         profile = _resources(template, "Microsoft.Cdn/profiles")[0]
         assert profile["sku"]["name"] == "Premium_AzureFrontDoor"
         assert profile["properties"]["originResponseTimeoutSeconds"] == 240
+        assert "namePrefix" in template["parameters"]["privateLinkRequestMessage"]["defaultValue"]
 
         origin_group = _resources(template, "Microsoft.Cdn/profiles/originGroups")[0]
         probe = origin_group["properties"]["healthProbeSettings"]
