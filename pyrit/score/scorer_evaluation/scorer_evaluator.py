@@ -13,7 +13,7 @@ import numpy as np
 from scipy.stats import ttest_1samp
 
 from pyrit.common.path import SCORER_EVALS_PATH
-from pyrit.models import UndeterminedScoreError
+from pyrit.models import MessageScorable, ScoringExpectation, UndeterminedScoreError
 from pyrit.score.message_scorer import extract_objective_from_previous_turn
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
@@ -392,9 +392,9 @@ class ScorerEvaluator(abc.ABC):
         total_scored_items = 0
         for _ in range(num_scorer_trials):
             start_time = time.perf_counter()
-            scores = await self.scorer.score_prompts_batch_async(
-                messages=assistant_responses,
-                objectives=resolved_objectives,
+            scores = await self.scorer.score_batch_async(
+                scorables=[MessageScorable.from_message(response) for response in assistant_responses],
+                expectations=[ScoringExpectation(objective=objective) for objective in resolved_objectives],
                 batch_size=max_concurrency,
             )
             elapsed_time = time.perf_counter() - start_time

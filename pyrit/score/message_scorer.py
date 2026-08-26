@@ -30,6 +30,8 @@ from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyrit.memory import MemoryInterface
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -340,6 +342,224 @@ class MessageScorer(Scorer):
             infer_objective_from_request=False,
         )
         return self._validate_and_persist_scores(scores=scores)
+
+    async def score_prompts_batch_async(
+        self,
+        *,
+        messages: Sequence[Message],
+        objectives: Sequence[str] | None = None,
+        batch_size: int = 10,
+        role_filter: ChatMessageRole | None = None,
+        skip_on_error_result: bool = False,
+        infer_objective_from_request: bool = False,
+    ) -> list[Score]:
+        """
+        Score multiple messages in batches using the provided objectives.
+
+        Args:
+            messages (Sequence[Message]): The messages to be scored.
+            objectives (Sequence[str]): The objectives/tasks based on which the prompts should be scored.
+                Must have the same length as messages.
+            batch_size (int): The maximum batch size for processing prompts. Defaults to 10.
+            role_filter (ChatMessageRole | None): If provided, only score pieces with this role.
+                Defaults to None (no filtering).
+            skip_on_error_result (bool): If True, skip scoring pieces that have errors. Defaults to False.
+            infer_objective_from_request (bool): If True and objective is empty, attempt to infer
+                the objective from the request. Defaults to False.
+
+        Returns:
+            list[Score]: A flattened list of Score objects from all scored prompts.
+
+        Raises:
+            ValueError: If objectives is not None and the number of objectives doesn't match
+                the number of messages.
+        """
+        if objectives is None:
+            resolved_objectives = [""] * len(messages)
+        elif len(objectives) != len(messages):
+            raise ValueError("The number of objectives must match the number of messages.")
+        else:
+            resolved_objectives = list(objectives)
+
+        if len(messages) == 0:
+            return []
+
+        if infer_objective_from_request:
+            resolved_objectives = [
+                objective or extract_objective_from_previous_turn(message=message, memory=self._memory)
+                for message, objective in zip(messages, resolved_objectives, strict=True)
+            ]
+
+        scorables = [MessageScorable.from_message(message) for message in messages]
+        expectations = [ScoringExpectation(objective=objective) for objective in resolved_objectives]
+        message_options = MessageScoringOptions(
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result,
+        )
+
+        return await self.score_batch_async(
+            scorables=scorables,
+            expectations=expectations,
+            batch_size=batch_size,
+            message_options=message_options,
+        )
+
+    @staticmethod
+    async def score_response_async(
+        *,
+        response: Message,
+        objective_scorer: Scorer | None = None,
+        auxiliary_scorers: list[Scorer] | None = None,
+        role_filter: ChatMessageRole = "assistant",
+        objective: str | None = None,
+        skip_on_error_result: bool = True,
+    ) -> dict[str, list[Score]]:
+        """
+        Score a response using an objective scorer and optional auxiliary scorers.
+
+        Args:
+            response (Message): Response containing pieces to score.
+            objective_scorer (Scorer | None): The main scorer to determine success. Defaults to None.
+            auxiliary_scorers (list[Scorer] | None): List of auxiliary scorers to apply. Defaults to None.
+            role_filter (ChatMessageRole): Only score pieces with this exact stored role.
+                Defaults to "assistant" (real responses only, not simulated).
+            objective (str | None): Task/objective for scoring context. Defaults to None.
+            skip_on_error_result (bool): If True, skip scoring pieces that have errors. Defaults to True.
+
+        Returns:
+            dict[str, list[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
+                containing lists of scores from each type of scorer.
+
+        Raises:
+            ValueError: If response is not provided.
+        """
+        result: dict[str, list[Score]] = {"auxiliary_scores": [], "objective_scores": []}
+
+        if not response:
+            raise ValueError("Response must be provided for scoring.")
+
+        # If no objective_scorer is provided, only run auxiliary_scorers if present
+        if objective_scorer is None:
+            if auxiliary_scorers:
+                aux_scores = await MessageScorer.score_response_multiple_scorers_async(
+                    response=response,
+                    scorers=auxiliary_scorers,
+                    role_filter=role_filter,
+                    objective=objective,
+                    skip_on_error_result=skip_on_error_result,
+                )
+                result["auxiliary_scores"] = aux_scores
+            # objective_scores remains empty
+            return result
+
+        # Run auxiliary and objective scoring in parallel if auxiliary_scorers is provided
+        if auxiliary_scorers:
+            aux_task = MessageScorer.score_response_multiple_scorers_async(
+                response=response,
+                scorers=auxiliary_scorers,
+                role_filter=role_filter,
+                objective=objective,
+                skip_on_error_result=skip_on_error_result,
+            )
+            obj_task = MessageScorer._score_response_with_scorer_async(
+                scorer=objective_scorer,
+                response=response,
+                expectation=ScoringExpectation(objective=objective),
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
+            )
+            aux_scores, obj_scores = await asyncio.gather(aux_task, obj_task)
+            result["auxiliary_scores"] = aux_scores
+            result["objective_scores"] = obj_scores
+        else:
+            obj_scores = await MessageScorer._score_response_with_scorer_async(
+                scorer=objective_scorer,
+                response=response,
+                expectation=ScoringExpectation(objective=objective),
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
+            )
+            result["objective_scores"] = obj_scores
+        return result
+
+    @staticmethod
+    async def score_response_multiple_scorers_async(
+        *,
+        response: Message,
+        scorers: list[Scorer],
+        role_filter: ChatMessageRole = "assistant",
+        objective: str | None = None,
+        skip_on_error_result: bool = True,
+    ) -> list[Score]:
+        """
+        Score a response using multiple scorers in parallel.
+
+        This method applies each scorer to the first scorable response piece (filtered by role and error),
+        and returns all scores. This is typically used for auxiliary scoring where all results are needed.
+
+        Args:
+            response (Message): The response containing pieces to score.
+            scorers (list[Scorer]): List of scorers to apply.
+            role_filter (ChatMessageRole): Only score pieces with this exact stored role.
+                Defaults to "assistant" (real responses only, not simulated).
+            objective (str | None): Optional objective description for scoring context.
+            skip_on_error_result (bool): If True, skip scoring pieces that have errors (default: True).
+
+        Returns:
+            list[Score]: All scores from all scorers
+        """
+        if not scorers:
+            return []
+
+        expectation = ScoringExpectation(objective=objective)
+        tasks = [
+            MessageScorer._score_response_with_scorer_async(
+                scorer=scorer,
+                response=response,
+                expectation=expectation,
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
+            )
+            for scorer in scorers
+        ]
+
+        # Execute all tasks in parallel
+        score_lists = await asyncio.gather(*tasks)
+
+        # Flatten the list of lists into a single list
+        return [score for scores in score_lists for score in scores]
+
+    @staticmethod
+    async def _score_response_with_scorer_async(
+        *,
+        scorer: Scorer,
+        response: Message,
+        expectation: ScoringExpectation,
+        role_filter: ChatMessageRole,
+        skip_on_error_result: bool,
+    ) -> list[Score]:
+        """
+        Apply response-scoring policy without storing policy on the scorable.
+
+        Role and error policy decide whether this response is scored at all, so they are
+        settled here in the message family rather than inside a scorer that may not be
+        message-shaped.
+
+        Returns:
+            list[Score]: Scores from the scorer, or an empty list when policy skips the response.
+        """
+        if response.get_piece().role != role_filter:
+            logger.debug("Skipping scoring due to role filter mismatch.")
+            return []
+        if skip_on_error_result and not message_has_readable_content(
+            message=response,
+            score_blocked_content=isinstance(scorer, MessageScorer) and scorer.score_blocked_content,
+        ):
+            return []
+        return await scorer.score_async(
+            scorable=MessageScorable.from_message(response),
+            expectation=expectation,
+        )
 
     def _consolidate_message_inputs(
         self,
@@ -821,3 +1041,66 @@ class MessageScorer(Scorer):
             list[Score]: One or more fallback scores.
         """
         ...
+
+    def _build_neutral_fallback_score(
+        self,
+        *,
+        message: Message,
+        objective: str | None,
+        neutral_value: str,
+    ) -> list[Score]:
+        """
+        Build the family's neutral result for a message that carries nothing to score.
+
+        Blocked, error, and filtered messages read the same way whatever the score family is,
+        so this message-family policy is stated once here. Each family supplies only its
+        neutral value.
+
+        Args:
+            message (Message): The message whose first piece tells why nothing was scored.
+            objective (str | None): The objective associated with this scoring call.
+            neutral_value (str): The family's neutral score value, such as "false" or "0.0".
+
+        Returns:
+            list[Score]: One neutral score of this scorer's type, or one undetermined score
+                when the response failed with an error.
+
+        Raises:
+            ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
+        """
+        first_piece = message.message_pieces[0]
+        piece_id = first_piece.id or first_piece.original_prompt_id
+        if piece_id is None:
+            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
+
+        if first_piece.is_blocked():
+            rationale = f"The response was blocked with no content to score; returning {neutral_value}."
+            description = f"Blocked response; returning {neutral_value}."
+        elif first_piece.has_error():
+            # A transport or protocol failure is not the target's answer, so there is no verdict.
+            return [
+                self._build_undetermined_score(
+                    rationale=f"Response had an error: {first_piece.response_error}; no verdict was reachable.",
+                    description="Error response; no verdict was reachable.",
+                    message_piece_id=piece_id,
+                    objective=objective,
+                )
+            ]
+        else:
+            # this can happen with multi-modal responses if no supported pieces are present
+            rationale = f"No supported pieces to score after filtering; returning {neutral_value}."
+            description = f"No pieces to score after filtering; returning {neutral_value}."
+
+        return [
+            Score(
+                score_value=neutral_value,
+                score_value_description=description,
+                score_type=self.scorer_type,
+                score_category=None,
+                score_metadata=None,
+                score_rationale=rationale,
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=piece_id,
+                objective=objective,
+            )
+        ]

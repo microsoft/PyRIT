@@ -62,6 +62,7 @@ from pyrit.prompt_target.common.target_history import filter_non_replayable_mess
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
+    MessageScorer,
     NumericRubric,
     Scorer,
     SelfAskScaleScorer,
@@ -830,7 +831,7 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=objective,
         ):
-            scoring_results = await Scorer.score_response_async(
+            scoring_results = await MessageScorer.score_response_async(
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,

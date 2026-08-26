@@ -26,60 +26,6 @@ class FloatScaleScorer(Scorer):
     sit over a child that scores something other than a message.
     """
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
-        """
-        Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
-
-        Inspects the first message piece to produce a rationale/description that
-        distinguishes blocked, error, and filtered cases.
-
-        Args:
-            message (Message): The message whose first piece is inspected for status.
-            objective (str | None): The objective associated with this scoring call.
-
-        Returns:
-            list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score
-                attributed to the first piece.
-
-        Raises:
-            ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
-        """
-        first_piece = message.message_pieces[0]
-        piece_id = first_piece.id or first_piece.original_prompt_id
-        if piece_id is None:
-            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
-
-        if first_piece.is_blocked():
-            rationale = "The response was blocked with no content to score; returning 0.0."
-            description = "Blocked response; returning 0.0."
-        elif first_piece.has_error():
-            # A transport or protocol failure is not the target's answer, so there is no verdict.
-            return [
-                self._build_undetermined_score(
-                    rationale=f"Response had an error: {first_piece.response_error}; no verdict was reachable.",
-                    description="Error response; no verdict was reachable.",
-                    message_piece_id=piece_id,
-                    objective=objective,
-                )
-            ]
-        else:
-            rationale = "No supported pieces to score after filtering; returning 0.0."
-            description = "No pieces to score after filtering; returning 0.0."
-
-        return [
-            Score(
-                score_value="0.0",
-                score_value_description=description,
-                score_type="float_scale",
-                score_category=None,
-                score_metadata=None,
-                score_rationale=rationale,
-                scorer_class_identifier=self.get_identifier(),
-                message_piece_id=piece_id,
-                objective=objective,
-            )
-        ]
-
     def validate_return_scores(self, scores: list[Score]) -> None:
         """
         Validate that the returned scores are within the valid range [0, 1].
@@ -132,7 +78,7 @@ class MessageFloatScaleScorer(FloatScaleScorer, MessageScorer):
     blocked, has another error type, or no piece matches the scorer's supported data
     types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
     single ``Score`` with value ``0.0``. The rationale distinguishes blocked / error /
-    filtered cases. This mirrors ``TrueFalseScorer``'s ``False`` default so that
+    filtered cases. This mirrors ``MessageTrueFalseScorer``'s ``False`` default so that
     downstream consumers (attack strategies, threshold wrappers) get a consistent,
     "attack did not succeed" value without each call site needing special-cased error
     handling. Subclasses that need different semantics (e.g. a refusal-style
@@ -160,3 +106,17 @@ class MessageFloatScaleScorer(FloatScaleScorer, MessageScorer):
             chat_target=chat_target,
             message_resolver=message_resolver,
         )
+
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+        """
+        Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
+
+        Args:
+            message (Message): The message whose first piece tells why nothing was scored.
+            objective (str | None): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score,
+                or an undetermined score when the response failed with an error.
+        """
+        return self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="0.0")

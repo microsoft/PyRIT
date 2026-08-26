@@ -43,7 +43,13 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, MessageScorable, Scorer, TrueFalseScorer
+from pyrit.score import (
+    FloatScaleThresholdScorer,
+    MessageScorable,
+    MessageScorer,
+    Scorer,
+    TrueFalseScorer,
+)
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
 
@@ -1056,7 +1062,7 @@ class TestBlockedScoringDefaults:
     """
 
     async def test_score_response_delegates_to_scorer_for_blocked(self, attack_builder):
-        """A blocked response goes straight through Scorer.score_response_async — no TAP-side
+        """A blocked response goes straight through MessageScorer.score_response_async — no TAP-side
         short-circuit. The scorer is responsible for producing 0.0 via its unified fallback."""
         builder = attack_builder.with_default_mocks()
         attack = builder.build()
@@ -1111,7 +1117,9 @@ class TestBlockedScoringDefaults:
             objective="test objective",
         )
         with patch.object(
-            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+            MessageScorer,
+            "score_response_async",
+            return_value={"objective_scores": [mock_score], "auxiliary_scores": []},
         ) as mock_score_call:
             await node._score_response_async(response=response, objective="test objective")
 
@@ -1174,7 +1182,9 @@ class TestBlockedScoringDefaults:
             objective="test objective",
         )
         with patch.object(
-            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+            MessageScorer,
+            "score_response_async",
+            return_value={"objective_scores": [mock_score], "auxiliary_scores": []},
         ):
             await node._score_response_async(response=response, objective="test objective")
 
@@ -1836,7 +1846,7 @@ class TestTreeOfAttacksNode:
                 return_value=response,
             ),
             patch.object(
-                Scorer,
+                MessageScorer,
                 "score_response_async",
                 new_callable=AsyncMock,
                 return_value={"objective_scores": [], "auxiliary_scores": []},
@@ -1967,12 +1977,12 @@ class TestTreeOfAttacksNode:
         )
         node._objective_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-        # Mock for Scorer.score_response_async
+        # Mock for MessageScorer.score_response_async
         def mock_score_response(*args, **kwargs):
             return {"objective_scores": [obj_score], "auxiliary_scores": [aux_score1, aux_score2]}
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             side_effect=mock_score_response,
         ):

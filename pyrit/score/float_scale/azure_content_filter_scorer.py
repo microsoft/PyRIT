@@ -349,7 +349,7 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
         input, this override emits one neutral ``0.0`` score per configured category
         (each tagged with the category name and matching the normal-path metadata),
         instead of the single category-less score produced by the base
-        ``FloatScaleScorer._build_fallback_score``.
+        ``MessageFloatScaleScorer._build_fallback_score``.
 
         Inspects the first message piece to tailor the rationale/description for
         blocked, error, and filtered cases.

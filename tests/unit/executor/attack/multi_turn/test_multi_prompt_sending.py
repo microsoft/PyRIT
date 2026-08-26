@@ -398,7 +398,7 @@ class TestResponseEvaluation:
         attack_scoring_config = AttackScoringConfig(objective_scorer=mock_true_false_scorer)
         attack = MultiPromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
-        with patch("pyrit.score.Scorer.score_response_async") as mock_score:
+        with patch("pyrit.score.MessageScorer.score_response_async") as mock_score:
             mock_score.return_value = {"objective_scores": [success_score]}
 
             result = await attack._evaluate_response_async(response=sample_response, objective="test objective")
@@ -423,7 +423,7 @@ class TestResponseEvaluation:
         )
         attack = MultiPromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
-        with patch("pyrit.score.Scorer.score_response_async") as mock_score:
+        with patch("pyrit.score.MessageScorer.score_response_async") as mock_score:
             mock_score.return_value = {"objective_scores": [success_score]}
 
             result = await attack._evaluate_response_async(response=sample_response, objective="test objective")

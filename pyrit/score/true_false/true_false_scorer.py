@@ -108,61 +108,6 @@ class TrueFalseScorer(Scorer):
 
         return find_objective_metrics_by_eval_hash(eval_hash=eval_hash, file_path=result_file)
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
-        """
-        Build a single-element list containing a ``false`` score when no pieces could be scored.
-
-        Inspects the first message piece to produce a rationale/description that
-        distinguishes blocked, error, and filtered cases.
-
-        Args:
-            message (Message): The message whose first piece is inspected for status.
-            objective (str | None): The objective associated with this scoring call.
-
-        Returns:
-            list[Score]: A single-element list containing a ``false`` ``true_false`` score
-                attributed to the first piece.
-
-        Raises:
-            ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
-        """
-        first_piece = message.message_pieces[0]
-        piece_id = first_piece.id or first_piece.original_prompt_id
-        if piece_id is None:
-            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
-
-        if first_piece.is_blocked():
-            rationale = "The response was blocked with no content to score; returning false."
-            description = "Blocked response; returning false."
-        elif first_piece.has_error():
-            # A transport or protocol failure is not the target's answer, so there is no verdict.
-            return [
-                self._build_undetermined_score(
-                    rationale=f"Response had an error: {first_piece.response_error}; no verdict was reachable.",
-                    description="Error response; no verdict was reachable.",
-                    message_piece_id=piece_id,
-                    objective=objective,
-                )
-            ]
-        else:
-            # this can happen with multi-modal responses if no supported pieces are present
-            rationale = "No supported pieces to score after filtering; returning false."
-            description = "No pieces to score after filtering; returning false."
-
-        return [
-            Score(
-                score_value=str(False).lower(),
-                score_value_description=description,
-                score_type="true_false",
-                score_category=None,
-                score_metadata=None,
-                score_rationale=rationale,
-                scorer_class_identifier=self.get_identifier(),
-                message_piece_id=piece_id,
-                objective=objective,
-            )
-        ]
-
 
 class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
     """
@@ -178,7 +123,7 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
     blocked, has another error type, or no piece matches the scorer's supported data
     types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
     single ``Score(False)`` whose rationale distinguishes blocked / error / filtered
-    cases. This mirrors ``FloatScaleScorer``'s ``0.0`` default so that downstream
+    cases. This mirrors ``MessageFloatScaleScorer``'s ``0.0`` default so that downstream
     consumers (attack strategies, threshold wrappers) get a consistent, "attack did not
     succeed" value without each call site needing special-cased error handling.
     Subclasses that need different semantics (e.g. ``SelfAskRefusalScorer``, which
@@ -211,6 +156,20 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
             chat_target=chat_target,
             message_resolver=message_resolver,
         )
+
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+        """
+        Build a single-element list containing a ``false`` score when no pieces could be scored.
+
+        Args:
+            message (Message): The message whose first piece tells why nothing was scored.
+            objective (str | None): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: A single-element list containing a ``false`` ``true_false`` score,
+                or an undetermined score when the response failed with an error.
+        """
+        return self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="false")
 
     async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """

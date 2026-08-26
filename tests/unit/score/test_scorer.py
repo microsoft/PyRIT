@@ -14,6 +14,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, ContentScorable, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
+    FloatScaleThresholdScorer,
     JsonSchemaResponseHandler,
     MessageFloatScaleScorer,
     MessageScorable,
@@ -511,13 +512,85 @@ async def test_score_image_batch_async_works_when_objectives_none(patch_central_
         assert "objective" not in call_kwargs
 
 
+class MockThresholdInnerScorer(MessageFloatScaleScorer):
+    """Minimal float-scale scorer to wrap in a FloatScaleThresholdScorer."""
+
+    def __init__(self):
+        super().__init__(validator=DummyValidator())
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """Build the scorer evaluation identifier for this mock scorer."""
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        return [
+            Score(
+                score_value="0.8",
+                score_value_description="desc",
+                score_type="float_scale",
+                score_category=None,
+                score_metadata=None,
+                score_rationale="rationale",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=message_piece.id,
+                objective=objective,
+            )
+        ]
+
+
+async def test_score_batch_async_rejects_mismatched_expectations():
+    """Test that expectations must match the number of scorables."""
+    scorer = MockScorer()
+    scorable = MessageScorable(message_piece_ids=(uuid.uuid4(),))
+
+    with pytest.raises(ValueError, match="expectations"):
+        await scorer.score_batch_async(scorables=[scorable], expectations=[])
+
+
+async def test_score_batch_async_returns_empty_for_no_scorables():
+    """Test that an empty batch does no work."""
+    scorer = MockScorer()
+
+    assert await scorer.score_batch_async(scorables=[]) == []
+
+
+async def test_score_batch_async_passes_no_expectation_by_default(patch_central_database):
+    """Test that expectations=None passes no expectation to score_async."""
+    scorer = MockScorer()
+    message = store_message(MessagePiece(role="user", original_value="Hello user", sequence=1).to_message())
+
+    with patch.object(scorer, "score_async", new_callable=AsyncMock) as mock_score_async:
+        mock_score_async.return_value = [MagicMock()]
+
+        await scorer.score_batch_async(scorables=[MessageScorable.from_message(message)])
+
+        _, call_kwargs = mock_score_async.call_args
+        assert call_kwargs["expectation"] is None
+
+
+async def test_score_batch_async_supports_non_message_scorers(patch_central_database):
+    """Test that wrapper scorers, which are not MessageScorers, can still batch."""
+    scorer = FloatScaleThresholdScorer(scorer=MockThresholdInnerScorer(), threshold=0.5)
+    assert not isinstance(scorer, MessageScorer)
+
+    message = store_message(MessagePiece(role="assistant", original_value="Hello from assistant").to_message())
+
+    scores = await scorer.score_batch_async(
+        scorables=[MessageScorable.from_message(message)],
+        expectations=[ScoringExpectation(objective="test objective")],
+    )
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+
+
 async def test_score_response_async_empty_scorers(patch_central_database):
     """Test that score_response_async returns empty list when no scorers provided."""
     response = Message(
         message_pieces=[MessagePiece(role="assistant", original_value="test", conversation_id="test-convo")]
     )
 
-    result = await Scorer.score_response_async(response=store_message(response), objective="test task")
+    result = await MessageScorer.score_response_async(response=store_message(response), objective="test task")
     assert result == {"auxiliary_scores": [], "objective_scores": []}
 
 
@@ -533,7 +606,7 @@ async def test_score_response_async_no_matching_role(patch_central_database):
     scorer = MockScorer()
     scorer.score_async = AsyncMock(return_value=[])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=store_message(response),
         objective_scorer=scorer,
         auxiliary_scorers=[scorer],
@@ -566,7 +639,7 @@ async def test_score_response_async_parallel_execution(patch_central_database):
     scorer2 = MockScorer()
     scorer2.score_async = AsyncMock(side_effect=[[score2_1], [score2_2]])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=response, auxiliary_scorers=[scorer1, scorer2], role_filter="assistant", objective="test task"
     )
 
@@ -590,7 +663,7 @@ async def test_score_response_select_first_success_async_empty_scorers(patch_cen
         message_pieces=[MessagePiece(role="assistant", original_value="test", conversation_id="test-convo")]
     )
 
-    result = await Scorer.score_response_multiple_scorers_async(
+    result = await MessageScorer.score_response_multiple_scorers_async(
         response=store_message(response), scorers=[], objective="test task"
     )
 
@@ -634,7 +707,7 @@ async def test_score_response_async_finds_success():
     scorer2 = MockScorer()
     scorer2.score_async = AsyncMock(return_value=[score2])
 
-    result = await Scorer.score_response_multiple_scorers_async(
+    result = await MessageScorer.score_response_multiple_scorers_async(
         response=response, scorers=[scorer1, scorer2], objective="test task"
     )
 
@@ -675,7 +748,7 @@ async def test_score_response_success_async_no_success_returns_first():
     scorer2 = MockScorer()
     scorer2.score_async = AsyncMock(side_effect=[[score2], [score4]])
 
-    result = await Scorer.score_response_multiple_scorers_async(
+    result = await MessageScorer.score_response_multiple_scorers_async(
         response=response, scorers=[scorer1, scorer2], objective="test task"
     )
 
@@ -726,7 +799,7 @@ async def test_score_response_success_async_parallel_scoring_per_piece(patch_cen
     scorer2 = MockScorer()
     scorer2.score_async = mock_score_async_2
 
-    await Scorer.score_response_multiple_scorers_async(
+    await MessageScorer.score_response_multiple_scorers_async(
         response=response, scorers=[scorer1, scorer2], objective="test task"
     )
 
@@ -740,7 +813,7 @@ async def test_score_response_async_no_scorers():
     """Test score_response_async with no scorers provided."""
     response = Message(message_pieces=[MessagePiece(role="assistant", original_value="test")])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=response, auxiliary_scorers=None, objective_scorer=None, objective="test task"
     )
 
@@ -763,7 +836,7 @@ async def test_score_response_async_auxiliary_only():
     aux_scorer2 = MockScorer()
     aux_scorer2.score_async = AsyncMock(return_value=[aux_score2])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=response, auxiliary_scorers=[aux_scorer1, aux_scorer2], objective_scorer=None, objective="test task"
     )
 
@@ -787,7 +860,7 @@ async def test_score_response_async_objective_only():
     obj_scorer = MockScorer()
     obj_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=response, auxiliary_scorers=None, objective_scorer=obj_scorer, objective="test task"
     )
 
@@ -814,7 +887,7 @@ async def test_score_response_async_both_types():
     obj_scorer = MockScorer()
     obj_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=response, auxiliary_scorers=[aux_scorer], objective_scorer=obj_scorer, objective="test task"
     )
 
@@ -847,7 +920,7 @@ async def test_score_response_async_multiple_pieces(patch_central_database):
     obj_scorer = MockScorer()
     obj_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=store_message(response),
         auxiliary_scorers=[aux_scorer1, aux_scorer2],
         objective_scorer=obj_scorer,
@@ -890,7 +963,7 @@ async def test_score_response_async_skip_on_error_true(patch_central_database):
     obj_scorer = MockScorer()
     obj_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=store_message(response),
         auxiliary_scorers=[aux_scorer],
         objective_scorer=obj_scorer,
@@ -919,7 +992,7 @@ async def test_score_response_async_skip_on_error_scores_partly_errored_response
     obj_scorer = MockScorer()
     obj_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=store_message(response),
         objective_scorer=obj_scorer,
         objective="test task",
@@ -950,7 +1023,7 @@ async def test_score_response_async_skip_on_error_false(patch_central_database):
     obj_scorer = MockScorer()
     obj_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=store_message(response),
         auxiliary_scorers=[aux_scorer],
         objective_scorer=obj_scorer,
@@ -990,7 +1063,7 @@ async def test_score_response_async_objective_failure():
     obj_scorer2 = MockScorer()
     obj_scorer2.score_async = AsyncMock(return_value=[obj_score2])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=response, auxiliary_scorers=None, objective_scorer=obj_scorer1, objective="test task"
     )
 
@@ -1030,7 +1103,7 @@ async def test_score_response_async_concurrent_execution():
     obj_scorer = MockScorer()
     obj_scorer.score_async = mock_obj_score_async
 
-    await Scorer.score_response_async(
+    await MessageScorer.score_response_async(
         response=response, auxiliary_scorers=[aux_scorer], objective_scorer=obj_scorer, objective="test task"
     )
 
@@ -1044,7 +1117,7 @@ async def test_score_response_async_empty_lists():
     piece = MessagePiece(role="assistant", original_value="response")
     response = Message(message_pieces=[piece])
 
-    result = await Scorer.score_response_async(
+    result = await MessageScorer.score_response_async(
         response=response, auxiliary_scorers=[], objective_scorer=None, objective="test task"
     )
 
@@ -2422,7 +2495,7 @@ class TestScoreResponseAsyncBlockedContent:
         obj_scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        result = await Scorer.score_response_async(
+        result = await MessageScorer.score_response_async(
             response=store_message(msg),
             objective_scorer=obj_scorer,
             objective="test",
@@ -2438,7 +2511,7 @@ class TestScoreResponseAsyncBlockedContent:
         obj_scorer.score_blocked_content = False
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        result = await Scorer.score_response_async(
+        result = await MessageScorer.score_response_async(
             response=store_message(msg),
             objective_scorer=obj_scorer,
             objective="test",
@@ -2453,7 +2526,7 @@ class TestScoreResponseAsyncBlockedContent:
         scorer2 = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
-        scores = await Scorer.score_response_multiple_scorers_async(
+        scores = await MessageScorer.score_response_multiple_scorers_async(
             response=store_message(msg),
             scorers=[scorer1, scorer2],
             objective="test",

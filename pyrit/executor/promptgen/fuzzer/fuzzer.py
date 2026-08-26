@@ -29,7 +29,9 @@ from pyrit.models import (
     ComponentIdentifier,
     Identifiable,
     Message,
+    MessageScorable,
     Score,
+    ScoringExpectation,
     SeedGroup,
     SeedPrompt,
     UndeterminedScoreError,
@@ -1049,8 +1051,9 @@ class FuzzerGenerator(
         response_pieces = [response.message_pieces[0] for response in responses]
 
         # Score with objective scorer
-        return await self._scorer.score_prompts_batch_async(
-            messages=[piece.to_message() for piece in response_pieces], objectives=tasks
+        return await self._scorer.score_batch_async(
+            scorables=[MessageScorable.from_message(piece.to_message()) for piece in response_pieces],
+            expectations=[ScoringExpectation(objective=task) for task in tasks],
         )
 
     def _process_scoring_results(
