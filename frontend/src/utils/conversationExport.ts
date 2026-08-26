@@ -472,7 +472,7 @@ async function resolveAttachment(
   }
   try {
     if (attachment.url.startsWith('data:')) {
-      const inlineBytes = base64ByteLength(attachment.url)
+      const inlineBytes = dataUriByteLength(attachment.url)
       if (inlineBytes === 0) {
         return { source: null, reason: 'unreadable' }
       }
@@ -543,21 +543,76 @@ function dataUriLength(mimeType: string, bytes: number): number {
 }
 
 /**
- * Decoded size of a `data:` URI payload. Percent-encoded payloads are measured
- * from their encoded text rather than assumed small, so the cap holds for every
- * form a `data:` URI can take.
+ * Decoded size of a `data:` URI payload — the bytes the media itself is made
+ * of, which is what the per-attachment limit is expressed in. The text the URI
+ * is written in is a separate cost, and the document budget already charges it
+ * in full, so measuring it here as well would refuse media that is comfortably
+ * within the limit: a four mebibyte image escape-encoded into twelve mebibytes
+ * of text is still a four mebibyte image. Percent escapes therefore count as
+ * the single byte each decodes to, literal characters cost their UTF-8 width,
+ * and base64 whitespace is formatting rather than data.
  */
-function base64ByteLength(dataUri: string): number {
+function dataUriByteLength(dataUri: string): number {
   const comma = dataUri.indexOf(',')
   if (comma === -1) {
     return 0
   }
   const payload = dataUri.slice(comma + 1)
   if (!/;base64$/i.test(dataUri.slice(0, comma))) {
-    return payload.length
+    return percentDecodedByteLength(payload)
   }
-  const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0
-  return Math.max(0, Math.floor((payload.length * 3) / 4) - padding)
+  return base64PayloadBytes(payload)
+}
+
+/**
+ * Bytes behind percent-encoded text, counted in one pass. Decoding first would
+ * copy a payload that can be megabytes long, and would throw on the malformed
+ * escapes a conversation is perfectly capable of carrying.
+ */
+function percentDecodedByteLength(payload: string): number {
+  let bytes = 0
+  let index = 0
+  while (index < payload.length) {
+    if (payload.charCodeAt(index) === 0x25 && isHexPair(payload, index + 1)) {
+      bytes += 1
+      index += 3
+      continue
+    }
+    // A malformed escape is left as the literal characters it is written in.
+    const code = payload.codePointAt(index) as number
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4
+    index += code < 0x10000 ? 1 : 2
+  }
+  return bytes
+}
+
+function isHexPair(text: string, at: number): boolean {
+  return at + 1 < text.length && isHexDigit(text.charCodeAt(at)) && isHexDigit(text.charCodeAt(at + 1))
+}
+
+function isHexDigit(code: number): boolean {
+  return (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x46) || (code >= 0x61 && code <= 0x66)
+}
+
+/**
+ * Bytes behind a base64 payload, counted in one pass so a line-wrapped payload
+ * several megabytes long does not have to be copied into a stripped duplicate
+ * of itself just to be measured.
+ */
+function base64PayloadBytes(payload: string): number {
+  let significant = 0
+  let padding = 0
+  for (let index = 0; index < payload.length; index += 1) {
+    const code = payload.charCodeAt(index)
+    // Whitespace is formatting rather than data: base64 may arrive wrapped.
+    if (code === 0x20 || (code >= 0x09 && code <= 0x0d)) {
+      continue
+    }
+    significant += 1
+    // '=' only pads the end, so any run of it is broken by real data.
+    padding = code === 0x3d ? padding + 1 : 0
+  }
+  return Math.max(0, Math.floor((significant * 3) / 4) - Math.min(padding, 2))
 }
 
 /** Encode a blob as a `data:` URI, skipping empty and oversized payloads. */

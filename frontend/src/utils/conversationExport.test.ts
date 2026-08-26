@@ -1070,7 +1070,7 @@ describe("conversationExport", () => {
     });
 
     it("measures a percent-encoded data uri instead of assuming it is small", async () => {
-      const url = `data:image/svg+xml,${"%20".repeat(4 * 1024 * 1024)}`;
+      const url = `data:image/svg+xml,${"%20".repeat(11 * 1024 * 1024)}`;
       const html = await conversationToHtml(
         [message({ attachments: [attachment({ url })] })],
         "conv-1",
@@ -1471,6 +1471,44 @@ describe("conversationExport", () => {
       expect(html).toContain("Attachments: 2 of 2 embedded");
     });
 
+    it("charges a percent-encoded payload the bytes it decodes to, not the characters it occupies", async () => {
+      const url = `data:image/svg+xml,${"%41".repeat(4 * 1024 * 1024)}`;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      // Twelve mebibytes of text carrying a four mebibyte image. The limit is
+      // on the image, and the text is charged to the document budget instead.
+      expect(html).not.toContain("too large to embed");
+      expect(html).toContain("Attachments: 1 of 1 embedded");
+    });
+
+    it("measures a non-ascii payload in utf-8 bytes rather than characters", async () => {
+      const url = `data:image/svg+xml,${"é".repeat(6 * 1024 * 1024)}`;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      // 6M characters, but 12 MiB once encoded — counting characters would
+      // have embedded it under a documented 10 MiB limit.
+      expect(html).toContain("too large to embed");
+    });
+
+    it("ignores the line breaks in a wrapped base64 payload", async () => {
+      // 12.8M base64 characters (9.6 MB) wrapped every 4th character. Counting
+      // the newlines as data would measure 12 MB and refuse a payload that
+      // fits well inside the 10 MiB limit.
+      const wrapped = `data:image/png;base64,${"AAAA\n".repeat(3_200_000)}`;
+      const html = await conversationToHtml(
+        [message({ attachments: [attachment({ url: wrapped })] })],
+        "conv-1",
+        FIXED_NOW,
+      );
+      expect(html).toContain("Attachments: 1 of 1 embedded");
+      expect(html).not.toContain("too large to embed");
+    });
   });
 
   describe("exportConversation", () => {
