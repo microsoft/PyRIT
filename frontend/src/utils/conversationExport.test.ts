@@ -402,6 +402,32 @@ describe("conversationExport", () => {
       expect(parsed.displayPieces[1].content).toBe("some text");
     });
 
+    it("drops the signed storage url from a display piece even with no flat attachment list", () => {
+      const json = conversationToJson(
+        [
+          message({
+            displayPieces: [
+              {
+                type: "media",
+                pieceId: "piece-1",
+                pieceIndex: 0,
+                attachment: {
+                  type: "image",
+                  name: "result.png",
+                  url: "https://acct.blob.core.windows.net/c/result.png?sv=2024&sig=SECRETSIG",
+                  mimeType: "image/png",
+                },
+              },
+            ],
+          }),
+        ],
+        "conv-1"
+      );
+      expect(json).not.toContain("SECRETSIG");
+      expect(json).not.toContain("blob.core.windows.net");
+      expect(JSON.parse(json).messages[0].displayPieces[0].attachment.url).toBe("");
+    });
+
     it("drops the local media path so a shared file does not expose the operator's disk", () => {
       const json = conversationToJson(
         [
