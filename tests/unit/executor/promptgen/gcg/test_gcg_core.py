@@ -341,28 +341,63 @@ class TestSampleControl:
                 assert new_tok not in non_ascii_set, f"Candidate {i} position {pos}: sampled non-ASCII token {new_tok}"
 
 
+# Architectures built as tiny random models to exercise the embedding helpers.
+# The first three predate this generic path and must keep returning float16 from
+# get_embeddings; the rest were previously rejected outright.
+_HALF_PRECISION_ARCHITECTURES = ["gpt2", "gptj", "gpt_neox"]
+_OTHER_ARCHITECTURES = ["llama", "mistral", "mixtral", "phi3", "qwen3", "starcoder2"]
+
+_TINY_CONFIG = {
+    "hidden_size": 32,
+    "num_hidden_layers": 1,
+    "num_attention_heads": 4,
+    "num_key_value_heads": 4,
+    "intermediate_size": 64,
+    "vocab_size": 256,
+}
+_EXTRA_CONFIG = {
+    "phi3": {
+        "max_position_embeddings": 64,
+        "original_max_position_embeddings": 64,
+        "pad_token_id": 0,
+    },
+}
+
+
+def _tiny_model(model_type: str):
+    """Build a small randomly initialized model of the given architecture."""
+    transformers = pytest.importorskip("transformers", reason="transformers not installed")
+    config = transformers.AutoConfig.for_model(model_type, **_TINY_CONFIG, **_EXTRA_CONFIG.get(model_type, {}))
+    return transformers.AutoModelForCausalLM.from_config(config)
+
+
 class TestEmbeddingHelpers:
     """Tests for get_embedding_layer, get_embedding_matrix, get_embeddings."""
 
-    def test_get_embedding_layer_raises_for_unknown_model(self) -> None:
-        """Should raise ValueError for unsupported model types."""
-        mock_model = MagicMock()
-        # Ensure it doesn't match any isinstance checks
-        mock_model.__class__ = type("UnknownModel", (), {})
-        with pytest.raises(ValueError, match="Unknown model type"):
-            get_embedding_layer(mock_model)
+    @pytest.mark.parametrize("model_type", _HALF_PRECISION_ARCHITECTURES + _OTHER_ARCHITECTURES)
+    def test_helpers_resolve_embeddings_for_any_causal_model(self, model_type: str) -> None:
+        """Any model AutoModelForCausalLM can load should resolve through the helpers."""
+        model = _tiny_model(model_type)
+        expected = model.get_input_embeddings()
 
-    def test_get_embedding_matrix_raises_for_unknown_model(self) -> None:
-        mock_model = MagicMock()
-        mock_model.__class__ = type("UnknownModel", (), {})
-        with pytest.raises(ValueError, match="Unknown model type"):
-            get_embedding_matrix(mock_model)
+        assert get_embedding_layer(model) is expected
+        assert get_embedding_matrix(model) is expected.weight
 
-    def test_get_embeddings_raises_for_unknown_model(self) -> None:
-        mock_model = MagicMock()
-        mock_model.__class__ = type("UnknownModel", (), {})
-        with pytest.raises(ValueError, match="Unknown model type"):
-            get_embeddings(mock_model, torch.tensor([1, 2, 3]))
+        embedded = get_embeddings(model, torch.tensor([[1, 2, 3]]))
+        assert embedded.shape[-1] == model.config.hidden_size
+
+    @pytest.mark.parametrize("model_type", _HALF_PRECISION_ARCHITECTURES)
+    def test_get_embeddings_keeps_half_precision_for_legacy_architectures(self, model_type: str) -> None:
+        """GPT-2, GPT-J and GPT-NeoX returned float16 before this path existed."""
+        model = _tiny_model(model_type)
+        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == torch.float16
+
+    @pytest.mark.parametrize("model_type", _OTHER_ARCHITECTURES)
+    def test_get_embeddings_keeps_embedding_dtype_for_other_architectures(self, model_type: str) -> None:
+        """Everything else keeps the embedding dtype rather than being downcast."""
+        model = _tiny_model(model_type)
+        expected_dtype = model.get_input_embeddings().weight.dtype
+        assert get_embeddings(model, torch.tensor([[1, 2, 3]])).dtype == expected_dtype
 
 
 class TestPromptManagerInit:
