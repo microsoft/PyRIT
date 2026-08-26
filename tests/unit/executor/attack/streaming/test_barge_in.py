@@ -10,9 +10,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.converter import Base64Converter
 from pyrit.executor.attack import BargeInAttack, BargeInAttackContext
-from pyrit.executor.attack.core import AttackParameters
+from pyrit.executor.attack.component import PrependedConversationConfig
+from pyrit.executor.attack.component.prepended_history_send_context import (
+    PrependedHistorySendContext,
+)
+from pyrit.executor.attack.core import AttackConverterConfig, AttackParameters
 from pyrit.models import AttackOutcome, Message, MessagePiece
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import RealtimeTarget
 
 if TYPE_CHECKING:
@@ -156,14 +162,73 @@ async def test_setup_async_persists_prepended_conversation_to_memory(vad_target)
     # All three messages share the context's conversation_id post-setup.
     for m in add_calls:
         assert m.message_pieces[0].conversation_id == ctx.conversation_id
+    assert ctx.prepended_history_send_context is None
 
 
-async def test_setup_async_no_op_when_prepended_conversation_empty(vad_target):
-    """Empty prepended_conversation: no memory writes, no crash."""
+async def test_converted_system_prompt_is_passed_to_streaming_session(vad_target):
+    attack = BargeInAttack(
+        objective_target=vad_target,
+        attack_converter_config=AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        ),
+        prepended_conversation_config=PrependedConversationConfig(apply_converters_to_roles=["system"]),
+    )
+    ctx = BargeInAttackContext(
+        params=AttackParameters(
+            objective="o",
+            prepended_conversation=[Message.from_prompt(prompt="You are strict.", role="system")],
+        ),
+        audio_chunks=_aiter([b"\x00" * 96]),
+    )
+    await attack._setup_async(context=ctx)
+    fake_session = _fake_session()
+
+    with patch.object(RealtimeTarget, "open_streaming_session", return_value=fake_session) as factory:
+        await attack._perform_async(context=ctx)
+
+    persisted = attack._conversation_manager.get_conversation(ctx.conversation_id)
+    passed_to_session = factory.call_args.kwargs["prepended_conversation"]
+    assert passed_to_session == persisted
+    assert passed_to_session[0].get_piece().converted_value == "WW91IGFyZSBzdHJpY3Qu"
+
+
+async def test_setup_reusing_conversation_passes_only_new_prepended_messages(vad_target):
+    attack = BargeInAttack(objective_target=vad_target)
+    conversation_id = "existing-conversation"
+    await attack._conversation_manager.add_prepended_conversation_to_memory_async(
+        prepended_conversation=[Message.from_prompt(prompt="old system", role="system")],
+        conversation_id=conversation_id,
+        target=vad_target,
+    )
+    ctx = BargeInAttackContext(
+        params=AttackParameters(
+            objective="o",
+            prepended_conversation=[Message.from_prompt(prompt="new system", role="system")],
+        ),
+        audio_chunks=_aiter([b"\x00" * 96]),
+        conversation_id=conversation_id,
+    )
+
+    await attack._setup_async(context=ctx)
+
+    assert [message.get_value() for message in ctx.prepended_conversation] == ["new system"]
+    assert [message.get_value() for message in attack._conversation_manager.get_conversation(conversation_id)] == [
+        "old system",
+        "new system",
+    ]
+
+
+async def test_setup_async_clears_unused_normalization_context_when_prepended_empty(vad_target):
+    """The direct streaming path does not retain target normalization state."""
     attack = BargeInAttack(objective_target=vad_target)
     ctx = BargeInAttackContext(
         params=AttackParameters(objective="o"),  # no prepended_conversation
         audio_chunks=_aiter([b"\x00" * 96]),
+    )
+    ctx.prepended_history_send_context = PrependedHistorySendContext(
+        conversation_id=ctx.conversation_id,
+        seed_message_ids=(Message.from_prompt(prompt="unused", role="user").get_piece().id,),
+        replay_seed_each_send=True,
     )
 
     add_calls: list[Any] = []
@@ -172,6 +237,7 @@ async def test_setup_async_no_op_when_prepended_conversation_empty(vad_target):
         await attack._setup_async(context=ctx)
 
     assert add_calls == []
+    assert ctx.prepended_history_send_context is None
 
 
 # ---- _perform_async: session factory passthrough ----------------------------------------------

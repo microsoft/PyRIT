@@ -46,6 +46,8 @@ from pyrit.models import (
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_MANUAL_ATTACK_PLACEHOLDER = "Manual attack via GUI"
+
 if TYPE_CHECKING:
     from pyrit.models.conversation_stats import ConversationStats
 
@@ -187,6 +189,21 @@ def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     return value
 
 
+def _normalize_summary_objective(ar: AttackResult) -> str:
+    """
+    Normalize the placeholder only for legacy unnamed manual attacks.
+
+    Returns:
+        The summary objective, with legacy manual placeholders converted to an empty string.
+    """
+    identifier = ar.get_attack_strategy_identifier()
+    is_manual_attack = identifier is not None and identifier.class_name == "ManualAttack"
+    has_placeholder_metadata = ar.metadata.get("objective_is_placeholder") is True
+    if ar.objective == _LEGACY_MANUAL_ATTACK_PLACEHOLDER and (is_manual_attack or has_placeholder_metadata):
+        return ""
+    return ar.objective
+
+
 async def attack_result_to_summary_async(
     ar: AttackResult,
     *,
@@ -213,8 +230,9 @@ async def attack_result_to_summary_async(
 
     data = {name: getattr(ar, name) for name in AttackResult.model_fields}
     data.update(
+        objective=_normalize_summary_objective(ar),
         last_response=await _summary_last_response_async(ar.last_response),
-        last_score=ScoreView.from_domain(ar.last_score) if ar.last_score else None,
+        last_score=ScoreView.from_domain(ar.last_score, is_objective_score=True) if ar.last_score else None,
         labels=labels,
         message_count=stats.message_count,
         last_message_preview=format_last_message_preview(
@@ -325,6 +343,8 @@ async def _fetch_scores_by_piece_async(
 
 async def pyrit_messages_to_dto_async(
     pyrit_messages: list[Message],
+    *,
+    objective_score_id: uuid.UUID | str | None = None,
 ) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.
@@ -338,7 +358,8 @@ async def pyrit_messages_to_dto_async(
 
     Scores are fetched from ``CentralMemory`` (``MessagePiece`` no longer carries
     them) via a single batched ``get_prompt_scores`` call and attached to their
-    originating piece.
+    originating piece. When ``objective_score_id`` is provided, the matching
+    score is marked as the attack's canonical objective score.
 
     Returns:
         List of MessageView responses for the API.
@@ -360,6 +381,7 @@ async def pyrit_messages_to_dto_async(
                 MessagePieceView.from_domain(
                     p,
                     scores=piece_scores,
+                    objective_score_id=objective_score_id,
                     original_value_url=original_value_url,
                     converted_value_url=converted_value_url,
                 )

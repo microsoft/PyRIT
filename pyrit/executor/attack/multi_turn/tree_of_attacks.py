@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import enum
 import logging
 import uuid
@@ -31,6 +32,9 @@ from pyrit.executor.attack.component.conversation_manager import (
     build_conversation_context_string_async,
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
+from pyrit.executor.attack.component.prepended_history_send_context import (
+    PrependedHistorySendContext,
+)
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -39,12 +43,12 @@ from pyrit.executor.attack.core.attack_config import (
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
+from pyrit.message_normalizer._helpers import get_unflattenable_converter_output_types
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
-    Conversation,
     ConversationReference,
     ConversationType,
     Message,
@@ -54,6 +58,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
@@ -90,6 +95,33 @@ class TAPSystemPromptPaths(enum.Enum):
 _ADVERSARIAL_REQUIREMENTS = TargetRequirements(
     native_required=frozenset({CapabilityName.MULTI_TURN, CapabilityName.SYSTEM_PROMPT}),
 )
+
+
+def _validate_stateful_clone_history_compatibility(
+    *,
+    objective_target: PromptTarget,
+    messages: list[Message],
+) -> None:
+    """
+    Reject converted history that cannot be replayed into a cloned provider session.
+
+    Raises:
+        ValueError: If a stateful target cannot preserve converted media while cloning.
+    """
+    if not objective_target.configuration.includes(
+        capability=CapabilityName.MULTI_TURN
+    ) or objective_target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY):
+        return
+
+    non_text_output_types = get_unflattenable_converter_output_types(converted_messages=messages)
+    if non_text_output_types:
+        raise ValueError(
+            "Tree of Attacks cannot clone a stateful objective-target conversation without editable history "
+            "when persisted request or response history contains converted non-text output "
+            f"{sorted(non_text_output_types)}. Copied media cannot be flattened without changing converter "
+            "role scoping. Use an editable-history target, text-output converters, a stateless target, "
+            "or branching_factor=1."
+        )
 
 
 class TAPAttackScoringConfig(AttackScoringConfig):
@@ -350,6 +382,7 @@ class _TreeOfAttacksNode:
         parent_id: str | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
         initial_prompt: Message | None = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize a tree node.
@@ -379,6 +412,9 @@ class _TreeOfAttacksNode:
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts and responses.
             initial_prompt (Message | None): Initial message to send for the first turn,
                 bypassing adversarial chat generation. Supports multimodal messages.
+            prepended_conversation_config (PrependedConversationConfig | None):
+                Configuration for prepended-conversation converter roles and
+                target-facing formatting.
         """
         # Store configuration
         self._objective_target = objective_target
@@ -396,6 +432,7 @@ class _TreeOfAttacksNode:
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
         self._modality_router = modality_router
+        self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         self._use_score_as_feedback = use_score_as_feedback
 
         # Initialize utilities
@@ -421,7 +458,7 @@ class _TreeOfAttacksNode:
         self.last_prompt_sent: str | None = None
         self.last_response: Message | None = None
         self.error_message: str | None = None
-
+        self._prepended_history_send_context: PrependedHistorySendContext | None = None
         # Context from prepended conversation (for adversarial chat system prompt)
         self._conversation_context: str | None = None
 
@@ -464,6 +501,8 @@ class _TreeOfAttacksNode:
         """
         if not prepended_conversation:
             return
+        if prepended_conversation_config:
+            self._prepended_conversation_config = prepended_conversation_config
 
         # Use ConversationManager to add messages to memory
         conversation_manager = ConversationManager(
@@ -476,8 +515,16 @@ class _TreeOfAttacksNode:
             request_converters=self._request_converters,
             prepended_conversation_config=prepended_conversation_config,
             target_identifier=self._objective_target.get_identifier(),
+            target=self._objective_target,
         )
-
+        persisted_messages = list(
+            self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
+        )
+        self._prepended_history_send_context = conversation_manager.create_prepended_history_send_context(
+            target=self._objective_target,
+            conversation_id=self.objective_target_conversation_id,
+            prepended_messages=persisted_messages,
+        )
         # Build context string for adversarial chat system prompt (like Crescendo)
         # The adversarial chat uses this in its system prompt rather than in conversation history
         self._conversation_context = await build_conversation_context_string_async(prepended_conversation)
@@ -515,6 +562,14 @@ class _TreeOfAttacksNode:
             - `off_topic`: `True` if the prompt was deemed off-topic after all retries
             - `error_message`: Set if an error occurred during execution
         """
+        # Clear the previous turn's outcome before reusing this branch.
+        self.completed = False
+        self.off_topic = False
+        self.objective_score = None
+        self.auxiliary_scores = {}
+        self.last_prompt_sent = None
+        self.error_message = None
+
         # Store objective for use in execution context
         self._objective = objective
 
@@ -609,10 +664,7 @@ class _TreeOfAttacksNode:
         Side Effects:
             - Sets self.last_response to the target's response text
         """
-        # For single-turn targets, generate a fresh conversation ID before each send
-        # to ensure the target always receives a clean conversation without prior history.
-        if not self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
-            self.objective_target_conversation_id = str(uuid.uuid4())
+        self._rotate_unseeded_single_turn_conversation()
 
         # Build the request message via the modality router so prior media (if any)
         # is included when the objective target accepts it.
@@ -636,6 +688,11 @@ class _TreeOfAttacksNode:
                 response_converter_configurations=self._response_converters,
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
+                normalizer_overrides=self._prepended_conversation_config.get_normalizer_overrides(
+                    target=self._objective_target,
+                    prepended_history_send_context=self._prepended_history_send_context,
+                ),
+                send_context=self._prepended_history_send_context,
             )
 
         # Store the full response so subsequent turns can forward media when supported.
@@ -671,9 +728,7 @@ class _TreeOfAttacksNode:
         if self._initial_prompt is None:
             raise ValueError("_initial_prompt must be set before calling this method")
 
-        # For single-turn targets, generate a fresh conversation ID
-        if not self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
-            self.objective_target_conversation_id = str(uuid.uuid4())
+        self._rotate_unseeded_single_turn_conversation()
 
         assert self._objective is not None
         initial_prompt = self._initial_prompt
@@ -712,6 +767,11 @@ class _TreeOfAttacksNode:
                 response_converter_configurations=self._response_converters,
                 conversation_id=self.objective_target_conversation_id,
                 target=self._objective_target,
+                normalizer_overrides=self._prepended_conversation_config.get_normalizer_overrides(
+                    target=self._objective_target,
+                    prepended_history_send_context=self._prepended_history_send_context,
+                ),
+                send_context=self._prepended_history_send_context,
             )
 
         # Store the full response so subsequent turns can forward media when supported.
@@ -719,6 +779,14 @@ class _TreeOfAttacksNode:
         logger.debug(f"Node {self.node_id}: Received response from target")
 
         return response
+
+    def _rotate_unseeded_single_turn_conversation(self) -> None:
+        """Isolate unseeded single-turn sends without discarding an explicit branch boundary."""
+        if (
+            not self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN)
+            and self._prepended_history_send_context is None
+        ):
+            self.objective_target_conversation_id = str(uuid.uuid4())
 
     async def _score_response_async(self, *, response: Message, objective: str) -> None:
         """
@@ -741,6 +809,9 @@ class _TreeOfAttacksNode:
                 This contains the target's reply to the adversarial prompt.
             objective (str): The attack objective describing what the attacker wants to achieve.
                 This is passed to scorers as context for evaluation.
+
+        Raises:
+            RuntimeError: If the scoring process returns no objective score.
 
         Side Effects:
             - Sets self.objective_score to the primary scorer's result (if available)
@@ -770,9 +841,11 @@ class _TreeOfAttacksNode:
 
         # Extract objective score
         objective_scores = scoring_results["objective_scores"]
-        if objective_scores:
-            self.objective_score = objective_scores[0]
-            logger.debug(f"Node {self.node_id}: Objective score: {normalize_score_to_float(self.objective_score)}")
+        if not objective_scores:
+            raise RuntimeError("No objective scores returned from scoring process.")
+
+        self.objective_score = objective_scores[0]
+        logger.debug(f"Node {self.node_id}: Objective score: {normalize_score_to_float(self.objective_score)}")
 
         # Extract auxiliary scores
         auxiliary_scores = scoring_results["auxiliary_scores"]
@@ -873,6 +946,13 @@ class _TreeOfAttacksNode:
             of multiple attack variations from promising nodes. The tree expands by
             duplicating successful nodes and pruning unsuccessful ones.
         """
+        source_messages = filter_non_replayable_messages(
+            messages=list(self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id))
+        )
+        _validate_stateful_clone_history_compatibility(
+            objective_target=self._objective_target,
+            messages=source_messages,
+        )
         duplicate_node = _TreeOfAttacksNode(
             objective_target=self._objective_target,
             adversarial_chat=self._adversarial_chat,
@@ -892,30 +972,36 @@ class _TreeOfAttacksNode:
             desired_response_prefix=self._desired_response_prefix,
             parent_id=self.node_id,
             prompt_normalizer=self._prompt_normalizer,
+            prepended_conversation_config=self._prepended_conversation_config,
         )
 
-        # Duplicate the conversations to preserve history
-        # For single-turn targets, duplicate only the system messages (e.g., system prompt
-        # from prepended conversation) so the target retains its configuration without
-        # carrying over attack turn history that would cause validation errors.
-        if self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN):
-            duplicate_node.objective_target_conversation_id = self._memory.duplicate_conversation(
-                conversation_id=self.objective_target_conversation_id
+        duplicate_node.objective_target_conversation_id = self._memory.duplicate_conversation(
+            conversation_id=self.objective_target_conversation_id
+        )
+        duplicated_messages = filter_non_replayable_messages(
+            messages=list(
+                self._memory.get_conversation_messages(conversation_id=duplicate_node.objective_target_conversation_id)
             )
-        else:
-            messages = self._memory.get_conversation_messages(conversation_id=self.objective_target_conversation_id)
-            system_messages = [m for m in messages if m.api_role == "system"]
-            if system_messages:
-                new_id, pieces = self._memory.duplicate_messages(messages=system_messages)
-                self._memory.add_conversation_to_memory(
-                    conversation=Conversation(
-                        conversation_id=new_id, target_identifier=self._objective_target.get_identifier()
-                    )
+        )
+        if self._prepended_history_send_context:
+            duplicate_node._prepended_history_send_context = (
+                self._prepended_history_send_context.remap_for_duplicate_conversation(
+                    conversation_id=duplicate_node.objective_target_conversation_id,
+                    source_messages=source_messages,
+                    duplicated_messages=duplicated_messages,
                 )
-                self._memory.add_message_pieces_to_memory(message_pieces=pieces)
-                duplicate_node.objective_target_conversation_id = new_id
-            else:
-                duplicate_node.objective_target_conversation_id = str(uuid.uuid4())
+            )
+        elif (
+            duplicated_messages
+            and self._objective_target.configuration.includes(capability=CapabilityName.MULTI_TURN)
+            and not self._objective_target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY)
+        ):
+            duplicate_node._prepended_history_send_context = PrependedHistorySendContext(
+                conversation_id=duplicate_node.objective_target_conversation_id,
+                seed_message_ids=(),
+                replay_seed_each_send=False,
+                bootstrap_message_ids=tuple(message.get_piece().id for message in duplicated_messages),
+            )
 
         duplicate_node.adversarial_chat_conversation_id = self._memory.duplicate_conversation(
             conversation_id=self.adversarial_chat_conversation_id
@@ -923,6 +1009,7 @@ class _TreeOfAttacksNode:
 
         # Copy conversation context for adversarial chat system prompt
         duplicate_node._conversation_context = self._conversation_context
+        duplicate_node.last_response = copy.deepcopy(self.last_response)
 
         # Copy visualization position so the clone starts from the same tree position
         duplicate_node._vis_node_id = self._vis_node_id
@@ -1454,7 +1541,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             batch_size (int): Number of nodes to process in parallel per batch. Defaults to 10.
             prepended_conversation_config (PrependedConversationConfig | None):
                 Configuration for how to process prepended conversations. Controls converter
-                application by role, message normalization, and non-chat target behavior.
+                application by role and request formatting for targets without editable history.
 
         Raises:
             ValueError: If attack_scoring_config uses a non-FloatScaleThresholdScorer objective scorer,
@@ -1480,7 +1567,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         )
 
         # Initialize base class
-        super().__init__(objective_target=objective_target, logger=logger, context_type=TAPAttackContext)
+        super().__init__(
+            objective_target=objective_target,
+            logger=logger,
+            context_type=TAPAttackContext,
+            prepended_conversation_config=prepended_conversation_config,
+        )
 
         self._memory = CentralMemory.get_memory_instance()
         self._node_executor = _TreeOfAttacksNodeExecutor(
@@ -1591,9 +1683,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             raise ValueError("On-topic checking is enabled but no scoring target is available.")
 
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
-
-        # Store the prepended conversation configuration
-        self._prepended_conversation_config = prepended_conversation_config
 
     def _load_adversarial_prompts(self) -> None:
         """Load the adversarial chat prompt template and seed prompt from the default paths."""
@@ -2030,12 +2119,17 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
     def _update_best_performing_node(self, context: TAPAttackContext) -> None:
         """
-        Update the best conversation ID and score from the top-performing node.
+        Select the highest-scoring eligible node on the current TAP frontier.
 
-        This method finds and extracts the best conversation ID and score from the
-        highest-scoring node among the current nodes. It sorts the nodes internally
-        to ensure robustness and doesn't rely on any pre-sorting assumptions.
-        The best conversation represents the most promising attack path found so far.
+        This method chooses among the completed, on-topic nodes that survived the
+        current iteration. It does not calculate a lifetime maximum across every
+        response generated by the attack. A later eligible frontier therefore replaces
+        the previous selection even when its highest score is lower.
+
+        If the current frontier has no eligible node, an existing selection is retained.
+        This preserves the last valid scored response when a later iteration fails
+        completely. Before any valid selection exists, a conversation from an incomplete
+        node may be retained for result reporting without an objective score.
 
         Args:
             context (TAPAttackContext): The attack context containing the current state of nodes.
@@ -2110,6 +2204,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             parent_id=parent_id,
             prompt_normalizer=self._prompt_normalizer,
             initial_prompt=initial_prompt,
+            prepended_conversation_config=self._prepended_conversation_config,
         )
 
         # Add the adversarial chat conversation ID to the context's tracking (ensuring uniqueness)
@@ -2300,8 +2395,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 about the attack execution, including conversation ID, objective, outcome,
                 outcome reason, executed turns, last response, last score, and additional metadata.
         """
-        # Get the last response from the best conversation if available
-        last_response = self._get_last_response_from_conversation(context.best_conversation_id)
+        last_response = self._get_result_response(
+            conversation_id=context.best_conversation_id,
+            score=context.best_objective_score,
+        )
 
         # Get auxiliary scores from the best node if available
         auxiliary_scores_summary = self._get_auxiliary_scores_summary(context.nodes)
@@ -2332,6 +2429,60 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         result.best_adversarial_conversation_id = context.best_adversarial_conversation_id
 
         return result
+
+    def _get_result_response(
+        self,
+        *,
+        conversation_id: str | None,
+        score: Score | None,
+    ) -> MessagePiece | None:
+        """
+        Resolve the response associated with TAP's already-selected score.
+
+        This method does not compare scores or decide which node is best. The caller
+        supplies the conversation and score selected by `_update_best_performing_node`.
+        When a score exists, its message piece ID is used to find the corresponding
+        assistant response in that conversation, keeping `last_response` and
+        `last_score` aligned even when a later response was not scored.
+
+        Duplicated TAP branches preserve lineage through `original_prompt_id`, and
+        memory may attach the score to that original ID rather than the branch-local
+        message ID. Matching either ID resolves the same logical response. If no score
+        exists, the final conversation message is returned only as an unscored
+        reporting fallback.
+
+        Args:
+            conversation_id (str | None): The selected TAP conversation ID.
+            score (Score | None): The selected objective score.
+
+        Returns:
+            MessagePiece | None: The response associated with the selected score, the
+                final unscored message when no score exists, or `None` when it cannot
+                be resolved.
+        """
+        if not conversation_id:
+            return None
+
+        if score:
+            message_piece_id = getattr(score, "message_piece_id", None)
+            if not message_piece_id:
+                return None
+
+            responses = self._memory.get_message_pieces(
+                conversation_id=conversation_id,
+                role="assistant",
+            )
+            return next(
+                (
+                    response
+                    for response in responses
+                    if str(response.id) == str(message_piece_id)
+                    or str(response.original_prompt_id) == str(message_piece_id)
+                ),
+                None,
+            )
+
+        return self._get_last_response_from_conversation(conversation_id)
 
     def _get_last_response_from_conversation(self, conversation_id: str | None) -> MessagePiece | None:
         """

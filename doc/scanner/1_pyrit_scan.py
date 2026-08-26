@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.5
+#       jupytext_version: 1.19.1
 # ---
 
 # %% [markdown]
@@ -121,7 +121,8 @@
 # - `--max-retries <int>`: Maximum number of automatic retries if the scenario raises an exception
 # - `--memory-labels <json>`: Additional labels to apply to all attack runs (must be a JSON string with string keys and values)
 #
-# Dataset-backed scenarios can also select a supported dataset:
+# Dataset-backed scenarios can also select a supported dataset. Requested datasets are fetched
+# on demand, so a full dataset preload is not required:
 #
 # ```shell
 # pyrit_scan run garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
@@ -161,11 +162,14 @@
 #
 # ```shell
 # # Add the registered "translation_spanish" converter to role_play_movie_script only
-# pyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish
+# pyrit_scan run airt.rapid_response --target openai_chat --initializers target my_converters --techniques role_play_movie_script:converter.translation_spanish
 #
 # ```
 #
-# # Chain multiple converters (applied in order) and combine with plain techniquespyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
+# #### Chain multiple converters (applied in order) and combine with plain techniques
+# ```shell
+# pyrit_scan run airt.rapid_response --target openai_chat --initializers load_default_datasets target my_converters --techniques role_play_movie_script:converter.translation_spanish:converter.base64 many_shot
+# ```
 
 # %% [markdown]
 # #### Using Custom Scenarios
@@ -234,6 +238,39 @@ MyCustomScenario()
 #
 # ```The scenario name is automatically converted from the class name (e.g., `MyCustomScenario` becomes `my_custom_scenario`).
 #
+
+# %% [markdown]
+# ## Inspecting Results
+#
+# Each run is saved under a `scenario_result_id` (printed when the run finishes), so you can revisit it later without re-running. Use `scenario-history` to find recent run ids:
+#
+# ```shell
+# pyrit_scan scenario-history          # last 10 runs
+# pyrit_scan scenario-history 25       # last 25
+# ```
+#
+# Then inspect a run with `scenario-results` at the granularity you want via `--view`:
+#
+# ```shell
+# # Aggregate stats + per-group success rates (the default; same as the run summary)
+# pyrit_scan scenario-results <scenario_result_id>
+#
+# # One row per attack: id, technique, objective, outcome, turns, score
+# pyrit_scan scenario-results <scenario_result_id> --view attacks
+#
+# # Full message transcripts with the objective score per turn
+# pyrit_scan scenario-results <scenario_result_id> --view conversations
+#
+# # Both: the attacks table followed by the transcripts
+# pyrit_scan scenario-results <scenario_result_id> --view full
+# ```
+#
+# `--view` picks *how much* detail per attack; `--attack-result-ids` picks *which* attacks (ids come from the `attacks` view); the two combine. Use `--limit` to cap how many attacks are shown; the `conversations` and `full` views default to 5 when you scope neither:
+#
+# ```shell
+# pyrit_scan scenario-results <id> --view conversations --attack-result-ids <attack_id> <attack_id>
+# pyrit_scan scenario-results <id> --view conversations --limit 3
+# ```
 
 # %% [markdown]
 # ## Stopping the Backend Server
