@@ -89,7 +89,13 @@ repos:
         # ty in an isolated env without project deps, which causes spurious
         # ``unresolved-import`` errors now that the rule is set to ``error``.
         # Include optional modules in the environment, including GCG's torch imports.
-        entry: uv run --extra all --link-mode=copy ty check
+        # ``pass_filenames: false`` keeps this to one invocation. pre-commit otherwise
+        # splits the files into parallel batches, and the concurrent ``uv run`` syncs
+        # fight over the same venv and fail to copy locked files on Windows.
+        # ``--frozen`` stops ``uv run`` from rewriting uv.lock, which rewrites every
+        # index URL when a contributor has a private package index configured.
+        entry: uv run --frozen --extra all --link-mode=copy ty check pyrit
         language: system
         files: ^pyrit/
         types: [python]
+        pass_filenames: false
