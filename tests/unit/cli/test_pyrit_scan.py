@@ -187,6 +187,14 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["list-scenarios", "--server-url", "http://remote:9000"])
         assert args.server_url == "http://remote:9000"
 
+    def test_list_with_auth_mode(self):
+        args = pyrit_scan.parse_args(["list-scenarios", "--auth-mode", "device_code"])
+        assert args.auth_mode == "device_code"
+
+    def test_list_rejects_invalid_auth_mode(self):
+        with pytest.raises(SystemExit):
+            pyrit_scan.parse_args(["list-scenarios", "--auth-mode", "interactive"])
+
     def test_global_flag_before_verb(self):
         args = pyrit_scan.parse_args(["--server-url", "http://remote:9000", "list-scenarios"])
         assert args.command == "list-scenarios"
@@ -433,6 +441,21 @@ class TestMain:
 
         assert result == 0
         mock_client.list_scenarios_async.assert_awaited_once()
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_passes_auth_mode_to_client(self, mock_client_class, mock_probe):
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["list-scenarios", "--auth-mode", "azure_cli"])
+
+        assert result == 0
+        assert mock_client_class.call_args.kwargs["auth_mode"] == "azure_cli"
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
