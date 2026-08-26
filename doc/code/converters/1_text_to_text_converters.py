@@ -36,6 +36,9 @@
 # These converters encode text into various formats:
 
 # %%
+from pathlib import Path
+from types import SimpleNamespace
+
 from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
@@ -46,11 +49,14 @@ from pyrit.converter import (
     BinAsciiConverter,
     BrailleConverter,
     CaesarConverter,
+    DigitBijectionConverter,
     EcojiConverter,
+    LetterBijectionConverter,
     MorseConverter,
     NatoConverter,
     NegationTrapConverter,
     ROT13Converter,
+    TokenBijectionConverter,
     VigenereConverter,
 )
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
@@ -58,6 +64,10 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, seed=42)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
+token_bijection_vocab = Path("token_bijection_vocab.txt").read_text(encoding="utf-8").splitlines()
+token_bijection_tokenizer = SimpleNamespace(
+    get_vocab=lambda: {word: index for index, word in enumerate(token_bijection_vocab)}
+)
 
 print("ROT13:", await ROT13Converter().convert_async(prompt=prompt))  # type: ignore
 print("Base64:", await Base64Converter().convert_async(prompt=prompt))  # type: ignore
@@ -70,6 +80,14 @@ print("Caesar:", await CaesarConverter(caesar_offset=3).convert_async(prompt=pro
 print("Atbash:", await AtbashConverter().convert_async(prompt=prompt))  # type: ignore
 print("Vigenere:", await VigenereConverter(key="key").convert_async(prompt=prompt))  # type: ignore
 print("Braille:", await BrailleConverter().convert_async(prompt=prompt))  # type: ignore
+print("LetterBijectionConverter:", await LetterBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
+print("DigitBijectionConverter:", await DigitBijectionConverter(seed=42).convert_async(prompt=prompt))  # type: ignore
+print(
+    "TokenBijectionConverter:",
+    await TokenBijectionConverter(tokenizer=token_bijection_tokenizer, seed=42).convert_async(  # type: ignore
+        prompt=prompt,
+    ),
+)
 print("ASCII Art:", await AsciiArtConverter().convert_async(prompt=prompt))  # type: ignore
 print("Ecoji:", await EcojiConverter().convert_async(prompt=prompt))  # type: ignore
 

@@ -76,17 +76,20 @@ class TestScoreViewContract:
 
     def test_dump_has_canonical_and_computed_fields(self) -> None:
         """Test that the serialized score exposes canonical fields plus scorer_type."""
-        view = ScoreView.from_domain(_make_score())
+        view = ScoreView.from_domain(_make_score(), is_objective_score=True)
         dumped = view.model_dump(mode="json")
 
         assert dumped["score_value"] == "0.5"
         assert dumped["score_type"] == "float_scale"
         assert dumped["scorer_type"] == "FloatScaleScorer"
+        assert dumped["is_objective_score"] is True
         assert "scorer_class_identifier" in dumped
 
     def test_schema_builds(self) -> None:
         """Test that ScoreView's serialization schema includes the computed field."""
-        assert "scorer_type" in ScoreView.model_json_schema(mode="serialization")["properties"]
+        properties = ScoreView.model_json_schema(mode="serialization")["properties"]
+        assert "scorer_type" in properties
+        assert "is_objective_score" in properties
 
 
 class TestMessagePieceViewContract:
@@ -112,10 +115,27 @@ class TestMessagePieceViewContract:
     def test_scores_are_score_views(self) -> None:
         """Test that nested scores serialize with the ScoreView computed field."""
         piece = _make_piece()
-        view = MessagePieceView.from_domain(piece, scores=[_make_score()])
+        score = _make_score()
+        view = MessagePieceView.from_domain(piece, scores=[score], objective_score_id=score.id)
         dumped = view.model_dump(mode="json")
 
         assert dumped["scores"][0]["scorer_type"] == "FloatScaleScorer"
+        assert dumped["scores"][0]["is_objective_score"] is True
+
+    def test_string_score_id_matches_uuid_objective_score_id(self) -> None:
+        """Test that equivalent string and UUID score IDs identify the objective score."""
+        piece = _make_piece()
+        score = _make_score()
+        objective_score_id = uuid.UUID(str(score.id))
+        score.id = str(score.id)
+
+        view = MessagePieceView.from_domain(
+            piece,
+            scores=[score],
+            objective_score_id=objective_score_id,
+        )
+
+        assert view.scores[0].is_objective_score is True
 
 
 class TestMessageViewContract:
