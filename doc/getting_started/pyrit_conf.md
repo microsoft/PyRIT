@@ -127,11 +127,11 @@ initializers:
   - name: technique
 ```
 
-#### Optional Full Dataset Preload
+#### Optional Dataset Preload
 
 `load_default_datasets` is not required for `pyrit_scan`. Scenario `DatasetAttackConfiguration` objects fetch only their requested datasets from registered providers on demand, then add them to memory.
 
-Use `load_default_datasets` only when you intentionally want to preload every registered dataset—for example, to warm a shared cache or prepare an offline environment:
+Use `load_default_datasets` only when you intentionally want to preload datasets—for example, to warm a shared cache or prepare an offline environment. By default, it loads the bounded datasets required by registered scenarios and skips large opt-in datasets:
 
 ```yaml
 initializers:
@@ -141,7 +141,17 @@ initializers:
   - name: load_default_datasets
 ```
 
-Full preload can take several minutes and may require network access, provider credentials, or acceptance of gated dataset licenses. When preloading during local backend startup, increase `server.startup_timeout` if the configured timeout is not long enough.
+Select opt-in datasets explicitly with `dataset_names` or `tags`. Either parameter replaces the scenario-default selection rather than adding to it:
+
+```yaml
+initializers:
+  - name: load_default_datasets
+    args:
+      dataset_names:
+        - garak_npm_packages
+```
+
+Preloading can take several minutes and may require network access, provider credentials, or acceptance of gated dataset licenses. When preloading during local backend startup, increase `server.startup_timeout` if the configured timeout is not long enough.
 
 ### `initialization_scripts`
 
@@ -366,10 +376,14 @@ initializers:
         - scorer
   - name: scorer
   - name: technique
-  # Optional full preload/cache warming; scenarios fetch requested datasets on demand.
-  # Full preload can take several minutes and may require network access,
+  # Optional scenario dataset preload/cache warming; scenarios fetch requested
+  # datasets on demand. Large opt-in datasets must be selected explicitly.
+  # Preloading can take several minutes and may require network access,
   # provider credentials, accepted dataset licenses, and a larger startup_timeout.
   # - name: load_default_datasets
+  #   args:
+  #     dataset_names:
+  #       - garak_npm_packages
 
 # Custom initialization scripts (optional)
 # Omit or set to null for no scripts; [] to explicitly load nothing
