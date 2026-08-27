@@ -684,23 +684,34 @@ async def test_initialize_connection_async_timeout_raises(
             await target._initialize_connection_async(websocket=connection)
 
 
-async def test_cleanup_conversation_async_removes_connection(websocket_target: WebsocketTarget) -> None:
+async def test_reset_conversation_async_removes_connection(websocket_target: WebsocketTarget) -> None:
     connection = AsyncMock(spec=ClientConnection)
     websocket_target._existing_conversation["conversation"] = connection
 
-    await websocket_target.cleanup_conversation_async("conversation")
+    await websocket_target.reset_conversation_async(conversation_id="conversation")
 
     connection.close.assert_awaited_once()
     assert websocket_target._existing_conversation == {}
 
 
-async def test_cleanup_conversation_async_does_not_retain_unknown_lock(websocket_target: WebsocketTarget) -> None:
-    await websocket_target.cleanup_conversation_async("missing")
+async def test_cleanup_conversation_async_warns_and_delegates(websocket_target: WebsocketTarget) -> None:
+    connection = AsyncMock(spec=ClientConnection)
+    websocket_target._existing_conversation["conversation"] = connection
+
+    with pytest.warns(DeprecationWarning, match="cleanup_conversation_async"):
+        await websocket_target.cleanup_conversation_async("conversation")
+
+    connection.close.assert_awaited_once()
+    assert websocket_target._existing_conversation == {}
+
+
+async def test_reset_conversation_async_does_not_retain_unknown_lock(websocket_target: WebsocketTarget) -> None:
+    await websocket_target.reset_conversation_async(conversation_id="missing")
 
     assert "missing" not in websocket_target._conversation_locks
 
 
-async def test_cleanup_conversation_async_cancellation_finishes_closing_connection(
+async def test_reset_conversation_async_cancellation_finishes_closing_connection(
     websocket_target: WebsocketTarget,
 ) -> None:
     connection = AsyncMock(spec=ClientConnection)
@@ -713,7 +724,7 @@ async def test_cleanup_conversation_async_cancellation_finishes_closing_connecti
         await finish_close.wait()
 
     connection.close.side_effect = close_connection
-    cleanup_task = asyncio.create_task(websocket_target.cleanup_conversation_async("conversation"))
+    cleanup_task = asyncio.create_task(websocket_target.reset_conversation_async(conversation_id="conversation"))
     await close_started.wait()
 
     cleanup_task.cancel()
@@ -728,7 +739,7 @@ async def test_cleanup_conversation_async_cancellation_finishes_closing_connecti
     assert websocket_target._existing_conversation == {}
 
 
-async def test_cleanup_conversation_async_cancellation_preserved_when_close_fails(
+async def test_reset_conversation_async_cancellation_preserved_when_close_fails(
     websocket_target: WebsocketTarget,
 ) -> None:
     connection = AsyncMock(spec=ClientConnection)
@@ -743,7 +754,7 @@ async def test_cleanup_conversation_async_cancellation_preserved_when_close_fail
         raise close_error
 
     connection.close.side_effect = close_connection
-    cleanup_task = asyncio.create_task(websocket_target.cleanup_conversation_async("conversation"))
+    cleanup_task = asyncio.create_task(websocket_target.reset_conversation_async(conversation_id="conversation"))
     await close_started.wait()
 
     cleanup_task.cancel()

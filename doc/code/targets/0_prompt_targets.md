@@ -67,7 +67,7 @@ async def reset_conversation_async(self, *, conversation_id: str) -> None:
 
 on the objective target for every conversation the run used. That includes conversations the attack abandoned partway through, such as a `PromptSendingAttack` retry or a `CrescendoAttack` backtrack.
 
-The base implementation does nothing, so a target that keeps no state between calls does not need to override it. `RealtimeTarget` overrides it to close the websocket it caches per conversation. If you write a target that holds something similar, override it and release that state there. Do not raise for a conversation id you do not recognize, since the attack calls this while it is tearing down and treats it as best effort.
+The base implementation does nothing, so a target that keeps no state between calls does not need to override it. `RealtimeTarget` and `WebsocketTarget` override it to close the websocket each caches per conversation. If you write a target that holds something similar, override it and release that state there. Do not raise for a conversation id you do not recognize, since the attack calls this while it is tearing down and treats it as best effort.
 
 The reset runs from the attack's teardown, which is in the `finally` of the execution lifecycle, so it covers runs that succeed, runs that raise and runs that are cancelled.
 
