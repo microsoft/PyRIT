@@ -23,6 +23,7 @@ from pyrit.executor.attack.core.attack_strategy import (
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackContext
+from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.executor.attack.single_turn.single_turn_attack_strategy import SingleTurnAttackContext
 from pyrit.executor.core import StrategyEvent, StrategyEventData
 from pyrit.memory.central_memory import CentralMemory
@@ -41,6 +42,7 @@ from pyrit.models.identifiers import (
 )
 from pyrit.models.retry_event import RetryEvent
 from pyrit.prompt_target import PromptTarget
+from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
@@ -413,6 +415,67 @@ class TestAttackStrategyTeardown:
         await self._strategy(target)._teardown_async(context=context)
 
         target.reset_conversation_async.assert_awaited_once()
+
+
+class _RecordingTarget(MockPromptTarget):
+    """Objective target that records every conversation it is asked to release."""
+
+    def __init__(self, *, failure: Exception | None = None, block: asyncio.Event | None = None) -> None:
+        super().__init__()
+        self.reset_calls: list[str] = []
+        self.started = asyncio.Event()
+        self._failure = failure
+        self._block = block
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        self.started.set()
+        if self._failure:
+            raise self._failure
+        if self._block:
+            await self._block.wait()
+        return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+    async def reset_conversation_async(self, *, conversation_id: str) -> None:
+        self.reset_calls.append(conversation_id)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestObjectiveConversationRelease:
+    """The reset has to reach every way a run can end, not only the ones that return a result."""
+
+    async def test_the_context_lookup_matches_the_result_contract(self):
+        target = _RecordingTarget()
+        attack = PromptSendingAttack(objective_target=target)
+
+        result = await attack.execute_async(objective="o")
+
+        # _get_objective_conversation_ids is AttackResult.get_active_conversation_ids
+        # read off the context. Pinned equal here so the two cannot drift apart.
+        assert set(target.reset_calls) == result.get_active_conversation_ids()
+
+    async def test_a_failed_run_still_releases_its_conversation(self):
+        target = _RecordingTarget(failure=RuntimeError("target exploded mid-run"))
+        attack = PromptSendingAttack(objective_target=target)
+
+        with pytest.raises(Exception):  # noqa: B017 - the wrapper type is not the point
+            await attack.execute_async(objective="o")
+
+        # execute_async re-raises rather than returning, so a caller holding only the
+        # return value has no conversation id to release.
+        assert len(target.reset_calls) == 1
+
+    async def test_a_cancelled_run_still_releases_its_conversation(self):
+        block = asyncio.Event()
+        target = _RecordingTarget(block=block)
+        attack = PromptSendingAttack(objective_target=target)
+
+        task = asyncio.create_task(attack.execute_async(objective="o"))
+        await asyncio.wait_for(target.started.wait(), timeout=10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert len(target.reset_calls) == 1
 
 
 @pytest.mark.usefixtures("patch_central_database")

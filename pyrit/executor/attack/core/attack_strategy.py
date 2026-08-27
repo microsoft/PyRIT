@@ -169,6 +169,29 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         self._next_message_override = value
 
 
+def _resolve_live_conversation_id(*, context: AttackContext[Any]) -> str | None:
+    """
+    Return the objective-target conversation the run is currently using.
+
+    A context that declares ``conversation_id`` answers for itself, including when
+    the answer is that it has none: ``TAPAttackContext`` reports the best branch
+    and has nothing to report before the first one is chosen. Only a context
+    without the attribute falls through to its conversation session, which is
+    where multi-turn contexts keep it.
+
+    Args:
+        context (AttackContext[Any]): The context for the attack.
+
+    Returns:
+        str | None: The conversation id, or ``None`` when the context has none.
+    """
+    if hasattr(context, "conversation_id"):
+        candidate = getattr(context, "conversation_id", None)
+    else:
+        candidate = getattr(getattr(context, "session", None), "conversation_id", None)
+    return candidate if isinstance(candidate, str) and candidate else None
+
+
 class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT]):
     """
     Default event handler for attack strategies.
@@ -385,11 +408,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         collector = get_retry_collector()
         retry_events = collector.events if collector else []
 
-        # Multi-turn contexts keep the active ID on their conversation session.
-        conversation_id = getattr(context, "conversation_id", None)
-        if not conversation_id:
-            conversation_id = getattr(getattr(context, "session", None), "conversation_id", None)
-        conversation_id = conversation_id or str(uuid.uuid4())
+        conversation_id = _resolve_live_conversation_id(context=context) or str(uuid.uuid4())
 
         error_result = AttackResult(
             conversation_id=conversation_id,
@@ -690,14 +709,25 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         Collect every objective-target conversation id this run used.
 
-        The live conversation sits directly on single-turn contexts and on
-        ``session`` for multi-turn ones. A run can also leave earlier
-        conversations behind: a retry in ``PromptSendingAttack``, a Crescendo
-        backtrack, or the rotation multi-turn attacks do for single-turn
-        targets all mint a fresh id and record the old one as ``PRUNED``.
-        Those still hold target-side state, so they are collected too.
+        This is ``AttackResult.get_active_conversation_ids()`` read off the
+        context instead of the result: the live conversation plus the ones
+        recorded as ``PRUNED``. A run leaves conversations behind whenever it
+        mints a fresh id mid-run, which a ``PromptSendingAttack`` retry, a
+        Crescendo backtrack, the single-turn rotation in multi-turn attacks and
+        TAP branching all do. Those still hold target-side state.
 
-        Attacks that key conversations somewhere else should override this.
+        The two are pinned equal by test. Reading the context rather than the
+        result is what lets teardown run on the paths where no result exists,
+        which is every failed and every cancelled run.
+
+        Adversarial, scorer and converter conversations belong to other targets
+        and are deliberately not included; ``get_active_conversation_ids()``
+        excludes them for the same reason.
+
+        An attack that keeps its live conversation somewhere else should expose
+        it as ``conversation_id`` on its context, the way ``TAPAttackContext``
+        reports the best branch, rather than overriding this. That keeps one
+        lookup, and it is the same property the error-result builder reads.
 
         Args:
             context (AttackStrategyContextT): The context for the attack.
@@ -708,9 +738,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         ids: list[str] = []
 
-        live = getattr(context, "conversation_id", None) or getattr(
-            getattr(context, "session", None), "conversation_id", None
-        )
+        live = _resolve_live_conversation_id(context=context)
         if live:
             ids.append(live)
 
@@ -730,9 +758,13 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         connection, a browser page) can close it. The base target
         implementation is a no-op, so this is inert for stateless targets.
 
-        This runs in the ``finally`` of the execution lifecycle, so a target
-        that raises here is logged rather than allowed to replace whatever
-        error the attack was already reporting.
+        This pass covers the objective target only. Adversarial, scorer and
+        converter targets have their own lifetimes and are not released here.
+
+        This runs in the ``finally`` of the execution lifecycle, so it covers
+        runs that succeed, runs that raise and runs that are cancelled, and a
+        target that raises here is logged rather than allowed to replace
+        whatever error the attack was already reporting.
 
         Subclasses that need their own teardown should override this and call
         ``await super()._teardown_async(context=context)``.

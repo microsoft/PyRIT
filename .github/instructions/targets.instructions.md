@@ -50,6 +50,15 @@ Attacks call ``reset_conversation_async(*, conversation_id)`` from
 implementation is a no-op, so a target that keeps no state between calls
 does not need to do anything.
 
+The attack decides when a conversation is over and says so; the target only
+releases what it holds. Only the **objective** target is reset. Adversarial,
+scorer and converter targets have their own lifetimes and are out of scope.
+
+An attack whose context keeps the live conversation somewhere other than
+``conversation_id`` or ``session.conversation_id`` should expose it as a
+``conversation_id`` property, the way ``TAPAttackContext`` reports the best
+branch. That is the same property the error-result builder reads.
+
 Targets that hold external state keyed by conversation (a websocket
 connection, a browser page, an upstream session) SHOULD override it to
 release that state:
