@@ -12,7 +12,7 @@ import {
   Input,
   Text,
 } from '@fluentui/react-components'
-import { AddRegular, DeleteRegular, SaveRegular } from '@fluentui/react-icons'
+import { AddRegular, DeleteRegular } from '@fluentui/react-icons'
 
 import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
@@ -24,20 +24,16 @@ import { useCustomInitializersStyles } from './CustomInitializers.styles'
 interface CustomInitializersProps {
   items: CustomInitializer[]
   registering: boolean
-  updatingName: string | null
   deletingName: string | null
   onRegister: (name: string, scriptContent: string) => Promise<boolean>
-  onUpdate: (name: string, scriptContent: string) => Promise<boolean>
   onDelete: (name: string) => Promise<void>
 }
 
 export default function CustomInitializers({
   items,
   registering,
-  updatingName,
   deletingName,
   onRegister,
-  onUpdate,
   onDelete,
 }: CustomInitializersProps) {
   const styles = useCustomInitializersStyles()
@@ -46,7 +42,6 @@ export default function CustomInitializers({
   const [scriptContent, setScriptContent] = useState('')
   const [selectedName, setSelectedName] = useState<string | null>(items[0]?.initializer_name ?? null)
   const selectedInitializer = items.find((item) => item.initializer_name === selectedName) ?? items[0] ?? null
-  const [editedSource, setEditedSource] = useState(selectedInitializer?.script_content ?? '')
   const [initializerToDelete, setInitializerToDelete] = useState<CustomInitializer | null>(null)
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
@@ -60,13 +55,6 @@ export default function CustomInitializers({
 
   const selectInitializer = (initializer: CustomInitializer): void => {
     setSelectedName(initializer.initializer_name)
-    setEditedSource(initializer.script_content)
-  }
-
-  const handleUpdate = async (): Promise<void> => {
-    if (selectedInitializer) {
-      await onUpdate(selectedInitializer.initializer_name, editedSource)
-    }
   }
 
   const handleDelete = async (initializer: CustomInitializer): Promise<void> => {
@@ -74,7 +62,6 @@ export default function CustomInitializers({
     setInitializerToDelete(null)
     await onDelete(initializer.initializer_name)
     setSelectedName(nextInitializer?.initializer_name ?? null)
-    setEditedSource(nextInitializer?.script_content ?? '')
   }
 
   return (
@@ -88,7 +75,7 @@ export default function CustomInitializers({
         selectedId={selectedInitializer?.initializer_name ?? null}
         navigationLabel="Custom initializer files"
         emptyMessage="No custom initializer scripts stored."
-        description="Edit Python initializers loaded when the backend starts."
+        description="Python initializers loaded when the backend starts."
         actions={(
           <div className={styles.editorActions}>
             <Button appearance="subtle" icon={<AddRegular />} onClick={() => setDialogOpen(true)}>
@@ -97,24 +84,10 @@ export default function CustomInitializers({
             <Button
               appearance="subtle"
               icon={<DeleteRegular />}
-              disabled={!selectedInitializer || deletingName !== null || updatingName !== null}
+              disabled={!selectedInitializer || deletingName !== null}
               onClick={() => selectedInitializer && setInitializerToDelete(selectedInitializer)}
             >
               {deletingName === selectedInitializer?.initializer_name ? 'Removing...' : 'Remove'}
-            </Button>
-            <Button
-              appearance="primary"
-              icon={<SaveRegular />}
-              disabled={
-                !selectedInitializer
-                || updatingName !== null
-                || deletingName !== null
-                || editedSource.trim() === ''
-                || editedSource === selectedInitializer.script_content
-              }
-              onClick={() => void handleUpdate()}
-            >
-              {updatingName === selectedInitializer?.initializer_name ? 'Saving...' : 'Save'}
             </Button>
           </div>
         )}
@@ -128,12 +101,11 @@ export default function CustomInitializers({
             <Field
               className={styles.editorField}
               label={selectedInitializer.initializer_name}
-              hint={editedSource === selectedInitializer.script_content ? 'No unsaved changes' : 'Unsaved changes'}
             >
               <PythonCodeEditor
-                source={editedSource}
-                disabled={updatingName !== null || deletingName !== null}
-                onChange={setEditedSource}
+                source={selectedInitializer.script_content}
+                disabled
+                onChange={() => undefined}
               />
             </Field>
           </>

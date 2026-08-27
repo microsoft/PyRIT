@@ -185,7 +185,8 @@ export interface ListRegisteredInitializersResponse {
   pagination: PaginationInfo
 }
 
-export interface UpdateCustomInitializerRequest {
+export interface RegisterInitializerRequest {
+  name: string
   script_content: string
 }
 

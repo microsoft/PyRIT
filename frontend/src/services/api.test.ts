@@ -15,9 +15,9 @@ jest.mock("axios", () => ({
 import {
   apiClient,
   healthApi,
+  initializersApi,
   versionApi,
   configurationApi,
-  initializersApi,
   targetsApi,
   attacksApi,
 } from "./api";
@@ -150,20 +150,24 @@ describe("api service", () => {
   });
 
   describe("initializersApi", () => {
-    it("should update custom initializer source", async () => {
-      const request = { script_content: "class UpdatedInitializer: pass\n" };
-      const response = { data: { initializer_name: "custom/name" } };
-      (apiClient.put as jest.Mock).mockResolvedValueOnce(response);
+    it("should list stored custom initializers", async () => {
+      const response = { data: { source: "C:/custom", items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
 
-      await expect(initializersApi.updateCustom("custom/name", request)).resolves.toEqual(response.data);
-      expect(apiClient.put).toHaveBeenCalledWith("/initializers/custom/custom%2Fname", request);
+      await expect(initializersApi.listCustom()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/initializers/custom");
     });
 
-    it("should delete custom initializer source", async () => {
+    it("should register and unregister through existing endpoints", async () => {
+      const request = { name: "custom", script_content: "class Custom: pass\n" };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ status: 201 });
       (apiClient.delete as jest.Mock).mockResolvedValueOnce({ status: 204 });
 
-      await expect(initializersApi.deleteCustom("custom/name")).resolves.toBeUndefined();
-      expect(apiClient.delete).toHaveBeenCalledWith("/initializers/custom/custom%2Fname");
+      await initializersApi.register(request);
+      await initializersApi.unregister("custom/name");
+
+      expect(apiClient.post).toHaveBeenCalledWith("/initializers", request);
+      expect(apiClient.delete).toHaveBeenCalledWith("/initializers/custom%2Fname");
     });
   });
 

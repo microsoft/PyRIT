@@ -19,7 +19,6 @@ export default function CustomInitializerFiles() {
   const [items, setItems] = useState<CustomInitializer[]>([])
   const [loading, setLoading] = useState(true)
   const [registering, setRegistering] = useState(false)
-  const [updatingName, setUpdatingName] = useState<string | null>(null)
   const [deletingName, setDeletingName] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
 
@@ -59,9 +58,9 @@ export default function CustomInitializerFiles() {
     setRegistering(true)
     setStatusMessage(null)
     try {
-      await initializersApi.updateCustom(name, { script_content: scriptContent })
+      await initializersApi.register({ name, script_content: scriptContent })
       await reload()
-      setStatusMessage({ intent: 'success', text: `Added ${name}. Restart the backend to load it.` })
+      setStatusMessage({ intent: 'success', text: `Added and registered ${name}.` })
       return true
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -71,29 +70,13 @@ export default function CustomInitializerFiles() {
     }
   }
 
-  const handleUpdate = async (name: string, scriptContent: string): Promise<boolean> => {
-    setUpdatingName(name)
-    setStatusMessage(null)
-    try {
-      await initializersApi.updateCustom(name, { script_content: scriptContent })
-      await reload()
-      setStatusMessage({ intent: 'success', text: `Updated ${name}. Restart the backend to load the change.` })
-      return true
-    } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
-      return false
-    } finally {
-      setUpdatingName(null)
-    }
-  }
-
   const handleDelete = async (name: string): Promise<void> => {
     setDeletingName(name)
     setStatusMessage(null)
     try {
-      await initializersApi.deleteCustom(name)
+      await initializersApi.unregister(name)
       await reload()
-      setStatusMessage({ intent: 'success', text: `Removed ${name}. Restart the backend to unload it.` })
+      setStatusMessage({ intent: 'success', text: `Removed ${name}.` })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
     } finally {
@@ -115,10 +98,8 @@ export default function CustomInitializerFiles() {
       <CustomInitializers
         items={items}
         registering={registering}
-        updatingName={updatingName}
         deletingName={deletingName}
         onRegister={handleRegister}
-        onUpdate={handleUpdate}
         onDelete={handleDelete}
       />
     </div>

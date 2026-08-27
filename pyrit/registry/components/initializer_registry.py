@@ -73,13 +73,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
     directory structure is used for organization but not exposed to users.
     """
 
-    def __init__(
-        self,
-        *,
-        discovery_path: Path | None = None,
-        lazy_discovery: bool = False,
-        custom_scripts_source: str | None = None,
-    ) -> None:
+    def __init__(self, *, discovery_path: Path | None = None, lazy_discovery: bool = False) -> None:
         """
         Initialize the initializer registry.
 
@@ -88,28 +82,19 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                 If None, defaults to pyrit/setup/initializers (discovers all).
             lazy_discovery: If True, discovery is deferred until first access.
                 Defaults to False for backwards compatibility.
-            custom_scripts_source: Local directory or Azure Blob container URI with an
-                optional blob prefix for stored custom initializer scripts. Defaults to
-                ``~/.pyrit/custom_initializers``.
         """
         self._discovery_path: Path = (
             discovery_path if discovery_path is not None else Path(PYRIT_PATH) / "setup" / "initializers"
         )
 
         self._builtin_names: set[str] = set()
-        self._custom_scripts_source = custom_scripts_source
         self._custom_storage: CustomInitializerStorage | None = None
         super().__init__(lazy_discovery=lazy_discovery)
 
     def configure_custom_scripts_source(self, source: str | None) -> None:
-        """Configure a local directory or Azure Blob source for custom scripts."""
-        self._custom_scripts_source = source
-        self._custom_storage = None
-
-    @property
-    def custom_scripts_source(self) -> str:
-        """Credential-free custom initializer storage source."""
-        return self._get_custom_storage().display_source
+        """Configure the local directory or Azure Blob source for custom initializers."""
+        custom_source = source or str(self._get_custom_scripts_dir())
+        self._custom_storage = CustomInitializerStorage(source=custom_source)
 
     def _metadata_class(self) -> type[InitializerMetadata]:
         """Return the concrete metadata dataclass this registry builds."""
@@ -394,11 +379,6 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         module, discovers the first concrete ``PyRITInitializer``
         subclass, and registers it under *name*.
 
-        Note:
-            Registrations are runtime-only and are not rediscovered on
-            server restart.  Script files persist on disk as import
-            artifacts for the current process.
-
         Args:
             name: Registry name for the new initializer.
             script_content: Python source code that defines a
@@ -413,107 +393,48 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                 with an existing entry.
         """
         self._ensure_discovered()
-        with self._catalog_lock:
-            validate_registry_name(name)
 
-            if name in self._classes:
-                raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
+        validate_registry_name(name)
 
-            discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
-            storage = self._get_custom_storage()
+        if name in self._classes:
+            raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
+
+        storage = self._get_custom_storage()
+        try:
             storage.save_script(name=name, content=script_content)
-            try:
-                self.register_class(discovered, name=name)
-            except Exception:
-                storage.delete_script(name)
-                raise
+        except OSError as error:
+            raise ValueError(f"Failed to write initializer script: {error}") from error
+        try:
+            discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
+        except Exception:
+            storage.delete_script(name)
+            raise
+
+        self.register_class(discovered, name=name)
         logger.info(f"Registered custom initializer: {name} ({discovered.__name__})")
         return name
 
-    def update_from_content(self, *, name: str, script_content: str) -> str:
-        """
-        Replace a registered custom initializer and its stored source.
-
-        Returns:
-            str: The updated registry name.
-
-        Raises:
-            KeyError: If the initializer is not registered.
-            ValueError: If the initializer is built-in or the source is invalid.
-        """
+    def register_stored_initializers(self) -> None:
+        """Register all valid custom initializers from the configured storage source."""
         self._ensure_discovered()
-        with self._catalog_lock:
-            if name in self._builtin_names:
-                raise ValueError(f"Cannot update built-in initializer '{name}'.")
-            if name not in self._classes:
-                raise KeyError(name)
+        for name, script_content in self._get_custom_storage().list_scripts().items():
+            try:
+                validate_registry_name(name)
+                if name in self._classes:
+                    logger.warning(f"Skipping stored custom initializer '{name}': name is already registered.")
+                    continue
+                discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
+                self.register_class(discovered, name=name)
+            except Exception:
+                logger.exception(f"Skipping stored custom initializer '{name}': registration failed.")
 
-            discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
-            self._get_custom_storage().save_script(name=name, content=script_content)
-            self._classes[name] = discovered
-            self._metadata_cache = None
-            self._catalog_version += 1
-        logger.info(f"Updated custom initializer: {name} ({discovered.__name__})")
-        return name
-
-    def list_custom_initializer_sources(self) -> dict[str, str]:
-        """
-        List stored custom initializer source definitions.
-
-        Returns:
-            dict[str, str]: Script content keyed by registry name.
-        """
-        with self._catalog_lock:
-            return self._get_custom_storage().list_scripts()
-
-    def save_custom_initializer_script(self, *, name: str, script_content: str) -> None:
-        """
-        Validate and persist a custom initializer script for the next startup.
-
-        Raises:
-            ValueError: If the name or source is invalid.
-        """
-        validate_registry_name(name)
-        with self._catalog_lock:
-            self._load_custom_initializer_class(name=name, script_content=script_content)
-            self._get_custom_storage().save_script(name=name, content=script_content)
-
-    def delete_custom_initializer_script(self, *, name: str) -> None:
-        """
-        Delete a stored custom initializer script for the next startup.
-
-        Raises:
-            KeyError: If the custom initializer script does not exist.
-            ValueError: If the name is invalid.
-        """
-        validate_registry_name(name)
-        with self._catalog_lock:
-            if name not in self._get_custom_storage().list_scripts():
-                raise KeyError(name)
-            self._get_custom_storage().delete_script(name)
-
-    def get_custom_initializer_source(self, name: str) -> str:
-        """
-        Get the credential-free storage location for a custom initializer.
-
-        Returns:
-            str: Local file path or Azure Blob URI for the script.
-        """
-        return self._get_custom_storage().get_script_source(name)
-
-    def restore_custom_initializers(self) -> None:
-        """Load all stored custom initializer scripts into the runtime registry."""
-        self._ensure_discovered()
-        with self._catalog_lock:
-            for name, script_content in self.list_custom_initializer_sources().items():
-                try:
-                    if name in self._classes:
-                        logger.warning(f"Skipping stored custom initializer '{name}': name is already registered.")
-                        continue
-                    discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
-                    self.register_class(discovered, name=name)
-                except Exception:
-                    logger.exception(f"Skipping stored custom initializer '{name}': registration failed.")
+    def list_stored_initializer_sources(self) -> tuple[str, list[tuple[str, str, str]]]:
+        """Return the configured source and its stored custom initializer scripts."""
+        storage = self._get_custom_storage()
+        scripts = storage.list_scripts()
+        return storage.display_source, [
+            (name, script_content, storage.get_script_source(name)) for name, script_content in scripts.items()
+        ]
 
     def unregister_and_cleanup(self, name: str) -> None:
         """
@@ -531,16 +452,15 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             ValueError: If the name refers to a built-in initializer.
         """
         self._ensure_discovered()
-        with self._catalog_lock:
-            if name in self._builtin_names:
-                raise ValueError(f"Cannot remove built-in initializer '{name}'.")
-            if name not in self._classes:
-                available = ", ".join(self.get_class_names())
-                raise KeyError(f"'{name}' not found in registry. Available: {available}")
-            self._get_custom_storage().delete_script(name)
-            del self._classes[name]
-            self._metadata_cache = None
-            self._catalog_version += 1
+        if name in self._builtin_names:
+            raise ValueError(f"Cannot remove built-in initializer '{name}'.")
+        if name not in self._classes:
+            available = ", ".join(self.get_class_names())
+            raise KeyError(f"'{name}' not found in registry. Available: {available}")
+        del self._classes[name]
+        self._metadata_cache = None
+
+        self._get_custom_storage().delete_script(name)
 
     def _load_custom_initializer_class(
         self,
@@ -576,16 +496,12 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         return discovered_classes[0]
 
     def _get_custom_storage(self) -> CustomInitializerStorage:
-        """
-        Create storage for the configured custom initializer source.
-
-        Returns:
-            CustomInitializerStorage: Configured script storage.
-        """
-        if self._custom_storage is None:
-            source = self._custom_scripts_source or str(self._get_custom_scripts_dir())
-            self._custom_storage = CustomInitializerStorage(source=source)
-        return self._custom_storage
+        """Return storage for the configured custom initializer source."""
+        storage = self._custom_storage
+        if storage is None:
+            storage = CustomInitializerStorage(source=str(self._get_custom_scripts_dir()))
+            self._custom_storage = storage
+        return storage
 
     @staticmethod
     def _get_custom_scripts_dir() -> Path:

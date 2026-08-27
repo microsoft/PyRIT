@@ -27,10 +27,7 @@ class TestLifespan:
     async def test_lifespan_yields(self) -> None:
         """Test that lifespan delegates to ConfigurationLoader and yields."""
         fake_config = ConfigurationLoader()
-        service = MagicMock(
-            restore_custom_initializers_async=AsyncMock(),
-            run_additional_initializers_async=AsyncMock(),
-        )
+        service = MagicMock(run_additional_initializers_async=AsyncMock())
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
@@ -44,34 +41,7 @@ class TestLifespan:
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
-            service.restore_custom_initializers_async.assert_not_awaited()
-            service.run_additional_initializers_async.assert_awaited_once_with(allow_custom_initializers=False)
-
-    async def test_lifespan_registers_custom_initializers_before_running_additional(self) -> None:
-        fake_config = ConfigurationLoader(allow_custom_initializers=True)
-        call_order: list[str] = []
-
-        async def register_custom_async() -> None:
-            call_order.append("custom")
-
-        async def run_additional_async(*, allow_custom_initializers: bool) -> None:
-            assert allow_custom_initializers is True
-            call_order.append("additional")
-
-        service = MagicMock(
-            restore_custom_initializers_async=AsyncMock(side_effect=register_custom_async),
-            run_additional_initializers_async=AsyncMock(side_effect=run_additional_async),
-        )
-        with (
-            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
-            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
-            patch("pyrit.backend.main.get_initializer_service", return_value=service),
-            patch("pyrit.backend.main.setup_frontend"),
-        ):
-            async with lifespan(app):
-                pass
-
-        assert call_order == ["custom", "additional"]
+            service.run_additional_initializers_async.assert_awaited_once_with()
 
     async def test_lifespan_warns_when_custom_initializers_allowed(self) -> None:
         """Test that lifespan logs a warning when allow_custom_initializers is enabled."""
@@ -82,7 +52,6 @@ class TestLifespan:
             patch(
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(
-                    restore_custom_initializers_async=AsyncMock(),
                     run_additional_initializers_async=AsyncMock(),
                 ),
             ),
@@ -103,7 +72,6 @@ class TestLifespan:
             patch(
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(
-                    restore_custom_initializers_async=AsyncMock(),
                     run_additional_initializers_async=AsyncMock(),
                 ),
             ),
@@ -125,7 +93,6 @@ class TestLifespan:
             patch(
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(
-                    restore_custom_initializers_async=AsyncMock(),
                     run_additional_initializers_async=AsyncMock(),
                 ),
             ),
@@ -141,10 +108,7 @@ class TestLifespan:
         """Test that YAML config determines the custom script source."""
         fake_config = ConfigurationLoader(custom_initializers_source="C:/yaml/initializers")
         registry = MagicMock()
-        service = MagicMock(
-            restore_custom_initializers_async=AsyncMock(),
-            run_additional_initializers_async=AsyncMock(),
-        )
+        service = MagicMock(run_additional_initializers_async=AsyncMock())
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
@@ -156,6 +120,31 @@ class TestLifespan:
                 pass
 
         registry.configure_custom_scripts_source.assert_called_once_with("C:/yaml/initializers")
+        registry.register_stored_initializers.assert_not_called()
+
+    async def test_lifespan_registers_stored_initializers_when_enabled(self) -> None:
+        """Test that enabled custom initializers are registered before baseline initialization."""
+        fake_config = ConfigurationLoader(allow_custom_initializers=True)
+        call_order: list[str] = []
+        registry = MagicMock()
+        registry.register_stored_initializers.side_effect = lambda: call_order.append("custom")
+        service = MagicMock(run_additional_initializers_async=AsyncMock())
+
+        async def initialize_async() -> None:
+            call_order.append("baseline")
+
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock(side_effect=initialize_async)),
+            patch("pyrit.backend.main.InitializerRegistry.get_registry_singleton", return_value=registry),
+            patch("pyrit.backend.main.get_initializer_service", return_value=service),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        registry.register_stored_initializers.assert_called_once_with()
+        assert call_order == ["custom", "baseline"]
 
     async def test_lifespan_downloads_blob_config_to_temporary_file(self) -> None:
         """Test that an Azure Blob config URI is materialized and removed after loading."""
@@ -185,7 +174,6 @@ class TestLifespan:
             patch(
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(
-                    restore_custom_initializers_async=AsyncMock(),
                     run_additional_initializers_async=AsyncMock(),
                 ),
             ),

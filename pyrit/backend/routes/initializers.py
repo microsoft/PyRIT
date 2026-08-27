@@ -4,7 +4,7 @@
 """
 Initializer API routes.
 
-Provides endpoints for listing, registering, and removing initializers, plus managing stored custom scripts.
+Provides endpoints for listing, registering, and removing initializers.
 
 Route structure:
     GET    /api/initializers                — list all initializers
@@ -16,9 +16,6 @@ Route structure:
     GET    /api/initializers/{name}         — get single initializer detail
     POST   /api/initializers                — register initializer from script
     DELETE /api/initializers/{name}         — unregister an initializer
-    GET    /api/initializers/custom         — list stored custom scripts
-    PUT    /api/initializers/custom/{name}  — add or update a stored custom script
-    DELETE /api/initializers/custom/{name}  — delete a stored custom script
 """
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -30,12 +27,10 @@ from pyrit.backend.models.initializers import (
     BaselineInitializerSetting,
     CreateAdditionalInitializerRequest,
     CustomInitializerListResponse,
-    CustomInitializerResponse,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisterInitializerRequest,
     UpdateAdditionalInitializerRequest,
-    UpdateCustomInitializerRequest,
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
 from pyrit.models import AdditionalInitializer
@@ -261,17 +256,13 @@ async def apply_initializer(  # pyrit-async-suffix-exempt
 )
 async def list_custom_initializers(request: Request) -> CustomInitializerListResponse:  # pyrit-async-suffix-exempt
     """
-    List user-defined initializer source from configured script storage.
-
-    Args:
-        request: The incoming FastAPI request.
+    List custom initializer scripts from the configured storage source.
 
     Returns:
-        CustomInitializerListResponse: Storage source and stored custom initializer definitions.
+        CustomInitializerListResponse: The configured source and stored scripts.
     """
     _check_custom_initializers_allowed(request)
-    service = get_initializer_service()
-    return await service.list_custom_initializers_async()
+    return await get_initializer_service().list_custom_initializers_async()
 
 
 @router.get(
@@ -339,80 +330,6 @@ async def register_initializer(  # pyrit-async-suffix-exempt
         if "already registered" in detail:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from None
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from None
-
-
-@router.put(
-    "/custom/{initializer_name}",
-    response_model=CustomInitializerResponse,
-    responses={
-        400: {"model": ProblemDetail, "description": "Invalid initializer source"},
-        403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
-    },
-)
-async def update_custom_initializer(  # pyrit-async-suffix-exempt
-    request: Request,
-    initializer_name: str,
-    body: UpdateCustomInitializerRequest,
-) -> CustomInitializerResponse:
-    """
-    Add or replace a stored custom initializer script for the next backend startup.
-
-    Args:
-        request: The incoming FastAPI request.
-        initializer_name: Registry name of the custom initializer.
-        body: Replacement Python source.
-
-    Returns:
-        CustomInitializerResponse: Updated stored custom initializer script.
-    """
-    _check_custom_initializers_allowed(request)
-    service = get_initializer_service()
-    try:
-        return await service.save_custom_initializer_async(
-            name=initializer_name,
-            script_content=body.script_content,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from None
-
-
-@router.delete(
-    "/custom/{initializer_name}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    responses={
-        400: {"model": ProblemDetail, "description": "Cannot remove referenced custom initializer"},
-        403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
-        404: {"model": ProblemDetail, "description": "Initializer not found"},
-    },
-)
-async def delete_custom_initializer(  # pyrit-async-suffix-exempt
-    request: Request,
-    initializer_name: str,
-) -> None:
-    """
-    Delete a stored custom initializer script for the next backend startup.
-
-    The current runtime registry is unchanged until restart.
-
-    Args:
-        request: The incoming FastAPI request.
-        initializer_name: Registry name of the initializer to remove.
-    """
-    _check_custom_initializers_allowed(request)
-    service = get_initializer_service()
-
-    try:
-        await service.delete_custom_initializer_async(initializer_name=initializer_name)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from None
-    except KeyError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Initializer '{initializer_name}' not found",
-        ) from None
 
 
 @router.delete(

@@ -17,8 +17,8 @@ jest.mock('@/services/api', () => ({
   },
   initializersApi: {
     listCustom: jest.fn(),
-    updateCustom: jest.fn(),
-    deleteCustom: jest.fn(),
+    register: jest.fn(),
+    unregister: jest.fn(),
   },
 }))
 
@@ -56,20 +56,14 @@ describe('BackendConfiguration', () => {
     })
     mockedInitializersApi.listCustom.mockResolvedValue({
       source: 'C:/Users/test/.pyrit/custom_initializers',
-      items: [
-        {
-          initializer_name: 'custom_target',
-          script_content: 'class CustomTargetInitializer: pass',
-          source: 'C:/Users/test/.pyrit/custom_initializers/custom_target.py',
-        },
-      ],
+      items: [{
+        initializer_name: 'custom_target',
+        script_content: 'class CustomTargetInitializer: pass',
+        source: 'C:/Users/test/.pyrit/custom_initializers/custom_target.py',
+      }],
     })
-    mockedInitializersApi.updateCustom.mockResolvedValue({
-      initializer_name: 'custom_target',
-      script_content: 'class UpdatedCustomTargetInitializer: pass',
-      source: 'C:/Users/test/.pyrit/custom_initializers/custom_target.py',
-    })
-    mockedInitializersApi.deleteCustom.mockResolvedValue()
+    mockedInitializersApi.register.mockResolvedValue()
+    mockedInitializersApi.unregister.mockResolvedValue()
   })
 
   it('should load and display configuration content', async () => {
@@ -183,45 +177,26 @@ describe('BackendConfiguration', () => {
     })
   })
 
-  it('should edit storage-backed custom initializers in its own tab', async () => {
+  it('should list and register custom initializers', async () => {
     const user = userEvent.setup()
     renderPage()
 
     await user.click(screen.getByRole('tab', { name: 'Custom Initializers' }))
-    expect(screen.getByText('C:/Users/test/.pyrit/custom_initializers/custom_target.py')).toBeInTheDocument()
-    expect(await screen.findByRole('navigation', { name: 'Custom initializer files' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Copy Python source' })).toBeInTheDocument()
-    fireEvent.change(screen.getByRole('textbox', { name: 'Python source' }), {
-      target: { value: 'class UpdatedCustomTargetInitializer: pass' },
-    })
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-
-    await waitFor(() => {
-      expect(mockedInitializersApi.updateCustom).toHaveBeenCalledWith('custom_target', {
-        script_content: 'class UpdatedCustomTargetInitializer: pass',
-      })
-    })
-    expect(await screen.findByText('Updated custom_target. Restart the backend to load the change.')).toBeInTheDocument()
-  })
-
-  it('should add a storage-backed custom initializer', async () => {
-    const user = userEvent.setup()
-    renderPage()
-
-    await user.click(screen.getByRole('tab', { name: 'Custom Initializers' }))
+    expect(await screen.findByText('C:/Users/test/.pyrit/custom_initializers/custom_target.py')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Add initializer' }))
-    const addDialog = await screen.findByRole('dialog')
-    await user.type(within(addDialog).getByRole('textbox', { name: /Initializer name/ }), 'new_custom')
-    fireEvent.change(within(addDialog).getByRole('textbox', { name: 'Python source' }), {
+    const dialog = screen.getByRole('dialog', { name: 'Add custom initializer' })
+    await user.type(within(dialog).getByRole('textbox', { name: /Initializer name/ }), 'new_custom')
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Python source' }), {
       target: { value: 'class NewCustom: pass' },
     })
-    await user.click(within(addDialog).getByRole('button', { name: 'Add' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Add' }))
 
     await waitFor(() => {
-      expect(mockedInitializersApi.updateCustom).toHaveBeenCalledWith('new_custom', {
+      expect(mockedInitializersApi.register).toHaveBeenCalledWith({
+        name: 'new_custom',
         script_content: 'class NewCustom: pass',
       })
     })
-    expect(await screen.findByText('Added new_custom. Restart the backend to load it.')).toBeInTheDocument()
   })
+
 })

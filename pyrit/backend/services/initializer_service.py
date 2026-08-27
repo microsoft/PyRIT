@@ -26,7 +26,6 @@ from pyrit.backend.models.initializers import (
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
 )
-from pyrit.backend.services.stale_while_revalidate_cache import StaleWhileRevalidateCache
 from pyrit.memory import CentralMemory
 from pyrit.models import AdditionalInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
@@ -34,8 +33,6 @@ from pyrit.registry import InitializerMetadata, InitializerRegistry
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
-_CUSTOM_CACHE_TTL_SECONDS = 10.0
-_CUSTOM_CACHE_KEY = "custom-initializers"
 
 
 def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> RegisteredInitializer:
@@ -69,10 +66,6 @@ class InitializerService:
         """Initialize the initializer service."""
         self._registry = InitializerRegistry.get_registry_singleton()
         self._memory = CentralMemory.get_memory_instance()
-        self._custom_cache = StaleWhileRevalidateCache[CustomInitializerListResponse](
-            ttl_seconds=_CUSTOM_CACHE_TTL_SECONDS,
-            load_async=lambda _: self._load_custom_initializers_async(),
-        )
 
     async def list_initializers_async(
         self,
@@ -260,16 +253,12 @@ class InitializerService:
             applied_parameters=parameters,
         )
 
-    async def run_additional_initializers_async(self, *, allow_custom_initializers: bool) -> None:
+    async def run_additional_initializers_async(self) -> None:
         """
         Run all persisted additional initializers in stored order, after the baseline.
 
         Intended for the backend startup lifespan: the ``.pyrit_conf`` baseline runs first via
         the configuration loader, then this appends the user's additional initializers.
-        When custom initializers are disabled, only built-in initializers are run.
-
-        Args:
-            allow_custom_initializers: Whether stored custom initializers may run.
 
         Failures are isolated per initializer: a persisted row that fails to build, validate, or
         initialize (e.g. a missing required environment variable) is logged and skipped so one bad
@@ -282,12 +271,6 @@ class InitializerService:
 
         logger.info("Running %d additional initializer(s)...", len(initializers))
         for initializer in initializers:
-            if not allow_custom_initializers and not self._registry.is_builtin(initializer.initializer_name):
-                logger.info(
-                    "Skipping custom additional initializer '%s' because custom initializers are disabled.",
-                    initializer.initializer_name,
-                )
-                continue
             try:
                 await asyncio.to_thread(
                     self._build_and_run_initializer,
@@ -317,104 +300,32 @@ class InitializerService:
         Returns:
             RegisteredInitializer: The newly registered initializer summary.
         """
-        self._registry.register_from_content(name=name, script_content=script_content)
+        await asyncio.to_thread(self._registry.register_from_content, name=name, script_content=script_content)
 
         initializer = await self.get_initializer_async(initializer_name=name)
         if not initializer:
             raise ValueError(f"Initializer '{name}' was registered but metadata could not be retrieved.")
         return initializer
 
-    async def save_custom_initializer_async(
-        self,
-        *,
-        name: str,
-        script_content: str,
-    ) -> CustomInitializerResponse:
-        """
-        Validate and persist a custom initializer definition for the next startup.
-
-        Args:
-            name: Registry name of the custom initializer.
-            script_content: Replacement Python source code.
-
-        Returns:
-            CustomInitializerResponse: The stored custom initializer script.
-        """
-        await asyncio.to_thread(
-            self._registry.save_custom_initializer_script,
-            name=name,
-            script_content=script_content,
-        )
-        self._invalidate_custom_initializers_cache()
-        return self._custom_initializer_response(name=name, script_content=script_content)
-
     async def list_custom_initializers_async(self) -> CustomInitializerListResponse:
         """
-        List stored custom initializer source definitions and their storage source.
+        List custom initializer scripts from the registry's configured storage.
 
         Returns:
-            CustomInitializerListResponse: Credential-free source and stored definitions.
+            CustomInitializerListResponse: The configured source and stored scripts.
         """
-        return await self._custom_cache.get_async(key=_CUSTOM_CACHE_KEY)
-
-    async def _load_custom_initializers_async(self) -> CustomInitializerListResponse:
-        """
-        Read custom initializer storage and replace the cached response.
-
-        Returns:
-            CustomInitializerListResponse: The current stored custom initializers.
-        """
-        sources = await asyncio.to_thread(self._registry.list_custom_initializer_sources)
+        source, scripts = await asyncio.to_thread(self._registry.list_stored_initializer_sources)
         return CustomInitializerListResponse(
-            source=self._registry.custom_scripts_source,
+            source=source,
             items=[
                 CustomInitializerResponse(
                     initializer_name=name,
                     script_content=script_content,
-                    source=self._registry.get_custom_initializer_source(name),
+                    source=script_source,
                 )
-                for name, script_content in sources.items()
+                for name, script_content, script_source in scripts
             ],
         )
-
-    def _invalidate_custom_initializers_cache(self) -> None:
-        """Invalidate custom initializer data after a successful mutation."""
-        self._custom_cache.invalidate(_CUSTOM_CACHE_KEY)
-
-    def _custom_initializer_response(self, *, name: str, script_content: str) -> CustomInitializerResponse:
-        """
-        Build a response for one stored custom initializer script.
-
-        Returns:
-            CustomInitializerResponse: The stored script and its source location.
-        """
-        return CustomInitializerResponse(
-            initializer_name=name,
-            script_content=script_content,
-            source=self._registry.get_custom_initializer_source(name),
-        )
-
-    async def restore_custom_initializers_async(self) -> None:
-        """Restore stored custom initializer definitions into the runtime registry."""
-        await self._custom_cache.refresh_async(key=_CUSTOM_CACHE_KEY)
-        await asyncio.to_thread(self._registry.restore_custom_initializers)
-
-    async def delete_custom_initializer_async(self, *, initializer_name: str) -> None:
-        """
-        Delete a stored custom initializer script for the next startup.
-
-        Args:
-            initializer_name: The registry name to remove.
-        """
-        additional_initializers = await asyncio.to_thread(self._memory.get_additional_initializers)
-        if any(initializer.initializer_name == initializer_name for initializer in additional_initializers):
-            raise ValueError(
-                f"Cannot remove initializer '{initializer_name}' while additional initializer settings reference it."
-            )
-
-        await asyncio.to_thread(self._registry.delete_custom_initializer_script, name=initializer_name)
-        self._invalidate_custom_initializers_cache()
-        logger.info("Deleted custom initializer script: %s", initializer_name)
 
     async def unregister_initializer_async(self, *, initializer_name: str) -> None:
         """
@@ -423,7 +334,7 @@ class InitializerService:
         Args:
             initializer_name: The registry name to remove.
         """
-        self._registry.unregister_and_cleanup(initializer_name)
+        await asyncio.to_thread(self._registry.unregister_and_cleanup, initializer_name)
         logger.info("Unregistered initializer: %s", initializer_name)
 
     def _build_and_run_initializer(

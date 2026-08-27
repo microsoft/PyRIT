@@ -58,7 +58,12 @@ async def test_environment_file_service_lists_and_updates_akv_before_files(tmp_p
     with (
         patch(
             "pyrit.backend.services.environment_file_service._fetch_akv_document_async",
-            new=AsyncMock(return_value=("AKV=before\n", "https://vault.vault.azure.net")),
+            new=AsyncMock(
+                side_effect=[
+                    ("AKV=before\n", "https://vault.vault.azure.net"),
+                    ("AKV=after\n", "https://vault.vault.azure.net"),
+                ]
+            ),
         ) as fetch_mock,
         patch(
             "pyrit.backend.services.environment_file_service._update_akv_document_async",
@@ -69,15 +74,15 @@ async def test_environment_file_service_lists_and_updates_akv_before_files(tmp_p
         fetch_mock.assert_not_awaited()
         loaded = await service.read_async(file_id="akv:0")
         updated = await service.update_async(file_id="akv:0", content="AKV=after\n")
-        cached_after_update = await service.read_async(file_id="akv:0")
+        loaded_after_update = await service.read_async(file_id="akv:0")
 
     assert [item.id for item in items] == ["akv:0", "0"]
     assert items[0].name == "AKV: bootstrap"
     assert items[0].path == secret_url
     assert items[0].content == ""
     assert loaded.content == "AKV=before\n"
-    assert cached_after_update.content == "AKV=after\n"
-    fetch_mock.assert_awaited_once_with(secret_url=secret_url, strict=True, silent=True)
+    assert loaded_after_update.content == "AKV=after\n"
+    assert fetch_mock.await_count == 2
     assert updated.content == "AKV=after\n"
     update_mock.assert_awaited_once_with(secret_url=secret_url, content="AKV=after\n", strict=True)
 
@@ -95,27 +100,15 @@ async def test_environment_file_service_rejects_versioned_akv_update() -> None:
     credential_mock.assert_not_called()
 
 
-async def test_environment_file_service_caches_selected_akv_source_until_expiry() -> None:
-    """Test that expiry returns stale content while refreshing for the next read."""
+async def test_environment_file_service_reads_latest_akv_content() -> None:
+    """Test that every read observes the current AKV content."""
     secret_url = "https://vault.vault.azure.net/secrets/bootstrap"
     service = EnvironmentFileService(resolved_env_files=[], env_akv_ref=[secret_url])
-    with (
-        patch(
-            "pyrit.backend.services.environment_file_service._fetch_akv_document_async",
-            new=AsyncMock(side_effect=[("FIRST=1\n", "vault"), ("SECOND=2\n", "vault")]),
-        ) as fetch_mock,
-        patch(
-            "pyrit.backend.services.stale_while_revalidate_cache.time.monotonic", return_value=100.0
-        ) as monotonic_mock,
-    ):
+    with patch(
+        "pyrit.backend.services.environment_file_service._fetch_akv_document_async",
+        new=AsyncMock(side_effect=[("FIRST=1\n", "vault"), ("SECOND=2\n", "vault")]),
+    ) as fetch_mock:
         assert (await service.read_async(file_id="akv:0")).content == "FIRST=1\n"
-        assert (await service.read_async(file_id="akv:0")).content == "FIRST=1\n"
-
-        monotonic_mock.return_value = 111.0
-        assert (await service.read_async(file_id="akv:0")).content == "FIRST=1\n"
-        refresh_task = service._cache.get_refresh_task("akv:0")
-        assert refresh_task is not None
-        await refresh_task
         assert (await service.read_async(file_id="akv:0")).content == "SECOND=2\n"
 
     assert fetch_mock.await_count == 2

@@ -12,11 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import aiofiles
 
-from pyrit.backend.services.stale_while_revalidate_cache import StaleWhileRevalidateCache
 from pyrit.setup.configuration_loader import ConfigurationLoader
-
-_CACHE_TTL_SECONDS = 10.0
-_CONFIG_CACHE_KEY = "configuration"
 
 
 def _is_azure_blob_uri(value: str) -> bool:
@@ -87,10 +83,6 @@ class ConfigurationFileService:
         """Initialize the service with an explicit source or the default configuration path."""
         self._config_file_value = config_file_value
         self._source = config_file_value or str(ConfigurationLoader.get_default_config_path())
-        self._cache = StaleWhileRevalidateCache[str](
-            ttl_seconds=_CACHE_TTL_SECONDS,
-            load_async=lambda _: self._read_source_async(),
-        )
 
     @property
     def source(self) -> str:
@@ -107,7 +99,7 @@ class ConfigurationFileService:
         Returns:
             str: The UTF-8 configuration contents.
         """
-        return await self._cache.get_async(key=_CONFIG_CACHE_KEY)
+        return await self._read_source_async()
 
     async def _read_source_async(self) -> str:
         """
@@ -125,10 +117,7 @@ class ConfigurationFileService:
 
     async def update_async(self, content: str) -> None:
         """Replace the current configuration contents."""
-        await self._cache.update_async(
-            key=_CONFIG_CACHE_KEY,
-            update_async=lambda: self._write_source_async(content),
-        )
+        await self._write_source_async(content)
 
     async def _write_source_async(self, content: str) -> str:
         """

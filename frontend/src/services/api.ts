@@ -14,8 +14,8 @@ import type {
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
-  CustomInitializer,
   CustomInitializerListResponse,
+  RegisterInitializerRequest,
   AdditionalInitializer,
   CreateAdditionalInitializerRequest,
   UpdateAdditionalInitializerRequest,
@@ -34,7 +34,6 @@ import type {
   EnvironmentFileContent,
   EnvironmentFileListResponse,
   UpdateConfigurationFileRequest,
-  UpdateCustomInitializerRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -256,16 +255,12 @@ export const initializersApi = {
     return response.data
   },
 
-  updateCustom: async (
-    initializerName: string,
-    request: UpdateCustomInitializerRequest,
-  ): Promise<CustomInitializer> => {
-    const response = await apiClient.put(`/initializers/custom/${encodeURIComponent(initializerName)}`, request)
-    return response.data
+  register: async (request: RegisterInitializerRequest): Promise<void> => {
+    await apiClient.post('/initializers', request)
   },
 
-  deleteCustom: async (initializerName: string): Promise<void> => {
-    await apiClient.delete(`/initializers/custom/${encodeURIComponent(initializerName)}`)
+  unregister: async (initializerName: string): Promise<void> => {
+    await apiClient.delete(`/initializers/${encodeURIComponent(initializerName)}`)
   },
 
   createAdditional: async (

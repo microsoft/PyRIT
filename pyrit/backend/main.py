@@ -5,6 +5,7 @@
 FastAPI application entry point for PyRIT backend.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -74,6 +75,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     initializer_registry = InitializerRegistry.get_registry_singleton()
     initializer_registry.configure_custom_scripts_source(config.custom_initializers_source)
+    if config.allow_custom_initializers:
+        await asyncio.to_thread(initializer_registry.register_stored_initializers)
     await config.initialize_pyrit_async()
 
     # Persisted additional initializers run after the .pyrit_conf baseline, in stored order.
@@ -85,12 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         for order_index, initializer in enumerate(config.initializer_configs)
     ]
-    initializer_service = get_initializer_service()
-    if config.allow_custom_initializers:
-        await initializer_service.restore_custom_initializers_async()
-    await initializer_service.run_additional_initializers_async(
-        allow_custom_initializers=config.allow_custom_initializers
-    )
+    await get_initializer_service().run_additional_initializers_async()
 
     # Expose config values to route handlers via app.state
     default_labels: dict[str, str] = {}

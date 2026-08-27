@@ -123,28 +123,12 @@ def test_local_storage_returns_script_path(tmp_path: Path) -> None:
     assert storage.get_script_source("example") == str(tmp_path / "example.py")
 
 
-def test_local_storage_caches_scripts_until_expiry(tmp_path: Path) -> None:
-    """Test that external script changes become visible after the cache expires."""
+def test_local_storage_reads_latest_script_content(tmp_path: Path) -> None:
+    """Test that every listing observes current script content."""
     script_path = tmp_path / "example.py"
     script_path.write_text("VALUE = 1\n", encoding="utf-8")
     storage = CustomInitializerStorage(source=str(tmp_path))
 
-    with patch("pyrit.registry.custom_initializer_storage.time.monotonic", return_value=100.0) as monotonic_mock:
-        assert storage.list_scripts() == {"example": "VALUE = 1\n"}
-        script_path.write_text("VALUE = 2\n", encoding="utf-8")
-        assert storage.list_scripts() == {"example": "VALUE = 1\n"}
-
-        monotonic_mock.return_value = 111.0
-        assert storage.list_scripts() == {"example": "VALUE = 2\n"}
-
-
-def test_local_storage_updates_warm_cache_after_writes(tmp_path: Path) -> None:
-    """Test that saves and deletes update an existing cache immediately."""
-    storage = CustomInitializerStorage(source=str(tmp_path))
-    assert storage.list_scripts() == {}
-
-    storage.save_script(name="example", content="VALUE = 1\n")
     assert storage.list_scripts() == {"example": "VALUE = 1\n"}
-
-    storage.delete_script("example")
-    assert storage.list_scripts() == {}
+    script_path.write_text("VALUE = 2\n", encoding="utf-8")
+    assert storage.list_scripts() == {"example": "VALUE = 2\n"}

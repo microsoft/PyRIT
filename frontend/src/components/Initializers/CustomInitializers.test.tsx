@@ -27,10 +27,8 @@ describe('CustomInitializers', () => {
   const defaultProps = {
     items: ITEMS,
     registering: false,
-    updatingName: null,
     deletingName: null,
     onRegister: jest.fn(),
-    onUpdate: jest.fn(),
     onDelete: jest.fn(),
   }
 
@@ -58,9 +56,7 @@ describe('CustomInitializers', () => {
     expect(screen.getByRole('button', { name: 'second_target' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('should edit and save stored source', async () => {
-    const user = userEvent.setup()
-    defaultProps.onUpdate.mockResolvedValue(true)
+  it('should display stored source as read-only', () => {
     render(
       <TestWrapper>
         <CustomInitializers {...defaultProps} />
@@ -68,11 +64,8 @@ describe('CustomInitializers', () => {
     )
 
     const editor = screen.getByLabelText('Python source')
-    await user.clear(editor)
-    await user.type(editor, 'def updated():\n    pass')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-
-    expect(defaultProps.onUpdate).toHaveBeenCalledWith('custom_target', 'def updated():\n    pass')
+    expect(editor).toBeDisabled()
+    expect(editor).toHaveValue('def initialize():\n    pass')
   })
 
   it('should select a custom initializer from the file navigation', async () => {

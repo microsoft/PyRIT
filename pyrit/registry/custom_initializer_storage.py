@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import time
 from contextlib import contextmanager, suppress
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -22,7 +21,6 @@ _AZURE_BLOB_HOST_SUFFIXES = (
     ".blob.core.usgovcloudapi.net",
     ".blob.core.cloudapi.de",
 )
-_CACHE_TTL_SECONDS = 10.0
 
 
 def is_azure_blob_source_uri(value: str) -> bool:
@@ -57,8 +55,6 @@ class CustomInitializerStorage:
                 "with an optional blob prefix"
             )
         self._container_url, self._blob_prefix = self._parse_blob_source() if self._is_blob else (None, "")
-        self._cached_scripts: dict[str, str] | None = None
-        self._cache_expires_at = 0.0
 
     @property
     def display_source(self) -> str:
@@ -86,19 +82,12 @@ class CustomInitializerStorage:
         Returns:
             dict[str, str]: Script content keyed by registry name.
         """
-        if self._cached_scripts is not None and time.monotonic() < self._cache_expires_at:
-            return dict(self._cached_scripts)
-
         if self._is_blob:
-            scripts = self._list_blob_scripts()
-        else:
-            directory = Path(self._source).expanduser()
-            directory.mkdir(parents=True, exist_ok=True)
-            scripts = {path.stem: path.read_text(encoding="utf-8") for path in sorted(directory.glob("*.py"))}
+            return self._list_blob_scripts()
 
-        self._cached_scripts = scripts
-        self._cache_expires_at = time.monotonic() + _CACHE_TTL_SECONDS
-        return dict(scripts)
+        directory = Path(self._source).expanduser()
+        directory.mkdir(parents=True, exist_ok=True)
+        return {path.stem: path.read_text(encoding="utf-8") for path in sorted(directory.glob("*.py"))}
 
     def save_script(self, *, name: str, content: str) -> None:
         """Persist one custom initializer script."""
@@ -110,8 +99,6 @@ class CustomInitializerStorage:
             directory.mkdir(parents=True, exist_ok=True)
             (directory / f"{name}.py").write_text(content, encoding="utf-8")
 
-        self._update_cached_script(name=name, content=content)
-
     def delete_script(self, name: str) -> None:
         """Delete one custom initializer script if it exists."""
         if self._is_blob:
@@ -122,28 +109,6 @@ class CustomInitializerStorage:
                     client.delete_blob(self._get_blob_name(name))
         else:
             (Path(self._source).expanduser() / f"{name}.py").unlink(missing_ok=True)
-
-        self._delete_cached_script(name)
-
-    def _update_cached_script(self, *, name: str, content: str) -> None:
-        """Update a fresh cache after a successful write, or invalidate a stale cache."""
-        now = time.monotonic()
-        if self._cached_scripts is None or now >= self._cache_expires_at:
-            self._cached_scripts = None
-            self._cache_expires_at = 0.0
-            return
-        self._cached_scripts[name] = content
-        self._cache_expires_at = now + _CACHE_TTL_SECONDS
-
-    def _delete_cached_script(self, name: str) -> None:
-        """Update a fresh cache after a successful delete, or invalidate a stale cache."""
-        now = time.monotonic()
-        if self._cached_scripts is None or now >= self._cache_expires_at:
-            self._cached_scripts = None
-            self._cache_expires_at = 0.0
-            return
-        self._cached_scripts.pop(name, None)
-        self._cache_expires_at = now + _CACHE_TTL_SECONDS
 
     def _list_blob_scripts(self) -> dict[str, str]:
         """

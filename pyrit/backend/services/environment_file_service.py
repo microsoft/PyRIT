@@ -9,7 +9,6 @@ from pathlib import Path
 import aiofiles
 
 from pyrit.backend.models.configuration import EnvironmentFileContent
-from pyrit.backend.services.stale_while_revalidate_cache import StaleWhileRevalidateCache
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.setup.environment_loading import (
     _create_akv_secret_client,
@@ -17,8 +16,6 @@ from pyrit.setup.environment_loading import (
     _parse_akv_secret_url,
     _validate_dotenv_document,
 )
-
-_CACHE_TTL_SECONDS = 10.0
 
 
 async def _update_akv_document_async(*, secret_url: str, content: str, strict: bool) -> str:
@@ -58,10 +55,6 @@ class EnvironmentFileService:
             [CONFIGURATION_DIRECTORY_PATH / ".env", CONFIGURATION_DIRECTORY_PATH / ".env.local"]
             if resolved_env_files is None
             else resolved_env_files
-        )
-        self._cache = StaleWhileRevalidateCache[EnvironmentFileContent](
-            ttl_seconds=_CACHE_TTL_SECONDS,
-            load_async=lambda file_id: self._read_source_async(file_id=file_id),
         )
 
     async def list_async(self) -> list[EnvironmentFileContent]:
@@ -107,7 +100,7 @@ class EnvironmentFileService:
         Raises:
             KeyError: If the identifier does not name a configured environment source.
         """
-        return await self._cache.get_async(key=file_id)
+        return await self._read_source_async(file_id=file_id)
 
     async def _read_source_async(self, *, file_id: str) -> EnvironmentFileContent:
         """
@@ -130,10 +123,7 @@ class EnvironmentFileService:
         Raises:
             KeyError: If the identifier does not name a configured environment file.
         """
-        return await self._cache.update_async(
-            key=file_id,
-            update_async=lambda: self._write_source_async(file_id=file_id, content=content),
-        )
+        return await self._write_source_async(file_id=file_id, content=content)
 
     async def _read_akv_source_async(self, *, file_id: str) -> EnvironmentFileContent:
         index, secret_url = self._get_akv_source(file_id)

@@ -29,7 +29,7 @@ async def test_configuration_file_service_reads_and_updates_blob() -> None:
     with (
         patch(
             "pyrit.backend.services.configuration_file_service._download_blob_config_async",
-            new=AsyncMock(return_value=b"operator: before\n"),
+            new=AsyncMock(side_effect=[b"operator: before\n", b"operator: after\n"]),
         ) as download_mock,
         patch(
             "pyrit.backend.services.configuration_file_service._upload_blob_config_async",
@@ -40,31 +40,21 @@ async def test_configuration_file_service_reads_and_updates_blob() -> None:
         await service.update_async("operator: after\n")
         assert await service.read_async() == "operator: after\n"
 
-    download_mock.assert_awaited_once_with(blob_uri)
+    assert download_mock.await_count == 2
+    assert download_mock.call_args_list[0].args == (blob_uri,)
+    assert download_mock.call_args_list[1].args == (blob_uri,)
     upload_mock.assert_awaited_once_with(blob_uri=blob_uri, content=b"operator: after\n")
 
 
-async def test_configuration_file_service_refreshes_blob_after_cache_expires() -> None:
-    """Test that expiry returns stale content while refreshing for the next read."""
+async def test_configuration_file_service_reads_latest_blob_content() -> None:
+    """Test that every read observes the current blob content."""
     blob_uri = "https://account.blob.core.windows.net/config/config.yaml"
     service = ConfigurationFileService(config_file_value=blob_uri)
-    with (
-        patch(
-            "pyrit.backend.services.configuration_file_service._download_blob_config_async",
-            new=AsyncMock(side_effect=[b"operator: before\n", b"operator: external\n"]),
-        ) as download_mock,
-        patch(
-            "pyrit.backend.services.stale_while_revalidate_cache.time.monotonic", return_value=100.0
-        ) as monotonic_mock,
-    ):
+    with patch(
+        "pyrit.backend.services.configuration_file_service._download_blob_config_async",
+        new=AsyncMock(side_effect=[b"operator: before\n", b"operator: external\n"]),
+    ) as download_mock:
         assert await service.read_async() == "operator: before\n"
-        assert await service.read_async() == "operator: before\n"
-
-        monotonic_mock.return_value = 111.0
-        assert await service.read_async() == "operator: before\n"
-        refresh_task = service._cache.get_refresh_task("configuration")
-        assert refresh_task is not None
-        await refresh_task
         assert await service.read_async() == "operator: external\n"
 
     assert download_mock.await_count == 2
