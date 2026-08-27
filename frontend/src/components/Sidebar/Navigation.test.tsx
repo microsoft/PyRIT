@@ -79,7 +79,7 @@ describe("Navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });
 
-  it("calls onNavigate with 'config' when targets button is clicked", async () => {
+  it("calls onNavigate with 'targets' when targets button is clicked", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderWithProvider(
@@ -87,7 +87,7 @@ describe("Navigation", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Targets" }));
-    expect(onNavigate).toHaveBeenCalledWith("config");
+    expect(onNavigate).toHaveBeenCalledWith("targets");
   });
 
   it("navigates to backend configuration", async () => {

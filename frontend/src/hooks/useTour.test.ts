@@ -101,7 +101,7 @@ describe('useTour', () => {
     })
     expect(result.current.tourProps.stepIndex).toBe(2)
 
-    rerender({ currentView: 'config' })
+    rerender({ currentView: 'targets' })
 
     expect(result.current.tourProps.run).toBe(true)
     expect(result.current.tourProps.steps[2]).toMatchObject({
@@ -149,10 +149,10 @@ describe('useTour', () => {
       result.current.tourProps.onEvent(makeEvent({ index: 1 }))
     })
 
-    rerender({ currentView: 'config', hasActiveTarget: false })
+    rerender({ currentView: 'targets', hasActiveTarget: false })
     expect(result.current.tourProps.steps[2].content).toContain('Configure a target')
 
-    rerender({ currentView: 'config', hasActiveTarget: true })
+    rerender({ currentView: 'targets', hasActiveTarget: true })
     expect(result.current.tourProps.steps[2].target).toBe('body')
     expect(result.current.tourProps.steps[2].content).toContain('target currently active for Chat')
     expect(result.current.tourProps.steps[3].target).toBe('[data-tour="converter-toggle"]')

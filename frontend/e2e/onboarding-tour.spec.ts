@@ -23,7 +23,7 @@ test.describe("Onboarding tour", () => {
     await page
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(
       page.getByRole("heading", { name: "Target Configuration" })
     ).toBeVisible();
@@ -42,7 +42,7 @@ test.describe("Onboarding tour", () => {
     await page
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(dialog).toBeVisible();
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
@@ -112,7 +112,7 @@ test.describe("Onboarding tour", () => {
     await page
       .getByRole("button", { name: "Manage targets", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(
       page.getByRole("heading", { name: "Target Configuration" })
     ).toBeVisible();
@@ -168,7 +168,7 @@ test.describe("Onboarding tour", () => {
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
 
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(dialog).toBeVisible();
     await page.getByRole("button", { name: "Set Active", exact: true }).click();
     await expect(page.getByText("Active", { exact: true }).first()).toBeVisible();

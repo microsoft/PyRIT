@@ -128,7 +128,7 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to config, set the mock target as active, then return to chat. */
+/** Navigate to targets, set the mock target as active, then return to chat. */
 async function activateMockTarget(page: Page) {
   // Click Targets button in sidebar
   await page.getByTitle("Targets").click();

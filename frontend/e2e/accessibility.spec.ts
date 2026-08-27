@@ -120,7 +120,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config, set active, return to chat so input is enabled
+    // Navigate to targets, set active, return to chat so input is enabled
     await page.getByTitle("Targets").click();
     await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
     const setActiveBtn = page.getByRole("button", { name: /set active/i });
@@ -219,7 +219,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config, set active, return to chat so input is enabled
+    // Navigate to targets, set active, return to chat so input is enabled
     await page.getByTitle("Targets").click();
     await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
     const setActiveBtn = page.getByRole("button", { name: /set active/i });
@@ -239,7 +239,7 @@ test.describe("Accessibility", () => {
     await expect(input).toBeFocused();
   });
 
-  test("should have accessible target table in config view", async ({ page }) => {
+  test("should have accessible target table in targets view", async ({ page }) => {
     // Mock targets API for consistent test
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill({
@@ -265,7 +265,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config
+    // Navigate to targets
     await page.getByTitle("Targets").click();
     await expect(page.getByText("Target Configuration")).toBeVisible();
 

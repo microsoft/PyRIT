@@ -18,13 +18,13 @@ import {
   OpenRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
-  DocumentSettingsRegular,
+  TargetRegular,
 } from '@fluentui/react-icons'
 import { useTheme } from '../../hooks/useTheme'
 import type { ThemeMode } from '../../hooks/useTheme'
 import { useNavigationStyles } from './Navigation.styles'
 
-export type ViewName = 'home' | 'chat' | 'history' | 'config' | 'initializers' | 'backendConfig'
+export type ViewName = 'home' | 'chat' | 'history' | 'targets' | 'initializers' | 'backendConfig'
 
 interface NavigationProps {
   currentView: ViewName
@@ -97,13 +97,13 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
 
         <Button
           className={styles.navButton}
-          data-active={currentView === 'config'}
+          data-active={currentView === 'targets'}
           appearance="subtle"
-          icon={<SettingsRegular />}
+          icon={<TargetRegular />}
           title="Targets"
           aria-label="Targets"
-          aria-current={currentView === 'config' ? 'page' : undefined}
-          onClick={() => onNavigate('config')}
+          aria-current={currentView === 'targets' ? 'page' : undefined}
+          onClick={() => onNavigate('targets')}
         />
 
         <Button
@@ -121,7 +121,7 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
           className={styles.navButton}
           data-active={currentView === 'backendConfig'}
           appearance="subtle"
-          icon={<DocumentSettingsRegular />}
+          icon={<SettingsRegular />}
           title="Backend Configuration"
           aria-label="Backend Configuration"
           aria-current={currentView === 'backendConfig' ? 'page' : undefined}

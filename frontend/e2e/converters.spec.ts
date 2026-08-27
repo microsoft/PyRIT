@@ -407,7 +407,7 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to config, set the mock target as active, then return to chat. */
+/** Navigate to targets, set the mock target as active, then return to chat. */
 async function activateMockTarget(page: Page) {
   await page.getByTitle("Targets").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });

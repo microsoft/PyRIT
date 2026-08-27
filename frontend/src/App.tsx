@@ -38,13 +38,14 @@ const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
   history: '/history',
-  config: '/config',
+  targets: '/targets',
   initializers: '/initializers',
   backendConfig: '/backend-config',
 }
 
 /** Resolves the active view from a URL path, defaulting to home for unknown paths. */
 function viewFromPath(pathname: string): ViewName {
+  if (pathname === '/config') return 'targets'
   const match = (Object.entries(VIEW_PATHS) as [ViewName, string][]).find(
     ([, path]) => path === pathname,
   )
@@ -411,7 +412,7 @@ function App() {
                 element={chatElement}
               />
               <Route
-                path="/config"
+                path="/targets"
                 element={
                   <TargetConfig
                     activeTarget={activeTarget}
@@ -419,6 +420,7 @@ function App() {
                   />
                 }
               />
+              <Route path="/config" element={<Navigate to="/targets" replace />} />
               <Route path="/initializers" element={<Initializers />} />
               <Route path="/backend-config" element={<BackendConfiguration />} />
               <Route
