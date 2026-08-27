@@ -90,7 +90,7 @@ describe('CustomInitializers', () => {
     expect(screen.getByRole('button', { name: 'second_target' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('should register a custom initializer', async () => {
+  it('should add a custom initializer script', async () => {
     const user = userEvent.setup()
     defaultProps.onRegister.mockResolvedValue(true)
     render(
@@ -99,11 +99,11 @@ describe('CustomInitializers', () => {
       </TestWrapper>,
     )
 
-    await user.click(screen.getByRole('button', { name: 'Register initializer' }))
-    const dialog = screen.getByRole('dialog', { name: 'Register custom initializer' })
+    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+    const dialog = screen.getByRole('dialog', { name: 'Add custom initializer' })
     await user.type(within(dialog).getByRole('textbox', { name: /Initializer name/ }), 'new_custom')
     await user.type(within(dialog).getByRole('textbox', { name: 'Python source' }), 'class NewCustom: pass')
-    await user.click(within(dialog).getByRole('button', { name: 'Register' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Add' }))
 
     expect(defaultProps.onRegister).toHaveBeenCalledWith('new_custom', 'class NewCustom: pass')
   })

@@ -466,6 +466,32 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         with self._catalog_lock:
             return self._get_custom_storage().list_scripts()
 
+    def save_custom_initializer_script(self, *, name: str, script_content: str) -> None:
+        """
+        Validate and persist a custom initializer script for the next startup.
+
+        Raises:
+            ValueError: If the name or source is invalid.
+        """
+        validate_registry_name(name)
+        with self._catalog_lock:
+            self._load_custom_initializer_class(name=name, script_content=script_content)
+            self._get_custom_storage().save_script(name=name, content=script_content)
+
+    def delete_custom_initializer_script(self, *, name: str) -> None:
+        """
+        Delete a stored custom initializer script for the next startup.
+
+        Raises:
+            KeyError: If the custom initializer script does not exist.
+            ValueError: If the name is invalid.
+        """
+        validate_registry_name(name)
+        with self._catalog_lock:
+            if name not in self._get_custom_storage().list_scripts():
+                raise KeyError(name)
+            self._get_custom_storage().delete_script(name)
+
     def get_custom_initializer_source(self, name: str) -> str:
         """
         Get the credential-free storage location for a custom initializer.

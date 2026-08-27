@@ -156,7 +156,14 @@ describe("api service", () => {
       (apiClient.put as jest.Mock).mockResolvedValueOnce(response);
 
       await expect(initializersApi.updateCustom("custom/name", request)).resolves.toEqual(response.data);
-      expect(apiClient.put).toHaveBeenCalledWith("/initializers/custom%2Fname", request);
+      expect(apiClient.put).toHaveBeenCalledWith("/initializers/custom/custom%2Fname", request);
+    });
+
+    it("should delete custom initializer source", async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ status: 204 });
+
+      await expect(initializersApi.deleteCustom("custom/name")).resolves.toBeUndefined();
+      expect(apiClient.delete).toHaveBeenCalledWith("/initializers/custom/custom%2Fname");
     });
   });
 

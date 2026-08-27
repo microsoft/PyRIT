@@ -59,9 +59,9 @@ export default function CustomInitializerFiles() {
     setRegistering(true)
     setStatusMessage(null)
     try {
-      await initializersApi.register({ name, script_content: scriptContent })
+      await initializersApi.updateCustom(name, { script_content: scriptContent })
       await reload()
-      setStatusMessage({ intent: 'success', text: `Registered ${name}.` })
+      setStatusMessage({ intent: 'success', text: `Added ${name}. Restart the backend to load it.` })
       return true
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -77,7 +77,7 @@ export default function CustomInitializerFiles() {
     try {
       await initializersApi.updateCustom(name, { script_content: scriptContent })
       await reload()
-      setStatusMessage({ intent: 'success', text: `Updated ${name}.` })
+      setStatusMessage({ intent: 'success', text: `Updated ${name}. Restart the backend to load the change.` })
       return true
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -91,9 +91,9 @@ export default function CustomInitializerFiles() {
     setDeletingName(name)
     setStatusMessage(null)
     try {
-      await initializersApi.unregister(name)
+      await initializersApi.deleteCustom(name)
       await reload()
-      setStatusMessage({ intent: 'success', text: `Removed ${name}.` })
+      setStatusMessage({ intent: 'success', text: `Removed ${name}. Restart the backend to unload it.` })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
     } finally {

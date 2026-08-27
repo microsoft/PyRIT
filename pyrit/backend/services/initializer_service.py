@@ -317,40 +317,36 @@ class InitializerService:
         Returns:
             RegisteredInitializer: The newly registered initializer summary.
         """
-        await asyncio.to_thread(
-            self._registry.register_from_content,
-            name=name,
-            script_content=script_content,
-        )
-        self._invalidate_custom_initializers_cache()
+        self._registry.register_from_content(name=name, script_content=script_content)
 
         initializer = await self.get_initializer_async(initializer_name=name)
         if not initializer:
             raise ValueError(f"Initializer '{name}' was registered but metadata could not be retrieved.")
         return initializer
 
-    async def update_initializer_async(
+    async def save_custom_initializer_async(
         self,
         *,
         name: str,
         script_content: str,
-    ) -> RegisteredInitializer:
+    ) -> CustomInitializerResponse:
         """
-        Validate and replace a stored custom initializer definition.
+        Validate and persist a custom initializer definition for the next startup.
 
         Args:
             name: Registry name of the custom initializer.
             script_content: Replacement Python source code.
 
         Returns:
-            RegisteredInitializer: Updated initializer metadata.
+            CustomInitializerResponse: The stored custom initializer script.
         """
-        await asyncio.to_thread(self._registry.update_from_content, name=name, script_content=script_content)
+        await asyncio.to_thread(
+            self._registry.save_custom_initializer_script,
+            name=name,
+            script_content=script_content,
+        )
         self._invalidate_custom_initializers_cache()
-        initializer = await self.get_initializer_async(initializer_name=name)
-        if not initializer:
-            raise ValueError(f"Initializer '{name}' was updated but metadata could not be retrieved.")
-        return initializer
+        return self._custom_initializer_response(name=name, script_content=script_content)
 
     async def list_custom_initializers_async(self) -> CustomInitializerListResponse:
         """
@@ -385,14 +381,27 @@ class InitializerService:
         """Invalidate custom initializer data after a successful mutation."""
         self._custom_cache.invalidate(_CUSTOM_CACHE_KEY)
 
+    def _custom_initializer_response(self, *, name: str, script_content: str) -> CustomInitializerResponse:
+        """
+        Build a response for one stored custom initializer script.
+
+        Returns:
+            CustomInitializerResponse: The stored script and its source location.
+        """
+        return CustomInitializerResponse(
+            initializer_name=name,
+            script_content=script_content,
+            source=self._registry.get_custom_initializer_source(name),
+        )
+
     async def restore_custom_initializers_async(self) -> None:
         """Restore stored custom initializer definitions into the runtime registry."""
         await self._custom_cache.refresh_async(key=_CUSTOM_CACHE_KEY)
         await asyncio.to_thread(self._registry.restore_custom_initializers)
 
-    async def unregister_initializer_async(self, *, initializer_name: str) -> None:
+    async def delete_custom_initializer_async(self, *, initializer_name: str) -> None:
         """
-        Remove a custom initializer from the registry.
+        Delete a stored custom initializer script for the next startup.
 
         Args:
             initializer_name: The registry name to remove.
@@ -403,8 +412,18 @@ class InitializerService:
                 f"Cannot remove initializer '{initializer_name}' while additional initializer settings reference it."
             )
 
-        await asyncio.to_thread(self._registry.unregister_and_cleanup, initializer_name)
+        await asyncio.to_thread(self._registry.delete_custom_initializer_script, name=initializer_name)
         self._invalidate_custom_initializers_cache()
+        logger.info("Deleted custom initializer script: %s", initializer_name)
+
+    async def unregister_initializer_async(self, *, initializer_name: str) -> None:
+        """
+        Remove a custom initializer from the registry.
+
+        Args:
+            initializer_name: The registry name to remove.
+        """
+        self._registry.unregister_and_cleanup(initializer_name)
         logger.info("Unregistered initializer: %s", initializer_name)
 
     def _build_and_run_initializer(

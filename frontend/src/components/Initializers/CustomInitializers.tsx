@@ -87,12 +87,12 @@ export default function CustomInitializers({
         }))}
         selectedId={selectedInitializer?.initializer_name ?? null}
         navigationLabel="Custom initializer files"
-        emptyMessage="No custom initializers registered."
+        emptyMessage="No custom initializer scripts stored."
         description="Edit Python initializers loaded when the backend starts."
         actions={(
           <div className={styles.editorActions}>
             <Button appearance="subtle" icon={<AddRegular />} onClick={() => setDialogOpen(true)}>
-              Register initializer
+              Add initializer
             </Button>
             <Button
               appearance="subtle"
@@ -144,7 +144,7 @@ export default function CustomInitializers({
         <DialogSurface className={styles.sourceDialog}>
           <form onSubmit={handleSubmit}>
             <DialogBody>
-              <DialogTitle>Register custom initializer</DialogTitle>
+              <DialogTitle>Add custom initializer</DialogTitle>
               <DialogContent className={styles.dialogBody}>
                 <Field label="Initializer name" required>
                   <Input
@@ -167,7 +167,7 @@ export default function CustomInitializers({
                   appearance="primary"
                   disabled={registering || name.trim() === '' || scriptContent.trim() === ''}
                 >
-                  {registering ? 'Registering...' : 'Register'}
+                  {registering ? 'Adding...' : 'Add'}
                 </Button>
               </DialogActions>
             </DialogBody>

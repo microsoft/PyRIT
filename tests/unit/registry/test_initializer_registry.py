@@ -238,6 +238,33 @@ def test_restore_custom_initializers_loads_persisted_scripts(tmp_path: Path) -> 
     assert registry.get_class("restored").__name__ == "ScriptTestInitializer"
 
 
+def test_save_custom_initializer_script_upserts_without_registering(tmp_path: Path) -> None:
+    """Test adding and updating custom source does not change the runtime registry."""
+    registry = InitializerRegistry(lazy_discovery=True, custom_scripts_source=str(tmp_path))
+    registry._discovered = True
+    updated_script = _VALID_SCRIPT.replace("ScriptTestInitializer", "UpdatedInitializer")
+
+    registry.save_custom_initializer_script(name="custom", script_content=_VALID_SCRIPT)
+    registry.save_custom_initializer_script(name="custom", script_content=updated_script)
+
+    assert registry.list_custom_initializer_sources() == {"custom": updated_script}
+    with pytest.raises(KeyError):
+        registry.get_class("custom")
+
+
+def test_delete_custom_initializer_script_removes_source_without_registry_changes(tmp_path: Path) -> None:
+    """Test deleting custom source leaves the runtime registry unchanged."""
+    registry = InitializerRegistry(lazy_discovery=True, custom_scripts_source=str(tmp_path))
+    registry._discovered = True
+    registry.save_custom_initializer_script(name="custom", script_content=_VALID_SCRIPT)
+
+    registry.delete_custom_initializer_script(name="custom")
+
+    assert registry.list_custom_initializer_sources() == {}
+    with pytest.raises(KeyError):
+        registry.get_class("custom")
+
+
 def test_custom_initializer_storage_is_reused_until_source_changes(tmp_path: Path) -> None:
     """Test that startup and GUI reads share one cache-bearing storage instance."""
     registry = InitializerRegistry(lazy_discovery=True, custom_scripts_source=str(tmp_path))

@@ -17,9 +17,8 @@ jest.mock('@/services/api', () => ({
   },
   initializersApi: {
     listCustom: jest.fn(),
-    register: jest.fn(),
     updateCustom: jest.fn(),
-    unregister: jest.fn(),
+    deleteCustom: jest.fn(),
   },
 }))
 
@@ -65,21 +64,12 @@ describe('BackendConfiguration', () => {
         },
       ],
     })
-    mockedInitializersApi.register.mockResolvedValue({
-      initializer_name: 'new_custom',
-      initializer_type: 'NewCustomInitializer',
-      description: 'New custom initializer.',
-      required_env_vars: [],
-      supported_parameters: [],
-    })
     mockedInitializersApi.updateCustom.mockResolvedValue({
       initializer_name: 'custom_target',
-      initializer_type: 'CustomTargetInitializer',
-      description: 'Updated custom initializer.',
-      required_env_vars: [],
-      supported_parameters: [],
+      script_content: 'class UpdatedCustomTargetInitializer: pass',
+      source: 'C:/Users/test/.pyrit/custom_initializers/custom_target.py',
     })
-    mockedInitializersApi.unregister.mockResolvedValue()
+    mockedInitializersApi.deleteCustom.mockResolvedValue()
   })
 
   it('should load and display configuration content', async () => {
@@ -211,27 +201,27 @@ describe('BackendConfiguration', () => {
         script_content: 'class UpdatedCustomTargetInitializer: pass',
       })
     })
-    expect(await screen.findByText('Updated custom_target.')).toBeInTheDocument()
+    expect(await screen.findByText('Updated custom_target. Restart the backend to load the change.')).toBeInTheDocument()
   })
 
-  it('should register a storage-backed custom initializer', async () => {
+  it('should add a storage-backed custom initializer', async () => {
     const user = userEvent.setup()
     renderPage()
 
     await user.click(screen.getByRole('tab', { name: 'Custom Initializers' }))
-    await user.click(screen.getByRole('button', { name: 'Register initializer' }))
-    const registerDialog = await screen.findByRole('dialog')
-    await user.type(within(registerDialog).getByRole('textbox', { name: /Initializer name/ }), 'new_custom')
-    fireEvent.change(within(registerDialog).getByRole('textbox', { name: 'Python source' }), {
+    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+    const addDialog = await screen.findByRole('dialog')
+    await user.type(within(addDialog).getByRole('textbox', { name: /Initializer name/ }), 'new_custom')
+    fireEvent.change(within(addDialog).getByRole('textbox', { name: 'Python source' }), {
       target: { value: 'class NewCustom: pass' },
     })
-    await user.click(within(registerDialog).getByRole('button', { name: 'Register' }))
+    await user.click(within(addDialog).getByRole('button', { name: 'Add' }))
 
     await waitFor(() => {
-      expect(mockedInitializersApi.register).toHaveBeenCalledWith({
-        name: 'new_custom',
+      expect(mockedInitializersApi.updateCustom).toHaveBeenCalledWith('new_custom', {
         script_content: 'class NewCustom: pass',
       })
     })
+    expect(await screen.findByText('Added new_custom. Restart the backend to load it.')).toBeInTheDocument()
   })
 })
