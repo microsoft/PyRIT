@@ -23,7 +23,7 @@ parameters:
     default: false
 
 variables:
-  copyritAzureServiceConnection: 'copyrit-gui-azure'
+  azureServiceConnection: 'copyrit-gui-azure'
 
 stages:
   - stage: ValidateInputs
@@ -67,7 +67,7 @@ stages:
               PYRIT_IMAGE_NAME: $(imageName)
               PYRIT_SOURCE_VERSION: $(Build.SourceVersion)
             inputs:
-              azureSubscription: '$(copyritAzureServiceConnection)'
+              azureSubscription: '$(azureServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -167,7 +167,7 @@ stages:
                     PYRIT_ENABLE_OTEL: $(enableOtel)
                     PYRIT_ENV_SECRET_NAME: $(envSecretName)
                   inputs:
-                    azureSubscription: '$(copyritAzureServiceConnection)'
+                    azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
                     scriptLocation: 'scriptPath'
                     scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'
@@ -262,7 +262,7 @@ stages:
                     PYRIT_ENABLE_OTEL: $(enableOtel)
                     PYRIT_ENV_SECRET_NAME: $(envSecretName)
                   inputs:
-                    azureSubscription: '$(copyritAzureServiceConnection)'
+                    azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
                     scriptLocation: 'scriptPath'
                     scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'
