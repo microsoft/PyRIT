@@ -30,6 +30,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     _TAPAttackConfiguration,
     _TreeOfAttacksNode,
 )
+from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
@@ -1087,6 +1088,7 @@ class TestBlockedScoringDefaults:
                 adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
+            report_objective_conversation=lambda conversation_id: None,
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1154,6 +1156,7 @@ class TestBlockedScoringDefaults:
                 adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
+            report_objective_conversation=lambda conversation_id: None,
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1563,6 +1566,7 @@ class TestTreeOfAttacksNode:
             "attack_id": {"id": "test_attack"},
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
+            "report_objective_conversation": lambda conversation_id: None,
             "memory_labels": {"test": "label"},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -2995,6 +2999,7 @@ class TestModalityRouterIntegration:
             "attack_id": {"id": "test_attack"},
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
+            "report_objective_conversation": lambda conversation_id: None,
             "memory_labels": {},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -3282,7 +3287,13 @@ class TestTAPAdversarialIdentity:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTAPConversationReset:
-    """TAP keeps one objective conversation per node, not a single one on session."""
+    """Every objective-target conversation TAP opens has to stay reachable.
+
+    TAP keeps one conversation per node and rotates it per turn against a
+    single-turn target. Anything it abandons without recording is a conversation
+    no caller can name afterwards, so the base teardown cannot release it and the
+    result under-reports what the run opened.
+    """
 
     def _context_with_nodes(self, *node_ids: str) -> TAPAttackContext:
         context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
@@ -3292,31 +3303,64 @@ class TestTAPConversationReset:
             context.nodes.append(node)
         return context
 
-    def test_collects_surviving_node_conversations(self, basic_attack):
-        context = self._context_with_nodes("node-a", "node-b")
-
-        ids = basic_attack._get_objective_conversation_ids(context=context)
-
-        assert set(ids) == {"node-a", "node-b"}
-
-    def test_collects_best_and_pruned_conversations(self, basic_attack):
+    def test_the_base_lookup_finds_the_best_conversation(self, basic_attack):
         context = self._context_with_nodes("node-a")
         context.best_conversation_id = "best-1"
-        context.related_conversations.add(
-            ConversationReference(conversation_id="pruned-1", conversation_type=ConversationType.PRUNED)
-        )
 
         ids = basic_attack._get_objective_conversation_ids(context=context)
 
-        assert set(ids) == {"node-a", "best-1", "pruned-1"}
+        assert "best-1" in ids
 
-    def test_does_not_use_the_unused_session_conversation_id(self, basic_attack):
+    def test_the_base_lookup_does_not_use_the_unused_session_conversation_id(self, basic_attack):
         context = self._context_with_nodes("node-a")
+        context.best_conversation_id = "best-1"
 
         ids = basic_attack._get_objective_conversation_ids(context=context)
 
         # TAP never sends anything on session.conversation_id.
         assert context.session.conversation_id not in ids
+
+    def test_a_conversation_is_recorded_as_soon_as_it_is_sent_on(self, basic_attack):
+        context = self._context_with_nodes()
+        record = basic_attack._make_objective_conversation_recorder(context=context)
+
+        record("turn-1")
+        record("turn-2")
+
+        # Recorded while the run is still going, so a run that raises or is
+        # cancelled can still name them. related_conversations is a set, so the
+        # order the lookup returns them in is not meaningful.
+        assert set(basic_attack._get_objective_conversation_ids(context=context)) == {"turn-1", "turn-2"}
+
+    def test_recording_the_same_conversation_twice_records_it_once(self, basic_attack):
+        context = self._context_with_nodes()
+        record = basic_attack._make_objective_conversation_recorder(context=context)
+
+        record("turn-1")
+        record("turn-1")
+
+        assert {ref.conversation_id for ref in context.related_conversations} == {"turn-1"}
+
+    def test_the_winning_branch_stops_being_reported_as_pruned(self, basic_attack):
+        context = self._context_with_nodes()
+        record = basic_attack._make_objective_conversation_recorder(context=context)
+        record("node-a")
+        record("node-b")
+        context.best_conversation_id = "node-a"
+
+        basic_attack._release_best_conversation(context)
+
+        # It is still released, through the live conversation rather than the pruned list.
+        assert {ref.conversation_id for ref in context.related_conversations} == {"node-b"}
+        assert set(basic_attack._get_objective_conversation_ids(context=context)) == {"node-a", "node-b"}
+
+    def test_releasing_the_best_branch_without_one_is_a_noop(self, basic_attack):
+        context = self._context_with_nodes()
+        basic_attack._make_objective_conversation_recorder(context=context)("node-a")
+
+        basic_attack._release_best_conversation(context)
+
+        assert {ref.conversation_id for ref in context.related_conversations} == {"node-a"}
 
     def test_returns_no_duplicates(self, basic_attack):
         context = self._context_with_nodes("node-a")
@@ -3328,3 +3372,169 @@ class TestTAPConversationReset:
         ids = basic_attack._get_objective_conversation_ids(context=context)
 
         assert ids == ["node-a"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestTAPConversationsAreAllReachable:
+    """End to end, with real nodes: nothing the objective target served goes missing.
+
+    ``TestTAPConversationReset`` covers the pieces in isolation. This drives the
+    real ``_TreeOfAttacksNode`` so the wiring is covered too, which is where a
+    conversation actually goes missing: the per-turn rotation against a
+    single-turn target, and the branch a run walks away from.
+    """
+
+    def _run_and_collect(self, *, attack_builder, supports_multi_turn, depth, width, branching):
+        """Run TAP and return (ids the target served, ids the run can still name)."""
+        served: list[str] = []
+
+        attack = (
+            attack_builder.with_supports_multi_turn(supports_multi_turn)
+            .with_default_mocks()
+            .with_tree_params(tree_depth=depth, tree_width=width, branching_factor=branching)
+            .build()
+        )
+        objective_target = attack._objective_target
+        memory = CentralMemory.get_memory_instance()
+
+        async def record_and_reply(**kwargs):
+            conversation_id = kwargs.get("conversation_id")
+            reply = Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="assistant",
+                        original_value="response",
+                        converted_value="response",
+                        conversation_id=conversation_id,
+                    )
+                ]
+            )
+            if kwargs.get("target") is not objective_target:
+                return reply
+            served.append(conversation_id)
+            request = Message(
+                message_pieces=[
+                    MessagePiece(
+                        role="user",
+                        original_value="request",
+                        converted_value="request",
+                        conversation_id=conversation_id,
+                    )
+                ]
+            )
+            for message in (request, reply):
+                for piece in message.message_pieces:
+                    piece.not_in_memory = False
+                memory.add_message_to_memory(request=message)
+            return reply
+
+        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer.send_prompt_async = AsyncMock(side_effect=record_and_reply)
+        attack._prompt_normalizer = normalizer
+        attack._node_executor._prompt_normalizer = normalizer
+
+        return attack, served
+
+    async def _execute(self, attack, context):
+        async def score(node_self, *, response, objective):
+            node_self.objective_score = MagicMock(
+                spec=Score, get_value=MagicMock(return_value=0.1), score_metadata=None
+            )
+
+        with patch.object(
+            _TreeOfAttacksNode, "_generate_adversarial_prompt_async", new_callable=AsyncMock, return_value="prompt"
+        ):
+            with patch.object(_TreeOfAttacksNode, "_score_response_async", new=score):
+                await attack._setup_async(context=context)
+                return await attack._perform_async(context=context)
+
+    @pytest.mark.parametrize(
+        "supports_multi_turn, depth, width, branching",
+        [
+            pytest.param(False, 3, 1, 1, id="single_turn_rotates_per_turn"),
+            pytest.param(True, 3, 2, 2, id="multi_turn_branches_per_node"),
+        ],
+    )
+    async def test_every_conversation_the_target_served_stays_reachable(
+        self, attack_builder, supports_multi_turn, depth, width, branching
+    ):
+        attack, served = self._run_and_collect(
+            attack_builder=attack_builder,
+            supports_multi_turn=supports_multi_turn,
+            depth=depth,
+            width=width,
+            branching=branching,
+        )
+        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
+
+        result = await self._execute(attack, context)
+
+        assert served, "the run has to have sent something for this to mean anything"
+        # Nothing the target served may be left without a name: the teardown reset
+        # and the result readers both work from these two.
+        assert set(served) <= set(attack._get_objective_conversation_ids(context=context))
+        assert set(served) <= result.get_active_conversation_ids()
+
+    async def test_a_conversation_that_was_never_used_is_not_recorded(self, attack_builder):
+        attack, served = self._run_and_collect(
+            attack_builder=attack_builder, supports_multi_turn=False, depth=3, width=1, branching=1
+        )
+        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
+
+        result = await self._execute(attack, context)
+
+        # A node is constructed with a conversation id it rotates away from before
+        # its first send. That conversation has no messages, so recording it would
+        # put an empty conversation in front of the user. Checked on an unbranched
+        # tree, where every conversation that exists is one the target served;
+        # branching also duplicates conversations, which are real but never sent.
+        assert result.get_active_conversation_ids() == set(served)
+
+    async def test_the_context_and_the_result_agree(self, attack_builder):
+        attack, _ = self._run_and_collect(
+            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=2, branching=2
+        )
+        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
+
+        result = await self._execute(attack, context)
+
+        assert set(attack._get_objective_conversation_ids(context=context)) == result.get_active_conversation_ids()
+
+    async def test_the_winning_conversation_is_not_also_reported_as_pruned(self, attack_builder):
+        attack, served = self._run_and_collect(
+            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=2, branching=2
+        )
+        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
+
+        result = await self._execute(attack, context)
+
+        assert result.conversation_id, "the run has to have picked a best branch"
+        # Every conversation is recorded while the run is in flight, before there is
+        # any way to know which branch wins. The winner has to come back out.
+        assert result.conversation_id not in result.get_pruned_conversation_ids()
+        assert result.conversation_id in result.get_active_conversation_ids()
+
+    async def test_a_run_that_raises_still_names_everything_it_served(self, attack_builder):
+        """The path that matters most, because a run that blew up is the one holding connections."""
+        attack, served = self._run_and_collect(
+            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=3, branching=1
+        )
+        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
+
+        iterations = {"count": 0}
+        prepare = type(attack)._prepare_nodes_for_iteration_async
+
+        async def fail_on_the_second_iteration(self, context):
+            iterations["count"] += 1
+            if iterations["count"] >= 2:
+                raise ValueError("blew up mid-run")
+            await prepare(self, context=context)
+
+        with patch.object(type(attack), "_prepare_nodes_for_iteration_async", new=fail_on_the_second_iteration):
+            with pytest.raises(ValueError):
+                await self._execute(attack, context)
+
+        assert served, "the run has to have sent something for this to mean anything"
+        # No result is built on this path, so anything recorded only at result time
+        # would be lost, and teardown is the only hook that still runs.
+        assert set(served) <= set(attack._get_objective_conversation_ids(context=context))

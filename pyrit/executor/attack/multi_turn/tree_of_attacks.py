@@ -74,7 +74,7 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
     from pyrit.models.literals import PromptDataType
@@ -377,6 +377,7 @@ class _TreeOfAttacksNode:
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
+        report_objective_conversation: Callable[[str], None],
         use_score_as_feedback: bool = True,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
@@ -405,6 +406,10 @@ class _TreeOfAttacksNode:
                 whether prior media should travel back to the adversarial chat or forward to
                 the objective target, and fills adversarial-placeholder pieces in seed
                 messages. Typically shared across all nodes of the same attack.
+            report_objective_conversation (Callable[[str], None]): Called with each
+                objective-target conversation id this node sends on, as soon as the send
+                returns. The attack records them so a conversation stays nameable even
+                if the run ends before a result is built.
             use_score_as_feedback (bool): Whether subsequent adversarial prompts include
                 the objective score. Defaults to True.
             memory_labels (dict[str, str] | None): Labels for memory storage.
@@ -449,6 +454,9 @@ class _TreeOfAttacksNode:
         # Conversation tracking
         self.objective_target_conversation_id = str(uuid.uuid4())
         self.adversarial_chat_conversation_id = str(uuid.uuid4())
+        # Reports every objective-target conversation this node actually sends on, so
+        # the attack can record it while the run is still going.
+        self._report_objective_conversation = report_objective_conversation
 
         # Execution results (populated after send_prompt_async)
         self.completed = False
@@ -695,6 +703,11 @@ class _TreeOfAttacksNode:
                 send_context=self._prepended_history_send_context,
             )
 
+        # Report before returning. From here the target holds state for this
+        # conversation, and a single-turn rotation replaces the id on the next turn
+        # without telling anything else.
+        self._report_objective_conversation(self.objective_target_conversation_id)
+
         # Store the full response so subsequent turns can forward media when supported.
         self.last_response = response
         logger.debug(f"Node {self.node_id}: Received response from target")
@@ -773,6 +786,11 @@ class _TreeOfAttacksNode:
                 ),
                 send_context=self._prepended_history_send_context,
             )
+
+        # Report before returning. From here the target holds state for this
+        # conversation, and a single-turn rotation replaces the id on the next turn
+        # without telling anything else.
+        self._report_objective_conversation(self.objective_target_conversation_id)
 
         # Store the full response so subsequent turns can forward media when supported.
         self.last_response = response
@@ -967,6 +985,7 @@ class _TreeOfAttacksNode:
             attack_id=self._attack_id,
             attack_strategy_name=self._attack_strategy_name,
             modality_router=self._modality_router,
+            report_objective_conversation=self._report_objective_conversation,
             use_score_as_feedback=self._use_score_as_feedback,
             memory_labels=self._memory_labels,
             desired_response_prefix=self._desired_response_prefix,
@@ -1874,30 +1893,54 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         return self._create_failure_result(context)
 
-    def _get_objective_conversation_ids(self, *, context: TAPAttackContext) -> list[str]:
+    def _make_objective_conversation_recorder(self, *, context: TAPAttackContext) -> Callable[[str], None]:
         """
-        Collect the objective-target conversations across the whole tree.
+        Build the callback nodes use to report an objective-target conversation.
 
-        TAP keeps one objective conversation per node rather than a single one
-        on ``session``, so the surviving nodes and the best conversation are
-        collected alongside the pruned ones the base class already finds.
+        TAP keeps one conversation per node and, against a single-turn target, mints
+        a fresh id every turn. Recording them only when the result is built would
+        lose every conversation opened by a run that raises or is cancelled, which
+        are the runs most likely to leave a connection open. Recording as each send
+        returns means a conversation is nameable from the moment the target holds
+        state for it.
+
+        Args:
+            context (TAPAttackContext): The attack context to record onto.
+
+        Returns:
+            Callable[[str], None]: Recorder for one objective-target conversation id.
+        """
+
+        def record(conversation_id: str) -> None:
+            context.related_conversations.add(
+                ConversationReference(
+                    conversation_id=conversation_id,
+                    conversation_type=ConversationType.PRUNED,
+                )
+            )
+
+        return record
+
+    def _release_best_conversation(self, context: TAPAttackContext) -> None:
+        """
+        Stop reporting the winning branch as pruned.
+
+        Every conversation is recorded while the run is in flight, before there is
+        any way to know which branch will win. The one that does becomes
+        ``result.conversation_id``, so leaving it in ``related_conversations`` would
+        report it twice.
 
         Args:
             context (TAPAttackContext): The attack context.
-
-        Returns:
-            list[str]: Conversation ids to release, without duplicates.
         """
-        ids = [node.objective_target_conversation_id for node in context.nodes]
-        if context.best_conversation_id:
-            ids.append(context.best_conversation_id)
-
-        ids.extend(
-            ref.conversation_id
-            for ref in context.related_conversations
-            if ref.conversation_type == ConversationType.PRUNED
+        if not context.best_conversation_id:
+            return
+        context.related_conversations.discard(
+            ConversationReference(
+                conversation_id=context.best_conversation_id,
+                conversation_type=ConversationType.PRUNED,
+            )
         )
-        return list(dict.fromkeys(ids))
 
     async def _prepare_nodes_for_iteration_async(self, context: TAPAttackContext) -> None:
         """
@@ -2206,6 +2249,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_id=self.get_identifier(),
             attack_strategy_name=self.__class__.__name__,
             modality_router=self._modality_router,
+            report_objective_conversation=self._make_objective_conversation_recorder(context=context),
             use_score_as_feedback=self._attack_scoring_config.use_score_as_feedback,
             memory_labels=context.memory_labels,
             desired_response_prefix=self._configuration.desired_response_prefix,
@@ -2392,6 +2436,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         from the top node, calculates tree statistics, and populates all TAP-specific
         metadata fields.
 
+        Drops the winning branch from ``context.related_conversations`` before
+        copying it onto the result, since which branch wins is only known once the
+        run is over. Both endings come through here, so that happens exactly once.
+
         Args:
             context (TAPAttackContext): The attack context containing the final state
                 after execution, including best conversation ID, score, and tree visualization.
@@ -2403,6 +2451,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 about the attack execution, including conversation ID, objective, outcome,
                 outcome reason, executed turns, last response, last score, and additional metadata.
         """
+        self._release_best_conversation(context)
+
         last_response = self._get_result_response(
             conversation_id=context.best_conversation_id,
             score=context.best_objective_score,
