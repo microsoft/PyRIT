@@ -62,6 +62,11 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert self.pipeline.count("timeoutInMinutes: 120") == 2
         assert self.pipeline.count("scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'") == 2
 
+    def test_service_connection_is_not_shadowed_by_common_variable_group(self):
+        assert "copyritAzureServiceConnection: 'copyrit-gui-azure'" in self.pipeline
+        assert self.pipeline.count("azureSubscription: '$(copyritAzureServiceConnection)'") == 3
+        assert "$(azureServiceConnection)" not in self.pipeline
+
     def test_production_remains_opt_in_and_independently_approved(self):
         assert "job: ValidateProdConfiguration" in self.pipeline
         assert "copyrit-gui-prod must define prodApprovers" in self.pipeline
