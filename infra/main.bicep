@@ -24,6 +24,7 @@
 //                  entraClientId=<app-registration-client-id> \
 //                  entraTenantId=<tenant-id> \
 //                  allowedGroupObjectIds=<comma-separated-entra-group-ids> \
+//                  adminGroupObjectId=<admin-entra-group-id> \
 //                  allowedCidr='<your-corp-vpn-cidr>' \
 //                  sqlServerFqdn=<your-server>.database.windows.net \
 //                  sqlDatabaseName=<your-database> \
@@ -57,6 +58,10 @@ var normalizedAllowedGroupObjectIds = filter(
   map(split(allowedGroupObjectIds, ','), groupId => trim(groupId)),
   groupId => !empty(groupId)
 )
+
+@description('Object ID of the Entra security group allowed to manage backend configuration')
+@minLength(1)
+param adminGroupObjectId string
 
 @description('CIDR range allowed to reach the app (e.g., your corp VPN CIDR). Empty = no IP restriction, all traffic allowed.')
 param allowedCidr string = ''
@@ -482,6 +487,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'ENTRA_ALLOWED_GROUP_IDS'
               value: join(normalizedAllowedGroupObjectIds, ',')
+            }
+            {
+              name: 'ENTRA_ADMIN_GROUP_ID'
+              value: trim(adminGroupObjectId)
             }
             // OTel: point the SDK at the ACA managed agent (localhost sidecar)
             {

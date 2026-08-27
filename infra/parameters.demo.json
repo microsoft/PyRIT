@@ -19,6 +19,9 @@
     "allowedGroupObjectIds": {
       "value": "REPLACE_GROUP_OBJECT_IDS"
     },
+    "adminGroupObjectId": {
+      "value": "REPLACE_ADMIN_GROUP_OBJECT_ID"
+    },
     "allowedCidr": {
       "value": ""
     },

@@ -13,11 +13,12 @@ from starlette.responses import JSONResponse
 from pyrit.backend.middleware.auth import AuthenticatedUser, AuthenticationError, EntraAuthMiddleware
 
 
-def _make_middleware(*, allowed_group_ids: str = "allowed-group") -> EntraAuthMiddleware:
+def _make_middleware(*, allowed_group_ids: str = "allowed-group", admin_group_id: str = "") -> EntraAuthMiddleware:
     environment = {
         "ENTRA_TENANT_ID": "test-tenant",
         "ENTRA_CLIENT_ID": "test-client",
         "ENTRA_ALLOWED_GROUP_IDS": allowed_group_ids,
+        "ENTRA_ADMIN_GROUP_ID": admin_group_id,
     }
     with patch.dict("os.environ", environment, clear=False):
         return EntraAuthMiddleware(MagicMock())
@@ -84,6 +85,23 @@ async def test_authenticate_with_graph_resolves_groups_when_restricted() -> None
     assert result.groups == ["group-1"]
     assert client.post.call_args.args[0] == EntraAuthMiddleware._GRAPH_CHECK_MEMBER_GROUPS_URL
     assert client.post.call_args.kwargs["json"] == {"groupIds": ["group-1"]}
+
+
+async def test_authenticate_with_graph_marks_admin_membership() -> None:
+    middleware = _make_middleware(allowed_group_ids="allowed-group", admin_group_id="admin-group")
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get.return_value = _response(
+        status_code=200,
+        data={"id": "admin-1", "displayName": "Admin User", "mail": "admin@example.com"},
+    )
+    client.post.return_value = _response(status_code=200, data={"value": ["admin-group"]})
+
+    with patch("pyrit.backend.middleware.auth.httpx.AsyncClient", return_value=_client_context(client)):
+        result = await middleware._authenticate_with_graph_async(token="graph-token")
+
+    assert result.is_admin is True
+    assert middleware._is_authorized(result) is True
+    assert client.post.call_args.kwargs["json"] == {"groupIds": ["admin-group", "allowed-group"]}
 
 
 @pytest.mark.parametrize(
@@ -196,10 +214,16 @@ async def test_authenticate_request_denies_and_does_not_cache_unauthorized_user(
 
 
 async def test_authenticate_request_caches_successful_authorization() -> None:
-    middleware = _make_middleware()
+    middleware = _make_middleware(admin_group_id="admin-group")
     request = MagicMock()
     request.headers = {"Authorization": "bearer graph-token"}
-    user = AuthenticatedUser(oid="user-1", name="Test User", email="test@example.com", groups=["allowed-group"])
+    user = AuthenticatedUser(
+        oid="user-1",
+        name="Test User",
+        email="test@example.com",
+        groups=["allowed-group", "admin-group"],
+        is_admin=True,
+    )
 
     with patch.object(
         middleware,
@@ -212,6 +236,7 @@ async def test_authenticate_request_caches_successful_authorization() -> None:
 
     assert first_result == user
     assert second_result == user
+    assert second_result.is_admin is True
     authenticate.assert_awaited_once_with(token="graph-token")
 
 

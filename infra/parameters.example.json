@@ -17,6 +17,9 @@
     "allowedGroupObjectIds": {
       "value": "YOUR_ENTRA_GROUP_OBJECT_IDS"
     },
+    "adminGroupObjectId": {
+      "value": "YOUR_ADMIN_ENTRA_GROUP_OBJECT_ID"
+    },
     "allowedCidr": {
       "value": ""
     },

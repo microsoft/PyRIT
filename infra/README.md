@@ -61,7 +61,8 @@ Production is opt-in via `deployToProd: true`.
   Microsoft Graph-backed middleware on the backend. The frontend sends a delegated
   Graph token, and the backend authenticates it through Graph `/me`. PKCE (public
   client) requires no client secrets or certificates.
-- **Authorization**: Entra group check via `allowedGroupObjectIds` param. Requires
+- **Authorization**: Entra group checks via `allowedGroupObjectIds` for application access
+  and `adminGroupObjectId` for backend configuration routes. Requires
   delegated Graph `User.Read`; the backend calls `/me/checkMemberGroups` and compares
   the returned transitive memberships with the configured group IDs. Each security
   group must also be assigned to the enterprise app (see Prerequisites §3). Authenticated
@@ -191,8 +192,9 @@ az rest --method PATCH \
 
 ### 3. Entra security groups (required for group-based authorization)
 
-Create one or more security groups for authorized users. Multiple groups can be
-specified as comma-separated IDs in `allowedGroupObjectIds`.
+Create one or more security groups for authorized users and a security group for
+configuration administrators. Multiple user groups can be specified as comma-separated
+IDs in `allowedGroupObjectIds`; set the admin group ID in `adminGroupObjectId`.
 
 ```bash
 # Create security group for authorized users
@@ -203,6 +205,11 @@ az ad group create --display-name "MyApp-Users" --mail-nickname myapp-users
 # Get the group Object ID (use this as allowedGroupObjectIds)
 GROUP_ID=$(az ad group show --group "MyApp-Users" --query id -o tsv)
 echo "allowedGroupObjectIds: $GROUP_ID"
+
+# Create or retrieve the admin group Object ID (use this as adminGroupObjectId)
+az ad group create --display-name "MyApp-Admins" --mail-nickname myapp-admins
+ADMIN_GROUP_ID=$(az ad group show --group "MyApp-Admins" --query id -o tsv)
+echo "adminGroupObjectId: $ADMIN_GROUP_ID"
 
 # Add users to the group
 az ad group member add --group "MyApp-Users" --member-id <user-object-id>
@@ -397,7 +404,8 @@ az deployment group create \
    ```
 
 4. **Manage access** — Add or remove users via Entra security groups
-   (`allowedGroupObjectIds`). Each group must also be assigned to the enterprise app.
+  (`allowedGroupObjectIds` and `adminGroupObjectId`). Each group must also be assigned
+  to the enterprise app.
 
 ## Access the GUI
 

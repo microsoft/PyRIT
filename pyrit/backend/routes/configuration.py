@@ -6,8 +6,9 @@
 import os
 
 from azure.core.exceptions import ResourceNotFoundError
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from pyrit.backend.middleware.auth import AuthenticatedUser
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.configuration import (
     ConfigurationFileContent,
@@ -19,7 +20,20 @@ from pyrit.backend.models.configuration import (
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 
-router = APIRouter(prefix="/config", tags=["config"])
+
+def _require_admin(request: Request) -> None:
+    """Require an administrator when authentication is enabled."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return
+    if not isinstance(user, AuthenticatedUser) or not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access is required",
+        )
+
+
+router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(_require_admin)])
 
 
 def _get_configuration_file_service(request: Request) -> ConfigurationFileService:

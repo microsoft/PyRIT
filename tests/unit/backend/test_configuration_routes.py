@@ -11,7 +11,12 @@ from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.routes.configuration import _get_configuration_file_service, _get_environment_file_service
+from pyrit.backend.middleware.auth import AuthenticatedUser
+from pyrit.backend.routes.configuration import (
+    _get_configuration_file_service,
+    _get_environment_file_service,
+    _require_admin,
+)
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 
@@ -47,6 +52,36 @@ def test_get_environment_file_service_raises_when_unavailable() -> None:
         _get_environment_file_service(request)
 
     assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+def test_require_admin_allows_admin_user() -> None:
+    """Test that authenticated administrators can use configuration routes."""
+    request = MagicMock()
+    request.state.user = AuthenticatedUser(
+        oid="admin-1",
+        name="Admin User",
+        email="admin@example.com",
+        groups=["admin-group"],
+        is_admin=True,
+    )
+
+    _require_admin(request)
+
+
+def test_require_admin_rejects_non_admin_user() -> None:
+    """Test that authenticated non-administrators cannot use configuration routes."""
+    request = MagicMock()
+    request.state.user = AuthenticatedUser(
+        oid="user-1",
+        name="Test User",
+        email="test@example.com",
+        groups=["allowed-group"],
+    )
+
+    with pytest.raises(HTTPException, match="Administrator access is required") as exc_info:
+        _require_admin(request)
+
+    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
 
 def test_get_configuration_file_returns_content(client: TestClient) -> None:

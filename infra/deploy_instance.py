@@ -25,7 +25,8 @@ Usage:
         --location eastus2 \\
         --acr-name myacr \\
         --container-image myacr.azurecr.io/pyrit:abc1234 \\
-        --allowed-groups "group-oid-1,group-oid-2"
+        --allowed-groups "group-oid-1,group-oid-2" \
+        --admin-group "admin-group-oid"
 
 """
 
@@ -762,6 +763,7 @@ def deploy_bicep(
     tenant_id: str,
     client_id: str,
     group_ids: str,
+    admin_group_id: str,
     sql_server_fqdn: str,
     sql_database_name: str,
     kv_resource_id: str,
@@ -786,6 +788,7 @@ def deploy_bicep(
         tenant_id (str): The Entra tenant ID.
         client_id (str): The Entra app registration client ID.
         group_ids (str): Comma-separated group object IDs.
+        admin_group_id (str): Admin group object ID.
         sql_server_fqdn (str): The SQL server FQDN.
         sql_database_name (str): The SQL database name.
         kv_resource_id (str): The Key Vault resource ID (kept for the
@@ -808,6 +811,7 @@ def deploy_bicep(
         "entraTenantId": {"value": tenant_id},
         "entraClientId": {"value": client_id},
         "allowedGroupObjectIds": {"value": group_ids},
+        "adminGroupObjectId": {"value": admin_group_id},
         "sqlServerFqdn": {"value": sql_server_fqdn},
         "sqlDatabaseName": {"value": sql_database_name},
         "keyVaultResourceId": {"value": kv_resource_id},
@@ -1106,6 +1110,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated Entra group object IDs to grant access",
     )
     parser.add_argument(
+        "--admin-group",
+        required=True,
+        help="Entra group object ID allowed to manage backend configuration",
+    )
+    parser.add_argument(
         "--owner-tag",
         default="",
         help=(
@@ -1169,9 +1178,13 @@ def main(args: list[str] | None = None) -> int:
     storage_account_name = _storage_account_name(instance)
     entra_app_name = f"CoPyRIT GUI ({instance})"
     group_ids = [g.strip() for g in parsed.allowed_groups.split(",") if g.strip()]
+    admin_group_id = parsed.admin_group.strip()
 
     if not group_ids:
         logger.error("--allowed-groups must contain at least one Entra group object ID")
+        return 1
+    if not admin_group_id:
+        logger.error("--admin-group must contain an Entra group object ID")
         return 1
 
     # Validate Azure resource name length constraints
@@ -1212,6 +1225,7 @@ def main(args: list[str] | None = None) -> int:
         logger.info("Storage account: %s (container: %s)", storage_account_name, _STORAGE_CONTAINER_NAME)
         logger.info("Entra app: %s", entra_app_name)
         logger.info("Allowed groups: %s", group_ids)
+        logger.info("Admin group: %s", admin_group_id)
         logger.info("Env file: %s", env_file)
         logger.info("Container image: %s", parsed.container_image)
         logger.info("PyRIT config file URI: %s", parsed.pyrit_config_file_uri or "(generated at startup)")
@@ -1241,7 +1255,7 @@ def main(args: list[str] | None = None) -> int:
         )
 
         # Step 4: Assign groups to enterprise app
-        assign_groups_to_app(sp_id=entra["sp_id"], group_ids=group_ids)
+        assign_groups_to_app(sp_id=entra["sp_id"], group_ids=[*group_ids, admin_group_id])
 
         # Step 5: Create SQL server + database
         sql = create_sql_server_and_db(
@@ -1307,6 +1321,7 @@ def main(args: list[str] | None = None) -> int:
             tenant_id=entra["tenant_id"],
             client_id=entra["app_id"],
             group_ids=",".join(group_ids),
+            admin_group_id=admin_group_id,
             sql_server_fqdn=sql["server_fqdn"],
             sql_database_name=sql["database_name"],
             kv_resource_id=kv_id,
