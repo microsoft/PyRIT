@@ -408,6 +408,7 @@ class TestRegistrationGate:
         names = registry.get_class_names()
         assert names
         assert "SelfAskRefusalScorer" in names
+        assert "_LegacyMessageScorerAdapter" not in names
 
     def test_is_llm_based_matches_target_reference(self, registry: ScorerRegistry) -> None:
         from pyrit.models.identifiers import ScorerIdentifier

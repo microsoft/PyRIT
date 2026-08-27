@@ -14,7 +14,7 @@
 # %% [markdown]
 # Scorers are composable. Rather than building one complex scorer, combine small ones:
 # aggregate several true/false scorers, invert a result, convert a float-scale score to a
-# boolean with a threshold, or lift any scorer to evaluate a whole conversation.
+# boolean with a threshold, or lift a message scorer to evaluate a whole conversation.
 #
 # These wrappers are themselves scorers, so they plug into attacks and the batch scorer
 # exactly like the leaf scorers on the [True/False](1_true_false_scorers.ipynb) and
