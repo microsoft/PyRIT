@@ -104,6 +104,8 @@ jobs:
       scriptType: 'bash'
       scriptLocation: 'inlineScript'
       inlineScript: |
+        set -e
+
         # Prefetch token for Cognitive Services before ID token expires (60-90 minute validity)
         az account get-access-token --scope https://cognitiveservices.azure.com/.default --output none
         echo "Cognitive Services access token cached successfully."
