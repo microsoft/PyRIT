@@ -1490,6 +1490,78 @@ class TestLegacyDirectScorerSubclass:
 
         assert len(scores) == 2
 
+    @staticmethod
+    def _build_legacy_family_scorer_class():
+        class LegacyFamilyScorer(TrueFalseScorer):
+            def _build_identifier(self) -> ComponentIdentifier:
+                return self._create_identifier()
+
+            async def _score_piece_async(
+                self, message_piece: MessagePiece, *, objective: str | None = None
+            ) -> list[Score]:
+                return [Score(score_value="true", score_type="true_false", objective=objective)]
+
+        return LegacyFamilyScorer
+
+    async def test_legacy_family_scorer_keeps_message_keyword(self, patch_central_database):
+        scorer = self._build_legacy_family_scorer_class()()
+        message = store_message(
+            MessagePiece(role="assistant", original_value="legacy", conversation_id="legacy-kw").to_message()
+        )
+
+        with pytest.warns(DeprecationWarning):
+            scores = await scorer.score_async(message=message, objective="legacy objective")
+
+        assert scores[0].get_value() is True
+        assert scores[0].objective == "legacy objective"
+
+    async def test_legacy_family_scorer_keeps_score_message_async(self, patch_central_database):
+        scorer = self._build_legacy_family_scorer_class()()
+        message = store_message(
+            MessagePiece(role="assistant", original_value="legacy", conversation_id="legacy-msg").to_message()
+        )
+
+        scores = await scorer.score_message_async(message=message)
+
+        assert scores[0].get_value() is True
+
+    async def test_legacy_family_scorer_keeps_batch_api(self, patch_central_database):
+        scorer = self._build_legacy_family_scorer_class()()
+        messages = [
+            store_message(
+                MessagePiece(
+                    role="assistant", original_value=f"legacy {index}", conversation_id=f"batch-{index}"
+                ).to_message()
+            )
+            for index in range(2)
+        ]
+
+        scores = await scorer.score_prompts_batch_async(messages=messages)
+
+        assert len(scores) == 2
+
+    async def test_scorer_score_response_async_still_dispatches(self, patch_central_database):
+        scorer = MockScorer()
+        message = store_message(
+            MessagePiece(role="assistant", original_value="response", conversation_id="legacy-response").to_message()
+        )
+
+        with pytest.warns(DeprecationWarning, match="Scorer.score_response_async"):
+            results = await Scorer.score_response_async(response=message, objective_scorer=scorer)
+
+        assert len(results["objective_scores"]) == 1
+
+    async def test_scorer_score_response_multiple_scorers_async_still_dispatches(self, patch_central_database):
+        scorer = MockScorer()
+        message = store_message(
+            MessagePiece(role="assistant", original_value="response", conversation_id="legacy-multi").to_message()
+        )
+
+        with pytest.warns(DeprecationWarning, match="score_response_multiple_scorers_async"):
+            scores = await Scorer.score_response_multiple_scorers_async(response=message, scorers=[scorer])
+
+        assert len(scores) == 1
+
 
 # Tests for get_identifier and identifier
 

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
 
+    from pyrit.models import ChatMessageRole
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
@@ -114,6 +115,67 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
             cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
 
     cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+    _lend_legacy_message_api(cls)
+
+
+async def _legacy_score_prepared_message_async(
+    self: Scorer,
+    *,
+    message: Message,
+    expectation: ScoringExpectation | None,
+) -> list[Score]:
+    """
+    Run a pre-2.0 scorer body over a message the compatibility adapter already prepared.
+
+    Returns:
+        list[Score]: The scores the legacy scorer body produced.
+    """
+    legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
+    scores: list[Score] = await legacy_score_async(message, objective=expectation.objective if expectation else None)
+    return scores
+
+
+def _lend_legacy_message_api(cls: type) -> None:
+    """
+    Give a pre-2.0 subclass back the message entry points its family base used to carry.
+
+    ``TrueFalseScorer`` and ``FloatScaleScorer`` no longer run the message pipeline, so a
+    subclass written against the pre-2.0 shape would otherwise lose ``score_async(message=...)``,
+    ``score_message_async``, ``score_prompts_batch_async`` and its default validator. Lend it
+    the same compatibility adapter the generic wrapping scorers use, along with the
+    message-policy defaults its family base used to declare.
+    """
+    from pyrit.score.message_scorer import LegacyMessageScorerCompatibility
+    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+
+    def defines_before_scorer(name: str) -> bool:
+        for base in cls.__mro__:
+            if base is Scorer:
+                return False
+            if name in base.__dict__:
+                return True
+        return False
+
+    lent: dict[str, Any] = {
+        name: LegacyMessageScorerCompatibility.__dict__[name]
+        for name in (
+            "score_async",
+            "score_message_async",
+            "score_prompts_batch_async",
+            "_get_message_compatibility_adapter",
+            "_score_nested_message_compatibility_async",
+        )
+    }
+    lent["_score_prepared_message_compatibility_async"] = _legacy_score_prepared_message_async
+    lent["score_blocked_content"] = True
+    lent["raise_if_scorer_blocks"] = True
+    # The pre-2.0 family base defaulted the validator, so a subclass that passes none still
+    # needs one. An instance assignment in the subclass shadows this class-level default.
+    lent["_validator"] = ScorerPromptValidator()
+
+    for name, member in lent.items():
+        if not defines_before_scorer(name):
+            setattr(cls, name, member)
 
 
 class Scorer(Identifiable, abc.ABC):
@@ -612,6 +674,71 @@ class Scorer(Identifiable, abc.ABC):
         return await self.score_async(
             scorable=ContentScorable(value=image_path, data_type="image_path"),
             expectation=ScoringExpectation(objective=objective),
+        )
+
+    @staticmethod
+    async def score_response_async(
+        *,
+        response: Message,
+        objective_scorer: Scorer | None = None,
+        auxiliary_scorers: list[Scorer] | None = None,
+        role_filter: ChatMessageRole = "assistant",
+        objective: str | None = None,
+        skip_on_error_result: bool = True,
+    ) -> dict[str, list[Score]]:
+        """
+        Score a response through the message family. Deprecated.
+
+        Response scoring is message-only policy, so it moved to ``MessageScorer``.
+
+        Returns:
+            dict[str, list[Score]]: Auxiliary and objective scores, keyed by
+                ``auxiliary_scores`` and ``objective_scores``.
+        """
+        from pyrit.score.message_scorer import MessageScorer
+
+        print_deprecation_message(
+            old_item="Scorer.score_response_async",
+            new_item="MessageScorer.score_response_async",
+            removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+        )
+        return await MessageScorer.score_response_async(
+            response=response,
+            objective_scorer=objective_scorer,
+            auxiliary_scorers=auxiliary_scorers,
+            role_filter=role_filter,
+            objective=objective,
+            skip_on_error_result=skip_on_error_result,
+        )
+
+    @staticmethod
+    async def score_response_multiple_scorers_async(
+        *,
+        response: Message,
+        scorers: list[Scorer],
+        role_filter: ChatMessageRole = "assistant",
+        objective: str | None = None,
+        skip_on_error_result: bool = True,
+    ) -> list[Score]:
+        """
+        Score a response with several scorers through the message family. Deprecated.
+
+        Returns:
+            list[Score]: Every score the scorers produced.
+        """
+        from pyrit.score.message_scorer import MessageScorer
+
+        print_deprecation_message(
+            old_item="Scorer.score_response_multiple_scorers_async",
+            new_item="MessageScorer.score_response_multiple_scorers_async",
+            removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+        )
+        return await MessageScorer.score_response_multiple_scorers_async(
+            response=response,
+            scorers=scorers,
+            role_filter=role_filter,
+            objective=objective,
+            skip_on_error_result=skip_on_error_result,
         )
 
     async def score_batch_async(

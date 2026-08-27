@@ -160,18 +160,22 @@ async def test_file_content_is_copied_hashed_shared_and_resolvable(
     assert Path(resolved.get_piece().converted_value).read_bytes() == image_bytes
 
 
-async def test_file_content_missing_source_fails_before_database_write(
+async def test_file_content_missing_source_keeps_the_score_and_drops_the_anchor(
     sqlite_instance: MemoryInterface,
     tmp_path: Path,
 ):
+    """An unreadable source must not destroy an already-computed score (score_image_async path)."""
     missing = tmp_path / "missing.wav"
-    score = _content_score(ContentScorable(value=str(missing), data_type="audio_path"))
+    scorable = ContentScorable(value=str(missing), data_type="audio_path")
+    score = _content_score(scorable)
 
-    with pytest.raises(FileNotFoundError, match="missing.wav"):
-        await sqlite_instance.add_scores_to_memory_async(scores=[score])
+    await sqlite_instance.add_scores_to_memory_async(scores=[score])
 
-    assert sqlite_instance.get_scores(score_ids=[str(score.id)]) == []
+    persisted = sqlite_instance.get_scores(score_ids=[str(score.id)])
+    assert len(persisted) == 1
+    assert persisted[0].scorable is None
     assert sqlite_instance._query_entries(ScorableContentEntry) == []
+    assert score.scorable is scorable
 
 
 async def test_file_content_uses_configured_azure_results_storage(

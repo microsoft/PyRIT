@@ -162,8 +162,8 @@ class MessageScorer(Scorer):
     Subclasses implement ``_score_async``, which still receives a ``Message``.
     """
 
-    #: When False, a blocked response from the scorer's own LLM produces the scorer
-    #: family's neutral fallback score instead of raising.
+    #: When False, a blocked response from the scorer's own LLM produces an undetermined
+    #: score instead of raising.
     raise_if_scorer_blocks: bool = True
 
     #: When True, a blocked response that still carries content the target emitted before the
@@ -749,9 +749,9 @@ class MessageScorer(Scorer):
             )
         except ScorerLLMResponseBlockedException as e:
             # The scorer's own LLM response was content-filtered. By default this is a real
-            # error and propagates; when raise_if_scorer_blocks is False, fall back to the
-            # scorer's type default (False / 0.0) instead. The decision lives here in the
-            # scorer, not the transport (see doc/code/framework.md).
+            # error and propagates; when raise_if_scorer_blocks is False, no verdict was
+            # reached, so the score is undetermined rather than a definitive negative. The
+            # decision lives here in the scorer, not the transport (see doc/code/framework.md).
             if self.raise_if_scorer_blocks:
                 e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
                 e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
@@ -1379,6 +1379,39 @@ async def score_nested_message_compatibility_async(
     )
 
 
+async def score_prepared_message_compatibility_async(
+    *,
+    scorer: Scorer,
+    message: Message,
+    expectation: ScoringExpectation | None,
+) -> list[Score]:
+    """
+    Hand an already prepared message to a message-capable scorer tree.
+
+    The caller has already applied message policy, so this skips straight to the scorer's
+    transformation and leaves persistence to the caller.
+
+    Returns:
+        list[Score]: Scores produced without persistence.
+
+    Raises:
+        TypeError: If the scorer has no message-capable compatibility path.
+    """
+    if isinstance(scorer, MessageScorer):
+        return await scorer._score_prepared_message_async(
+            message=message,
+            expectation=expectation,
+        )
+    if isinstance(scorer, LegacyMessageScorerCompatibility):
+        return await scorer._score_prepared_message_compatibility_async(
+            message=message,
+            expectation=expectation,
+        )
+    raise TypeError(
+        f"{type(scorer).__name__} is not message-capable. Use the wrapper's scorable API for non-message scorers."
+    )
+
+
 class _LegacyMessageScorerAdapter(MessageScorer):
     """Run message-only compatibility policy for a generic wrapping scorer."""
 
@@ -1387,7 +1420,9 @@ class _LegacyMessageScorerAdapter(MessageScorer):
 
         self._scorer = scorer
         super().__init__(
-            validator=ScorerPromptValidator(),
+            # A pre-2.0 scorer carries its own validator; keep it so the piece rules it was
+            # written with still decide what this scorer reads.
+            validator=getattr(scorer, "_validator", None) or ScorerPromptValidator(),
             chat_target=scorer.get_chat_target(),
         )
         self.score_blocked_content = score_blocked_content_enabled(scorer=scorer)

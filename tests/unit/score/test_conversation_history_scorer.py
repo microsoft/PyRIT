@@ -11,11 +11,15 @@ from pyrit.memory import CentralMemory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score import (
     ContentScorable,
+    FloatScaleThresholdScorer,
     MessageScorable,
     MessageScorer,
     MessageScoringOptions,
     Scorer,
     SelfAskGeneralFloatScaleScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
     create_conversation_scorer,
 )
 from pyrit.score.conversation_scorer import ConversationScorer
@@ -408,16 +412,34 @@ def test_factory_uses_default_validator():
 
 
 def test_factory_raises_error_for_unsupported_scorer_type():
-    """Test that factory raises ValueError for scorers that are not FloatScaleScorer or TrueFalseScorer."""
+    """Test that factory raises ValueError for scorers outside the true/false and float-scale families."""
     unsupported_scorer = MockUnsupportedScorer()
 
     with pytest.raises(
         ValueError,
-        match=(
-            "Unsupported scorer type.*Scorer must be an instance of MessageFloatScaleScorer or MessageTrueFalseScorer"
-        ),
+        match="Unsupported scorer type.*must be message-capable and belong to the true/false or float-scale family",
     ):
         create_conversation_scorer(scorer=unsupported_scorer)
+
+
+@pytest.mark.parametrize(
+    "make_wrapper",
+    [
+        lambda: TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[MockTrueFalseScorer()]),
+        lambda: TrueFalseInverterScorer(scorer=MockTrueFalseScorer()),
+        lambda: FloatScaleThresholdScorer(scorer=MockFloatScaleScorer(), threshold=0.5),
+    ],
+    ids=["composite", "inverter", "threshold"],
+)
+def test_factory_accepts_generic_wrapper_scorers(make_wrapper):
+    """Composite, inverter, and threshold wrappers reach messages through the compatibility mixin."""
+    wrapper = make_wrapper()
+
+    conv_scorer = create_conversation_scorer(scorer=wrapper)
+
+    assert isinstance(conv_scorer, MessageTrueFalseScorer)
+    assert isinstance(conv_scorer, ConversationScorer)
+    assert conv_scorer._get_wrapped_scorer() is wrapper
 
 
 def test_factory_creates_unique_instances():
@@ -444,7 +466,7 @@ def test_get_wrapped_scorer_raises_when_wrapped_scorer_reassigned_to_non_scorer(
 
     conv_scorer._wrapped_scorer = "not-a-scorer"  # type: ignore[assignment]
 
-    with pytest.raises(TypeError, match="Wrapped conversation scorer must inherit from MessageScorer"):
+    with pytest.raises(TypeError, match="Wrapped conversation scorer must be message-capable"):
         conv_scorer._get_wrapped_scorer()
 
 
