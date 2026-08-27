@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.backend import pyrit_backend
-from pyrit.backend.main import app
 
 
 class TestParseArgs:
@@ -125,22 +124,19 @@ class TestMain:
 
 
 class TestRunServer:
-    """Tests for the managed uvicorn server loop."""
+    """Tests for uvicorn startup."""
 
-    @patch("uvicorn.Server")
-    def test_restart_callback_starts_new_server(self, mock_server_type: MagicMock) -> None:
-        first_server = MagicMock()
-        second_server = MagicMock()
-        first_server.serve = AsyncMock(side_effect=lambda: app.state.restart_backend())
-        second_server.serve = AsyncMock()
-        mock_server_type.side_effect = [first_server, second_server]
-
+    @patch("uvicorn.run")
+    def test_starts_uvicorn_without_reload(self, mock_run: MagicMock) -> None:
         pyrit_backend._run_server(host="localhost", port=8000, log_level="warning", reload=False)
 
-        assert mock_server_type.call_count == 2
-        assert first_server.should_exit is True
-        first_server.serve.assert_awaited_once_with()
-        second_server.serve.assert_awaited_once_with()
+        mock_run.assert_called_once_with(
+            "pyrit.backend.main:app",
+            host="localhost",
+            port=8000,
+            log_level="warning",
+            reload=False,
+        )
 
     @patch("uvicorn.run")
     def test_reload_uses_uvicorn_reloader(self, mock_run: MagicMock) -> None:

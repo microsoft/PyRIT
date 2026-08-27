@@ -188,7 +188,7 @@ export default function EnvironmentFiles() {
           {selectedFile && selectedFileIsLoaded && (
             <Field
               className={styles.editorField}
-              label={selectedFile.name}
+              label={selectedFile.path}
               hint={hasUnsavedChanges ? 'Unsaved changes' : 'No unsaved changes'}
             >
               <DotenvEditor

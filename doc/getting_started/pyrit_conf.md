@@ -155,7 +155,7 @@ With this configuration, PyRIT reads and writes scripts directly under the `cust
 
 ### `initialization_scripts`
 
-Local paths or Azure Blob URIs to custom Python scripts containing `PyRITInitializer` subclasses. Local paths can be absolute or relative to the current working directory. Blob URIs may include a SAS token; URIs without one authenticate with `DefaultAzureCredential`.
+Local paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.
 
 | Value             | Behavior                           |
 | ----------------- | ---------------------------------- |
@@ -167,7 +167,6 @@ Local paths or Azure Blob URIs to custom Python scripts containing `PyRITInitial
 initialization_scripts:
   - /path/to/my_custom_initializer.py
   - ./local_initializer.py
-  - https://account.blob.core.windows.net/scripts/cloud_initializer.py
 ```
 
 ### `env_files`

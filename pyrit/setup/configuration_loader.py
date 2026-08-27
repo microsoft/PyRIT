@@ -22,13 +22,7 @@ from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
 from pyrit.setup.environment_loading import validate_env_akv_strict
-from pyrit.setup.initialization import (
-    AZURE_SQL,
-    IN_MEMORY,
-    SQLITE,
-    initialize_pyrit_async,
-    is_azure_blob_script_uri,
-)
+from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async
 
 if TYPE_CHECKING:
     from pyrit.setup.pyrit_initializer import PyRITInitializer
@@ -563,7 +557,7 @@ class ConfigurationLoader(YamlLoadable):
         if not configs:
             return resolved
 
-        registry = InitializerRegistry()
+        registry = InitializerRegistry.get_registry_singleton()
 
         logging.getLogger(__name__).info("Running %d initializer(s)...", len(configs))
 
@@ -580,13 +574,13 @@ class ConfigurationLoader(YamlLoadable):
 
         return resolved
 
-    def resolve_initialization_scripts(self) -> Sequence[str | pathlib.Path] | None:
+    def resolve_initialization_scripts(self) -> Sequence[pathlib.Path] | None:
         """
         Resolve initialization script paths.
 
         Returns:
             None if field is None (use defaults), empty list if field is [],
-            or a sequence of resolved Path objects and preserved Azure Blob URIs.
+            or a sequence of resolved Path objects.
         """
         # None means "use defaults" - return None to signal this
         if self.initialization_scripts is None:
@@ -596,12 +590,8 @@ class ConfigurationLoader(YamlLoadable):
         if len(self.initialization_scripts) == 0:
             return list[pathlib.Path]()
 
-        resolved: list[str | pathlib.Path] = []
+        resolved: list[pathlib.Path] = []
         for script_str in self.initialization_scripts:
-            if is_azure_blob_script_uri(script_str):
-                resolved.append(script_str)
-                continue
-
             script_path = pathlib.Path(script_str)
             if not script_path.is_absolute():
                 script_path = pathlib.Path.cwd() / script_path

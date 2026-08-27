@@ -66,6 +66,7 @@ describe('CustomInitializers', () => {
     const editor = screen.getByLabelText('Python source')
     expect(editor).toBeDisabled()
     expect(editor).toHaveValue('def initialize():\n    pass')
+    expect(screen.getByText(ITEMS[0].source, { selector: 'label' })).toBeInTheDocument()
   })
 
   it('should select a custom initializer from the file navigation', async () => {
@@ -79,7 +80,7 @@ describe('CustomInitializers', () => {
     await user.click(screen.getByRole('button', { name: 'second_target' }))
 
     expect(screen.getByLabelText('Python source')).toHaveValue('def initialize_second():\n    pass')
-    expect(screen.getByText(ITEMS[1].source)).toBeInTheDocument()
+  expect(screen.getByText(ITEMS[1].source, { selector: 'label' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'second_target' })).toHaveAttribute('aria-current', 'page')
   })
 

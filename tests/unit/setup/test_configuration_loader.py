@@ -7,12 +7,14 @@ from unittest import mock
 
 import pytest
 
+from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import (
     ConfigurationLoader,
     InitializerConfig,
     ServerConfig,
     initialize_from_config_async,
 )
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 class TestInitializerConfig:
@@ -305,6 +307,23 @@ silent: true
 class TestConfigurationLoaderResolvers:
     """Tests for ConfigurationLoader path resolution methods."""
 
+    def test_resolve_initializers_uses_singleton_registry(self) -> None:
+        """Test resolving a custom initializer registered during backend startup."""
+
+        class CustomInitializer(PyRITInitializer):
+            async def initialize_async(self) -> None:
+                pass
+
+        registry = InitializerRegistry(lazy_discovery=True)
+        registry.register_class(CustomInitializer, name="custom")
+        config = ConfigurationLoader(initializers=["custom"])
+
+        with mock.patch.object(InitializerRegistry, "get_registry_singleton", return_value=registry):
+            resolved = config.resolve_initializers()
+
+        assert len(resolved) == 1
+        assert isinstance(resolved[0], CustomInitializer)
+
     def testresolve_initialization_scripts_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
@@ -335,13 +354,6 @@ class TestConfigurationLoaderResolvers:
         assert resolved[0].is_absolute()
         # Check path ends with expected components (works on both Unix and Windows)
         assert resolved[0].parts[-2:] == ("relative", "script.py")
-
-    def testresolve_initialization_scripts_preserves_azure_blob_uri(self):
-        """Test preserving an Azure Blob URI for initialization-time download."""
-        source = "https://account.blob.core.windows.net/scripts/example.py?sp=r&sig=secret"
-        config = ConfigurationLoader(initialization_scripts=[source])
-
-        assert config.resolve_initialization_scripts() == [source]
 
     def testresolve_env_files_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
@@ -437,7 +449,7 @@ class TestConfigurationLoaderInitialization:
         """Test initialization with initializers resolved from registry."""
         # Setup mock registry
         mock_registry = mock.MagicMock()
-        mock_registry_cls.return_value = mock_registry
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
         # Mock the configured initializer instance produced by the registry
         mock_initializer_instance = mock.MagicMock()
@@ -461,7 +473,7 @@ class TestConfigurationLoaderInitialization:
     async def test_initialize_pyrit_async_unknown_initializer_raises_error(self, mock_registry_cls):
         """Test that unknown initializer name raises ValueError."""
         mock_registry = mock.MagicMock()
-        mock_registry_cls.return_value = mock_registry
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
         mock_registry.create_and_configure.side_effect = KeyError("unknown_initializer")
         mock_registry.get_class_names.return_value = ["simple", "airt"]
 

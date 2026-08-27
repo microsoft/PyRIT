@@ -9,7 +9,6 @@ import BackendConfiguration from './BackendConfiguration'
 jest.mock('@/services/api', () => ({
   configurationApi: {
     getContent: jest.fn(),
-    restart: jest.fn(),
     updateContent: jest.fn(),
     listEnvironmentFiles: jest.fn(),
     getEnvironmentFile: jest.fn(),
@@ -40,7 +39,6 @@ describe('BackendConfiguration', () => {
       content: 'operator: alice\n',
       source: 'C:/Users/test/.pyrit/config.yaml',
     })
-    mockedConfigurationApi.restart.mockResolvedValue()
     mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({
       items: [
         { id: '0', name: '.env', path: 'C:/Users/test/.pyrit/.env', content: '', exists: true },
@@ -72,7 +70,7 @@ describe('BackendConfiguration', () => {
     expect(await screen.findByLabelText('Configuration YAML')).toHaveValue('operator: alice\n')
     expect(screen.getByRole('navigation', { name: 'Configuration files' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /\.pyrit_conf/i })).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByText('C:/Users/test/.pyrit/config.yaml')).toBeInTheDocument()
+    expect(screen.getByText('C:/Users/test/.pyrit/config.yaml', { selector: 'label' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy YAML source' })).toBeInTheDocument()
     expect(screen.getByTestId('yaml-highlight').innerHTML).toContain('token key atrule')
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
@@ -95,16 +93,6 @@ describe('BackendConfiguration', () => {
     expect(await screen.findByText(/restart the backend/i)).toBeInTheDocument()
   })
 
-  it('should request a backend restart from the header', async () => {
-    const user = userEvent.setup()
-    renderPage()
-
-    await user.click(screen.getByRole('button', { name: 'Restart backend' }))
-
-    expect(mockedConfigurationApi.restart).toHaveBeenCalledTimes(1)
-    expect(await screen.findByText('Backend restart requested.')).toBeInTheDocument()
-  })
-
   it('should show a load error', async () => {
     mockedConfigurationApi.getContent.mockRejectedValue(new Error('Configuration unavailable'))
     renderPage()
@@ -125,6 +113,7 @@ describe('BackendConfiguration', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Environment Files' }))
     const editor = await screen.findByLabelText('Environment file contents')
+    expect(screen.getByText('C:/Users/test/.pyrit/.env', { selector: 'label' })).toBeInTheDocument()
     expect(screen.getByTitle('C:/Users/test/.pyrit/.env')).toBeInTheDocument()
     expect(editor).toHaveValue('API_KEY=value\n')
     expect(screen.getByTestId('dotenv-highlight').innerHTML).toContain('token key atrule')
@@ -168,6 +157,7 @@ describe('BackendConfiguration', () => {
     expect(await screen.findByRole('button', { name: /AKV: bootstrap/i })).toBeInTheDocument()
     expect(screen.getByTitle(secretUrl)).toBeInTheDocument()
     const editor = await screen.findByLabelText('Environment file contents')
+    expect(screen.getByText(secretUrl, { selector: 'label' })).toBeInTheDocument()
     await user.clear(editor)
     await user.type(editor, 'API_KEY=after\n')
     await user.click(screen.getByRole('button', { name: 'Save' }))
@@ -182,7 +172,10 @@ describe('BackendConfiguration', () => {
     renderPage()
 
     await user.click(screen.getByRole('tab', { name: 'Custom Initializers' }))
-    expect(await screen.findByText('C:/Users/test/.pyrit/custom_initializers/custom_target.py')).toBeInTheDocument()
+    expect(await screen.findByText(
+      'C:/Users/test/.pyrit/custom_initializers/custom_target.py',
+      { selector: 'label' },
+    )).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Add initializer' }))
     const dialog = screen.getByRole('dialog', { name: 'Add custom initializer' })
     await user.type(within(dialog).getByRole('textbox', { name: /Initializer name/ }), 'new_custom')

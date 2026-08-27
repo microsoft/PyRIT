@@ -4,11 +4,9 @@
 """Backend configuration file API routes."""
 
 import os
-from collections.abc import Callable
-from typing import cast
 
 from azure.core.exceptions import ResourceNotFoundError
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.configuration import (
@@ -54,22 +52,6 @@ def _get_environment_file_service(request: Request) -> EnvironmentFileService:
             detail="Environment file configuration is unavailable",
         )
     return service
-
-
-def _get_restart_callback(request: Request) -> Callable[[], None]:
-    """
-    Get the restart callback installed by the managed backend server.
-
-    Returns:
-        Callable[[], None]: The managed server restart callback.
-    """
-    callback = getattr(request.app.state, "restart_backend", None)
-    if not callable(callback):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Backend restart is unavailable for this server process",
-        )
-    return cast("Callable[[], None]", callback)
 
 
 @router.get(
@@ -118,15 +100,6 @@ async def update_configuration_file(  # pyrit-async-suffix-exempt
     except (FileNotFoundError, ResourceNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration file not found") from exc
     return ConfigurationFileContent(content=body.content, source=service.source)
-
-
-@router.post("/restart", status_code=status.HTTP_202_ACCEPTED)
-async def restart_backend(  # pyrit-async-suffix-exempt
-    request: Request,
-    background_tasks: BackgroundTasks,
-) -> None:
-    """Schedule a backend restart after the response is sent."""
-    background_tasks.add_task(_get_restart_callback(request))
 
 
 @router.get("/env-files", response_model=EnvironmentFileListResponse)

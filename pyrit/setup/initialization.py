@@ -1,12 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-import asyncio
 import logging
 import pathlib
-import tempfile
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
-from urllib.parse import parse_qs, urlparse
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.random_context import configure_random_seed
@@ -27,76 +24,7 @@ SQLITE = "SQLite"
 AZURE_SQL = "AzureSQL"
 MemoryDatabaseType = Literal["InMemory", "SQLite", "AzureSQL"]
 
-_AZURE_BLOB_HOST_SUFFIXES = (
-    ".blob.core.windows.net",
-    ".blob.core.chinacloudapi.cn",
-    ".blob.core.usgovcloudapi.net",
-    ".blob.core.cloudapi.de",
-)
-
 _load_environment_files = load_environment_files
-
-
-def is_azure_blob_script_uri(value: str) -> bool:
-    """Return whether a value identifies an Azure Blob Storage object."""
-    parsed_uri = urlparse(value)
-    hostname = parsed_uri.hostname or ""
-    return (
-        parsed_uri.scheme == "https"
-        and any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in _AZURE_BLOB_HOST_SUFFIXES)
-        and parsed_uri.username is None
-        and parsed_uri.password is None
-        and parsed_uri.port is None
-        and len(parsed_uri.path.strip("/").split("/")) >= 2
-    )
-
-
-def _download_initialization_script(*, source: str, destination: pathlib.Path) -> None:
-    """
-    Download an Azure Blob initialization script to a temporary path.
-
-    Raises:
-        ValueError: If the Blob URI does not identify a Python file.
-    """
-    from azure.identity import DefaultAzureCredential
-    from azure.storage.blob import BlobClient
-
-    parsed_uri = urlparse(source)
-    if pathlib.PurePosixPath(parsed_uri.path).suffix != ".py":
-        raise ValueError(f"Initialization script must be a Python file (.py): {parsed_uri.path}")
-
-    if "sig" in parse_qs(parsed_uri.query):
-        with BlobClient.from_blob_url(blob_url=source) as client:
-            destination.write_bytes(client.download_blob().readall())
-        return
-
-    with DefaultAzureCredential() as credential:
-        with BlobClient.from_blob_url(blob_url=source, credential=credential) as client:
-            destination.write_bytes(client.download_blob().readall())
-
-
-async def _materialize_initialization_scripts_async(
-    *, script_sources: Sequence[str | pathlib.Path], destination: pathlib.Path
-) -> list[pathlib.Path]:
-    """
-    Resolve local paths and download Azure Blob scripts into a temporary directory.
-
-    Returns:
-        list[pathlib.Path]: Local paths suitable for registry loading.
-    """
-    resolved: list[pathlib.Path] = []
-    for index, source in enumerate(script_sources):
-        source_str = str(source)
-        if not is_azure_blob_script_uri(source_str):
-            resolved.append(pathlib.Path(source))
-            continue
-
-        blob_name = pathlib.PurePosixPath(urlparse(source_str).path).name
-        temporary_path = destination / f"{index}_{blob_name}"
-        await asyncio.to_thread(_download_initialization_script, source=source_str, destination=temporary_path)
-        resolved.append(temporary_path)
-
-    return resolved
 
 
 async def _execute_initializers_async(*, initializers: Sequence["PyRITInitializer"]) -> None:
@@ -160,9 +88,8 @@ async def initialize_pyrit_async(
         memory_db_type (MemoryDatabaseType): The MemoryDatabaseType string literal which indicates the memory
             instance to use for central memory. Options include "InMemory", "SQLite", and "AzureSQL".
         initialization_scripts (Sequence[str | pathlib.Path] | None): Optional sequence of local Python script paths
-            or Azure Blob URIs that define PyRITInitializer subclasses. Every initializer subclass defined in each
-            file is loaded and executed. Loading is handled by the InitializerRegistry. Blob URIs may include a SAS;
-            otherwise, authentication uses DefaultAzureCredential.
+            that define PyRITInitializer subclasses. Every initializer subclass defined in each file is loaded and
+            executed. Loading is handled by the InitializerRegistry.
         initializers (Sequence[PyRITInitializer] | None): Optional sequence of PyRITInitializer instances
             to execute directly. These provide type-safe, validated configuration with clear documentation.
         load_defaults (bool): If True (default) AND the caller supplies neither ``initializers`` nor
@@ -236,12 +163,8 @@ async def initialize_pyrit_async(
         from pyrit.registry import InitializerRegistry
 
         registry = InitializerRegistry.get_registry_singleton()
-        with tempfile.TemporaryDirectory(prefix="pyrit-initializers-") as temporary_directory:
-            script_paths = await _materialize_initialization_scripts_async(
-                script_sources=initialization_scripts,
-                destination=pathlib.Path(temporary_directory),
-            )
-            script_initializers = registry.create_from_script_paths(script_paths=script_paths)
+        script_paths = [pathlib.Path(script_path) for script_path in initialization_scripts]
+        script_initializers = registry.create_from_script_paths(script_paths=script_paths)
         all_initializers.extend(script_initializers)
 
     # When the caller supplies nothing, fall back to the default initializer set so a

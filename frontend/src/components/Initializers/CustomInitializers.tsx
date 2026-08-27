@@ -100,7 +100,7 @@ export default function CustomInitializers({
           <>
             <Field
               className={styles.editorField}
-              label={selectedInitializer.initializer_name}
+              label={selectedInitializer.source}
             >
               <PythonCodeEditor
                 source={selectedInitializer.script_content}
