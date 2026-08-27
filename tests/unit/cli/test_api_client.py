@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from pyrit.cli._auth import CliAuthenticationError
 from pyrit.cli.api_client import PyRITApiClient, ServerNotAvailableError
 from pyrit.models import ScenarioRunState, TargetCapabilities
 from pyrit.models.catalog import (
@@ -154,6 +155,103 @@ async def test_async_context_manager_uses_default_when_request_timeout_is_none(
 async def test_close_async_is_noop_when_already_closed():
     c = PyRITApiClient(base_url="http://localhost:8000")
     await c.close_async()  # Should not raise.
+
+
+async def test_context_manager_discovers_auth_and_attaches_bearer_token(mock_httpx_client):
+    c = PyRITApiClient(base_url="https://copyrit.example.com", auth_mode="auto", interactive=False)
+    fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
+    mock_httpx_client.get.return_value = _make_response(
+        json_data={
+            "enabled": True,
+            "tenantId": "tenant-id",
+            "clientId": "client-id",
+            "scopes": ["https://graph.microsoft.com/User.Read"],
+        }
+    )
+    provider = MagicMock()
+    provider.get_token_async = AsyncMock(return_value="access-token")
+    provider.close_async = AsyncMock()
+
+    with (
+        patch("httpx.AsyncClient", fake_async_client_cls),
+        patch(
+            "pyrit.cli._auth.create_token_provider_async",
+            new_callable=AsyncMock,
+            return_value=provider,
+        ) as create_provider,
+    ):
+        async with c:
+            request_hook = fake_async_client_cls.call_args.kwargs["event_hooks"]["request"][0]
+            request = httpx.Request("GET", "https://copyrit.example.com/api/targets")
+            await request_hook(request)
+            assert request.headers["Authorization"] == "Bearer access-token"
+
+    mock_httpx_client.get.assert_awaited_once_with("/api/auth/config")
+    create_provider.assert_awaited_once()
+    provider.close_async.assert_awaited_once()
+
+
+async def test_context_manager_leaves_public_requests_unauthenticated(mock_httpx_client):
+    c = PyRITApiClient(base_url="https://copyrit.example.com", auth_mode="auto")
+    fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
+    mock_httpx_client.get.return_value = _make_response(
+        json_data={
+            "enabled": False,
+            "tenantId": "",
+            "clientId": "",
+            "scopes": [],
+        }
+    )
+
+    with patch("httpx.AsyncClient", fake_async_client_cls):
+        async with c:
+            request_hook = fake_async_client_cls.call_args.kwargs["event_hooks"]["request"][0]
+            request = httpx.Request("GET", "https://copyrit.example.com/api/health")
+            await request_hook(request)
+            assert "Authorization" not in request.headers
+
+
+async def test_context_manager_accepts_legacy_backend_without_auth_endpoint(mock_httpx_client):
+    c = PyRITApiClient(base_url="http://legacy.example.com", auth_mode="auto")
+    fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
+    mock_httpx_client.get.return_value = _make_response(status_code=404)
+
+    with patch("httpx.AsyncClient", fake_async_client_cls):
+        async with c:
+            assert c._token_provider is None
+
+
+async def test_context_manager_rejects_authentication_over_remote_http(mock_httpx_client):
+    c = PyRITApiClient(base_url="http://copyrit.example.com", auth_mode="auto")
+    fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
+    mock_httpx_client.get.return_value = _make_response(
+        json_data={
+            "enabled": True,
+            "tenantId": "tenant-id",
+            "clientId": "client-id",
+            "scopes": ["https://graph.microsoft.com/User.Read"],
+        }
+    )
+
+    with patch("httpx.AsyncClient", fake_async_client_cls):
+        with pytest.raises(CliAuthenticationError, match="non-HTTPS"):
+            await c.__aenter__()
+
+    mock_httpx_client.aclose.assert_awaited_once()
+
+
+async def test_context_manager_rejects_invalid_auth_config_json(mock_httpx_client):
+    c = PyRITApiClient(base_url="https://copyrit.example.com", auth_mode="auto")
+    fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
+    response = _make_response()
+    response.json.side_effect = ValueError("invalid JSON")
+    mock_httpx_client.get.return_value = response
+
+    with patch("httpx.AsyncClient", fake_async_client_cls):
+        with pytest.raises(CliAuthenticationError, match="invalid JSON"):
+            await c.__aenter__()
+
+    mock_httpx_client.aclose.assert_awaited_once()
 
 
 def test_get_client_raises_when_not_opened():

@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     from pyrit.converter.pdf_converter import PDFConverter
     from pyrit.converter.persuasion_converter import PersuasionConverter
     from pyrit.converter.policy_puppetry_converter import PolicyPuppetryConverter, PolicyPuppetryTemplate
+    from pyrit.converter.puzzled import PuzzledConverter, PuzzleType
     from pyrit.converter.qr_code_converter import QRCodeConverter
     from pyrit.converter.random_capital_letters_converter import RandomCapitalLettersConverter
     from pyrit.converter.random_translation_converter import RandomTranslationConverter
@@ -205,6 +206,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PositionSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "Converter": "pyrit.converter.converter",
     "ProportionSelectionStrategy": "pyrit.converter.text_selection_strategy",
+    "PuzzleType": "pyrit.converter.puzzled",
+    "PuzzledConverter": "pyrit.converter.puzzled",
     "QRCodeConverter": "pyrit.converter.qr_code_converter",
     "ROT13Converter": "pyrit.converter.rot13_converter",
     "RandomCapitalLettersConverter": "pyrit.converter.random_capital_letters_converter",
