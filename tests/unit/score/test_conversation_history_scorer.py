@@ -18,9 +18,9 @@ from pyrit.score import (
     create_conversation_scorer,
 )
 from pyrit.score.conversation_scorer import ConversationScorer
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
 def _make_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
@@ -31,7 +31,7 @@ def _make_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
     )
 
 
-class MockFloatScaleScorer(FloatScaleScorer):
+class MockFloatScaleScorer(MessageFloatScaleScorer):
     """Mock FloatScaleScorer for testing"""
 
     def __init__(self):
@@ -44,7 +44,7 @@ class MockFloatScaleScorer(FloatScaleScorer):
         return []
 
 
-class MockTrueFalseScorer(TrueFalseScorer):
+class MockTrueFalseScorer(MessageTrueFalseScorer):
     """Mock TrueFalseScorer for testing"""
 
     def __init__(self):
@@ -355,7 +355,7 @@ def test_factory_returns_instance_of_float_scale_scorer():
     """Test that factory creates scorer inheriting from FloatScaleScorer."""
     float_scorer = MockFloatScaleScorer()
     conv_scorer = create_conversation_scorer(scorer=float_scorer)
-    assert isinstance(conv_scorer, FloatScaleScorer)
+    assert isinstance(conv_scorer, MessageFloatScaleScorer)
     assert isinstance(conv_scorer, ConversationScorer)
     assert isinstance(conv_scorer, Scorer)
 
@@ -364,7 +364,7 @@ def test_factory_returns_instance_of_true_false_scorer():
     """Test that factory creates scorer inheriting from TrueFalseScorer."""
     tf_scorer = MockTrueFalseScorer()
     conv_scorer = create_conversation_scorer(scorer=tf_scorer)
-    assert isinstance(conv_scorer, TrueFalseScorer)
+    assert isinstance(conv_scorer, MessageTrueFalseScorer)
     assert isinstance(conv_scorer, ConversationScorer)
     assert isinstance(conv_scorer, Scorer)
 
@@ -428,8 +428,8 @@ def test_factory_creates_unique_instances():
     assert conv_scorer1 is not conv_scorer2, "Should create different instances"
 
     # But both should be instances of the same base classes
-    assert isinstance(conv_scorer1, FloatScaleScorer)
-    assert isinstance(conv_scorer2, FloatScaleScorer)
+    assert isinstance(conv_scorer1, MessageFloatScaleScorer)
+    assert isinstance(conv_scorer2, MessageFloatScaleScorer)
     assert isinstance(conv_scorer1, ConversationScorer)
     assert isinstance(conv_scorer2, ConversationScorer)
 
@@ -575,7 +575,7 @@ async def test_conversation_scorer_uses_partial_content_when_score_blocked_conte
 
 
 async def test_conversation_scorer_uses_error_json_when_score_blocked_content_disabled(patch_central_database):
-    """When score_blocked_content is False (default), blocked pieces use converted_value (error JSON)."""
+    """When score_blocked_content is False, blocked pieces use converted_value (error JSON)."""
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
 
@@ -624,7 +624,7 @@ async def test_conversation_scorer_uses_error_json_when_score_blocked_content_di
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    # score_blocked_content defaults to False
+    scorer.score_blocked_content = False
     scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
     assert len(scores) == 1
@@ -753,7 +753,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
     # never see the harmful content and return [], collapsing to a 0.0 fallback.
     captured_messages: list[Message] = []
 
-    class HarmfulContentDetector(FloatScaleScorer):
+    class HarmfulContentDetector(MessageFloatScaleScorer):
         def __init__(self) -> None:
             super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 

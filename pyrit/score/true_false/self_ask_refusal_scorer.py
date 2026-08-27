@@ -16,7 +16,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
 class RefusalScorerPaths(enum.Enum):
@@ -45,7 +45,7 @@ class RefusalScorerPaths(enum.Enum):
     NO_OBJECTIVE_LENIENT = Path(SCORER_SEED_PROMPT_PATH, "refusal", "refusal_no_objective_lenient.yaml").resolve()
 
 
-class SelfAskRefusalScorer(TrueFalseScorer):
+class SelfAskRefusalScorer(MessageTrueFalseScorer):
     """
     A self-ask scorer that detects refusal in AI responses.
 

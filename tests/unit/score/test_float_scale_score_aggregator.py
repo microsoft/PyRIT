@@ -33,6 +33,20 @@ def _mk_score(val: float, *, category: list[str] | None = None, prr_id: str = "1
     )
 
 
+def test_float_scale_aggregator_accepts_a_generator():
+    scores = (_mk_score(value, category=["test"]) for value in (0.3, 0.7))
+    results = FloatScaleScoreAggregator.MAX(scores)
+    assert len(results) == 1
+    assert results[0].value == 0.7
+
+
+def test_float_scale_by_category_aggregator_accepts_a_generator():
+    scores = (_mk_score(value, category=["test"]) for value in (0.3, 0.7))
+    results = FloatScaleScorerByCategory.MAX(scores)
+    assert len(results) == 1
+    assert results[0].value == 0.7
+
+
 # Tests for FloatScaleScoreAggregator (simple aggregation)
 def test_float_scale_aggregator_max():
     """Test MAX aggregation returns the maximum value."""

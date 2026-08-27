@@ -381,7 +381,7 @@ class TestSkeletonKeyAttackExecuteAsync:
         attack._perform_async = AsyncMock(return_value=mock_result)
 
         with patch(
-            "pyrit.executor.attack.single_turn.prompt_sending.Scorer.score_response_async",
+            "pyrit.executor.attack.single_turn.prompt_sending.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": [success_score]},
         ):

@@ -322,7 +322,8 @@ export interface BackendScore {
   message_piece_id: string
   scorer_type: string
   score_type: string
-  score_value: string
+  score_value?: string | null
+  status?: string
   is_objective_score?: boolean
   score_category?: string[] | null
   score_rationale?: string | null

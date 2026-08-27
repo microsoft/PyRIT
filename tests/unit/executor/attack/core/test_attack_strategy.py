@@ -20,6 +20,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
     AttackStrategy,
     _DefaultAttackStrategyEventHandler,
+    attack_outcome_from_score,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackContext
@@ -30,6 +31,8 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     Message,
+    Score,
+    ScoreStatus,
     SeedPrompt,
 )
 from pyrit.models.identifiers import (
@@ -46,6 +49,18 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
         class_name=name,
         class_module="test",
     )
+
+
+@pytest.mark.parametrize(
+    "score,expected",
+    [
+        (Score(score_value="true", score_type="true_false"), AttackOutcome.SUCCESS),
+        (Score(score_value="false", score_type="true_false"), AttackOutcome.FAILURE),
+        (Score(status=ScoreStatus.UNDETERMINED, score_type="true_false"), AttackOutcome.UNDETERMINED),
+    ],
+)
+def test_attack_outcome_from_score(score: Score, expected: AttackOutcome):
+    assert attack_outcome_from_score(score) is expected
 
 
 @pytest.fixture

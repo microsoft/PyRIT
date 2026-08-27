@@ -539,7 +539,7 @@ class TestResponseEvaluation:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": [success_score]},
         ) as mock_score_method:
@@ -561,7 +561,7 @@ class TestResponseEvaluation:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": []},
         ) as mock_score_method:
@@ -602,7 +602,7 @@ class TestResponseEvaluation:
         )
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [auxiliary_score], "objective_scores": [success_score]},
         ) as mock_score_method:
@@ -1228,7 +1228,7 @@ class TestEdgeCasesAndErrorHandling:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             side_effect=RuntimeError("Scorer error"),
         ):

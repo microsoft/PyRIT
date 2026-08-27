@@ -9,10 +9,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory.memory_models import ScorableContentEntry
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
     Condition,
+    ContentEntryScorable,
     MatchesObjective,
     Message,
     MessagePiece,
@@ -23,16 +25,15 @@ from pyrit.score import (
     ContentScorable,
     MessageScorable,
     MessageScorer,
+    MessageTrueFalseScorer,
     Scorable,
     Scorer,
     ScorerPromptValidator,
-    TrueFalseScorer,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import MessageScoringOptions, extract_objective_from_previous_turn
 
 
-@dataclasses.dataclass(frozen=True)
 class UnsupportedScorable(Scorable):
     """A scorable kind no message scorer handles."""
 
@@ -50,7 +51,7 @@ class PermissiveValidator(ScorerPromptValidator):
         return True
 
 
-class RecordingScorer(TrueFalseScorer):
+class RecordingScorer(MessageTrueFalseScorer):
     """A message scorer that remembers what it was asked to score."""
 
     def __init__(
@@ -188,6 +189,18 @@ class TestScorableResolution:
         # Memory cannot link a score to a piece it never stored.
         assert scores[0].message_piece_id is None
 
+    async def test_rescoring_stored_content_keeps_its_anchor(self, sqlite_instance: MemoryInterface):
+        """Re-scoring must point at the row the content already has, not copy it into a new one."""
+        scorer = RecordingScorer()
+        first = (await scorer.score_async(scorable=ContentScorable(value="loose text")))[0]
+        anchor = first.scorable
+        assert isinstance(anchor, ContentEntryScorable)
+
+        second = (await scorer.score_async(scorable=anchor))[0]
+
+        assert second.scorable == anchor
+        assert len(sqlite_instance._query_entries(ScorableContentEntry)) == 1
+
     async def test_message_scorer_uses_injected_resolver(self):
         message = _assistant_message()
         resolver = MagicMock(spec=MessageScorableResolver)
@@ -203,6 +216,17 @@ class TestScorableResolution:
 
         with pytest.raises(TypeError, match="cannot score UnsupportedScorable"):
             await scorer.score_async(scorable=UnsupportedScorable(uri="/tmp/out.txt"))  # type: ignore[arg-type]
+
+    def test_stamping_an_unknown_anchor_raises_type_error(self):
+        score = MagicMock(spec=Score)
+        score.scorable = None
+
+        with pytest.raises(TypeError, match="cannot anchor a score"):
+            MessageScorer._stamp_scorable(
+                message=_assistant_message(),
+                scores=[score],
+                anchor=UnsupportedScorable(uri="/tmp/out.txt"),
+            )
 
 
 class TestScorerBaseIsScorableAgnostic:
@@ -274,6 +298,31 @@ class TestScorableFilters:
 
         assert scores == []
         assert scorer.scored_messages == []
+
+    async def test_skip_on_error_result_scores_a_partly_errored_message(self):
+        """One bad piece must not discard the pieces that came through beside it."""
+        scorer = RecordingScorer()
+        conversation_id = str(uuid.uuid4())
+        message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="blocked",
+                    original_value_data_type="error",
+                    response_error="blocked",
+                    conversation_id=conversation_id,
+                ),
+                MessagePiece(role="assistant", original_value="usable text", conversation_id=conversation_id),
+            ]
+        )
+        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+
+        scores = await scorer.score_async(
+            scorable=MessageScorable.from_message(message),
+            message_options=MessageScoringOptions(skip_on_error_result=True),
+        )
+
+        assert len(scores) == 1
 
     async def test_error_message_is_scored_when_not_skipping(self):
         scorer = RecordingScorer()

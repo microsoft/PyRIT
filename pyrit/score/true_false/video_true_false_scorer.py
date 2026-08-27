@@ -5,11 +5,11 @@
 from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 from pyrit.score.video_scorer import VideoHelper
 
 
-class VideoTrueFalseScorer(TrueFalseScorer):
+class VideoTrueFalseScorer(MessageTrueFalseScorer):
     """
     A scorer that processes videos by extracting frames and scoring them using a true/false image scorer.
 
@@ -28,8 +28,8 @@ class VideoTrueFalseScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        image_capable_scorer: TrueFalseScorer,
-        audio_scorer: TrueFalseScorer | None = None,
+        image_capable_scorer: MessageTrueFalseScorer,
+        audio_scorer: MessageTrueFalseScorer | None = None,
         num_sampled_frames: int | None = None,
         validator: ScorerPromptValidator | None = None,
         image_objective_template: str | None = VideoHelper._DEFAULT_IMAGE_OBJECTIVE_TEMPLATE,

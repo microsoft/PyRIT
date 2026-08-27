@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from pyrit.memory import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, Score, ScoreStatus
 from pyrit.score import (
     FloatScaleScorer,
     HarmHumanLabeledEntry,
@@ -84,7 +84,7 @@ async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     )
     # Patch scorer to return fixed scores
     entry_values = [MagicMock(get_value=lambda: 0.2), MagicMock(get_value=lambda: 0.4)]
-    mock_harm_scorer.score_prompts_batch_async = AsyncMock(return_value=entry_values)
+    mock_harm_scorer.score_batch_async = AsyncMock(return_value=entry_values)
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
     assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
@@ -102,13 +102,40 @@ async def test_evaluate_dataset_async_objective(mock_objective_scorer):
         name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=[entry], version="1.0"
     )
     # Patch scorer to return fixed scores
-    mock_objective_scorer.score_prompts_batch_async = AsyncMock(return_value=[MagicMock(get_value=lambda: False)])
+    mock_objective_scorer.score_batch_async = AsyncMock(return_value=[MagicMock(get_value=lambda: False)])
     evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
     assert mock_objective_scorer._memory.add_message_to_memory.call_count == 1
     assert isinstance(metrics, ObjectiveScorerMetrics)
     assert metrics.accuracy == 0.0
     assert metrics.accuracy_standard_error == 0.0
+
+
+async def test_evaluate_dataset_async_excludes_undetermined_responses(mock_objective_scorer):
+    responses = [
+        Message(message_pieces=[MessagePiece(role="assistant", original_value=value, original_value_data_type="text")])
+        for value in ["unknown", "known"]
+    ]
+    entries = [
+        ObjectiveHumanLabeledEntry([response], [expected], "Test objective")
+        for response, expected in zip(responses, [True, False], strict=True)
+    ]
+    dataset = HumanLabeledDataset(
+        name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=entries, version="1.0"
+    )
+    mock_objective_scorer.score_batch_async = AsyncMock(
+        return_value=[
+            Score(score_type="true_false", status=ScoreStatus.UNDETERMINED),
+            Score(score_type="true_false", score_value="false"),
+        ]
+    )
+
+    metrics = await ObjectiveScorerEvaluator(mock_objective_scorer).evaluate_dataset_async(
+        labeled_dataset=dataset, num_scorer_trials=2
+    )
+
+    assert metrics.accuracy == 1.0
+    assert metrics.trial_scores.shape == (2, 1)
 
 
 async def test_evaluate_dataset_async_objective_returns_metrics(mock_objective_scorer):
@@ -120,7 +147,7 @@ async def test_evaluate_dataset_async_objective_returns_metrics(mock_objective_s
     mock_dataset = HumanLabeledDataset(
         name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=[entry], version="1.0"
     )
-    mock_objective_scorer.score_prompts_batch_async = AsyncMock(return_value=[MagicMock(get_value=lambda: True)])
+    mock_objective_scorer.score_batch_async = AsyncMock(return_value=[MagicMock(get_value=lambda: True)])
     mock_objective_scorer.get_identifier = MagicMock(return_value=MagicMock(hash="test_hash"))
     evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
 
@@ -588,7 +615,7 @@ async def test_evaluate_dataset_async_harm_passes_harm_definition_version(mock_h
         harm_definition_version="1.0",
     )
     entry_values = [MagicMock(get_value=lambda: 0.3)]
-    mock_harm_scorer.score_prompts_batch_async = AsyncMock(return_value=entry_values)
+    mock_harm_scorer.score_batch_async = AsyncMock(return_value=entry_values)
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
 
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=1)
@@ -643,7 +670,7 @@ async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
         make_dataset("1.0", "1.0"),
     ]
 
-    mock_harm_scorer.score_prompts_batch_async = AsyncMock(
+    mock_harm_scorer.score_batch_async = AsyncMock(
         return_value=[
             MagicMock(get_value=lambda: 0.2),
             MagicMock(get_value=lambda: 0.2),
@@ -712,7 +739,7 @@ async def test_run_evaluation_async_combines_mixed_dataset_versions(
         make_dataset("2.0", "1.0"),  # b_file.csv (second after sorting)
     ]
 
-    mock_harm_scorer.score_prompts_batch_async = AsyncMock(
+    mock_harm_scorer.score_batch_async = AsyncMock(
         return_value=[MagicMock(get_value=lambda: 0.2), MagicMock(get_value=lambda: 0.2)]
     )
 

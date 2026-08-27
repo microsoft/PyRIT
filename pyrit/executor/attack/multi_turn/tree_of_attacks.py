@@ -40,7 +40,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
 )
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
+from pyrit.executor.attack.core.attack_strategy import AttackStrategy, attack_outcome_from_score
 from pyrit.executor.attack.multi_turn import MultiTurnAttackContext
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer._helpers import get_unflattenable_converter_output_types
@@ -62,6 +62,7 @@ from pyrit.prompt_target.common.target_history import filter_non_replayable_mess
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
+    MessageScorer,
     NumericRubric,
     Scorer,
     SelfAskScaleScorer,
@@ -69,7 +70,7 @@ from pyrit.score import (
     TrueFalseQuestion,
     TrueFalseScorer,
 )
-from pyrit.score.score_utils import normalize_score_to_float
+from pyrit.score.score_utils import normalize_score_to_float, score_is_true
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
@@ -830,7 +831,7 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=objective,
         ):
-            scoring_results = await Scorer.score_response_async(
+            scoring_results = await MessageScorer.score_response_async(
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
@@ -853,7 +854,7 @@ class _TreeOfAttacksNode:
             scorer_identifier = score.scorer_class_identifier
             scorer_name = scorer_identifier.class_name if scorer_identifier else "unknown"
             self.auxiliary_scores[scorer_name] = score
-            logger.debug(f"Node {self.node_id}: {scorer_name} score: {score.get_value()}")
+            logger.debug(f"Node {self.node_id}: {scorer_name} score: {normalize_score_to_float(score)}")
 
     def _mark_execution_complete(self) -> None:
         """
@@ -1095,7 +1096,7 @@ class _TreeOfAttacksNode:
         for attempt in range(max_retries):
             on_topic_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
 
-            if on_topic_score.get_value():
+            if score_is_true(on_topic_score):
                 # Prompt is on-topic, we're done
                 return prompt
 
@@ -1117,7 +1118,7 @@ class _TreeOfAttacksNode:
 
         # Final check after all retries
         final_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
-        if not final_score.get_value():
+        if not score_is_true(final_score):
             logger.info(f"Node {self.node_id}: Prompt still off-topic after {max_retries} retries, pruning branch")
             self.off_topic = True
 
@@ -1549,13 +1550,11 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 or if parameters are invalid.
 
         Note:
-            Blocked or errored target responses (e.g. content filter triggers from image
-            generation targets) are scored ``0.0`` via the unified
-            ``FloatScaleScorer`` default,
-            which prevents premature pruning without any attack-level error mapping. To
-            score partial content from blocked responses, set
-            ``score_blocked_content=True`` on the objective scorer (requires
-            ``prompt_metadata["partial_content"]`` on the blocked piece).
+            A blocked response that still carries ``prompt_metadata["partial_content"]`` is
+            scored on that content. A block with nothing behind it is scored ``0.0`` via the
+            unified ``FloatScaleScorer`` default, which prevents premature pruning without any
+            attack-level error mapping. Set ``score_blocked_content=False`` on the objective
+            scorer to treat every block that way.
         """
         self._configuration = _TAPAttackConfiguration(
             tree_width=tree_width,
@@ -2360,8 +2359,17 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Returns:
             TAPAttackResult: The failure result indicating the attack did not achieve its objective.
         """
-        best_score = normalize_score_to_float(context.best_objective_score)
-        outcome_reason = f"Did not achieve threshold score. Best score: {best_score:.2f}"
+        best_score = context.best_objective_score
+        if best_score is not None and attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:
+            return self._create_attack_result(
+                context=context,
+                outcome=AttackOutcome.UNDETERMINED,
+                outcome_reason=getattr(best_score, "score_rationale", None)
+                or "Objective scorer could not reach a verdict",
+            )
+
+        normalized_best = normalize_score_to_float(best_score)
+        outcome_reason = f"Did not achieve threshold score. Best score: {normalized_best:.2f}"
 
         return self._create_attack_result(
             context=context,
@@ -2520,11 +2528,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Returns:
             dict[str, float]: A dictionary mapping auxiliary score names to their
                 float values, or an empty dictionary if no auxiliary scores are available.
+                An undetermined auxiliary score summarizes as 0.0.
         """
         if not nodes or not nodes[0].auxiliary_scores:
             return {}
 
-        return {name: float(score.get_value()) for name, score in nodes[0].auxiliary_scores.items()}
+        return {name: normalize_score_to_float(score) for name, score in nodes[0].auxiliary_scores.items()}
 
     def _calculate_tree_statistics(self, tree_visualization: Tree) -> dict[str, int]:
         """

@@ -5,11 +5,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, cast
 
 from pyrit.models import ComponentIdentifier, Condition, Message, MessagePiece, Score, ScoringExpectation
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -63,8 +63,8 @@ class ConversationScorer(MessageScorer, ABC):
 
         The synthetic conversation Message is always built as ``text`` regardless of the
         triggering piece's data type or error state. Errors from individual turns are
-        preserved within the rendered text (either as the rendered error JSON or, with
-        ``score_blocked_content`` enabled, as the partial content). This ensures the wrapped
+        preserved within the rendered text (either as the partial content, or as the rendered
+        error JSON when ``score_blocked_content`` is turned off). This ensures the wrapped
         scorer's text-only validator accepts the synthetic message and scores the full
         conversation, even when the triggering turn was blocked or errored; the wrapped
         scorer's fallback only fires when the rendered conversation is genuinely unscoreable.
@@ -224,10 +224,10 @@ def create_conversation_scorer(
     # Determine the base class of the wrapped scorer
     scorer_base_class: type[Scorer] | None = None
 
-    if isinstance(scorer, FloatScaleScorer):
-        scorer_base_class = FloatScaleScorer
-    elif isinstance(scorer, TrueFalseScorer):
-        scorer_base_class = TrueFalseScorer
+    if isinstance(scorer, MessageFloatScaleScorer):
+        scorer_base_class = MessageFloatScaleScorer
+    elif isinstance(scorer, MessageTrueFalseScorer):
+        scorer_base_class = MessageTrueFalseScorer
     else:
         raise ValueError(
             f"Unsupported scorer type: {type(scorer).__name__}. "

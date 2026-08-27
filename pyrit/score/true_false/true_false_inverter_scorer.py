@@ -10,8 +10,7 @@ if TYPE_CHECKING:
 from pyrit.models import (
     ComponentIdentifier,
     Condition,
-    Message,
-    MessagePiece,
+    Scorable,
     Score,
     ScoringExpectation,
 )
@@ -32,13 +31,13 @@ class TrueFalseInverterScorer(TrueFalseScorer):
                 Note: This parameter is present for signature compatibility but is not used.
 
         Raises:
-            ValueError: If the scorer is not an instance of TrueFalseScorer.
+            ValueError: If the scorer is not a true/false scorer.
         """
         if not isinstance(scorer, TrueFalseScorer):
             raise ValueError("The scorer must be a true false scorer")
         self._scorer = scorer
 
-        super().__init__(validator=ScorerPromptValidator())
+        super().__init__()
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -79,51 +78,51 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         return self._scorer.required_conditions()
 
-    async def _score_prepared_message_async(
+    async def _score_scorable_async(
         self,
         *,
-        message: Message,
+        scorable: Scorable,
         expectation: ScoringExpectation | None,
     ) -> list[Score]:
         """
-        Scores the piece using the underlying true-false scorer and returns the inverted score.
+        Score the scorable with the wrapped scorer and invert the result.
 
         Args:
-            message (Message): The message to score.
+            scorable (Scorable): What to look at.
             expectation (ScoringExpectation | None): What the wrapped scorer should look for.
 
         Returns:
             list[Score]: A list containing a single Score object with the inverted true/false value.
         """
-        scores = await self._scorer._score_nested_message_async(
-            message=message,
-            expectation=expectation,
-        )
+        scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
+        return self._invert(scores)
+
+    def _invert(self, scores: list[Score]) -> list[Score]:
+        """
+        Flip a determined verdict, and leave an undetermined one alone.
+
+        Polarity sits above the acquisition policy: there is nothing to invert when the
+        wrapped scorer could not reach a verdict.
+
+        Returns:
+            list[Score]: A list containing the single inverted score.
+        """
         inv_score = scores[0]
-
-        inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
-        inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
-
         scorer_type = self._scorer.get_identifier().class_name
-        inv_score.score_rationale = (
-            f"Inverted score from {scorer_type} result: {inv_score.score_value}\n{inv_score.score_rationale}"
-        )
+
+        if inv_score.is_undetermined:
+            inv_score.score_rationale = (
+                f"Inverted score from {scorer_type} is undetermined\n{inv_score.score_rationale}"
+            )
+        else:
+            inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
+            inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
+            inv_score.score_rationale = (
+                f"Inverted score from {scorer_type} result: {inv_score.score_value}\n{inv_score.score_rationale}"
+            )
 
         inv_score.id = uuid.uuid4()
 
         inv_score.scorer_class_identifier = self.get_identifier()
 
         return [inv_score]
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        """
-        Indicate that True False Inverter scorers do not support piecewise scoring.
-
-        Args:
-            message_piece (MessagePiece): Unused.
-            objective (str | None): Unused.
-
-        Raises:
-            NotImplementedError: Always, since composite scoring operates at the response level.
-        """
-        raise NotImplementedError("TrueFalseInverterScorer does not support piecewise scoring.")

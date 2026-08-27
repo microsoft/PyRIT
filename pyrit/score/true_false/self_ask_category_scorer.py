@@ -32,7 +32,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
     import uuid
@@ -198,7 +198,7 @@ class _ContentClassifierResponseHandler(ResponseHandler):
         return score
 
 
-class SelfAskCategoryScorer(TrueFalseScorer):
+class SelfAskCategoryScorer(MessageTrueFalseScorer):
     """
     A class that represents a self-ask score for text classification and scoring.
     Given a ``ContentClassifier``, it scores according to its categories and returns the category

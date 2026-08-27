@@ -11,10 +11,10 @@ from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
 
 
@@ -58,7 +58,7 @@ def video_converter_sample_video(tmp_path, patch_central_database):
     yield message_piece
 
 
-class MockTrueFalseScorer(TrueFalseScorer):
+class MockTrueFalseScorer(MessageTrueFalseScorer):
     """Mock TrueFalseScorer for testing"""
 
     def __init__(self, *, return_value: bool = True):
@@ -90,7 +90,7 @@ class MockTrueFalseScorer(TrueFalseScorer):
         ]
 
 
-class MockFloatScaleScorer(FloatScaleScorer):
+class MockFloatScaleScorer(MessageFloatScaleScorer):
     """Mock FloatScaleScorer for testing"""
 
     def __init__(self, *, return_value: float = 0.8):
@@ -229,8 +229,8 @@ async def test_score_video_no_scores(video_converter_sample_video):
     """Test error handling when frame scoring returns no scores"""
     image_scorer = MockTrueFalseScorer()
 
-    # Mock score_prompts_batch_async to return empty list
-    image_scorer.score_prompts_batch_async = AsyncMock(return_value=[])
+    # Mock score_batch_async to return empty list
+    image_scorer.score_batch_async = AsyncMock(return_value=[])
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, num_sampled_frames=3)
 
     with pytest.raises(ValueError, match="No scores returned for image frames extracted from video."):
@@ -282,7 +282,7 @@ def test_video_scorer_default_num_frames():
     assert scorer._video_helper.num_sampled_frames == 5  # Default value
 
 
-class MockAudioTrueFalseScorer(TrueFalseScorer):
+class MockAudioTrueFalseScorer(MessageTrueFalseScorer):
     """Mock AudioTrueFalseScorer for testing video+audio integration"""
 
     def __init__(self, *, return_value: bool = True):
@@ -290,7 +290,7 @@ class MockAudioTrueFalseScorer(TrueFalseScorer):
         self.received_objective = None
         # Audio scorer needs to support audio_path data type
         validator = ScorerPromptValidator(supported_data_types=["audio_path"])
-        TrueFalseScorer.__init__(self, validator=validator)
+        MessageTrueFalseScorer.__init__(self, validator=validator)
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier()
