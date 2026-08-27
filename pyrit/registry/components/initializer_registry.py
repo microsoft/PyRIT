@@ -399,16 +399,12 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         if name in self._classes:
             raise ValueError(f"Initializer '{name}' is already registered. Unregister it first to replace it.")
 
+        discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
         storage = self._get_custom_storage()
         try:
             storage.save_script(name=name, content=script_content)
         except OSError as error:
             raise ValueError(f"Failed to write initializer script: {error}") from error
-        try:
-            discovered = self._load_custom_initializer_class(name=name, script_content=script_content)
-        except Exception:
-            storage.delete_script(name)
-            raise
 
         self.register_class(discovered, name=name)
         logger.info(f"Registered custom initializer: {name} ({discovered.__name__})")

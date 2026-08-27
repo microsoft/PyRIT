@@ -505,10 +505,10 @@ def test_register_from_content_write_failure_raises(lazy_registry):
                 lazy_registry.register_from_content(name="write_fail", script_content=_VALID_SCRIPT)
 
 
-def test_register_from_content_temporary_write_failure_cleans_up_storage(
+def test_register_from_content_temporary_write_failure_does_not_touch_storage(
     lazy_registry: InitializerRegistry,
 ) -> None:
-    """Test that failure to materialize saved source removes the stored script."""
+    """Test that failure to materialize source does not touch persistent storage."""
     storage = MagicMock(spec=CustomInitializerStorage)
     lazy_registry._custom_storage = storage
 
@@ -516,8 +516,8 @@ def test_register_from_content_temporary_write_failure_cleans_up_storage(
         with pytest.raises(ValueError, match="Failed to write initializer script"):
             lazy_registry.register_from_content(name="write_fail", script_content=_VALID_SCRIPT)
 
-    storage.save_script.assert_called_once_with(name="write_fail", content=_VALID_SCRIPT)
-    storage.delete_script.assert_called_once_with("write_fail")
+    storage.save_script.assert_not_called()
+    storage.delete_script.assert_not_called()
 
 
 def test_unregister_and_cleanup_unknown_name_raises(lazy_registry):

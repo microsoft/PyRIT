@@ -19,6 +19,7 @@ from time import monotonic
 from typing import Any, ClassVar
 
 import httpx
+from fastapi import HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -46,6 +47,18 @@ class AuthenticatedUser:
     email: str
     groups: list[str]
     is_admin: bool = False
+
+
+def require_admin(request: Request) -> None:
+    """Require an administrator when authentication is enabled."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return
+    if not isinstance(user, AuthenticatedUser) or not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access is required",
+        )
 
 
 class EntraAuthMiddleware(BaseHTTPMiddleware):

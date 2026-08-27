@@ -18,8 +18,9 @@ Route structure:
     DELETE /api/initializers/{name}         — unregister an initializer
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
     ApplyInitializerRequest,
@@ -253,6 +254,7 @@ async def apply_initializer(  # pyrit-async-suffix-exempt
 @router.get(
     "/custom",
     response_model=CustomInitializerListResponse,
+    dependencies=[Depends(require_admin)],
 )
 async def list_custom_initializers(request: Request) -> CustomInitializerListResponse:  # pyrit-async-suffix-exempt
     """
@@ -298,6 +300,7 @@ async def get_initializer(initializer_name: str) -> RegisteredInitializer:  # py
     "",
     response_model=RegisteredInitializer,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
     responses={
         403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
         409: {"model": ProblemDetail, "description": "Initializer name already registered"},
@@ -335,6 +338,7 @@ async def register_initializer(  # pyrit-async-suffix-exempt
 @router.delete(
     "/{initializer_name}",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
     responses={
         400: {"model": ProblemDetail, "description": "Cannot remove built-in initializer"},
         403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},

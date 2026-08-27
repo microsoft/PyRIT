@@ -156,7 +156,7 @@ async function expectWithin(
 /** Navigate to the config view. */
 async function goToConfig(page: Page) {
   await page.goto("/");
-  await page.getByTitle("Configuration").click();
+  await page.getByTitle("Targets").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
 }
 
@@ -552,7 +552,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await expect(page.getByTestId("no-target-banner")).toBeVisible();
 
     // Go to config, set a target
-    await page.getByTitle("Configuration").click();
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: /set active/i }).first().click();
 

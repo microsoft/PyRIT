@@ -11,11 +11,10 @@ from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.middleware.auth import AuthenticatedUser
+from pyrit.backend.middleware.auth import AuthenticatedUser, require_admin
 from pyrit.backend.routes.configuration import (
     _get_configuration_file_service,
     _get_environment_file_service,
-    _require_admin,
 )
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
@@ -65,7 +64,7 @@ def test_require_admin_allows_admin_user() -> None:
         is_admin=True,
     )
 
-    _require_admin(request)
+    require_admin(request)
 
 
 def test_require_admin_rejects_non_admin_user() -> None:
@@ -79,7 +78,7 @@ def test_require_admin_rejects_non_admin_user() -> None:
     )
 
     with pytest.raises(HTTPException, match="Administrator access is required") as exc_info:
-        _require_admin(request)
+        require_admin(request)
 
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
@@ -132,6 +131,18 @@ def test_update_configuration_file_returns_404_when_blob_missing(client: TestCli
         response = client.put("/api/config", json={"content": "operator: bob\n"})
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_update_configuration_file_returns_400_for_invalid_content(client: TestClient) -> None:
+    """Test that invalid configuration content produces a client error."""
+    service = MagicMock(spec=ConfigurationFileService)
+    service.read_async = AsyncMock()
+    service.update_async = AsyncMock(side_effect=ValueError("Invalid YAML configuration"))
+    with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
+        response = client.put("/api/config", json={"content": "operator: [unterminated\n"})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["detail"] == "Invalid YAML configuration"
 
 
 def test_list_environment_files_returns_configured_files(client: TestClient) -> None:

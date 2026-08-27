@@ -8,7 +8,7 @@ import os
 from azure.core.exceptions import ResourceNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from pyrit.backend.middleware.auth import AuthenticatedUser
+from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.configuration import (
     ConfigurationFileContent,
@@ -20,20 +20,7 @@ from pyrit.backend.models.configuration import (
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 
-
-def _require_admin(request: Request) -> None:
-    """Require an administrator when authentication is enabled."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return
-    if not isinstance(user, AuthenticatedUser) or not user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrator access is required",
-        )
-
-
-router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(_require_admin)])
+router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(require_admin)])
 
 
 def _get_configuration_file_service(request: Request) -> ConfigurationFileService:
@@ -93,7 +80,10 @@ async def get_configuration_file(  # pyrit-async-suffix-exempt
 @router.put(
     "",
     response_model=ConfigurationFileContent,
-    responses={404: {"model": ProblemDetail, "description": "Configuration file not found"}},
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid configuration file"},
+        404: {"model": ProblemDetail, "description": "Configuration file not found"},
+    },
 )
 async def update_configuration_file(  # pyrit-async-suffix-exempt
     body: UpdateConfigurationFileRequest,
@@ -113,6 +103,8 @@ async def update_configuration_file(  # pyrit-async-suffix-exempt
         await service.update_async(body.content)
     except (FileNotFoundError, ResourceNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration file not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return ConfigurationFileContent(content=body.content, source=service.source)
 
 

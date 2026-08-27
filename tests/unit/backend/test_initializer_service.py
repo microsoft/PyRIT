@@ -9,10 +9,11 @@ from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import status
+from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
+from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
     ApplyInitializerResponse,
@@ -889,6 +890,34 @@ class TestInitializerServiceCustomRegistration:
 
 class TestCustomInitializerRoutes:
     """Tests for runtime custom initializer routes."""
+
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body"),
+        [
+            ("GET", "/api/initializers/custom", None),
+            ("POST", "/api/initializers", {"name": "custom", "script_content": _SAMPLE_SCRIPT}),
+            ("DELETE", "/api/initializers/custom", None),
+        ],
+    )
+    def test_custom_initializer_routes_require_admin(
+        self,
+        client_with_custom_initializers_enabled: TestClient,
+        method: str,
+        path: str,
+        json_body: dict[str, str] | None,
+    ) -> None:
+        """Test that custom script operations apply the administrator dependency."""
+
+        def reject_non_admin() -> None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access is required")
+
+        app.dependency_overrides[require_admin] = reject_non_admin
+        try:
+            response = client_with_custom_initializers_enabled.request(method, path, json=json_body)
+        finally:
+            app.dependency_overrides.pop(require_admin)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_list_custom_initializers_uses_read_only_route(
         self, client_with_custom_initializers_enabled: TestClient

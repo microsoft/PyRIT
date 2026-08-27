@@ -343,7 +343,7 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function startChatWithMessages(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Configuration", exact: true }).click();
+  await page.getByRole("button", { name: "Targets", exact: true }).click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
   await page.getByRole("button", { name: "Set Active" }).first().click();
   await page.getByRole("button", { name: "Chat", exact: true }).click();
@@ -363,7 +363,7 @@ test.beforeEach(async ({ page }) => {
 test.describe("Mobile touch targets", () => {
   test.use({ viewport: MOBILE_VIEWPORT, hasTouch: true });
 
-  test("keeps Home, Configuration, and History controls at least 44px", async ({
+  test("keeps Home, Targets, and History controls at least 44px", async ({
     page,
   }) => {
     await page.goto("/");
@@ -385,7 +385,7 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
 
     await page
-      .getByRole("button", { name: "Configuration", exact: true })
+      .getByRole("button", { name: "Targets", exact: true })
       .click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
 
@@ -549,7 +549,7 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   );
 
   await page
-    .getByRole("button", { name: "Configuration", exact: true })
+    .getByRole("button", { name: "Targets", exact: true })
     .click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
   await expectCompactDesktopTarget(

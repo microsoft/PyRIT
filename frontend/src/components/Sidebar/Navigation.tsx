@@ -100,8 +100,8 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
           data-active={currentView === 'config'}
           appearance="subtle"
           icon={<SettingsRegular />}
-          title="Configuration"
-          aria-label="Configuration"
+          title="Targets"
+          aria-label="Targets"
           aria-current={currentView === 'config' ? 'page' : undefined}
           onClick={() => onNavigate('config')}
         />

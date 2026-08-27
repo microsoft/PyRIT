@@ -6,6 +6,8 @@
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from pyrit.backend.services.configuration_file_service import (
     ConfigurationFileService,
     _download_blob_config_async,
@@ -25,6 +27,30 @@ async def test_configuration_file_service_reads_and_updates_local_file(tmp_path:
 
     assert config_path.read_text(encoding="utf-8") == "operator: after\n"
     assert service.source == str(config_path)
+
+
+async def test_configuration_file_service_rejects_invalid_content_before_write(tmp_path: Path) -> None:
+    """Test that invalid YAML does not replace the existing configuration."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("operator: before\n", encoding="utf-8")
+    service = ConfigurationFileService(config_file_value=str(config_path))
+
+    with pytest.raises(ValueError, match="Invalid YAML configuration"):
+        await service.update_async("operator: [unterminated\n")
+
+    assert config_path.read_text(encoding="utf-8") == "operator: before\n"
+
+
+async def test_configuration_file_service_rejects_semantically_invalid_content_before_write(tmp_path: Path) -> None:
+    """Test that loader validation failures do not replace the existing configuration."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("operator: before\n", encoding="utf-8")
+    service = ConfigurationFileService(config_file_value=str(config_path))
+
+    with pytest.raises(ValueError, match="env_akv_strict must be a bool"):
+        await service.update_async("env_akv_strict: invalid\n")
+
+    assert config_path.read_text(encoding="utf-8") == "operator: before\n"
 
 
 async def test_blob_helpers_use_sas_authentication() -> None:

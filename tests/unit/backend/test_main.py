@@ -82,13 +82,12 @@ class TestLifespan:
 
             assert app.state.default_labels == {"operator": "alice", "operation": "op-42"}
 
-    async def test_lifespan_reads_explicit_config_without_default_layer(self) -> None:
-        """Test that PYRIT_CONFIG_FILE is loaded without merging the default configuration."""
+    async def test_lifespan_loads_explicit_config_as_override(self) -> None:
+        """Test that PYRIT_CONFIG_FILE overlays the default configuration."""
         fake_config = ConfigurationLoader()
         with (
             patch.dict(os.environ, {"PYRIT_CONFIG_FILE": "/tmp/foo.yaml"}, clear=False),
-            patch.object(ConfigurationLoader, "from_yaml_file", return_value=fake_config) as load_mock,
-            patch.object(ConfigurationLoader, "load_with_overrides") as layered_load_mock,
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config) as load_mock,
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
             patch(
                 "pyrit.backend.main.get_initializer_service",
@@ -101,8 +100,7 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
-            assert str(load_mock.call_args.args[0]).endswith("foo.yaml")
-            layered_load_mock.assert_not_called()
+            assert str(load_mock.call_args.kwargs["config_file"]).endswith("foo.yaml")
 
     async def test_lifespan_configures_custom_initializer_source_from_config(self) -> None:
         """Test that YAML config determines the custom script source."""
@@ -152,7 +150,7 @@ class TestLifespan:
         config_content = b"operator: blob-user\n"
         loaded_path: Path | None = None
 
-        def load_config(config_file: Path) -> ConfigurationLoader:
+        def load_config(*, config_file: Path) -> ConfigurationLoader:
             nonlocal loaded_path
             loaded_path = config_file
             assert config_file.suffix == ".yaml"
@@ -169,7 +167,7 @@ class TestLifespan:
                 "pyrit.backend.services.configuration_file_service._download_blob_config_async",
                 new=AsyncMock(return_value=config_content),
             ),
-            patch.object(ConfigurationLoader, "from_yaml_file", side_effect=load_config),
+            patch.object(ConfigurationLoader, "load_with_overrides", side_effect=load_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
             patch(
                 "pyrit.backend.main.get_initializer_service",
