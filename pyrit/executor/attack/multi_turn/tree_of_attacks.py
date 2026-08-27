@@ -1094,22 +1094,23 @@ class _TreeOfAttacksNode:
         # Check if on-topic and retry with feedback if needed
         max_retries = get_retry_max_num_attempts()
         for attempt in range(max_retries):
-            on_topic_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
+            topic_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
+            is_on_topic = score_is_true(topic_score)
 
-            if score_is_true(on_topic_score):
+            if is_on_topic:
                 # Prompt is on-topic, we're done
                 return prompt
 
             # Prompt is off-topic - send feedback and retry
             logger.info(
                 f"Node {self.node_id}: Prompt is off-topic (attempt {attempt + 1}/{max_retries}), "
-                f"sending feedback to adversarial chat. Rationale: {on_topic_score.score_rationale}"
+                f"sending feedback to adversarial chat. Rationale: {topic_score.score_rationale}"
             )
 
             # Generate feedback prompt and get a new response
             feedback_prompt = self._generate_off_topic_feedback_prompt(
                 original_prompt=prompt,
-                off_topic_rationale=on_topic_score.score_rationale or "",
+                off_topic_rationale=topic_score.score_rationale or "",
                 objective=objective,
             )
 
@@ -1117,8 +1118,9 @@ class _TreeOfAttacksNode:
             prompt = await self._send_to_adversarial_chat_async(prompt_text=feedback_prompt)
 
         # Final check after all retries
-        final_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
-        if not score_is_true(final_score):
+        final_topic_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
+        is_on_topic = score_is_true(final_topic_score)
+        if not is_on_topic:
             logger.info(f"Node {self.node_id}: Prompt still off-topic after {max_retries} retries, pruning branch")
             self.off_topic = True
 
@@ -2222,8 +2224,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         Filters out incomplete, off-topic, or unscored nodes. Only nodes that have
         successfully completed execution with valid float scores are included. The
-        sorting uses a random tiebreaker to ensure consistent ordering when nodes
-        have identical scores.
+        sorting is stable, so nodes with equal scores retain their frontier order.
+        Complete scores rank above undetermined scores.
 
         Args:
             nodes (list[_TreeOfAttacksNode]): List of nodes to filter and sort. May
@@ -2233,20 +2235,21 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             list[_TreeOfAttacksNode]: A list of nodes that are completed, on-topic,
                 and have valid objective scores, sorted by score in descending order.
         """
-        completed_nodes = [
-            node for node in nodes if node and node.completed and (not node.off_topic) and node.objective_score
-        ]
+        completed_nodes_with_scores: list[tuple[_TreeOfAttacksNode, Score]] = []
+        for node in nodes:
+            objective_score = node.objective_score
+            if node.completed and not node.off_topic and objective_score is not None:
+                completed_nodes_with_scores.append((node, objective_score))
 
-        # Sort by score (descending) with id(x) as tiebreaker
-        completed_nodes.sort(
-            key=lambda x: (
-                normalize_score_to_float(x.objective_score) if x.objective_score else 0.0,
-                id(x),
+        completed_nodes_with_scores.sort(
+            key=lambda item: (
+                not item[1].is_undetermined,
+                normalize_score_to_float(item[1]),
             ),
             reverse=True,
         )
 
-        return completed_nodes
+        return [node for node, _ in completed_nodes_with_scores]
 
     def _format_node_result(self, node: _TreeOfAttacksNode) -> str:
         """
@@ -2533,7 +2536,10 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         if not nodes or not nodes[0].auxiliary_scores:
             return {}
 
-        return {name: normalize_score_to_float(score) for name, score in nodes[0].auxiliary_scores.items()}
+        return {
+            name: 0.0 if score.is_undetermined else float(score.get_value())
+            for name, score in nodes[0].auxiliary_scores.items()
+        }
 
     def _calculate_tree_statistics(self, tree_visualization: Tree) -> dict[str, int]:
         """

@@ -5,7 +5,7 @@ import textwrap
 
 from colorama import Fore
 
-from pyrit.models import Score, UndeterminedScoreError
+from pyrit.models import Score
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.base import PrinterBase
 from pyrit.output.sink import Sink
@@ -55,15 +55,10 @@ class PrettyScorePrinter(_PrettyPrinterMixin, PrinterBase):
         lines.append(self._format_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX))
         lines.append(self._format_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN))
 
-        try:
-            value = score.get_value()
-        except UndeterminedScoreError:
-            value = None
-
-        if value is None:
+        if score.is_undetermined:
             score_color = Fore.LIGHTBLACK_EX
         elif score.score_type == "true_false":
-            score_color = Fore.GREEN if value else Fore.RED
+            score_color = Fore.GREEN if score.get_value() else Fore.RED
         else:
             score_color = Fore.YELLOW
 

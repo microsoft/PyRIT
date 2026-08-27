@@ -3,7 +3,7 @@
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleAggregatorFunc,
     FloatScaleScorerByCategory,
@@ -185,7 +185,8 @@ class VideoFloatScaleScorer(
         aggregate_scores: list[Score] = []
         for result in aggregator_results:
             aggregate_score = Score(
-                score_value=str(result.value),
+                score_value=str(result.value) if result.value is not None else None,
+                status=ScoreStatus.UNDETERMINED if result.value is None else ScoreStatus.COMPLETE,
                 score_value_description=result.description,
                 score_type="float_scale",
                 score_category=result.category,

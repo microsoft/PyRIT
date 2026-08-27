@@ -127,8 +127,7 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
     consumers (attack strategies, threshold wrappers) get a consistent, "attack did not
     succeed" value without each call site needing special-cased error handling.
     Subclasses that need different semantics (e.g. ``SelfAskRefusalScorer``, which
-    returns ``True`` on blocked) should override ``_score_piece_async`` and accept the
-    error data type in their validator.
+    returns ``True`` on blocked) should override ``_build_fallback_score``.
     """
 
     def __init__(
@@ -189,7 +188,7 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
                 list when no pieces could be scored (the base class will supply a fallback).
         """
         # Get individual scores for all supported pieces using base implementation logic
-        score_list = await super()._score_async(message, objective=objective)
+        score_list = await MessageScorer._score_async(self, message, objective=objective)
 
         if not score_list:
             return []

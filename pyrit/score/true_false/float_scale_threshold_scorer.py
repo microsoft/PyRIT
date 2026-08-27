@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from pyrit.models import (
     ComponentIdentifier,
     Condition,
+    Message,
     Scorable,
     ScorableUnion,
     Score,
@@ -18,11 +19,16 @@ from pyrit.models import (
 )
 from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.message_scorer import (
+    LegacyMessageScorerCompatibility,
+    score_blocked_content_enabled,
+    score_nested_message_compatibility_async,
+)
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
-class FloatScaleThresholdScorer(TrueFalseScorer):
+class FloatScaleThresholdScorer(LegacyMessageScorerCompatibility, TrueFalseScorer):
     """A scorer that applies a threshold to a float scale score to make it a true/false score."""
 
     ORIGINAL_FLOAT_VALUE_KEY: str = ORIGINAL_FLOAT_VALUE_KEY
@@ -103,6 +109,15 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.required_conditions()
 
+    def _get_nested_score_blocked_content(self) -> bool:
+        """
+        Delegate partial-blocked-content handling to the wrapped scorer.
+
+        Returns:
+            bool: Whether the wrapped scorer permits partial blocked content.
+        """
+        return score_blocked_content_enabled(scorer=self._scorer)
+
     async def _score_scorable_async(
         self,
         *,
@@ -126,6 +141,30 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             # Score rejects a kind outside the union when it is constructed below.
             scorable=cast("ScorableUnion | None", scorable),
             message_piece_id=self._piece_id_from_scorable(scorable),
+        )
+
+    async def _score_prepared_message_compatibility_async(
+        self,
+        *,
+        message: Message,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Run a message-capable child and apply the normal threshold.
+
+        Returns:
+            list[Score]: The thresholded score.
+        """
+        scores = await score_nested_message_compatibility_async(
+            scorer=self._scorer,
+            message=message,
+            expectation=expectation,
+        )
+        return self._apply_threshold(
+            scores=scores,
+            expectation=expectation,
+            scorable=None,
+            message_piece_id=message.message_pieces[0].id if message.message_pieces else None,
         )
 
     def _apply_threshold(

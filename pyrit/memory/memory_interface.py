@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 import abc
+import asyncio
 import atexit
+import hashlib
 import logging
 import re
 import uuid
@@ -13,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
+from urllib.parse import urlparse
 
 from sqlalchemy import MetaData, and_, func, not_, or_, select
 from sqlalchemy.engine.base import Engine
@@ -53,6 +56,7 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    MEDIA_PATH_DATA_TYPES,
     AdditionalInitializer,
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -70,6 +74,7 @@ from pyrit.models import (
     IdentifierType,
     Message,
     MessagePiece,
+    MessageScorable,
     ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
@@ -93,6 +98,15 @@ logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _PreparedScorableContent:
+    """A loose-content value prepared for durable database persistence."""
+
+    source: ContentScorable
+    stored: ContentScorable
+    value_sha256: str
 
 
 class AttackResultsKeysetCursor(NamedTuple):
@@ -1604,6 +1618,95 @@ class MemoryInterface(abc.ABC):
 
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
+        Persist scores whose loose-content anchors need no asynchronous file copy.
+
+        File-backed ``ContentScorable`` values must use ``add_scores_to_memory_async``
+        so the source bytes can be copied into managed results storage.
+        """
+        self._add_scores_to_memory(scores=scores, prepared_content_hashes={})
+
+    async def add_scores_to_memory_async(self, *, scores: Sequence[Score]) -> None:
+        """Prepare file-backed loose content, then persist the scores and their anchors."""
+        media_scorables = list(
+            dict.fromkeys(
+                score.scorable
+                for score in scores
+                if isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
+            )
+        )
+        if not media_scorables:
+            self.add_scores_to_memory(scores=scores)
+            return
+
+        prepared_content = await asyncio.gather(
+            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
+        )
+        prepared_by_source = {content.source: content for content in prepared_content}
+        prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
+
+        copied_scores: list[tuple[Score, Score]] = []
+        scores_to_persist: list[Score] = []
+        for score in scores:
+            scorable = score.scorable
+            prepared = prepared_by_source.get(scorable) if isinstance(scorable, ContentScorable) else None
+            if prepared is None:
+                scores_to_persist.append(score)
+                continue
+            copied_score = score.model_copy(update={"scorable": prepared.stored})
+            copied_scores.append((score, copied_score))
+            scores_to_persist.append(copied_score)
+
+        self._add_scores_to_memory(
+            scores=scores_to_persist,
+            prepared_content_hashes=prepared_hashes,
+        )
+        for original_score, copied_score in copied_scores:
+            original_score.scorable = copied_score.scorable
+
+    async def _prepare_scorable_content_async(
+        self,
+        *,
+        scorable: ContentScorable,
+    ) -> _PreparedScorableContent:
+        """
+        Copy one media value into managed results storage and calculate its digest.
+
+        Returns:
+            _PreparedScorableContent: The managed content reference and its digest.
+        """
+        source_serializer = data_serializer_factory(
+            category="scorable-content-entries",
+            data_type=scorable.data_type,
+            value=scorable.value,
+        )
+        content = await source_serializer.read_data_async()
+        value_sha256 = hashlib.sha256(content).hexdigest()
+        parsed_source = urlparse(scorable.value)
+        extension_source = parsed_source.path if parsed_source.scheme in {"http", "https"} else scorable.value
+        extension = DataTypeSerializer.get_extension(extension_source)
+        destination_serializer = data_serializer_factory(
+            category="scorable-content-entries",
+            data_type=scorable.data_type,
+            extension=extension.removeprefix(".") if extension else None,
+        )
+        await destination_serializer.save_data_async(content, output_filename=value_sha256)
+        stored = ContentScorable(
+            value=destination_serializer.value,
+            data_type=scorable.data_type,
+        )
+        return _PreparedScorableContent(
+            source=scorable,
+            stored=stored,
+            value_sha256=value_sha256,
+        )
+
+    def _add_scores_to_memory(
+        self,
+        *,
+        scores: Sequence[Score],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> None:
+        """
         Insert a list of scores into the memory storage.
 
         Callers that produce scores for pieces flagged via
@@ -1621,17 +1724,40 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
+        referenced_piece_ids = {str(score.message_piece_id) for score in scores if score.message_piece_id}
+        referenced_piece_ids.update(
+            str(piece_id)
+            for score in scores
+            if isinstance(score.scorable, MessageScorable)
+            for piece_id in score.scorable.message_piece_ids
+        )
+        pieces_by_id = {
+            str(piece.id): piece
+            for piece in (
+                self.get_message_pieces(prompt_ids=sorted(referenced_piece_ids)) if referenced_piece_ids else []
+            )
+        }
+        original_ids: dict[str, uuid.UUID] = {
+            piece_id: original_prompt_id
+            for piece_id, piece in pieces_by_id.items()
+            if (original_prompt_id := piece.original_prompt_id) is not None and original_prompt_id != piece.id
+        }
         for score in scores:
-            if score.message_piece_id:
-                message_piece_id = score.message_piece_id
-                pieces = self.get_message_pieces(prompt_ids=[str(message_piece_id)])
-                if not pieces:
-                    logger.error(f"MessagePiece with ID {message_piece_id} not found in memory.")
-                    continue
-                # auto-link score to the original prompt id if the prompt is a duplicate
-                if pieces[0].original_prompt_id != pieces[0].id:
-                    score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
-        content_entries, anchor_rewrites = self._store_scorable_content(scores=scores)
+            if score.message_piece_id and str(score.message_piece_id) not in pieces_by_id:
+                logger.error(f"MessagePiece with ID {score.message_piece_id} not found in memory.")
+            if score.message_piece_id and (original_id := original_ids.get(str(score.message_piece_id))):
+                score.message_piece_id = original_id  # type: ignore[ty:invalid-assignment]
+            if isinstance(score.scorable, MessageScorable):
+                mapped_piece_ids: tuple[uuid.UUID, ...] = tuple(
+                    original_ids.get(str(piece_id), uuid.UUID(str(piece_id)))
+                    for piece_id in score.scorable.message_piece_ids
+                )
+                if mapped_piece_ids != score.scorable.message_piece_ids:
+                    score.scorable = MessageScorable(message_piece_ids=mapped_piece_ids)
+        content_entries, anchor_rewrites = self._store_scorable_content(
+            scores=scores,
+            prepared_content_hashes=prepared_content_hashes,
+        )
         anchors_by_score = {id(score): anchor for score, anchor in anchor_rewrites}
         persisted_scores = [
             score.model_copy(update={"scorable": anchors_by_score[id(score)]})
@@ -1660,7 +1786,9 @@ class MemoryInterface(abc.ABC):
 
     @staticmethod
     def _store_scorable_content(
-        *, scores: Sequence[Score]
+        *,
+        scores: Sequence[Score],
+        prepared_content_hashes: Mapping[ContentScorable, str],
     ) -> tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
         """
         Turn loose-content anchors into stored references.
@@ -1671,6 +1799,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
                 Content rows to insert and anchor rewrites to publish after commit.
+
+        Raises:
+            ValueError: If file-backed content was not prepared through the async path.
         """
         rows: dict[ContentScorable, ScorableContentEntry] = {}
         anchor_rewrites: list[tuple[Score, ContentEntryScorable]] = []
@@ -1680,9 +1811,16 @@ class MemoryInterface(abc.ABC):
                 continue
             row = rows.get(scorable)
             if row is None:
+                value_sha256 = prepared_content_hashes.get(scorable)
+                if scorable.data_type in MEDIA_PATH_DATA_TYPES and value_sha256 is None:
+                    raise ValueError(
+                        "File-backed ContentScorable values require add_scores_to_memory_async "
+                        "so PyRIT can copy the source bytes into managed storage."
+                    )
                 row = ScorableContentEntry(
                     id=uuid.uuid4(),
                     value=scorable.value,
+                    value_sha256=value_sha256 or hashlib.sha256(scorable.value.encode("utf-8")).hexdigest(),
                     data_type=scorable.data_type,
                     timestamp=datetime.now(tz=timezone.utc),
                 )

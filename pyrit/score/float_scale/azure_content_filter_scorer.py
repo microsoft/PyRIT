@@ -381,7 +381,10 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
                     description="Error response; no verdict was reachable.",
                     message_piece_id=piece_id,
                     objective=objective,
+                    score_category=[category.value],
+                    score_metadata={"azure_severity": 0},
                 )
+                for category in self._harm_categories
             ]
         else:
             status = "No supported pieces to score after filtering"

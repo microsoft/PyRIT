@@ -155,20 +155,21 @@ function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }
 
 function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
   const styles = useMessageListStyles()
+  const displayValue = scoreDisplayValue(score)
 
   return (
     <Popover withArrow>
-      <Tooltip content={scoreDisplayValue(score)} relationship="description" withArrow>
+      <Tooltip content={displayValue} relationship="description" withArrow>
         <PopoverTrigger disableButtonEnhancement>
           <Button
             appearance="subtle"
             size="small"
             className={styles.scoreChip}
-            aria-label={`Score ${scoreDisplayValue(score)} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`}
+            aria-label={`Score ${displayValue} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`}
             data-testid={`message-score-${groupId}-${scoreIndex}`}
           >
             <Badge appearance="tint" color="brand" size="medium" className={styles.scoreChipValue}>
-              {scoreDisplayValue(score)}
+              {displayValue}
             </Badge>
           </Button>
         </PopoverTrigger>

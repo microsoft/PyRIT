@@ -15,6 +15,7 @@ from pyrit.models import (
     IdentifierFilter,
     IdentifierType,
     MessagePiece,
+    MessageScorable,
     Score,
     SeedPrompt,
 )
@@ -248,10 +249,13 @@ def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
         score_metadata={"test": "metadata"},
         scorer_class_identifier=_test_scorer_id("TestScorer"),
         message_piece_id=dupe_id,
+        scorable=MessageScorable(message_piece_ids=(dupe_id,)),
     )
     sqlite_instance.add_scores_to_memory(scores=[score])
 
     assert score.message_piece_id == original_id
+    assert score.scorable == MessageScorable(message_piece_ids=(original_id,))
+    assert sqlite_instance.get_scores(score_ids=[str(score_id)])[0].scorable == score.scorable
     assert sqlite_instance.get_prompt_scores(prompt_ids=[str(dupe_id)])[0].id == score_id
     assert sqlite_instance.get_prompt_scores(prompt_ids=[str(original_id)])[0].id == score_id
 

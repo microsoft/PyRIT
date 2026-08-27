@@ -97,6 +97,7 @@ def _create_aggregator(
                 )
             ]
 
+        metadata, category = combine_metadata_and_categories(scores_list)
         float_values = _float_values(scores_list)
         if float_values is None:
             return [
@@ -104,8 +105,8 @@ def _create_aggregator(
                     value=None,
                     description=f"No verdict was reachable in a {name} composite scorer.",
                     rationale="\n".join(format_score_for_rationale(s) for s in scores_list),
-                    metadata={},
-                    category=[],
+                    metadata=metadata,
+                    category=category,
                 )
             ]
         result = result_func(float_values)
@@ -114,8 +115,6 @@ def _create_aggregator(
         result = max(0.0, min(1.0, result))
 
         description, rationale = _build_rationale(scores_list, aggregate_description=aggregate_description)
-        metadata, category = combine_metadata_and_categories(scores_list)
-
         return [
             ScoreAggregatorResult(
                 value=result,
@@ -230,6 +229,7 @@ def _create_aggregator_by_category(
 
         if not group_by_category:
             # Original behavior: aggregate all scores together
+            metadata, category = combine_metadata_and_categories(scores_list)
             float_values = _float_values(scores_list)
             if float_values is None:
                 return [
@@ -237,16 +237,14 @@ def _create_aggregator_by_category(
                         value=None,
                         description=f"No verdict was reachable in a {name} composite scorer.",
                         rationale="\n".join(format_score_for_rationale(s) for s in scores_list),
-                        metadata={},
-                        category=[],
+                        metadata=metadata,
+                        category=category,
                     )
                 ]
             result = result_func(float_values)
             result = max(0.0, min(1.0, result))
 
             description, rationale = _build_rationale(scores_list, aggregate_description=aggregate_description)
-            metadata, category = combine_metadata_and_categories(scores_list)
-
             return [
                 ScoreAggregatorResult(
                     value=result,
@@ -279,6 +277,7 @@ def _create_aggregator_by_category(
         results: list[ScoreAggregatorResult] = []
 
         for category_name, category_scores in sorted(category_groups.items()):
+            metadata, category_list = combine_metadata_and_categories(category_scores)
             float_values = _float_values(category_scores)
             if float_values is None:
                 results.append(
@@ -286,8 +285,8 @@ def _create_aggregator_by_category(
                         value=None,
                         description=f"No verdict was reachable in a {name} composite scorer.",
                         rationale="\n".join(format_score_for_rationale(s) for s in category_scores),
-                        metadata={},
-                        category=[],
+                        metadata=metadata,
+                        category=category_list,
                     )
                 )
                 continue
@@ -304,9 +303,6 @@ def _create_aggregator_by_category(
                 description = f"{aggregate_description}{category_suffix}"
                 # Use generic description for rationale, not "Frame score"
                 rationale = _build_rationale(category_scores, aggregate_description="")[1]
-
-            # Combine metadata and categories for this group
-            metadata, category_list = combine_metadata_and_categories(category_scores)
 
             results.append(
                 ScoreAggregatorResult(

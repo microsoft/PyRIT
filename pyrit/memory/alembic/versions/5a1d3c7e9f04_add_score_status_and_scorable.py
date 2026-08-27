@@ -42,7 +42,8 @@ def upgrade() -> None:
     op.create_table(
         "ScorableContentEntries",
         sa.Column("id", sa.Uuid().with_variant(sa.CHAR(36), "sqlite"), nullable=False),
-        sa.Column("value", sa.String(), nullable=False),
+        sa.Column("value", sa.Unicode(), nullable=False),
+        sa.Column("value_sha256", sa.String(length=64), nullable=False),
         sa.Column("data_type", sa.String(length=32), nullable=False),
         sa.Column("timestamp", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),

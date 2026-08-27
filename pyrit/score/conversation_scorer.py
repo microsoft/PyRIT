@@ -19,9 +19,9 @@ class ConversationScorer(MessageScorer, ABC):
     """
     Scorer that evaluates entire conversation history rather than individual messages.
 
-    This scorer wraps another scorer (FloatScaleScorer or TrueFalseScorer) and evaluates
-    the full conversation context. Useful for multi-turn conversations where context matters
-    (e.g., psychosocial harms that emerge over time or persuasion/deception over many messages).
+    This scorer wraps a ``MessageFloatScaleScorer`` or ``MessageTrueFalseScorer`` and
+    evaluates the full conversation context. It is useful for multi-turn conversations
+    where context matters, such as harms that emerge over time.
 
     The ConversationScorer dynamically inherits from the same base class as the wrapped scorer,
     ensuring proper type compatibility.
@@ -51,6 +51,19 @@ class ConversationScorer(MessageScorer, ABC):
             frozenset[type[Condition]]: The required condition types.
         """
         return self._get_wrapped_scorer().required_conditions()
+
+    def _build_scoring_message(self, *, message: Message) -> Message | None:
+        """
+        Keep the trigger that identifies the conversation to acquire.
+
+        The trigger content is not sent to the child scorer. ``_score_prepared_message_async``
+        replaces it with a text view of the full conversation. The base class applies
+        ``skip_on_error_result`` before this hook.
+
+        Returns:
+            Message | None: The trigger message, or None if it has no pieces.
+        """
+        return message if message.message_pieces else None
 
     async def _score_prepared_message_async(
         self,
@@ -198,13 +211,13 @@ def create_conversation_scorer(
     """
     Create a ConversationScorer that inherits from the same type as the wrapped scorer.
 
-    This factory dynamically creates a ConversationScorer class that inherits from the wrapped scorer's
-    base class (FloatScaleScorer or TrueFalseScorer), ensuring the returned scorer is an instance
-    of both ConversationScorer and the wrapped scorer's type.
+    This factory dynamically creates a ConversationScorer class that inherits from the
+    wrapped scorer's message-family base. The returned scorer is an instance of both
+    ``ConversationScorer`` and the wrapped scorer's result family.
 
     Args:
         scorer (Scorer): The scorer to wrap for conversation-level evaluation.
-            Must be an instance of FloatScaleScorer or TrueFalseScorer.
+            Must be an instance of ``MessageFloatScaleScorer`` or ``MessageTrueFalseScorer``.
         validator (ScorerPromptValidator | None): Optional validator override.
             If not provided, uses the wrapped scorer's validator.
 
@@ -213,7 +226,7 @@ def create_conversation_scorer(
 
     Raises:
         TypeError: If the dynamic scorer does not inherit from ``Scorer``.
-        ValueError: If the scorer is not an instance of FloatScaleScorer or TrueFalseScorer.
+        ValueError: If the scorer is not message-capable.
 
     Example:
         >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
@@ -231,7 +244,7 @@ def create_conversation_scorer(
     else:
         raise ValueError(
             f"Unsupported scorer type: {type(scorer).__name__}. "
-            f"Scorer must be an instance of FloatScaleScorer or TrueFalseScorer."
+            "Scorer must be an instance of MessageFloatScaleScorer or MessageTrueFalseScorer."
         )
 
     # Both branches above narrow to a MessageScorer, which supplies the prepared-message hook.

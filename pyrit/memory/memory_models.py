@@ -1138,7 +1138,8 @@ class ScorableContentEntry(Base):
     __table_args__ = {"extend_existing": True}
 
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    value = mapped_column(String, nullable=False)
+    value = mapped_column(Unicode, nullable=False)
+    value_sha256 = mapped_column(String(64), nullable=False)
     data_type: Mapped[PromptDataType] = mapped_column(String(32), nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
 

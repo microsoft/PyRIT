@@ -255,12 +255,16 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 **Responsibility**: Scorers give feedback to the attack on what happened with the prompt. This could be as simple as "Was this prompt blocked?" or "Was our objective achieved?"
 
 - Any decision an attack makes should be based on a scorer result
-- A scorer is not limited to a prompt, it could be anything (e.g. was this tool called or was this file written).
+- A scorer receives a `Scorable`, which identifies the evidence, and an optional `ScoringExpectation`, which states what to evaluate.
+- `TrueFalseScorer` and `FloatScaleScorer` define result families without assuming that the evidence is a message.
+- `MessageScorer` owns message resolution, role and error policy, blocked-content substitution, and legacy objective inference.
+- A score can refer to a stored message or to loose content. When loose content is a file, score persistence copies the bytes to configured results storage and records a SHA-256 digest. The stored score does not depend on the source path remaining available.
+- `Score.status` distinguishes a complete verdict from an undetermined result. Attacks, not scorers, decide how to branch on that status and value.
 - **Does not own**: acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job, and aggregating scores across runs is analytics'. It may call a target to evaluate, but it doesn't send the attack's objective prompt or manage the conversation.
 
 **Framework Plans**:
 
-- Scorers will be refactored to be more generic, so they can determine more general results (does a file exist? Was a tool called?)
+- Phase 3 memory and retention work must normalize external media paths already stored in `PromptMemoryEntries`. That work must define deduplication and deletion policy. It is separate from managed persistence for loose score evidence.
 
 **Contributing (difficulty low)**:
 

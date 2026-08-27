@@ -432,6 +432,8 @@ def _to_transcript_score(*, score: dict[str, Any]) -> TranscriptScore:
         TranscriptScore: The scorer name, value, and rationale.
     """
     value = score.get("score_value")
+    if value is None:
+        value = score.get("status")
     return TranscriptScore(
         scorer=score.get("scorer_type") or None,
         value=str(value) if value is not None else None,

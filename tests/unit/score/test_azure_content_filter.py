@@ -366,3 +366,30 @@ async def test_azure_content_filter_scorer_blocked_default_categories_returns_fo
     assert {s.score_category[0] for s in scores} == {c.value for c in TextCategory}
     for score in scores:
         assert score.get_value() == 0.0
+
+
+async def test_azure_content_filter_scorer_error_preserves_category_shape(patch_central_database):
+    scorer = AzureContentFilterScorer(
+        api_key="foo",
+        endpoint="bar",
+        harm_categories=[TextCategory.HATE, TextCategory.VIOLENCE],
+    )
+    error_piece = MessagePiece(
+        role="assistant",
+        original_value="",
+        converted_value="",
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        response_error="unknown",
+    )
+    message = Message(message_pieces=[error_piece])
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
+
+    assert len(scores) == 2
+    assert {score.score_category[0] for score in scores} == {
+        TextCategory.HATE.value,
+        TextCategory.VIOLENCE.value,
+    }
+    assert all(score.is_undetermined for score in scores)
+    assert all(score.score_metadata == {"azure_severity": 0} for score in scores)

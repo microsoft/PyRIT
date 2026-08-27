@@ -13,6 +13,7 @@ from pyrit.score import (
     ContentScorable,
     MessageScorable,
     MessageScorer,
+    MessageScoringOptions,
     Scorer,
     SelfAskGeneralFloatScaleScorer,
     create_conversation_scorer,
@@ -411,7 +412,10 @@ def test_factory_raises_error_for_unsupported_scorer_type():
     unsupported_scorer = MockUnsupportedScorer()
 
     with pytest.raises(
-        ValueError, match="Unsupported scorer type.*Scorer must be an instance of FloatScaleScorer or TrueFalseScorer"
+        ValueError,
+        match=(
+            "Unsupported scorer type.*Scorer must be an instance of MessageFloatScaleScorer or MessageTrueFalseScorer"
+        ),
     ):
         create_conversation_scorer(scorer=unsupported_scorer)
 
@@ -697,6 +701,32 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
 
     assert len(scores) == 1
     mock_scorer._score_prepared_message_async.assert_awaited_once()
+
+
+async def test_conversation_scorer_skip_on_error_omits_blocked_trigger(patch_central_database):
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value='{"message": "content_filter"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        conversation_id=conversation_id,
+        response_error="blocked",
+    )
+    memory.add_message_pieces_to_memory(message_pieces=[blocked_piece])
+
+    wrapped_scorer = MockFloatScaleScorer()
+    wrapped_scorer._score_prepared_message_async = AsyncMock()
+    scorer = create_conversation_scorer(scorer=wrapped_scorer)
+
+    scores = await scorer.score_async(
+        scorable=MessageScorable.from_message(blocked_piece.to_message()),
+        message_options=MessageScoringOptions(skip_on_error_result=True),
+    )
+
+    assert scores == []
+    wrapped_scorer._score_prepared_message_async.assert_not_awaited()
 
 
 async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(patch_central_database):

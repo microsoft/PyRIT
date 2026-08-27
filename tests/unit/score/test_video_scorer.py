@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from unit.mocks import get_mock_scorer_identifier
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
@@ -122,6 +122,20 @@ class MockFloatScaleScorer(MessageFloatScaleScorer):
         ]
 
 
+def _make_score(*, score_type: str, score_value: str | None, message_piece_id: uuid.UUID) -> Score:
+    return Score(
+        score_type=score_type,
+        score_value=score_value,
+        status=ScoreStatus.UNDETERMINED if score_value is None else ScoreStatus.COMPLETE,
+        score_rationale="Test rationale",
+        score_category=["test_category"],
+        score_metadata={"source": "test"},
+        score_value_description="test_description",
+        message_piece_id=message_piece_id,
+        scorer_class_identifier=get_mock_scorer_identifier(),
+    )
+
+
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
 async def test_extract_frames_true_false(video_converter_sample_video):
     """Test that frame extraction produces the expected number of frames"""
@@ -209,6 +223,80 @@ async def test_score_video_float_scale(video_converter_sample_video):
     # With MAX aggregator (default), should return 0.8
     assert float(scores[0].score_value) == 0.8
     assert "Video scored by analyzing" in scores[0].score_rationale
+
+
+async def test_score_video_true_false_propagates_undetermined_frame_result(video_converter_sample_video):
+    image_scorer = MockTrueFalseScorer()
+    scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer)
+    scorer._video_helper._score_frames_async = AsyncMock(
+        return_value=[
+            _make_score(
+                score_type="true_false",
+                score_value=None,
+                message_piece_id=video_converter_sample_video.id,
+            )
+        ]
+    )
+
+    scores = await scorer._score_piece_async(video_converter_sample_video)
+
+    assert len(scores) == 1
+    assert scores[0].score_value is None
+    assert scores[0].status == ScoreStatus.UNDETERMINED
+    assert scores[0].score_category == ["test_category"]
+    assert scores[0].score_metadata == {"source": "test"}
+
+
+async def test_score_video_true_false_propagates_undetermined_final_result(video_converter_sample_video):
+    image_scorer = MockTrueFalseScorer()
+    audio_scorer = MockAudioTrueFalseScorer()
+    scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, audio_scorer=audio_scorer)
+    scorer._video_helper._score_frames_async = AsyncMock(
+        return_value=[
+            _make_score(
+                score_type="true_false",
+                score_value="true",
+                message_piece_id=video_converter_sample_video.id,
+            )
+        ]
+    )
+    scorer._video_helper._score_video_audio_async = AsyncMock(
+        return_value=[
+            _make_score(
+                score_type="true_false",
+                score_value=None,
+                message_piece_id=video_converter_sample_video.id,
+            )
+        ]
+    )
+
+    scores = await scorer._score_piece_async(video_converter_sample_video)
+
+    assert len(scores) == 1
+    assert scores[0].score_value is None
+    assert scores[0].status == ScoreStatus.UNDETERMINED
+
+
+async def test_score_video_float_scale_propagates_undetermined_result(video_converter_sample_video):
+    image_scorer = MockFloatScaleScorer()
+    scorer = VideoFloatScaleScorer(image_capable_scorer=image_scorer)
+    scorer._video_helper._score_frames_async = AsyncMock(
+        return_value=[
+            _make_score(
+                score_type="float_scale",
+                score_value=None,
+                message_piece_id=video_converter_sample_video.id,
+            )
+        ]
+    )
+
+    scores = await scorer._score_piece_async(video_converter_sample_video)
+
+    assert len(scores) == 1
+    assert scores[0].score_value is None
+    assert scores[0].status == ScoreStatus.UNDETERMINED
+    assert scores[0].score_category == ["test_category"]
+    assert scores[0].score_metadata == {"source": "test"}
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")

@@ -10,15 +10,21 @@ if TYPE_CHECKING:
 from pyrit.models import (
     ComponentIdentifier,
     Condition,
+    Message,
     Scorable,
     Score,
     ScoringExpectation,
+)
+from pyrit.score.message_scorer import (
+    LegacyMessageScorerCompatibility,
+    score_blocked_content_enabled,
+    score_nested_message_compatibility_async,
 )
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
-class TrueFalseInverterScorer(TrueFalseScorer):
+class TrueFalseInverterScorer(LegacyMessageScorerCompatibility, TrueFalseScorer):
     """A scorer that inverts a true false score."""
 
     def __init__(self, *, scorer: TrueFalseScorer, validator: ScorerPromptValidator | None = None) -> None:
@@ -78,6 +84,15 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         return self._scorer.required_conditions()
 
+    def _get_nested_score_blocked_content(self) -> bool:
+        """
+        Delegate partial-blocked-content handling to the wrapped scorer.
+
+        Returns:
+            bool: Whether the wrapped scorer permits partial blocked content.
+        """
+        return score_blocked_content_enabled(scorer=self._scorer)
+
     async def _score_scorable_async(
         self,
         *,
@@ -95,6 +110,25 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             list[Score]: A list containing a single Score object with the inverted true/false value.
         """
         scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
+        return self._invert(scores)
+
+    async def _score_prepared_message_compatibility_async(
+        self,
+        *,
+        message: Message,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Run a message-capable child and apply the normal inversion.
+
+        Returns:
+            list[Score]: The inverted score.
+        """
+        scores = await score_nested_message_compatibility_async(
+            scorer=self._scorer,
+            message=message,
+            expectation=expectation,
+        )
         return self._invert(scores)
 
     def _invert(self, scores: list[Score]) -> list[Score]:

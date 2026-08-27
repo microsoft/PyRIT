@@ -127,7 +127,7 @@ class XPIAResult(WorkflowResult):
         Returns:
             XPIAStatus: The status of the attack result.
         """
-        if self.score is None:
+        if self.score is None or self.score.is_undetermined:
             return XPIAStatus.UNKNOWN
         return XPIAStatus.SUCCESS if self.success else XPIAStatus.FAILURE
 

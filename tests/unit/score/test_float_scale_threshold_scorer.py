@@ -8,7 +8,7 @@ import pytest
 from unit.mocks import store_message
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, ContentEntryScorable, Message, MessagePiece, Score, ScoreStatus
 from pyrit.score import FloatScaleThresholdScorer, MessageScorable
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -350,3 +350,70 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     persisted_scores = memory.get_scores(score_type="true_false")
     assert len(persisted_scores) == 1
     assert memory.get_scores(score_type="float_scale") == []
+
+
+async def test_float_scale_threshold_score_message_async_uses_message_capable_child(patch_central_database):
+    class ConstantFloatScorer(MessageFloatScaleScorer):
+        def __init__(self):
+            super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return self._create_identifier()
+
+        async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+            return [
+                Score(
+                    score_value="0.8",
+                    score_type="float_scale",
+                    message_piece_id=message_piece.id,
+                )
+            ]
+
+    scorer = FloatScaleThresholdScorer(scorer=ConstantFloatScorer(), threshold=0.5)
+
+    scores = await scorer.score_message_async(
+        message=MessagePiece(role="assistant", original_value="response").to_message()
+    )
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+
+
+async def test_float_scale_threshold_undetermined_ephemeral_message_has_resolvable_anchor(
+    patch_central_database,
+):
+    class UndeterminedFloatScorer(MessageFloatScaleScorer):
+        def __init__(self):
+            super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return self._create_identifier()
+
+        async def _score_piece_async(
+            self,
+            message_piece: MessagePiece,
+            *,
+            objective: str | None = None,
+        ) -> list[Score]:
+            return [
+                Score(
+                    score_value=None,
+                    status=ScoreStatus.UNDETERMINED,
+                    score_type="float_scale",
+                    message_piece_id=message_piece.id,
+                )
+            ]
+
+    scorer = FloatScaleThresholdScorer(scorer=UndeterminedFloatScorer(), threshold=0.5)
+
+    scores = await scorer.score_message_async(
+        message=MessagePiece(role="assistant", original_value="ephemeral response").to_message()
+    )
+
+    assert len(scores) == 1
+    assert scores[0].is_undetermined
+    assert scores[0].message_piece_id is None
+    assert isinstance(scores[0].scorable, ContentEntryScorable)
+    memory = CentralMemory.get_memory_instance()
+    resolved = memory.get_scorable_content(content_ids=[scores[0].scorable.content_id])
+    assert resolved[scores[0].scorable.content_id].value == "ephemeral response"

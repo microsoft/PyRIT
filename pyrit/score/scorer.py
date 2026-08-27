@@ -12,6 +12,7 @@ from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    MEDIA_PATH_DATA_TYPES,
     ComponentIdentifier,
     Condition,
     ContentScorable,
@@ -95,10 +96,20 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
         if not defines("_score_piece_async"):
             return
         # A leaf that only fans in at the piece level used to inherit the message pipeline
-        # from its family base. That pipeline now lives on MessageScorer, so lend it here.
+        # from its family base. That pipeline now lives on the message-capable family,
+        # so lend the matching family implementation here.
+        from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
         from pyrit.score.message_scorer import MessageScorer
+        from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
 
-        cls._score_async = MessageScorer._score_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+        if issubclass(cls, TrueFalseScorer):
+            score_async = MessageTrueFalseScorer._score_async
+        elif issubclass(cls, FloatScaleScorer):
+            score_async = MessageFloatScaleScorer._score_async
+        else:
+            score_async = MessageScorer._score_async
+
+        cls._score_async = score_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
         if not defines("_get_supported_pieces"):
             cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
 
@@ -316,7 +327,7 @@ class Scorer(Identifiable, abc.ABC):
             raise
         except Exception as e:
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
-        return self._validate_and_persist_scores(scores=scores)
+        return await self._validate_and_persist_scores_async(scores=scores)
 
     def _validate_expectation(
         self,
@@ -364,7 +375,7 @@ class Scorer(Identifiable, abc.ABC):
             names = ", ".join(sorted(condition_type.__name__ for condition_type in missing))
             raise ValueError(f"{type(self).__name__} requires the condition(s) {names}.")
 
-    def _validate_and_persist_scores(self, *, scores: list[Score]) -> list[Score]:
+    async def _validate_and_persist_scores_async(self, *, scores: list[Score]) -> list[Score]:
         """
         Validate and persist non-empty scorer output.
 
@@ -375,7 +386,14 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         self.validate_return_scores(scores=scores)
-        self._memory.add_scores_to_memory(scores=scores)
+        requires_file_copy = any(
+            isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
+            for score in scores
+        )
+        if requires_file_copy:
+            await self._memory.add_scores_to_memory_async(scores=scores)
+        else:
+            self._memory.add_scores_to_memory(scores=scores)
         return scores
 
     async def _score_nested_async(
@@ -412,6 +430,8 @@ class Scorer(Identifiable, abc.ABC):
         message_piece_id: uuid.UUID | str | None = None,
         scorable: ScorableUnion | None = None,
         objective: str | None = None,
+        score_category: list[str] | None = None,
+        score_metadata: dict[str, str | int | float] | None = None,
     ) -> Score:
         """
         Build a score that reports no verdict was reachable.
@@ -422,6 +442,8 @@ class Scorer(Identifiable, abc.ABC):
             message_piece_id (uuid.UUID | str | None): The message piece anchor, if any.
             scorable (Scorable | None): What the score is about, if known here.
             objective (str | None): The objective associated with this scoring call.
+            score_category (list[str] | None): Categories whose verdict is undetermined.
+            score_metadata (dict[str, str | int | float] | None): Context retained from the scorer.
 
         Returns:
             Score: An undetermined score of this scorer's type.
@@ -431,8 +453,8 @@ class Scorer(Identifiable, abc.ABC):
             status=ScoreStatus.UNDETERMINED,
             score_value_description=description,
             score_type=self.scorer_type,
-            score_category=None,
-            score_metadata=None,
+            score_category=score_category,
+            score_metadata=score_metadata,
             score_rationale=rationale,
             scorer_class_identifier=self.get_identifier(),
             message_piece_id=message_piece_id,

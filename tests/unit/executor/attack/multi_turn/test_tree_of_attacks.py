@@ -39,6 +39,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoreStatus,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
@@ -120,7 +121,10 @@ class MockNodeFactory:
         # Set up objective score
         if config.objective_score_value is not None:
             node.objective_score = MagicMock(
-                spec=Score, get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
+                spec=Score,
+                get_value=MagicMock(return_value=config.objective_score_value),
+                is_undetermined=False,
+                score_metadata=None,
             )
         else:
             node.objective_score = None
@@ -328,6 +332,24 @@ class TestHelpers:
             score_category=["test"],
             score_value_description="Test score",
             score_rationale="Test rationale",
+            score_metadata={"test": "metadata"},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=ComponentIdentifier(
+                class_name="MockScorer",
+                class_module="test_module",
+            ),
+        )
+
+    @staticmethod
+    def create_undetermined_score() -> Score:
+        """Create an objective score for which no verdict was reachable."""
+        return Score(
+            score_type="float_scale",
+            score_value=None,
+            status=ScoreStatus.UNDETERMINED,
+            score_category=["test"],
+            score_value_description="No verdict",
+            score_rationale="The scorer could not reach a verdict.",
             score_metadata={"test": "metadata"},
             message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier=ComponentIdentifier(
@@ -766,6 +788,50 @@ class TestPruningLogic:
         # Verify off-topic node is excluded
         assert len(completed) == 3
         assert all(not node.off_topic for node in completed)
+
+    def test_sort_prefers_complete_zero_to_undetermined(self, basic_attack, node_factory, helpers):
+        undetermined_node = node_factory.create_node(NodeMockConfig(node_id="undetermined"))
+        undetermined_node.objective_score = helpers.create_undetermined_score()
+        complete_zero_node = node_factory.create_node(NodeMockConfig(node_id="complete_zero"))
+        complete_zero_node.objective_score = helpers.create_score(0.0)
+
+        completed = basic_attack._get_completed_nodes_sorted_by_score([undetermined_node, complete_zero_node])
+
+        assert completed == [complete_zero_node, undetermined_node]
+
+    def test_sort_all_undetermined_scores_is_stable(self, basic_attack, node_factory, helpers):
+        first_node = node_factory.create_node(NodeMockConfig(node_id="first"))
+        second_node = node_factory.create_node(NodeMockConfig(node_id="second"))
+        first_node.objective_score = helpers.create_undetermined_score()
+        second_node.objective_score = helpers.create_undetermined_score()
+        nodes = [first_node, second_node]
+
+        assert basic_attack._get_completed_nodes_sorted_by_score(nodes) == nodes
+        assert basic_attack._get_completed_nodes_sorted_by_score(nodes) == nodes
+
+    def test_sort_equal_complete_scores_is_stable(self, basic_attack, node_factory, helpers):
+        first_node = node_factory.create_node(NodeMockConfig(node_id="first"))
+        second_node = node_factory.create_node(NodeMockConfig(node_id="second"))
+        first_node.objective_score = helpers.create_score(0.5)
+        second_node.objective_score = helpers.create_score(0.5)
+        nodes = [first_node, second_node]
+
+        assert basic_attack._get_completed_nodes_sorted_by_score(nodes) == nodes
+
+    def test_update_best_performing_node_uses_undetermined_when_all_are_undetermined(
+        self, basic_attack, node_factory, helpers
+    ):
+        context = helpers.create_basic_context()
+        first_node = node_factory.create_node(NodeMockConfig(node_id="first"))
+        second_node = node_factory.create_node(NodeMockConfig(node_id="second"))
+        first_node.objective_score = helpers.create_undetermined_score()
+        second_node.objective_score = helpers.create_undetermined_score()
+        context.nodes = [first_node, second_node]
+
+        basic_attack._update_best_performing_node(context)
+
+        assert context.best_objective_score is first_node.objective_score
+        assert context.best_conversation_id == first_node.objective_target_conversation_id
 
     async def test_send_prompts_adds_off_topic_and_incomplete_nodes_to_related_conversations(
         self, attack_builder, node_factory, helpers
@@ -1425,6 +1491,22 @@ class TestHelperMethods:
         # Verify the outcome reason contains the float score, not "False"
         assert "0.65" in result.outcome_reason
         assert result.outcome == AttackOutcome.FAILURE
+
+    def test_auxiliary_score_summary_uses_threshold_verdicts(self, basic_attack, node_factory, helpers):
+        node = node_factory.create_node()
+        node.auxiliary_scores = {
+            "true_threshold": helpers.create_threshold_score(original_float_value=0.35, threshold=0.3),
+            "false_threshold": helpers.create_threshold_score(original_float_value=0.75, threshold=0.8),
+            "undetermined": Score(score_type="true_false", status=ScoreStatus.UNDETERMINED),
+        }
+
+        summary = basic_attack._get_auxiliary_scores_summary([node])
+
+        assert summary == {
+            "true_threshold": 1.0,
+            "false_threshold": 0.0,
+            "undetermined": 0.0,
+        }
 
 
 @pytest.mark.usefixtures("patch_central_database")

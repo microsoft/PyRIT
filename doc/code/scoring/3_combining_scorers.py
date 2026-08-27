@@ -54,8 +54,8 @@
 #     TF -->|"1+ via scorers="| COMP
 #     TF -->|"1 via scorer="| INV
 #     FS -->|"1 via scorer="| THRESH
-#     TF -->|"1 via scorer="| CONV
-#     FS -->|"1 via scorer="| CONV
+#     TF -->|"1 message-capable scorer"| CONV
+#     FS -->|"1 message-capable scorer"| CONV
 #
 #     COMP -. is a .-> TFOUT
 #     INV -. is a .-> TFOUT
@@ -76,9 +76,13 @@
 # `TrueFalseCompositeScorer` requires at least one `TrueFalseScorer` and combines their
 # single results with `AND`, `OR`, or `MAJORITY`; `TrueFalseInverterScorer` accepts one
 # `TrueFalseScorer`. `FloatScaleThresholdScorer` is the cross-kind adapter: it accepts one
-# `FloatScaleScorer` and produces a `TrueFalseScorer`. `create_conversation_scorer()`
-# accepts only those two base types and returns a dynamic wrapper that remains the same
-# scorer kind as its input.
+# `FloatScaleScorer` and produces a `TrueFalseScorer`. These generic wrappers forward the
+# same `Scorable` to their children, so each child must support that evidence kind.
+#
+# Their message-specific compatibility methods require every child in the path to be
+# message-capable. `create_conversation_scorer()` is stricter: it accepts only
+# `MessageTrueFalseScorer` or `MessageFloatScaleScorer` and returns a dynamic wrapper that
+# remains the same scorer kind as its input.
 #
 # For example, float-scale → conversation → threshold →
 # inversion is supported; a generic `Scorer` outside those base types is not.
@@ -149,9 +153,9 @@ print(f"[threshold] independent -> {original.get_value()}")
 # ## Scoring a whole conversation
 #
 # Some signals only emerge across turns — persuasion, gradual persona breaks, escalation.
-# `create_conversation_scorer()` wraps any `TrueFalseScorer` or `FloatScaleScorer` so it
-# scores the concatenated conversation instead of a single message. The returned scorer is
-# the same type as the one it wraps.
+# `create_conversation_scorer()` wraps a `MessageTrueFalseScorer` or
+# `MessageFloatScaleScorer` so it scores the concatenated conversation instead of a single
+# message. The returned scorer keeps the same result family as the scorer it wraps.
 #
 # Pass it any one message from the conversation; its `conversation_id` is used to pull the
 # full history from memory. Below we build a short conversation by hand and wrap a local

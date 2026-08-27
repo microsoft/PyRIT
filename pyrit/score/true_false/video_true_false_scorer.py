@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Condition, MessagePiece, Score, ScoreStatus
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
@@ -144,7 +144,8 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
 
         # Create a Score from the frame aggregation result
         frame_score = Score(
-            score_value=str(frame_result.value).lower(),
+            score_value=str(frame_result.value).lower() if frame_result.value is not None else None,
+            status=ScoreStatus.UNDETERMINED if frame_result.value is None else ScoreStatus.COMPLETE,
             score_value_description=frame_result.description,
             score_type="true_false",
             score_category=frame_result.category,
@@ -166,7 +167,8 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
                 final_result = TrueFalseScoreAggregator.AND(all_scores)
                 return [
                     Score(
-                        score_value=str(final_result.value).lower(),
+                        score_value=str(final_result.value).lower() if final_result.value is not None else None,
+                        status=ScoreStatus.UNDETERMINED if final_result.value is None else ScoreStatus.COMPLETE,
                         score_value_description=final_result.description,
                         score_type="true_false",
                         score_category=final_result.category,
