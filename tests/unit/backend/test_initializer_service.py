@@ -872,6 +872,7 @@ class TestInitializerServiceCustomRegistration:
             assert result.items[0].initializer_name == "my_custom"
             assert result.items[0].source == "C:/custom/my_custom.py"
 
+
 # ============================================================================
 # POST / DELETE Route Tests
 # ============================================================================
@@ -885,9 +886,7 @@ class TestCustomInitializerRoutes:
     ) -> None:
         with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
             mock_service = MagicMock()
-            mock_service.list_custom_initializers_async = AsyncMock(
-                return_value={"source": "C:/custom", "items": []}
-            )
+            mock_service.list_custom_initializers_async = AsyncMock(return_value={"source": "C:/custom", "items": []})
             mock_get_service.return_value = mock_service
 
             response = client_with_custom_initializers_enabled.get("/api/initializers/custom")
