@@ -7,15 +7,16 @@ on:
   push:
     branches:
       - "main"
+      - "releases/v*"
   pull_request:
     branches:
       - "main"
-      - "release/**"
+      - "releases/**"
   merge_group:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 env:
