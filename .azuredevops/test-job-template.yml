@@ -11,6 +11,9 @@ parameters:
     type: string
   - name: makeTarget
     type: string
+  - name: testBatches
+    type: object
+    default: []
 
 jobs:
 - job: ${{ parameters.jobName }}
@@ -101,6 +104,8 @@ jobs:
       scriptType: 'bash'
       scriptLocation: 'inlineScript'
       inlineScript: |
+        set -e
+
         # Prefetch token for Cognitive Services before ID token expires (60-90 minute validity)
         az account get-access-token --scope https://cognitiveservices.azure.com/.default --output none
         echo "Cognitive Services access token cached successfully."
@@ -114,7 +119,16 @@ jobs:
         echo "Azure SQL Database access token cached successfully."
 
         # Run tests
-        make ${{ parameters.makeTarget }}
+        test_batches="${{ join(' ', parameters.testBatches) }}"
+        if [ -n "$test_batches" ]; then
+          batch_number=0
+          for test_batch in $test_batches; do
+            batch_number=$((batch_number + 1))
+            make ${{ parameters.makeTarget }} INTEGRATION_TESTS="$test_batch" JUNIT_XML="junit/test-results-${batch_number}.xml"
+          done
+        else
+          make ${{ parameters.makeTarget }}
+        fi
   - bash: |
       rm -f ~/.pyrit/.env ~/.pyrit/.env.local
     name: clean_up_env_files
@@ -123,4 +137,5 @@ jobs:
     condition: always()
     inputs:
       testResultsFormat: 'JUnit'
-      testResultsFiles: 'junit/test-results.xml'
+      testResultsFiles: 'junit/test-results*.xml'
+      mergeTestResults: true

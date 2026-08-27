@@ -18,10 +18,11 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_args, get_origin
+from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
 
 import aiofiles
 
+from pyrit.cli._auth import AUTH_MODES, AuthMode
 from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
@@ -160,6 +161,10 @@ _REQUEST_TIMEOUT_HELP = (
     "(catalog/results/cancel/etc). Defaults to 60. Polling a live "
     "scenario run always waits indefinitely regardless of this value."
 )
+_AUTH_MODE_HELP = (
+    "Backend authentication mode (default: server.auth_mode or auto). "
+    "Auto uses exact-scope device-code authentication in an interactive terminal."
+)
 
 
 def _add_common_options(*, parser: ArgumentParser, suppress_defaults: bool) -> None:
@@ -181,6 +186,7 @@ def _add_common_options(*, parser: ArgumentParser, suppress_defaults: bool) -> N
     group = parser.add_argument_group("global options")
     group.add_argument("--server-url", type=str, default=default, help=_SERVER_URL_HELP)
     group.add_argument("--config-file", type=Path, default=default, help=_CONFIG_FILE_HELP)
+    group.add_argument("--auth-mode", choices=AUTH_MODES, default=default, help=_AUTH_MODE_HELP)
     group.add_argument("--log-level", type=validate_log_level_argparse, default=log_default, help=_LOG_LEVEL_HELP)
 
 
@@ -700,6 +706,27 @@ def _resolve_configured_server_url(*, parsed_args: Namespace) -> str:
     return server_url
 
 
+def _resolve_auth_mode(*, parsed_args: Namespace) -> AuthMode:
+    """
+    Resolve the authentication mode from CLI and layered configuration.
+
+    Returns:
+        The selected authentication mode.
+
+    Raises:
+        ValueError: If an unsupported mode is supplied programmatically.
+    """
+    from pyrit.cli._config_reader import read_server_settings
+
+    configured_mode = read_server_settings(config_file=parsed_args.config_file).auth_mode
+    raw_auth_mode = getattr(parsed_args, "auth_mode", None)
+    if raw_auth_mode is None:
+        return configured_mode
+    if raw_auth_mode not in AUTH_MODES:
+        raise ValueError(f"Unsupported authentication mode: {raw_auth_mode}")
+    return cast("AuthMode", raw_auth_mode)
+
+
 async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     """
     Handle ``stop-server``: probe, then terminate the listening process.
@@ -1121,6 +1148,7 @@ async def _run_async(*, parsed_args: Namespace) -> int:
         async with PyRITApiClient(
             base_url=base_url_result,
             request_timeout=getattr(parsed_args, "request_timeout", None),
+            auth_mode=_resolve_auth_mode(parsed_args=parsed_args),
         ) as client:
             return await _dispatch_with_client_async(client=client, parsed_args=parsed_args)
     except ServerNotAvailableError as exc:
