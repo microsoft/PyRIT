@@ -207,7 +207,7 @@ expected_environment_id='/subscriptions/test/resourceGroups/copyrit-test-rg/prov
 normalized_expected_environment_id=$(lowercase "$expected_environment_id")
 deployment_name='pyrit-test-1'
 deployment_tags='{{}}'
-rollback_parameters=()
+rollback_parameters=('disableContainerAppsPublicAccess=false')
 
 az() {{
     printf '%s\n' "$*" >> "$AZ_CALLS"
@@ -262,6 +262,7 @@ kill -TERM $$
         assert "Public ACA origin rollback completed" in result.stdout
         assert "rest --method delete" in calls
         assert re.search(r"--name pyrit-test-1-rollback(?:\s|$)", calls)
+        assert "disableContainerAppsPublicAccess=false" in calls
 
     def test_manual_parameter_files_use_the_single_topology(self):
         example = json.loads(EXAMPLE_PARAMETERS.read_text(encoding="utf-8"))
