@@ -187,6 +187,14 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["list-scenarios", "--server-url", "http://remote:9000"])
         assert args.server_url == "http://remote:9000"
 
+    def test_list_with_auth_mode(self):
+        args = pyrit_scan.parse_args(["list-scenarios", "--auth-mode", "device_code"])
+        assert args.auth_mode == "device_code"
+
+    def test_list_rejects_invalid_auth_mode(self):
+        with pytest.raises(SystemExit):
+            pyrit_scan.parse_args(["list-scenarios", "--auth-mode", "interactive"])
+
     def test_global_flag_before_verb(self):
         args = pyrit_scan.parse_args(["--server-url", "http://remote:9000", "list-scenarios"])
         assert args.command == "list-scenarios"
@@ -440,6 +448,21 @@ class TestMain:
         return_value=True,
     )
     @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_passes_auth_mode_to_client(self, mock_client_class, mock_probe):
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["list-scenarios", "--auth-mode", "azure_cli"])
+
+        assert result == 0
+        assert mock_client_class.call_args.kwargs["auth_mode"] == "azure_cli"
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_list_initializers(self, mock_client_class, mock_probe):
         """Test main with --list-initializers flag."""
         mock_client = _mock_api_client()
@@ -627,6 +650,16 @@ class TestMain:
 # ---------------------------------------------------------------------------
 # Internal helper coverage
 # ---------------------------------------------------------------------------
+
+
+def test_resolve_auth_mode_rejects_unsupported_programmatic_value() -> None:
+    parsed_args = Namespace(config_file=None, auth_mode="invalid")
+
+    with (
+        patch("pyrit.cli._config_reader.read_server_settings", return_value=MagicMock(auth_mode="auto")),
+        pytest.raises(ValueError, match="Unsupported authentication mode"),
+    ):
+        pyrit_scan._resolve_auth_mode(parsed_args=parsed_args)
 
 
 class TestStopServerOnPort:
@@ -1024,6 +1057,43 @@ class TestResolveServerUrl:
         ):
             assert await pyrit_scan._resolve_server_url_async(parsed_args=parsed) == DEFAULT_SERVER_URL
 
+    async def test_raises_type_error_when_configured_url_is_not_a_string(self):
+        """A non-string configured URL (e.g. malformed config) raises TypeError."""
+        parsed = Namespace(server_url=None, start_server=False, config_file=None)
+        with patch(
+            "pyrit.cli._config_reader.read_server_settings",
+            return_value=pyrit_scan_config_reader.ServerSettings(url=12345),  # type: ignore[arg-type]
+        ):
+            with pytest.raises(TypeError, match="Configured server URL must be a string"):
+                await pyrit_scan._resolve_server_url_async(parsed_args=parsed)
+
+
+class TestResolveConfiguredServerUrl:
+    """Tests for _resolve_configured_server_url."""
+
+    def test_uses_cli_flag_when_provided(self):
+        parsed = Namespace(server_url="http://cli:1111", config_file=None)
+        assert pyrit_scan._resolve_configured_server_url(parsed_args=parsed) == "http://cli:1111"
+
+    def test_falls_back_to_config_file(self):
+        parsed = Namespace(server_url=None, config_file=None)
+        with patch("pyrit.cli._config_reader.read_server_url", return_value="http://cfg:2222"):
+            assert pyrit_scan._resolve_configured_server_url(parsed_args=parsed) == "http://cfg:2222"
+
+    def test_falls_back_to_default(self):
+        from pyrit.cli._config_reader import DEFAULT_SERVER_URL
+
+        parsed = Namespace(server_url=None, config_file=None)
+        with patch("pyrit.cli._config_reader.read_server_url", return_value=None):
+            assert pyrit_scan._resolve_configured_server_url(parsed_args=parsed) == DEFAULT_SERVER_URL
+
+    def test_raises_type_error_when_configured_url_is_not_a_string(self):
+        """A non-string configured URL (e.g. malformed config) raises TypeError."""
+        parsed = Namespace(server_url=None, config_file=None)
+        with patch("pyrit.cli._config_reader.read_server_url", return_value=12345):
+            with pytest.raises(TypeError, match="Configured server URL must be a string"):
+                pyrit_scan._resolve_configured_server_url(parsed_args=parsed)
+
 
 class TestScenarioParamCoercion:
     """Regression tests for client-side coercion of typed scenario-declared params."""
@@ -1322,6 +1392,24 @@ class TestMainExtraPaths:
         assert "Registered initializer 'myinit'" in capsys.readouterr().out
         mock_client.register_initializer_async.assert_awaited_once()
 
+    async def test_handle_add_initializer_reads_with_aiofiles(self, tmp_path):
+        script = tmp_path / "myinit.py"
+        script.write_text("content read outside the event loop")
+        parsed_args = Namespace(files=[str(script)])
+        client = AsyncMock()
+        async_file = MagicMock()
+        async_file.__aenter__ = AsyncMock(return_value=async_file)
+        async_file.__aexit__ = AsyncMock(return_value=None)
+        async_file.read = AsyncMock(return_value="# stub initializer\n")
+
+        with patch("pyrit.cli.pyrit_scan.aiofiles.open", return_value=async_file) as open_mock:
+            result = await pyrit_scan._handle_add_initializer_async(client=client, parsed_args=parsed_args)
+
+        assert result == 0
+        open_mock.assert_called_once_with(script.resolve())
+        async_file.read.assert_awaited_once()
+        assert client.register_initializer_async.await_args.kwargs["script_content"] == "# stub initializer\n"
+
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
         new_callable=AsyncMock,
@@ -1377,6 +1465,49 @@ class TestScenarioResults:
         rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
         assert rc == 0
         assert "extract data" in capsys.readouterr().out
+
+    def test_handle_results_conversations_fetches_and_prints(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {
+            "messages": [
+                {"role": "user", "turn_number": 0, "message_pieces": [{"converted_value": "give me data"}]},
+            ]
+        }
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "conversations"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        client.get_conversation_messages_async.assert_awaited_once()
+        assert client.get_conversation_messages_async.await_args.kwargs["conversation_id"] == "conv-1"
+        out = capsys.readouterr().out
+        assert "give me data" in out
+        assert "Conversations" in out
+
+    def test_handle_results_full_prints_table_then_transcripts(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {"messages": []}
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "full"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Attack Results" in out
+        assert "Conversations" in out
+
+    def test_handle_results_conversations_reports_fetch_error(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.side_effect = RuntimeError("boom")
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "conversations"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "boom" in capsys.readouterr().out
 
     def test_handle_results_reports_fetch_error(self, capsys):
         import asyncio

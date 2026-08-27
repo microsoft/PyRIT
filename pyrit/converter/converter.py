@@ -5,16 +5,21 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import functools
 import inspect
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, cast, get_args
 
 from pyrit import converter
+from pyrit.common.random_context import get_random_generator, random_execution
 from pyrit.models import ComponentIdentifier, ConverterIdentifier, Identifiable, PromptDataType
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    import random
+    from collections.abc import Awaitable, Callable
+
     from pyrit.prompt_target import PromptTarget
 
 
@@ -46,6 +51,9 @@ class Converter(Identifiable):
     - SUPPORTED_OUTPUT_TYPES: tuple of PromptDataType values that the converter produces
 
     These attributes are enforced at class definition time for all non-abstract subclasses.
+    Concrete ``convert_async`` implementations are also wrapped at class definition time so
+    named random streams are scoped to one input. Stochastic subclasses should obtain randomness
+    through ``_get_random_generator`` and store an optional explicit constructor seed in ``_seed``.
     """
 
     #: Tuple of input modalities supported by this converter. Subclasses must override this.
@@ -59,11 +67,11 @@ class Converter(Identifiable):
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     _identifier: ComponentIdentifier | None = None
+    _seed: int | None = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
-        Validate that concrete subclasses define required class attributes
-        and follow the keyword-only ``__init__`` contract.
+        Validate subclass contracts and scope concrete conversions for named randomness.
 
         Args:
             **kwargs: Additional keyword arguments passed to the superclass.
@@ -90,6 +98,32 @@ class Converter(Identifiable):
                     f"{cls.__name__} must define non-empty SUPPORTED_OUTPUT_TYPES tuple. "
                     f"Declare the output modalities this converter produces."
                 )
+
+        convert_async = cast(
+            "Callable[..., Awaitable[ConverterResult]] | None",
+            cls.__dict__.get("convert_async"),
+        )
+        if convert_async and not getattr(convert_async, "__isabstractmethod__", False):
+
+            @functools.wraps(convert_async)
+            async def convert_with_random_context_async(
+                self: Converter,
+                *args: Any,
+                **kwargs: Any,
+            ) -> ConverterResult:
+                namespace = f"{type(self).__module__}.{type(self).__qualname__}"
+                prompt = kwargs.get("prompt")
+                input_type = kwargs.get("input_type", "text")
+                operation_key = f"{input_type}\x1f{prompt}" if isinstance(prompt, str) else None
+                with random_execution(
+                    namespace=namespace,
+                    seed=self._get_random_seed_override(),
+                    owner=self,
+                    operation_key=operation_key,
+                ):
+                    return await convert_async(self, *args, **kwargs)
+
+            cls.convert_async = cast("Any", convert_with_random_context_async)
 
     def __init__(self, *, converter_target: PromptTarget | None = None) -> None:
         """
@@ -139,6 +173,30 @@ class Converter(Identifiable):
             bool: True if the output type is supported, False otherwise.
         """
         return output_type in self.SUPPORTED_OUTPUT_TYPES
+
+    def _get_random_generator(self, *, stream: str) -> random.Random:
+        """
+        Return this conversion's generator for a named child stream.
+
+        Args:
+            stream (str): Stable name for the converter's independent random stream.
+
+        Returns:
+            random.Random: An operation-local generator.
+        """
+        return get_random_generator(stream=stream)
+
+    def _get_random_seed_override(self) -> int | None:
+        """
+        Return the explicit seed that replaces the configured root for this converter.
+
+        Stochastic converters that expose a ``seed`` constructor argument store it in
+        ``self._seed``. Subclasses with another seed source can override this method.
+
+        Returns:
+            int | None: The converter-specific seed, or None to inherit the configured root.
+        """
+        return self._seed
 
     async def convert_tokens_async(
         self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
@@ -284,6 +342,10 @@ def get_converter_modalities() -> list[tuple[str, list[PromptDataType], list[Pro
 
         # Skip if not a class or not a subclass of Converter
         if not isinstance(converter_class, type) or not issubclass(converter_class, Converter):
+            continue
+
+        # Skip abstract base classes (they cannot be instantiated or used directly)
+        if getattr(converter_class, "__abstractmethods__", None):
             continue
 
         # Read the class attributes

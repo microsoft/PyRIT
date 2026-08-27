@@ -318,6 +318,54 @@ class TestAttackResultToSummary:
 
         assert summary.attack_specific_params == {"source": "gui"}
 
+    async def test_explicit_objective_is_preserved(self) -> None:
+        """A user-supplied objective passes through unchanged."""
+        ar = _make_attack_result()
+        stats = ConversationStats(message_count=0)
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.objective == ar.objective
+
+    async def test_empty_objective_is_preserved(self) -> None:
+        """An unnamed manual attack remains represented by an empty objective."""
+        ar = _make_attack_result()
+        ar.objective = ""
+        stats = ConversationStats(message_count=0)
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.objective == ""
+
+    async def test_legacy_placeholder_objective_is_normalized_to_empty(self) -> None:
+        """Historical unnamed manual attacks are normalized at the API boundary."""
+        ar = _make_attack_result(name="ManualAttack")
+        ar.objective = "Manual attack via GUI"
+        stats = ConversationStats(message_count=0)
+
+        summary = await attack_result_to_summary_async(ar, stats=stats)
+
+        assert summary.objective == ""
+
+    async def test_legacy_placeholder_metadata_is_normalized_to_empty(self) -> None:
+        """The former placeholder metadata flag remains supported."""
+        ar = _make_attack_result(name="LegacyNamedAttack")
+        ar.objective = "Manual attack via GUI"
+        ar.metadata["objective_is_placeholder"] = True
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == ""
+
+    async def test_non_manual_attack_preserves_placeholder_text_as_explicit_objective(self) -> None:
+        """A non-manual attack may legitimately use the legacy placeholder text."""
+        ar = _make_attack_result(name="CrescendoAttack")
+        ar.objective = "Manual attack via GUI"
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == "Manual attack via GUI"
+
     async def test_converters_extracted_from_identifier(self) -> None:
         """Test that converter class names are extracted into converters list."""
         now = datetime.now(timezone.utc)
@@ -406,6 +454,17 @@ class TestAttackResultToSummary:
         summary = await attack_result_to_summary_async(ar, stats=stats)
 
         assert summary.message_count == 5
+
+    async def test_last_score_is_marked_as_objective(self) -> None:
+        """The summary identifies ``last_score`` as the canonical objective score."""
+        ar = _make_attack_result()
+        ar.last_score = _make_score()
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.last_score is not None
+        assert summary.last_score.is_objective_score is True
+        assert summary.model_dump()["last_score"]["is_objective_score"] is True
 
     async def test_created_at_prefers_ar_timestamp_when_metadata_absent(self) -> None:
         """When metadata['created_at'] is absent but ar.timestamp is set, use ar.timestamp."""
@@ -865,6 +924,59 @@ class TestPyritMessagesToDtoRealObjects:
         assistant_scores = by_role["assistant"].message_pieces[0].scores
         assert len(assistant_scores) == 2
         assert {s.score_value for s in assistant_scores} == {"true", "0.1"}
+
+    async def test_multi_piece_scores_preserve_provenance_and_objective_flag(self, sqlite_instance) -> None:
+        """Scores stay on their source pieces and only the selected score is objective."""
+        conversation_id = "real-conv-score-provenance"
+        text_piece = MessagePiece(
+            role="assistant",
+            original_value="caption",
+            conversation_id=conversation_id,
+            sequence=1,
+        )
+        media_piece = MessagePiece(
+            role="assistant",
+            original_value="/tmp/nonexistent-score-provenance.png",
+            original_value_data_type="image_path",
+            conversation_id=conversation_id,
+            sequence=1,
+        )
+        sqlite_instance.add_message_to_memory(request=Message(message_pieces=[text_piece, media_piece]))
+
+        text_score_one = Score(score_value="true", score_type="true_false", message_piece_id=text_piece.id)
+        text_score_two = Score(score_value="0.8", score_type="float_scale", message_piece_id=text_piece.id)
+        media_score = Score(score_value="blocked", score_type="unknown", message_piece_id=media_piece.id)
+        scores = [text_score_one, text_score_two, media_score]
+        sqlite_instance.add_scores_to_memory(scores=scores)
+
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=conversation_id)
+        expected_score_ids_by_piece = {
+            str(text_piece.id): {str(text_score_one.id), str(text_score_two.id)},
+            str(media_piece.id): {str(media_score.id)},
+        }
+
+        for objective_score_id in (media_score.id, None):
+            result = await pyrit_messages_to_dto_async(
+                list(reloaded),
+                objective_score_id=objective_score_id,
+            )
+
+            assert len(result) == 1
+            actual_scores_by_piece = {
+                str(piece.id): {str(score.id): score for score in piece.scores} for piece in result[0].message_pieces
+            }
+            assert {
+                piece_id: set(piece_scores) for piece_id, piece_scores in actual_scores_by_piece.items()
+            } == expected_score_ids_by_piece
+
+            objective_score_ids = {
+                score_id
+                for piece_scores in actual_scores_by_piece.values()
+                for score_id, score in piece_scores.items()
+                if score.is_objective_score
+            }
+            expected_objective_score_ids = {str(media_score.id)} if objective_score_id is not None else set()
+            assert objective_score_ids == expected_objective_score_ids
 
 
 class TestIsAzureBlobUrl:

@@ -9,6 +9,7 @@ import {
   MenuPopover,
   MenuTrigger,
   mergeClasses,
+  Spinner,
   Switch,
   Text,
   Tooltip,
@@ -23,6 +24,7 @@ import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
+import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
@@ -94,6 +96,8 @@ interface ChatWindowProps {
   isLoadingAttack?: boolean
   /** Number of related (non-main) conversations in the loaded attack. */
   relatedConversationCount?: number
+  /** The loaded attack's objective (empty for new/manual attacks). */
+  objective?: string
 }
 
 export default function ChatWindow({
@@ -113,6 +117,7 @@ export default function ChatWindow({
   onRetryTargetResolution,
   isLoadingAttack,
   relatedConversationCount,
+  objective = '',
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
@@ -126,6 +131,8 @@ export default function ChatWindow({
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   // Conversation-wide preference for rendering message text as Markdown.
@@ -554,17 +561,26 @@ export default function ChatWindow({
   // Message action handlers (4 buttons on each assistant message)
   // -------------------------------------------------------------------
 
+  const copyMessageToInput = useCallback((message: Message): void => {
+    const inputBox = inputBoxRef.current
+    if (!inputBox) { return }
+
+    if (message.content) {
+      inputBox.setText(message.content)
+    }
+    for (const attachment of message.attachments ?? []) {
+      if (attachment.type !== 'file') {
+        inputBox.addAttachment(attachment)
+      }
+    }
+  }, [])
+
   /** 1. Copy the clicked message's content/attachments into the current conversation's input box */
   const handleCopyToInput = useCallback((messageIndex: number) => {
     const msg = messages[messageIndex]
     if (!msg) { return }
-    if (msg.content) { inputBoxRef.current?.setText(msg.content) }
-    if (msg.attachments) {
-      msg.attachments.filter(a => a.type !== 'file').forEach(att => {
-        inputBoxRef.current?.addAttachment(att)
-      })
-    }
-  }, [messages])
+    copyMessageToInput(msg)
+  }, [copyMessageToInput, messages])
 
   /** 2. Create a new conversation in the same attack and copy ONLY this message to its input box */
   const handleCopyToNewConversation = useCallback(async (messageIndex: number) => {
@@ -578,12 +594,7 @@ export default function ChatWindow({
       setIsPanelOpen(!isNarrowScreen)
       // Small delay so the panel/messages update first
       setTimeout(() => {
-        if (msg.content) inputBoxRef.current?.setText(msg.content)
-        if (msg.attachments) {
-          msg.attachments.filter(a => a.type !== 'file').forEach(att => {
-            inputBoxRef.current?.addAttachment(att)
-          })
-        }
+        copyMessageToInput(msg)
       }, 100)
     } catch {
       // If creating fails, fall back to current conversation
@@ -591,6 +602,7 @@ export default function ChatWindow({
     }
   }, [
     attackResultId,
+    copyMessageToInput,
     isNarrowScreen,
     isMutationLocked,
     messages,
@@ -715,8 +727,22 @@ export default function ChatWindow({
     !isLoadingMessages &&
     !awaitingConversationLoad
 
-  const handleExport = (format: ExportFormat) => {
-    exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+  const handleExport = async (format: ExportFormat) => {
+    // A ref, not the state flag: two clicks in the same tick would both read
+    // the pre-render value and start duplicate exports.
+    if (isExportingRef.current) {
+      return
+    }
+    isExportingRef.current = true
+    setIsExporting(true)
+    try {
+      await exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+    } catch (err) {
+      console.error('Failed to export conversation:', err)
+    } finally {
+      isExportingRef.current = false
+      setIsExporting(false)
+    }
   }
 
   return (
@@ -762,7 +788,7 @@ export default function ChatWindow({
                   <Button
                     appearance="subtle"
                     className={styles.ribbonAction}
-                    icon={<ArrowDownloadRegular />}
+                    icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
                     disabled={!canExportConversation}
                     aria-label="Export conversation"
                     data-testid="export-conversation-btn"
@@ -771,11 +797,18 @@ export default function ChatWindow({
               </MenuTrigger>
               <MenuPopover>
                 <MenuList>
-                  <MenuItem onClick={() => handleExport('markdown')} data-testid="export-markdown-item">
+                  <MenuItem
+                    onClick={() => handleExport('markdown')}
+                    disabled={isExporting}
+                    data-testid="export-markdown-item"
+                  >
                     Export as Markdown (.md)
                   </MenuItem>
-                  <MenuItem onClick={() => handleExport('json')} data-testid="export-json-item">
+                  <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
                     Export as JSON (.json)
+                  </MenuItem>
+                  <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+                    Export as HTML (.html)
                   </MenuItem>
                 </MenuList>
               </MenuPopover>
@@ -809,6 +842,7 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
+        <ObjectiveHeader key={objective} objective={objective} />
         {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}

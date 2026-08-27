@@ -26,6 +26,31 @@ PyRIT provides two command-line interfaces:
 pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 ```
 
+### Connecting to CoPyRIT
+
+Point a local configuration file at the remote backend:
+
+```yaml
+server:
+  url: https://copyrit.example.com/
+  auth_mode: auto
+```
+
+Then use the file without changing the default configuration in `~/.pyrit`:
+
+```bash
+pyrit_scan --config-file ./.pyrit_conf list-scenarios
+```
+
+The CLI reads the server's public authentication configuration. Automatic mode uses an
+interactive Entra device code with the exact Microsoft Graph `User.Read` scope and an encrypted
+persistent token cache. Use `--auth-mode device_code` to require this flow or `--auth-mode none`
+to disable authentication discovery.
+
+`--auth-mode azure_cli` is an explicit compatibility mode. The Azure CLI application can issue
+a Graph token with permissions beyond `User.Read`, and the CLI sends that token to the backend.
+Prefer automatic device-code authentication.
+
 ## Built-in Scenarios
 
 PyRIT ships with scenarios organized into the following families:

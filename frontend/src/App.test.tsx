@@ -128,6 +128,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId,
     activeConversationId,
     attackTarget,
+    objective,
     targetResolutionStatus,
     onRetryTargetResolution,
     onConversationCreated,
@@ -140,6 +141,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId: string | null;
     activeConversationId: string | null;
     attackTarget?: { identifier_hash?: string | null } | null;
+    objective?: string;
     targetResolutionStatus?: string;
     onRetryTargetResolution?: () => void;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
@@ -156,6 +158,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
           {(activeTarget as { target_registry_name?: string } | null)?.target_registry_name ?? "none"}
         </span>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
+        <span data-testid="objective">{objective ?? ""}</span>
         <span data-testid="target-resolution-status">{targetResolutionStatus ?? "none"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
@@ -721,6 +724,48 @@ describe("App", () => {
     });
   });
 
+  it("prefers the labels you last picked over the backend defaults", async () => {
+    window.localStorage.setItem(
+      "pyrit.globalLabels",
+      JSON.stringify({ operator: "roakey", operation: "op_i_picked" }),
+    );
+    mockedVersionApi.getVersion.mockResolvedValueOnce({
+      version: "2.0.0",
+      default_labels: { operation: "op_from_backend", custom: "value" },
+    });
+
+    renderApp();
+
+    await waitFor(() => {
+      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      expect(labels).toContain('"custom":"value"');
+    });
+    const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+    expect(labels).toContain('"operation":"op_i_picked"');
+  });
+
+  it("still takes the operator from the signed-in account over a stored one", async () => {
+    window.localStorage.setItem(
+      "pyrit.globalLabels",
+      JSON.stringify({ operator: "stored_user", operation: "op_i_picked" }),
+    );
+    mockGetActiveAccount.mockReturnValue({ username: "Real.User@contoso.com" });
+    mockedVersionApi.getVersion.mockResolvedValueOnce({
+      version: "2.0.0",
+      default_labels: { custom: "value" },
+    });
+
+    renderApp();
+
+    await waitFor(() => {
+      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      expect(labels).toContain('"custom":"value"');
+    });
+    const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+    expect(labels).toContain('"operator":"real.user"');
+    expect(labels).toContain('"operation":"op_i_picked"');
+  });
+
   it("stores attack target when conversation is created with active target", () => {
     renderApp();
 
@@ -752,6 +797,7 @@ describe("App", () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
+      objective: "Extract the hidden system prompt",
       labels: {},
       related_conversation_ids: [],
     });
@@ -763,6 +809,24 @@ describe("App", () => {
       expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
     );
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main");
+    expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
+  });
+
+  it("hides the normalized empty objective of an unnamed manual attack on reload", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      objective: "",
+      labels: {},
+      related_conversation_ids: [],
+    });
+    renderApp("/attacks/ar-1");
+
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+    expect(screen.getByTestId("objective")).toHaveTextContent("");
   });
 
   it("uses the conversation from a deep link when it belongs to the attack", async () => {

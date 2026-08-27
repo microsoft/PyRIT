@@ -61,6 +61,10 @@ class ScenarioResultView(str, Enum):
     OVERVIEW = "overview"
     #: One row per individual attack result.
     ATTACKS = "attacks"
+    #: Individual messages for each attack result conversation.
+    CONVERSATIONS = "conversations"
+    #: All of the above.
+    FULL = "full"
 
 
 def parse_scenario_result_view(raw: str) -> ScenarioResultView:
@@ -285,12 +289,14 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
     if not isinstance(labels, dict):
         raise ValueError("Memory labels must be a JSON object (dictionary)")
 
-    # Validate all keys and values are strings
+    # Validate all keys and values are strings and build a precisely typed result
+    validated_labels: dict[str, str] = {}
     for key, value in labels.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise ValueError(f"All label keys and values must be strings. Got: {key}={value}")
+        validated_labels[key] = value
 
-    return labels
+    return validated_labels
 
 
 def parse_dataset_filter(arg: str) -> tuple[str, str]:
@@ -443,7 +449,8 @@ def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
         type=parse_scenario_result_view,
         default=None,
         metavar="{" + ",".join(view.value for view in ScenarioResultView) + "}",
-        help="Result granularity: 'overview' (aggregate, default) or 'attacks' (per-attack table)",
+        help="Result granularity: 'overview' (aggregate, default), 'attacks' (per-attack table), "
+        "'conversations' (per-attack message transcripts), or 'full' (attacks + conversations)",
     )
     group.add_argument(
         "--attack-result-ids",
@@ -455,7 +462,8 @@ def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
         "--limit",
         type=positive_int,
         metavar="N",
-        help="Show at most N attack rows (ignored for --view overview)",
+        help="Show at most N attacks (ignored for --view overview; defaults to 5 for "
+        "--view conversations/full when no --attack-result-ids is given)",
     )
 
 

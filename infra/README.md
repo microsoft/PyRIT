@@ -7,6 +7,7 @@ Deploy the CoPyRIT GUI as an Azure Container App with [MSAL](https://learn.micro
 ```mermaid
 flowchart TB
   user["User browser"]
+  cli["PyRIT CLI"]
   entra["Microsoft Entra ID"]
   msGraph["Microsoft Graph<br/>/me + /me/checkMemberGroups"]
   providers["External model providers"]
@@ -41,9 +42,13 @@ flowchart TB
   frontDoor -->|"Private origin when enabled"| privateLink
   privateLink --> ingress
   user -.->|"Direct ACA URL when public access is enabled"| ingress
+  cli -->|"HTTPS when Front Door enabled"| frontDoor
+  cli -.->|"Direct ACA URL when public access is enabled"| ingress
   ingress --> environment
   user -->|"MSAL PKCE sign-in"| entra
+  cli -->|"Device-code sign-in"| entra
   entra -->|"Delegated Graph token"| user
+  entra -->|"Delegated Graph token"| cli
 
   app -.->|"Uses"| identity
   identity -.->|"AcrPull"| acr
@@ -97,7 +102,7 @@ Community users can deploy `main.bicep` directly using the instructions below. F
 
 ## Security
 
-- **Authentication**: [MSAL](https://learn.microsoft.com/en-us/entra/msal/) [PKCE](https://oauth.net/2/pkce/) on the frontend (`@azure/msal-browser`) + Microsoft Graph-backed middleware on the backend. The frontend sends a delegated Graph token, and the backend authenticates it through Graph `/me`. PKCE (public client) requires no client secrets or certificates.
+- **Authentication**: [MSAL](https://learn.microsoft.com/en-us/entra/msal/) [PKCE](https://oauth.net/2/pkce/) on the frontend (`@azure/msal-browser`) and public-client device-code authentication for the PyRIT CLI, backed by Microsoft Graph middleware on the backend. Both clients send delegated Graph tokens, and the backend authenticates them through Graph `/me`. These public-client flows require no client secrets or certificates.
 - **Authorization**: Entra group check via `allowedGroupObjectIds` param. Requires delegated Graph `User.Read`; the backend calls `/me/checkMemberGroups` and compares the returned transitive memberships with the configured group IDs. Each security group must also be assigned to the enterprise app (see Prerequisites §3). Authenticated deployments require at least one allowed group and fail to start without one. `/api/health`, `/api/auth/config`, and `/api/media` are intentional public exceptions; other `/api` routes require authentication when auth is enabled. Successful identity and membership results are cached in-process for 60 seconds, keyed by a SHA-256 token digest, to reduce Graph latency and throttling. Bearer tokens themselves are not stored in the cache.
 - **Identity**: `deploy_instance.py` creates its user-assigned managed identity (UAMI) and grants AcrPull and Storage Blob Data Contributor before deploying Bicep. A direct Bicep deployment can create `<appName>-identity`, but the template creates no role assignments, so its first revision can remain unhealthy until required roles are granted and the revision is restarted. A healthy one-pass direct deployment uses an existing, pre-authorized UAMI. `AZURE_CLIENT_ID` is set to the UAMI's client ID so `DefaultAzureCredential` selects the correct identity.
 - **Network**: The template always creates a VNet-integrated external Container Apps environment, one delegated ACA infrastructure subnet, a Standard NAT Gateway, and a static outbound IPv4. ACA supplies the generated HTTPS hostname and trusted certificate. In direct-ACA mode, `allowedCidr` optionally restricts public ingress to one IPv4 CIDR; an empty value permits public ingress. Front Door mode requires `allowedCidr` to be empty because ACA sees Front Door backend addresses, not the original client; Bicep and the team pipeline reject the invalid combination. Entra sign-in, enterprise-app assignment, and backend group checks remain mandatory application access controls.
@@ -190,7 +195,7 @@ az account show --query tenantId -o tsv
 >
 > For replacement/migration deployments that reuse an app registration, do not run this command because it replaces the URI list. Use the set-union procedure in Post-Deployment instead.
 
-**Configure delegated Microsoft Graph access** (required):
+**Configure delegated Microsoft Graph access and public-client login** (required):
 
 In Azure Portal → App registrations → your app → **API permissions**:
 
@@ -209,7 +214,15 @@ Or via CLI (this adds `User.Read` without replacing other API permissions):
 az ad app permission add --id "$APP_ID" \
   --api 00000003-0000-0000-c000-000000000000 \
   --api-permissions e1fe6dd8-ba31-4d61-89e7-88639da4683d=Scope
+
+# Enable device-code login without replacing existing API permissions
+APP_OBJ_ID=$(az ad app show --id "$APP_ID" --query id -o tsv)
+az rest --method PATCH \
+  --url "https://graph.microsoft.com/v1.0/applications/$APP_OBJ_ID" \
+  --body '{"isFallbackPublicClient":true}'
 ```
+
+`isFallbackPublicClient` enables device-code login for `pyrit_scan` and `pyrit_shell`. In the Azure Portal, the equivalent setting is **Authentication → Advanced settings → Allow public client flows → Yes**.
 
 ### 3. Entra security groups (required for group-based authorization)
 
@@ -428,7 +441,7 @@ The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. Its 
 
 ## Post-Deployment
 
-1. **Add the SPA redirect URI** without removing existing migration/rollback URIs:
+1. **Configure browser and CLI public-client authentication** without removing existing migration/rollback URIs:
 
    ```bash
    ACA_FQDN=$(az deployment group show -g <rg> -n <deployment-name> \
@@ -445,16 +458,17 @@ The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. Its 
      --argjson existing "$CURRENT_URIS" \
      --arg aca "https://$ACA_FQDN" \
      --arg public "https://$PUBLIC_FQDN" \
-    --arg publicAccess "$ACA_PUBLIC_ACCESS" \
-    '($existing // []) + (if $publicAccess == "Disabled" then [$public] else [$aca, $public] end) | unique')
-   PATCH_BODY=$(jq -cn --argjson uris "$UPDATED_URIS" '{spa:{redirectUris:$uris}}')
+     --arg publicAccess "$ACA_PUBLIC_ACCESS" \
+     '($existing // []) + (if $publicAccess == "Disabled" then [$public] else [$aca, $public] end) | unique')
+   PATCH_BODY=$(jq -cn --argjson uris "$UPDATED_URIS" \
+     '{spa:{redirectUris:$uris},isFallbackPublicClient:true}')
    az rest --method PATCH \
      --uri "https://graph.microsoft.com/v1.0/applications/$APP_OBJECT_ID" \
      --headers 'Content-Type=application/json' \
      --body "$PATCH_BODY"
    ```
 
-   This requires an identity authorized to update the Entra application. Remove the old URI only after rollback is retired.
+    This requires an identity authorized to update the Entra application. It preserves existing redirect URIs and enables device-code login for `pyrit_scan` and `pyrit_shell`. Remove the old URI only after rollback is retired. For an existing deployment, run this post-deployment step directly; do not rerun `infra/deploy_instance.py`, whose resource creation steps are not idempotent.
 
 2. **Grant managed identity RBAC** (required — the Bicep template does **not** create role assignments; the app will fail to start without AcrPull):
 
