@@ -1486,6 +1486,35 @@ class TestScenarioResults:
         assert rc == 1
         assert "boom" in capsys.readouterr().out
 
+    def test_handle_results_attacks_json_emits_parseable_document(self, capsys):
+        import asyncio
+        import json
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "attacks", "--output", "json"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        document = json.loads(capsys.readouterr().out)
+        assert document["scenario_result_id"] == "SID"
+        assert document["rows"][0]["objective"] == "extract data"
+
+    def test_handle_results_overview_json_emits_aggregates(self, capsys):
+        import asyncio
+        import json
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--output", "json"])
+        # overview JSON goes through the payload, not the framework console printer.
+        with patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock) as mock_print:
+            rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        mock_print.assert_not_awaited()
+        document = json.loads(capsys.readouterr().out)
+        assert document["scenario_result_id"] == "SID"
+        assert "overall_success_rate" in document
+
 
 class TestScenarioHistory:
     """Tests for the ``scenario-history`` verb and its handler."""

@@ -11,14 +11,22 @@ import uuid
 import pytest
 
 from pyrit.cli._cli_args import (
+    OutputFormat,
     ScenarioResultView,
     add_results_arguments,
     build_scenario_results_parser,
+    parse_output_format,
 )
 from pyrit.cli._results import (
+    AttacksTablePayload,
+    ConversationsPayload,
+    FullPayload,
+    ScenarioOverviewPayload,
     apply_view_limit_policy,
     build_attacks_table_payload,
     build_conversations_payload_async,
+    build_overview_payload,
+    build_results_payload_async,
     resolve_view,
 )
 from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, Score
@@ -92,7 +100,7 @@ def test_resolve_view_passes_through_explicit_value():
 def test_limit_policy_drops_and_warns_for_overview(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.OVERVIEW, limit=5)
     assert effective is None
-    assert "no effect" in capsys.readouterr().out
+    assert "no effect" in capsys.readouterr().err
 
 
 def test_limit_policy_keeps_limit_for_attacks(capsys):
@@ -161,6 +169,10 @@ def test_builder_limit_caps_rows_but_total_is_pre_limit():
     payload = build_attacks_table_payload(result=result, scenario_result_id="SID", limit=2)
     assert payload.total == 5
     assert len(payload.rows) == 2
+    # `shown` tracks the rendered rows; `total` stays the pre-limit count.
+    assert payload.shown == 2
+    assert payload.shown < payload.total
+    assert payload.model_dump()["shown"] == 2
 
 
 def test_builder_handles_no_attacks():
@@ -243,7 +255,7 @@ def test_resolve_view_passes_through_conversations():
 def test_limit_policy_defaults_heavy_view_when_unscoped(capsys):
     effective = apply_view_limit_policy(view=ScenarioResultView.CONVERSATIONS, limit=None)
     assert effective == 5
-    assert "at most 5" in capsys.readouterr().out
+    assert "at most 5" in capsys.readouterr().err
 
 
 def test_limit_policy_heavy_view_respects_explicit_limit(capsys):
@@ -394,3 +406,173 @@ async def test_build_conversations_payload_limit_gates_fetch():
     assert len(payload.conversations) == 2
     # --limit caps the number of message fetches, not just the rendered rows.
     assert len(client.calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# OutputFormat / --output
+# ---------------------------------------------------------------------------
+
+
+def test_output_format_values():
+    assert OutputFormat.CONSOLE.value == "console"
+    assert OutputFormat.JSON.value == "json"
+
+
+def test_parse_output_format_valid_and_invalid():
+    import argparse
+
+    assert parse_output_format("json") is OutputFormat.JSON
+    with pytest.raises(argparse.ArgumentTypeError, match="choose from console, json"):
+        parse_output_format("xml")
+
+
+def test_add_results_arguments_registers_output_defaulting_to_console():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    add_results_arguments(parser=parser)
+    assert parser.parse_args([]).output is OutputFormat.CONSOLE
+    assert parser.parse_args(["--output", "json"]).output is OutputFormat.JSON
+
+
+def test_shell_parser_rejects_unknown_output(capsys):
+    parser = build_scenario_results_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["SID", "--output", "xml"])
+    assert "choose from console, json" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# build_overview_payload
+# ---------------------------------------------------------------------------
+
+
+def test_build_overview_payload_computes_aggregates():
+    result = _result(
+        {
+            "tech_a": [
+                _attack(objective="a1", outcome=AttackOutcome.SUCCESS),
+                _attack(objective="a2", outcome=AttackOutcome.FAILURE),
+            ],
+            "tech_b": [_attack(objective="b1", outcome=AttackOutcome.SUCCESS)],
+        }
+    )
+
+    payload = build_overview_payload(result=result, scenario_result_id="SID")
+
+    assert payload.scenario_result_id == "SID"
+    assert payload.scenario_name == "TestScenario"
+    assert payload.total_attack_results == 3
+    assert payload.total_techniques == 2
+    # 2 of 3 attacks succeeded -> int(2/3 * 100).
+    assert payload.overall_success_rate == 66
+    assert payload.unique_objectives == 3
+
+
+def test_build_overview_payload_per_group_rates():
+    result = _result(
+        {
+            "tech_a": [
+                _attack(objective="a1", outcome=AttackOutcome.SUCCESS),
+                _attack(objective="a2", outcome=AttackOutcome.FAILURE),
+            ],
+            "tech_b": [_attack(objective="b1", outcome=AttackOutcome.SUCCESS)],
+        }
+    )
+
+    payload = build_overview_payload(result=result, scenario_result_id="SID")
+
+    groups = {group.name: group for group in payload.groups}
+    assert groups["tech_a"].total_results == 2
+    assert groups["tech_a"].success_rate == 50
+    assert groups["tech_b"].total_results == 1
+    assert groups["tech_b"].success_rate == 100
+
+
+async def test_overview_payload_matches_framework_printer():
+    # The console overview (framework printer) and the JSON overview
+    # (build_overview_payload) compute their numbers independently. This locks
+    # the two together: if the printer's aggregate math changes, its rendered
+    # numbers stop matching the payload and this fails, flagging the drift.
+    from pyrit.output.scenario_result.pretty import PrettyScenarioResultPrinter
+
+    result = _result(
+        {
+            "tech_a": [
+                _attack(objective="a1", outcome=AttackOutcome.SUCCESS),
+                _attack(objective="a2", outcome=AttackOutcome.FAILURE),
+            ],
+            "tech_b": [_attack(objective="b1", outcome=AttackOutcome.SUCCESS)],
+        }
+    )
+    payload = build_overview_payload(result=result, scenario_result_id="SID")
+
+    rendered = await PrettyScenarioResultPrinter(enable_colors=False).render_async(result)
+
+    assert f"Total Techniques: {payload.total_techniques}" in rendered
+    assert f"Total Attack Results: {payload.total_attack_results}" in rendered
+    assert f"Overall Success Rate: {payload.overall_success_rate}%" in rendered
+    assert f"Unique Objectives: {payload.unique_objectives}" in rendered
+    for group in payload.groups:
+        assert f"Group: {group.name}" in rendered
+        assert f"Success Rate: {group.success_rate}%" in rendered
+
+
+# ---------------------------------------------------------------------------
+# build_results_payload_async (view -> payload dispatch)
+# ---------------------------------------------------------------------------
+
+
+async def test_build_results_payload_overview_returns_overview_view():
+    result = _result({"tech_a": [_attack(objective="a1")]})
+    client = _FakeMessagesClient()
+
+    payload = await build_results_payload_async(
+        view=ScenarioResultView.OVERVIEW, result=result, client=client, scenario_result_id="SID"
+    )
+
+    assert isinstance(payload, ScenarioOverviewPayload)
+    assert client.calls == []
+
+
+async def test_build_results_payload_attacks_returns_table_without_fetch():
+    result = _result({"tech_a": [_attack(objective="a1")]})
+    client = _FakeMessagesClient()
+
+    payload = await build_results_payload_async(
+        view=ScenarioResultView.ATTACKS, result=result, client=client, scenario_result_id="SID"
+    )
+
+    assert isinstance(payload, AttacksTablePayload)
+    assert client.calls == []
+
+
+async def test_build_results_payload_conversations_returns_transcripts():
+    attack = _attack(objective="a1")
+    result = _result({"tech_a": [attack]})
+    client = _FakeMessagesClient()
+
+    payload = await build_results_payload_async(
+        view=ScenarioResultView.CONVERSATIONS, result=result, client=client, scenario_result_id="SID"
+    )
+
+    assert isinstance(payload, ConversationsPayload)
+    assert client.calls == [(attack.attack_result_id, attack.conversation_id)]
+
+
+async def test_build_results_payload_full_composes_both_with_shared_limit():
+    attacks = [_attack(objective=f"o{i}") for i in range(3)]
+    result = _result({"tech_a": attacks})
+    client = _FakeMessagesClient()
+
+    payload = await build_results_payload_async(
+        view=ScenarioResultView.FULL, result=result, client=client, scenario_result_id="SID", limit=2
+    )
+
+    assert isinstance(payload, FullPayload)
+    # The shared limit gates both the table rows and the fetched transcripts.
+    assert len(payload.attacks.rows) == 2
+    assert len(payload.conversations.conversations) == 2
+    assert len(client.calls) == 2
+    assert payload.attacks.total == 3
+    assert payload.conversations.total == 3

@@ -950,6 +950,16 @@ class TestDoScenarioResults:
         assert "deprecated" in capsys.readouterr().out.lower()
         mock_print.assert_awaited_once()
 
+    def test_attacks_view_json_emits_parseable_document(self, shell, capsys):
+        import json
+
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
+        s.do_scenario_results("rid-1 --view attacks --output json")
+        document = json.loads(capsys.readouterr().out)
+        assert document["scenario_result_id"] == "rid-1"
+        assert {row["objective"] for row in document["rows"]} == {"obj-alpha", "obj-beta"}
+
     def test_stop_server_close_client_swallows_errors(self, shell):
         s, client = shell
         launcher = MagicMock()

@@ -91,6 +91,44 @@ def parse_scenario_result_view(raw: str) -> ScenarioResultView:
         raise argparse.ArgumentTypeError(f"invalid view '{raw}' (choose from {valid})") from None
 
 
+class OutputFormat(str, Enum):
+    """
+    Serialization format for a ``scenario-results`` render.
+
+    Like ``ScenarioResultView``, this lives in this parse-time-safe module so the
+    argument parsers can reference it without importing ``pydantic``. ``html`` is
+    intentionally omitted until a later phase adds its renderer.
+    """
+
+    #: Human-readable console text (the default).
+    CONSOLE = "console"
+    #: Machine-readable JSON via the payload's ``model_dump_json``.
+    JSON = "json"
+
+
+def parse_output_format(raw: str) -> OutputFormat:
+    """
+    Parse an ``--output`` token into an ``OutputFormat``.
+
+    Used as an argparse ``type=`` so an invalid value produces an error that
+    lists the valid format names (mirroring ``parse_scenario_result_view``).
+
+    Args:
+        raw (str): The raw ``--output`` token.
+
+    Returns:
+        OutputFormat: The matching format.
+
+    Raises:
+        argparse.ArgumentTypeError: If *raw* is not a valid format name.
+    """
+    try:
+        return OutputFormat(raw)
+    except ValueError:
+        valid = ", ".join(fmt.value for fmt in OutputFormat)
+        raise argparse.ArgumentTypeError(f"invalid output '{raw}' (choose from {valid})") from None
+
+
 # ---------------------------------------------------------------------------
 # Pure validators
 # ---------------------------------------------------------------------------
@@ -464,6 +502,14 @@ def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
         metavar="N",
         help="Show at most N attacks (ignored for --view overview; defaults to 5 for "
         "--view conversations/full when no --attack-result-ids is given)",
+    )
+    group.add_argument(
+        "--output",
+        type=parse_output_format,
+        default=OutputFormat.CONSOLE,
+        metavar="{" + ",".join(fmt.value for fmt in OutputFormat) + "}",
+        help="Output format: 'console' (human-readable, default) or 'json' "
+        "(machine-readable; informational notes go to stderr so stdout stays parseable)",
     )
 
 
