@@ -72,21 +72,18 @@ operation: op_trash_panda
 
 # Initialization Scripts
 # ----------------------
-# List of local paths or Azure Blob URIs to Python scripts containing
-# PyRITInitializer subclasses. Local paths can be absolute or relative to the
-# current working directory. Blob URIs may include a SAS; otherwise
-# DefaultAzureCredential is used.
+# List of local paths to Python scripts containing PyRITInitializer subclasses.
+# Paths can be absolute or relative to the current working directory.
 #
 # Behavior:
 # - Omit this field (or set to null): No custom scripts loaded (default)
 # - Set to []: Explicitly load no scripts (same as omitting)
-# - Set to list of sources: Load the specified scripts
+# - Set to list of paths: Load the specified scripts
 #
 # Example:
 # initialization_scripts:
 #   - /path/to/my_custom_initializer.py
 #   - ./local_initializer.py
-#   - https://account.blob.core.windows.net/scripts/cloud_initializer.py
 
 # Environment Configuration
 # -------------------------
