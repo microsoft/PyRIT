@@ -4,9 +4,13 @@
 """Tests for backend configuration file storage."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.configuration_file_service import (
+    ConfigurationFileService,
+    _download_blob_config_async,
+    _upload_blob_config_async,
+)
 
 
 async def test_configuration_file_service_reads_and_updates_local_file(tmp_path: Path) -> None:
@@ -20,6 +24,53 @@ async def test_configuration_file_service_reads_and_updates_local_file(tmp_path:
     await service.update_async("operator: after\n")
 
     assert config_path.read_text(encoding="utf-8") == "operator: after\n"
+    assert service.source == str(config_path)
+
+
+async def test_blob_helpers_use_sas_authentication() -> None:
+    """Test downloading and uploading directly with a SAS-authenticated blob URI."""
+    blob_uri = "https://account.blob.core.windows.net/config/config.yaml?sig=secret"
+    blob_stream = MagicMock()
+    blob_stream.readall = AsyncMock(return_value=b"operator: alice\n")
+    blob_client = MagicMock()
+    blob_client.__aenter__ = AsyncMock(return_value=blob_client)
+    blob_client.__aexit__ = AsyncMock(return_value=None)
+    blob_client.download_blob = AsyncMock(return_value=blob_stream)
+    blob_client.upload_blob = AsyncMock()
+
+    with patch("azure.storage.blob.aio.BlobClient.from_blob_url", return_value=blob_client) as client_factory:
+        assert await _download_blob_config_async(blob_uri) == b"operator: alice\n"
+        await _upload_blob_config_async(blob_uri=blob_uri, content=b"operator: bob\n")
+
+    assert client_factory.call_count == 2
+    assert client_factory.call_args_list[0].kwargs == {"blob_url": blob_uri}
+    blob_client.upload_blob.assert_awaited_once_with(b"operator: bob\n", overwrite=True)
+
+
+async def test_blob_helpers_use_default_credential_without_sas() -> None:
+    """Test downloading and uploading with the default Azure credential."""
+    blob_uri = "https://account.blob.core.windows.net/config/config.yaml"
+    credential = MagicMock()
+    credential.__aenter__ = AsyncMock(return_value=credential)
+    credential.__aexit__ = AsyncMock(return_value=None)
+    blob_stream = MagicMock()
+    blob_stream.readall = AsyncMock(return_value=b"operator: alice\n")
+    blob_client = MagicMock()
+    blob_client.__aenter__ = AsyncMock(return_value=blob_client)
+    blob_client.__aexit__ = AsyncMock(return_value=None)
+    blob_client.download_blob = AsyncMock(return_value=blob_stream)
+    blob_client.upload_blob = AsyncMock()
+
+    with (
+        patch("azure.identity.aio.DefaultAzureCredential", return_value=credential) as credential_factory,
+        patch("azure.storage.blob.aio.BlobClient.from_blob_url", return_value=blob_client) as client_factory,
+    ):
+        assert await _download_blob_config_async(blob_uri) == b"operator: alice\n"
+        await _upload_blob_config_async(blob_uri=blob_uri, content=b"operator: bob\n")
+
+    assert credential_factory.call_count == 2
+    assert client_factory.call_args_list[0].kwargs == {"blob_url": blob_uri, "credential": credential}
+    blob_client.upload_blob.assert_awaited_once_with(b"operator: bob\n", overwrite=True)
 
 
 async def test_configuration_file_service_reads_and_updates_blob() -> None:

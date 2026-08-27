@@ -121,6 +121,7 @@ def test_local_storage_returns_script_path(tmp_path: Path) -> None:
     storage = CustomInitializerStorage(source=str(tmp_path))
 
     assert storage.get_script_source("example") == str(tmp_path / "example.py")
+    assert storage.display_source == str(tmp_path)
 
 
 def test_local_storage_reads_latest_script_content(tmp_path: Path) -> None:
@@ -132,3 +133,19 @@ def test_local_storage_reads_latest_script_content(tmp_path: Path) -> None:
     assert storage.list_scripts() == {"example": "VALUE = 1\n"}
     script_path.write_text("VALUE = 2\n", encoding="utf-8")
     assert storage.list_scripts() == {"example": "VALUE = 2\n"}
+
+
+def test_direct_python_blob_rejects_name_outside_prefix() -> None:
+    """Test that blobs outside the configured virtual directory are ignored."""
+    assert not CustomInitializerStorage._is_direct_python_blob(
+        blob_name="other/example.py", prefix="custom-initializers/"
+    )
+
+
+def test_local_storage_cannot_open_blob_client(tmp_path: Path) -> None:
+    """Test that local storage cannot create an Azure container client."""
+    storage = CustomInitializerStorage(source=str(tmp_path))
+
+    with pytest.raises(RuntimeError, match="not configured"):
+        with storage._open_container_client():
+            pass

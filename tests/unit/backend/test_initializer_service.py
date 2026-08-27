@@ -872,6 +872,15 @@ class TestInitializerServiceCustomRegistration:
             assert result.items[0].initializer_name == "my_custom"
             assert result.items[0].source == "C:/custom/my_custom.py"
 
+    async def test_unregister_initializer_removes_runtime_registration(self) -> None:
+        with patch.object(InitializerService, "__init__", lambda self: None):
+            service = InitializerService()
+            service._registry = MagicMock()
+
+            await service.unregister_initializer_async(initializer_name="my_custom")
+
+            service._registry.unregister_and_cleanup.assert_called_once_with("my_custom")
+
 
 # ============================================================================
 # POST / DELETE Route Tests

@@ -4,7 +4,7 @@
 """Tests for backend environment file storage."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -100,6 +100,32 @@ async def test_environment_file_service_rejects_versioned_akv_update() -> None:
     credential_mock.assert_not_called()
 
 
+async def test_environment_file_service_updates_unversioned_akv_document() -> None:
+    """Test validating and persisting an unversioned Key Vault document."""
+    secret_url = "https://vault.vault.azure.net/secrets/bootstrap"
+    credential = MagicMock()
+    credential.__aenter__ = AsyncMock(return_value=credential)
+    credential.__aexit__ = AsyncMock(return_value=None)
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.set_secret = AsyncMock()
+
+    with (
+        patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
+        patch("pyrit.backend.services.environment_file_service._create_akv_secret_client", return_value=client),
+        patch(
+            "pyrit.backend.services.environment_file_service._validate_dotenv_document",
+            return_value="AKV=validated\n",
+        ) as validate_mock,
+    ):
+        result = await _update_akv_document_async(secret_url=secret_url, content="AKV=value\n", strict=False)
+
+    assert result == "AKV=validated\n"
+    validate_mock.assert_called_once_with("AKV=value\n", strict=False, silent=True)
+    client.set_secret.assert_awaited_once_with("bootstrap", "AKV=validated\n")
+
+
 async def test_environment_file_service_reads_latest_akv_content() -> None:
     """Test that every read observes the current AKV content."""
     secret_url = "https://vault.vault.azure.net/secrets/bootstrap"
@@ -112,3 +138,23 @@ async def test_environment_file_service_reads_latest_akv_content() -> None:
         assert (await service.read_async(file_id="akv:0")).content == "SECOND=2\n"
 
     assert fetch_mock.await_count == 2
+
+
+@pytest.mark.parametrize("file_id", ["akv:invalid", "akv:1", "akv:-1"])
+def test_environment_file_service_rejects_invalid_akv_id(file_id: str) -> None:
+    """Test malformed, out-of-range, and negative Key Vault identifiers."""
+    service = EnvironmentFileService(
+        resolved_env_files=[], env_akv_ref=["https://vault.vault.azure.net/secrets/bootstrap"]
+    )
+
+    with pytest.raises(KeyError, match=file_id):
+        service._get_akv_source(file_id)
+
+
+@pytest.mark.parametrize("file_id", ["invalid", "1", "-1"])
+def test_environment_file_service_rejects_invalid_file_id(file_id: str, tmp_path: Path) -> None:
+    """Test malformed, out-of-range, and negative local file identifiers."""
+    service = EnvironmentFileService(resolved_env_files=[tmp_path / ".env"])
+
+    with pytest.raises(KeyError, match=file_id):
+        service._get_file_path(file_id)
