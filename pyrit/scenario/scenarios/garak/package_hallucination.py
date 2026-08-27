@@ -11,11 +11,10 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score.true_false.regex.package_hallucination_scorer import (
@@ -59,7 +58,8 @@ class _LanguageSpec:
     ecosystem: PackageEcosystem
 
 
-# Keyed by technique value. garak fully supports these four languages (extractor + registry).
+# Keyed by technique value. Rust is the default because its registry is substantially smaller
+# than the Python, JavaScript, and Ruby registries.
 _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
     "python": _LanguageSpec(
         language_name="Python3", dataset_name="garak_pypi_packages", ecosystem=PackageEcosystem.PYTHON
@@ -72,6 +72,20 @@ _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
     ),
     "rust": _LanguageSpec(language_name="Rust", dataset_name="garak_crates_packages", ecosystem=PackageEcosystem.RUST),
 }
+
+
+class _PackageHallucinationDatasetConfiguration(DatasetConfiguration):
+    """Dataset configuration that exposes raw values for prompt and registry datasets."""
+
+    async def get_values_by_dataset_async(self) -> dict[str, list[str]]:
+        """
+        Resolve configured datasets, fetching missing datasets from their providers.
+
+        Returns:
+            dict[str, list[str]]: Seed values keyed by dataset name.
+        """
+        seeds_by_dataset = await self._collect_named_seeds_async()
+        return {name: [seed.value for seed in seeds] for name, seeds in seeds_by_dataset.items()}
 
 
 class PackageHallucinationTechnique(ScenarioTechnique):
@@ -87,10 +101,10 @@ class PackageHallucinationTechnique(ScenarioTechnique):
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
 
-    # Concrete per-language techniques (values match ``_LANGUAGE_SPECS`` keys).
-    Python = ("python", {"default"})
-    JavaScript = ("javascript", {"default"})
-    Ruby = ("ruby", {"default"})
+    # Concrete per-language techniques (values match the ``_LANGUAGE_SPECS`` keys).
+    Python = ("python", set())
+    JavaScript = ("javascript", set())
+    Ruby = ("ruby", set())
     Rust = ("rust", {"default"})
 
     @classmethod
@@ -121,7 +135,7 @@ class PackageHallucination(Scenario):
     Reference: [@derczynski2024garak]
     """
 
-    VERSION: int = 1
+    VERSION: int = 2
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
@@ -150,56 +164,54 @@ class PackageHallucination(Scenario):
             objective_scorer (TrueFalseScorer | None): Nominal scorer recorded in scenario
                 metadata. Actual scoring is per-language (each atomic attack carries a
                 ``PackageHallucinationScorer`` built from its registry), so this defaults to an
-                empty-registry Python scorer and is not used to score responses.
+                empty-registry scorer for the default technique and is not used to score responses.
             max_prompts_per_language (int | None): Cap on generated prompts per language.
                 Defaults to ``DEFAULT_MAX_PROMPTS_PER_LANGUAGE``.
             random_seed (int | None): Seed for deterministic prompt sampling. Defaults to 42.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
+        default_technique = PackageHallucinationTechnique.expand({PackageHallucinationTechnique.default()})[0]
+        default_spec = _LANGUAGE_SPECS[default_technique.value]
         objective_scorer = objective_scorer or PackageHallucinationScorer(
-            known_packages=set(), ecosystem=PackageEcosystem.PYTHON
+            known_packages=set(), ecosystem=default_spec.ecosystem
         )
 
         self._max_prompts_per_language = max_prompts_per_language or self.DEFAULT_MAX_PROMPTS_PER_LANGUAGE
         self._random_seed = random_seed if random_seed is not None else 42
+        self._known_packages_by_technique: dict[str, set[str]] = {}
 
         super().__init__(
             version=self.VERSION,
             technique_class=PackageHallucinationTechnique,
-            # Declared so both the package registries (consumed by the scorers) and the
-            # prompt-corpus datasets (stub templates + code tasks) are auto-fetched into
-            # memory. The raw package names are NEVER flowed as prompts:
-            # _resolve_seed_groups_by_dataset_async is overridden to synthesize the
-            # code-request prompts from the corpus datasets instead.
+            # Preload only the Rust registry and prompt corpus. Other registries are fetched
+            # on demand when their techniques are selected.
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=[*self.required_datasets(), *_CORPUS_DATASETS]
+                dataset_names=[_LANGUAGE_SPECS["rust"].dataset_name, *_CORPUS_DATASETS]
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
-    def _load_corpus(self) -> tuple[list[str], list[str]]:
+    @staticmethod
+    def _load_corpus(*, dataset_values: dict[str, list[str]]) -> tuple[list[str], list[str]]:
         """
-        Load the stub templates and the combined (real + unreal) code tasks from memory.
+        Load the stub templates and combined code tasks from resolved dataset values.
+
+        Args:
+            dataset_values (dict[str, list[str]]): Seed values keyed by dataset name.
 
         Returns:
             tuple[list[str], list[str]]: The stub templates and the code tasks.
 
         Raises:
-            ValueError: If the corpus datasets have not been loaded into CentralMemory.
+            ValueError: If the resolved corpus datasets are empty.
         """
-        memory = CentralMemory.get_memory_instance()
-        stubs = [seed.value for seed in memory.get_seeds(dataset_name=DATASET_STUBS)]
-        tasks = [
-            seed.value
-            for name in (DATASET_REAL_TASKS, DATASET_UNREAL_TASKS)
-            for seed in memory.get_seeds(dataset_name=name)
-        ]
+        stubs = dataset_values[DATASET_STUBS]
+        tasks = [task for name in (DATASET_REAL_TASKS, DATASET_UNREAL_TASKS) for task in dataset_values[name]]
         if not stubs or not tasks:
             raise ValueError(
                 "PackageHallucination scenario requires the garak prompt-corpus datasets "
-                f"('{DATASET_STUBS}', '{DATASET_REAL_TASKS}', '{DATASET_UNREAL_TASKS}') to be loaded "
-                "into CentralMemory before running."
+                f"('{DATASET_STUBS}', '{DATASET_REAL_TASKS}', '{DATASET_UNREAL_TASKS}') to contain seeds."
             )
         return stubs, tasks
 
@@ -270,39 +282,41 @@ class PackageHallucination(Scenario):
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by technique value (language).
         """
-        rng = random.Random(self._random_seed)
-        stubs, tasks = self._load_corpus()
         techniques = cast("list[PackageHallucinationTechnique]", self._scenario_techniques)
+        specs_by_technique = {technique.value: _LANGUAGE_SPECS[technique.value] for technique in techniques}
+        dataset_names = [
+            *_CORPUS_DATASETS,
+            *(spec.dataset_name for spec in specs_by_technique.values()),
+        ]
+        dataset_values = await _PackageHallucinationDatasetConfiguration(
+            dataset_names=list(dict.fromkeys(dataset_names))
+        ).get_values_by_dataset_async()
+
+        rng = random.Random(self._random_seed)
+        stubs, tasks = self._load_corpus(dataset_values=dataset_values)
+        self._known_packages_by_technique = {
+            name: set(dataset_values[spec.dataset_name]) for name, spec in specs_by_technique.items()
+        }
 
         seed_groups_by_language: dict[str, list[AttackSeedGroup]] = {}
-        for technique in techniques:
-            spec = _LANGUAGE_SPECS[technique.value]
+        for technique_name, spec in specs_by_technique.items():
             prompts = self._build_prompts_for_language(spec=spec, stubs=stubs, tasks=tasks, rng=rng)
-            seed_groups_by_language[technique.value] = self._build_seed_groups(spec=spec, prompts=prompts)
+            seed_groups_by_language[technique_name] = self._build_seed_groups(spec=spec, prompts=prompts)
 
         return seed_groups_by_language
 
-    def _build_scorer_for_language(self, *, spec: _LanguageSpec) -> PackageHallucinationScorer:
+    def _build_scorer_for_technique(self, *, technique: PackageHallucinationTechnique) -> PackageHallucinationScorer:
         """
-        Load the language's package registry from memory and build its scorer.
+        Build the selected technique's scorer from its resolved package registry.
 
         Args:
-            spec (_LanguageSpec): The language whose registry to load.
+            technique (PackageHallucinationTechnique): The language technique to score.
 
         Returns:
             PackageHallucinationScorer: A scorer seeded with the ecosystem's known packages.
-
-        Raises:
-            ValueError: If the registry dataset has not been loaded into CentralMemory.
         """
-        memory = CentralMemory.get_memory_instance()
-        seeds = memory.get_seeds(dataset_name=spec.dataset_name)
-        if not seeds:
-            raise ValueError(
-                f"PackageHallucination scenario requires the '{spec.dataset_name}' dataset to be loaded "
-                "into CentralMemory before running. Ensure the garak package-registry datasets are fetched."
-            )
-        known_packages = {seed.value for seed in seeds}
+        spec = _LANGUAGE_SPECS[technique.value]
+        known_packages = self._known_packages_by_technique[technique.value]
         return PackageHallucinationScorer(known_packages=known_packages, ecosystem=spec.ecosystem)
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
@@ -320,9 +334,12 @@ class PackageHallucination(Scenario):
             list[AtomicAttack]: One atomic attack per selected language.
         """
         atomic_attacks: list[AtomicAttack] = []
+        techniques_by_value = {
+            technique.value: technique
+            for technique in cast("list[PackageHallucinationTechnique]", context.scenario_techniques)
+        }
         for name, seed_groups in context.seed_groups_by_dataset.items():
-            spec = _LANGUAGE_SPECS[name]
-            scorer = self._build_scorer_for_language(spec=spec)
+            scorer = self._build_scorer_for_technique(technique=techniques_by_value[name])
             attack = PromptSendingAttack(
                 objective_target=context.objective_target,
                 attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),

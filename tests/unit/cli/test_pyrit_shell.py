@@ -311,6 +311,21 @@ class TestShellMain:
             mock_shell_class.assert_called_once()
             assert mock_shell_class.call_args.kwargs["server_url"] == "http://remote:9000"
 
+    def test_main_parses_auth_mode(self):
+        with (
+            patch("pyrit.cli._banner.play_animation", return_value=""),
+            patch("pyrit.cli.pyrit_shell.PyRITShell") as mock_shell_class,
+            patch(
+                "sys.argv",
+                ["pyrit_shell", "--auth-mode", "device_code", "--no-animation"],
+            ),
+        ):
+            mock_shell_class.return_value = MagicMock()
+
+            pyrit_shell.main()
+
+            assert mock_shell_class.call_args.kwargs["auth_mode"] == "device_code"
+
     def test_main_keyboard_interrupt(self, capsys):
         with (
             patch("pyrit.cli._banner.play_animation", return_value=""),
@@ -407,6 +422,58 @@ class TestEnsureClientStartServer:
             assert s._ensure_client() is True
             assert s._api_client is mock_client
             assert s._start_server is False  # only auto-start once
+
+    def test_authentication_failure_returns_false(self, capsys):
+        from pyrit.cli._auth import CliAuthenticationError
+
+        s = pyrit_shell.PyRITShell(no_animation=True, server_url="https://copyrit.example.com")
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
+        ):
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(side_effect=CliAuthenticationError("login failed"))
+            mock_client_class.return_value = mock_client
+
+            assert s._ensure_client() is False
+
+        assert s._api_client is None
+        assert "login failed" in capsys.readouterr().out
+
+    def test_auth_discovery_http_failure_returns_false(self, capsys):
+        import httpx
+
+        s = pyrit_shell.PyRITShell(no_animation=True, server_url="https://copyrit.example.com")
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
+        ):
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(side_effect=httpx.ConnectError("discovery failed"))
+            mock_client_class.return_value = mock_client
+
+            assert s._ensure_client() is False
+
+        assert s._api_client is None
+        assert "discovery failed" in capsys.readouterr().out
+
+    def test_config_failure_returns_false(self, capsys):
+        from pyrit.cli._config_reader import ConfigError
+
+        s = pyrit_shell.PyRITShell(no_animation=True, server_url="https://copyrit.example.com")
+        with patch.object(s, "_resolve_auth_mode", side_effect=ConfigError("invalid config")):
+            assert s._open_client(base_url="https://copyrit.example.com") is False
+
+        assert s._api_client is None
+        assert "invalid config" in capsys.readouterr().out
 
     def test_start_server_failure_returns_false(self, capsys):
         s = pyrit_shell.PyRITShell(no_animation=True, start_server=True)
@@ -766,6 +833,27 @@ class TestServerManagement:
             mock_client_class.return_value = mock_client
             s.do_start_server("")
         assert s._base_url == "http://localhost:8000"
+
+    def test_start_server_authentication_failure_stays_in_repl(self, capsys):
+        from pyrit.cli._auth import CliAuthenticationError
+
+        s = pyrit_shell.PyRITShell(no_animation=True)
+        with (
+            patch(
+                "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("pyrit.cli.api_client.PyRITApiClient") as mock_client_class,
+        ):
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(side_effect=CliAuthenticationError("login failed"))
+            mock_client_class.return_value = mock_client
+
+            s.do_start_server("")
+
+        assert s._api_client is None
+        assert "login failed" in capsys.readouterr().out
 
     def test_start_server_launch_replaces_existing_client(self):
         s = pyrit_shell.PyRITShell(no_animation=True)
