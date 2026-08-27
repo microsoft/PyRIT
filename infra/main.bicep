@@ -80,7 +80,7 @@ param pyritInitializer string = 'target'
 @description('Optional Azure Blob HTTPS URI for the backend .pyrit_conf. The container managed identity must have blob data access. When empty, start.sh generates config from the SQL and initializer parameters.')
 param pyritConfigFileUri string = ''
 
-@description('Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup.')
+@description('Key Vault secret name containing the .env file contents. Used as env_akv_ref when envFileContents is empty.')
 param envSecretName string = 'env-global'
 
 @secure()
@@ -418,19 +418,12 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
 
-      // Key Vault secret reference for the .env file contents
-      secrets: [
-        useInlineEnvFile
-          ? {
-              name: 'env-file'
-              value: envFileContents
-            }
-          : {
-              name: 'env-file'
-              keyVaultUrl: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${envSecretName}'
-              identity: managedIdentity.id
-            }
-      ]
+      secrets: useInlineEnvFile ? [
+        {
+          name: 'env-file'
+          value: envFileContents
+        }
+      ] : []
     }
 
     template: {
@@ -466,11 +459,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'PYRIT_CONFIG_FILE'
               value: pyritConfigFileUri
             }
-            // .env file contents from Key Vault — PyRIT parses this at startup
-            {
-              name: 'PYRIT_ENV_CONTENTS'
-              secretRef: 'env-file'
-            }
+            useInlineEnvFile
+              ? {
+                  name: 'PYRIT_ENV_CONTENTS'
+                  secretRef: 'env-file'
+                }
+              : {
+                  name: 'PYRIT_ENV_AKV_REF'
+                  value: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${envSecretName}'
+                }
             // MSAL PKCE auth config — frontend uses these to authenticate users
             // Easy Auth is NOT used because the tenant blocks client secrets/certs
             // on app registrations. PKCE (public client) needs no secrets.
