@@ -465,6 +465,16 @@ class TestEnsureClientStartServer:
         assert s._api_client is None
         assert "discovery failed" in capsys.readouterr().out
 
+    def test_config_failure_returns_false(self, capsys):
+        from pyrit.cli._config_reader import ConfigError
+
+        s = pyrit_shell.PyRITShell(no_animation=True, server_url="https://copyrit.example.com")
+        with patch.object(s, "_resolve_auth_mode", side_effect=ConfigError("invalid config")):
+            assert s._open_client(base_url="https://copyrit.example.com") is False
+
+        assert s._api_client is None
+        assert "invalid config" in capsys.readouterr().out
+
     def test_start_server_failure_returns_false(self, capsys):
         s = pyrit_shell.PyRITShell(no_animation=True, start_server=True)
         with (

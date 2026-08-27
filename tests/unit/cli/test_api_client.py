@@ -240,6 +240,20 @@ async def test_context_manager_rejects_authentication_over_remote_http(mock_http
     mock_httpx_client.aclose.assert_awaited_once()
 
 
+async def test_context_manager_rejects_invalid_auth_config_json(mock_httpx_client):
+    c = PyRITApiClient(base_url="https://copyrit.example.com", auth_mode="auto")
+    fake_async_client_cls = MagicMock(return_value=mock_httpx_client)
+    response = _make_response()
+    response.json.side_effect = ValueError("invalid JSON")
+    mock_httpx_client.get.return_value = response
+
+    with patch("httpx.AsyncClient", fake_async_client_cls):
+        with pytest.raises(CliAuthenticationError, match="invalid JSON"):
+            await c.__aenter__()
+
+    mock_httpx_client.aclose.assert_awaited_once()
+
+
 def test_get_client_raises_when_not_opened():
     c = PyRITApiClient(base_url="http://localhost:8000")
     with pytest.raises(ServerNotAvailableError, match="not connected"):

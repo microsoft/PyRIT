@@ -652,6 +652,16 @@ class TestMain:
 # ---------------------------------------------------------------------------
 
 
+def test_resolve_auth_mode_rejects_unsupported_programmatic_value() -> None:
+    parsed_args = Namespace(config_file=None, auth_mode="invalid")
+
+    with (
+        patch("pyrit.cli._config_reader.read_server_settings", return_value=MagicMock(auth_mode="auto")),
+        pytest.raises(ValueError, match="Unsupported authentication mode"),
+    ):
+        pyrit_scan._resolve_auth_mode(parsed_args=parsed_args)
+
+
 class TestStopServerOnPort:
     """Tests for stop_server_on_port helper (now lives in _server_launcher)."""
 
