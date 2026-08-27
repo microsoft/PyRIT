@@ -7,7 +7,7 @@ managed identity, security response headers, and no embedded secrets.
 ## Architecture
 
 ```
-Users ──→ MSAL PKCE auth ──→ Container App
+Users ──→ MSAL PKCE or CLI device-code auth ──→ Container App
                                                        ↓
                                           Graph-backed authentication
                                                        ↓
@@ -57,10 +57,11 @@ Production is opt-in via `deployToProd: true`.
 ## Security
 
 - **Authentication**: [MSAL](https://learn.microsoft.com/en-us/entra/msal/)
-  [PKCE](https://oauth.net/2/pkce/) on the frontend (`@azure/msal-browser`) +
+  [PKCE](https://oauth.net/2/pkce/) on the frontend (`@azure/msal-browser`) and
+  public-client device-code authentication for the PyRIT CLI +
   Microsoft Graph-backed middleware on the backend. The frontend sends a delegated
-  Graph token, and the backend authenticates it through Graph `/me`. PKCE (public
-  client) requires no client secrets or certificates.
+  Graph token, and the backend authenticates it through Graph `/me`. These public-client
+  flows require no client secrets or certificates.
 - **Authorization**: Entra group check via `allowedGroupObjectIds` param. Requires
   delegated Graph `User.Read`; the backend calls `/me/checkMemberGroups` and compares
   the returned transitive memberships with the configured group IDs. Each security
@@ -165,7 +166,7 @@ az account show --query tenantId -o tsv
 >   --spa-redirect-uris "https://$FQDN"
 > ```
 
-**Configure delegated Microsoft Graph access** (required):
+**Configure delegated Microsoft Graph access and public-client login** (required):
 
 In Azure Portal → App registrations → your app → **API permissions**:
 
@@ -186,8 +187,12 @@ Or via CLI:
 APP_OBJ_ID=$(az ad app show --id $APP_ID --query id -o tsv)
 az rest --method PATCH \
   --url "https://graph.microsoft.com/v1.0/applications/$APP_OBJ_ID" \
-  --body '{"requiredResourceAccess":[{"resourceAppId":"00000003-0000-0000-c000-000000000000","resourceAccess":[{"id":"e1fe6dd8-ba31-4d61-89e7-88639da4683d","type":"Scope"}]}]}'
+  --body '{"isFallbackPublicClient":true,"requiredResourceAccess":[{"resourceAppId":"00000003-0000-0000-c000-000000000000","resourceAccess":[{"id":"e1fe6dd8-ba31-4d61-89e7-88639da4683d","type":"Scope"}]}]}'
 ```
+
+`isFallbackPublicClient` enables device-code login for `pyrit_scan` and `pyrit_shell`. In the
+Azure Portal, the equivalent setting is **Authentication → Advanced settings → Allow public
+client flows → Yes**.
 
 ### 3. Entra security groups (required for group-based authorization)
 
@@ -350,13 +355,21 @@ az deployment group create \
 
 ## Post-Deployment
 
-1. **Set SPA redirect URI** on the app registration (requires the FQDN from deploy output):
+1. **Configure browser and CLI public-client authentication** on the app registration:
    ```bash
    FQDN=$(az deployment group show -g <rg> -n main \
      --query properties.outputs.appFqdn.value -o tsv)
    az ad app update --id <entraClientId> \
      --spa-redirect-uris "https://$FQDN"
+
+   APP_OBJ_ID=$(az ad app show --id <entraClientId> --query id -o tsv)
+   az rest --method PATCH \
+     --url "https://graph.microsoft.com/v1.0/applications/$APP_OBJ_ID" \
+     --body '{"isFallbackPublicClient":true}'
    ```
+
+   For an existing deployment, run only the `APP_OBJ_ID` and `az rest` commands once. Do not
+   rerun `infra/deploy_instance.py`; its resource creation steps are not idempotent.
 
 2. **Grant managed identity RBAC** (required — the Bicep template does **not** create
    role assignments; the app will fail to start without AcrPull):
