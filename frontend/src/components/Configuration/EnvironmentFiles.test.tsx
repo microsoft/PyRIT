@@ -50,7 +50,7 @@ describe('EnvironmentFiles', () => {
     expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenCalledWith('0', {
       content: 'VALUE=after\n',
     })
-    expect(await screen.findByText(/restart the backend/i)).toBeInTheDocument()
+    expect(await screen.findByText(/restart PyRIT/i)).toBeInTheDocument()
   })
 
   it('should show an error when the file list cannot be loaded', async () => {

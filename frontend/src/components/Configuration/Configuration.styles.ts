@@ -6,7 +6,7 @@ import {
   TOUCH_INPUT_QUERY,
 } from '@/styles/touchTargets'
 
-export const useBackendConfigurationStyles = makeStyles({
+export const useConfigurationStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',

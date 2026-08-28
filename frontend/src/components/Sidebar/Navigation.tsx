@@ -24,7 +24,7 @@ import { useTheme } from '../../hooks/useTheme'
 import type { ThemeMode } from '../../hooks/useTheme'
 import { useNavigationStyles } from './Navigation.styles'
 
-export type ViewName = 'home' | 'chat' | 'history' | 'targets' | 'initializers' | 'backendConfig'
+export type ViewName = 'home' | 'chat' | 'history' | 'targets' | 'initializers' | 'configuration'
 
 interface NavigationProps {
   currentView: ViewName
@@ -119,13 +119,13 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
 
         <Button
           className={styles.navButton}
-          data-active={currentView === 'backendConfig'}
+          data-active={currentView === 'configuration'}
           appearance="subtle"
           icon={<SettingsRegular />}
-          title="Backend Configuration"
-          aria-label="Backend Configuration"
-          aria-current={currentView === 'backendConfig' ? 'page' : undefined}
-          onClick={() => onNavigate('backendConfig')}
+          title="Configuration"
+          aria-label="Configuration"
+          aria-current={currentView === 'configuration' ? 'page' : undefined}
+          onClick={() => onNavigate('configuration')}
         />
 
       </nav>

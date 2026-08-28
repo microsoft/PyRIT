@@ -7,7 +7,7 @@ import { initializersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { CustomInitializer } from '@/types'
 
-import { useBackendConfigurationStyles } from './BackendConfiguration.styles'
+import { useConfigurationStyles } from './Configuration.styles'
 
 interface StatusMessage {
   intent: 'success' | 'error'
@@ -15,7 +15,7 @@ interface StatusMessage {
 }
 
 export default function CustomInitializerFiles() {
-  const styles = useBackendConfigurationStyles()
+  const styles = useConfigurationStyles()
   const [items, setItems] = useState<CustomInitializer[]>([])
   const [loading, setLoading] = useState(true)
   const [registering, setRegistering] = useState(false)

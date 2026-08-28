@@ -8,7 +8,7 @@ import { toApiError } from '@/services/errors'
 import type { EnvironmentFileContent } from '@/types'
 import EditorWorkspace from '@/components/EditorWorkspace'
 
-import { useBackendConfigurationStyles } from './BackendConfiguration.styles'
+import { useConfigurationStyles } from './Configuration.styles'
 import DotenvEditor from './DotenvEditor'
 
 interface StatusMessage {
@@ -17,7 +17,7 @@ interface StatusMessage {
 }
 
 export default function EnvironmentFiles() {
-  const styles = useBackendConfigurationStyles()
+  const styles = useConfigurationStyles()
   const [files, setFiles] = useState<EnvironmentFileContent[]>([])
   const [savedContents, setSavedContents] = useState<Record<string, string>>({})
   const [loadedIds, setLoadedIds] = useState<Set<string>>(() => new Set())
@@ -121,7 +121,7 @@ export default function EnvironmentFiles() {
       setSavedContents((currentContents) => ({ ...currentContents, [updated.id]: updated.content }))
       setStatusMessage({
         intent: 'success',
-        text: `${updated.name} saved. Restart the backend to apply these changes.`,
+        text: `${updated.name} saved. Restart PyRIT to apply these changes.`,
       })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -155,7 +155,7 @@ export default function EnvironmentFiles() {
         selectedId={selectedId}
         navigationLabel="Environment files"
         emptyMessage="No environment sources are enabled by the configuration."
-        description="Edit dotenv sources loaded when the backend starts."
+        description="Edit dotenv sources loaded when PyRIT starts."
         actions={(
           <div className={styles.actions}>
             <Button

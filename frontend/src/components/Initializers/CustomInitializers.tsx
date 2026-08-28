@@ -9,7 +9,7 @@ import { AddRegular, DeleteRegular } from '@fluentui/react-icons'
 
 import ConfirmDialog from '@/components/ConfirmDialog'
 import EditorWorkspace from '@/components/EditorWorkspace'
-import { PythonCodeEditor } from '@/components/BackendConfiguration/PythonCode'
+import { PythonCodeEditor } from '@/components/Configuration/PythonCode'
 import type { CustomInitializer } from '@/types'
 
 import AddCustomInitializerDialog from './AddCustomInitializerDialog'
@@ -58,7 +58,7 @@ export default function CustomInitializers({
         selectedId={selectedInitializer?.initializer_name ?? null}
         navigationLabel="Custom initializer files"
         emptyMessage="No custom initializer scripts stored."
-        description="Python initializers loaded when the backend starts."
+        description="Python initializers loaded when PyRIT starts."
         actions={(
           <div className={styles.editorActions}>
             <Button appearance="subtle" icon={<AddRegular />} onClick={() => setDialogOpen(true)}>

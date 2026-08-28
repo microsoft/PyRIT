@@ -9,7 +9,7 @@ import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import Initializers from './components/Initializers/Initializers'
-import BackendConfiguration from './components/BackendConfiguration/BackendConfiguration'
+import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
@@ -40,12 +40,11 @@ const VIEW_PATHS: Record<ViewName, string> = {
   history: '/history',
   targets: '/targets',
   initializers: '/initializers',
-  backendConfig: '/backend-config',
+  configuration: '/config',
 }
 
 /** Resolves the active view from a URL path, defaulting to home for unknown paths. */
 function viewFromPath(pathname: string): ViewName {
-  if (pathname === '/config') return 'targets'
   const match = (Object.entries(VIEW_PATHS) as [ViewName, string][]).find(
     ([, path]) => path === pathname,
   )
@@ -420,9 +419,8 @@ function App() {
                   />
                 }
               />
-              <Route path="/config" element={<Navigate to="/targets" replace />} />
               <Route path="/initializers" element={<Initializers />} />
-              <Route path="/backend-config" element={<BackendConfiguration />} />
+              <Route path="/config" element={<Configuration />} />
               <Route
                 path="/history"
                 element={

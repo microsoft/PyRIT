@@ -5,7 +5,7 @@ import 'prismjs/components/prism-yaml'
 
 import CodeEditorFrame from '@/components/CodeEditorFrame'
 
-import { useBackendConfigurationStyles } from './BackendConfiguration.styles'
+import { useConfigurationStyles } from './Configuration.styles'
 
 interface YamlEditorProps {
   value: string
@@ -18,7 +18,7 @@ function highlightYaml(value: string): string {
 }
 
 export default function YamlEditor({ value, disabled, onChange }: YamlEditorProps) {
-  const styles = useBackendConfigurationStyles()
+  const styles = useConfigurationStyles()
   const highlightRef = useRef<HTMLPreElement>(null)
 
   const handleScroll = (event: React.UIEvent<HTMLTextAreaElement>): void => {

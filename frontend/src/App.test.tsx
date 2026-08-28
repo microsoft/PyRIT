@@ -225,6 +225,11 @@ jest.mock("./components/Config/TargetConfig", () => {
   };
 });
 
+jest.mock("./components/Configuration/Configuration", () => ({
+  __esModule: true,
+  default: () => <div data-testid="configuration">Configuration</div>,
+}));
+
 jest.mock("./components/History/AttackHistory", () => {
   const MockAttackHistory = ({
     onOpenAttack,
@@ -365,14 +370,14 @@ describe("App", () => {
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("redirects the legacy /config URL to targets", () => {
+  it("renders configuration at /config", () => {
     renderApp("/config");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "targets"
+      "configuration"
     );
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByTestId("configuration")).toBeInTheDocument();
   });
 
   it("renders the history view when deep-linked to /history", () => {

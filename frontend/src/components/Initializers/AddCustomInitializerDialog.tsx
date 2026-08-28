@@ -13,7 +13,7 @@ import {
   Input,
 } from '@fluentui/react-components'
 
-import { PythonCodeEditor } from '@/components/BackendConfiguration/PythonCode'
+import { PythonCodeEditor } from '@/components/Configuration/PythonCode'
 
 import { useCustomInitializersStyles } from './CustomInitializers.styles'
 

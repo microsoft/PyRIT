@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 
 import { configurationApi, initializersApi } from '@/services/api'
 
-import BackendConfiguration from './BackendConfiguration'
+import Configuration from './Configuration'
 
 jest.mock('@/services/api', () => ({
   configurationApi: {
@@ -27,12 +27,12 @@ const mockedInitializersApi = jest.mocked(initializersApi)
 function renderPage(): void {
   render(
     <FluentProvider theme={webLightTheme}>
-      <BackendConfiguration />
+      <Configuration />
     </FluentProvider>,
   )
 }
 
-describe('BackendConfiguration', () => {
+describe('Configuration', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockedConfigurationApi.getContent.mockResolvedValue({
@@ -91,7 +91,7 @@ describe('BackendConfiguration', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(mockedConfigurationApi.updateContent).toHaveBeenCalledWith({ content: 'operator: bob\n' })
-    expect(await screen.findByText(/restart the backend/i)).toBeInTheDocument()
+    expect(await screen.findByText(/restart PyRIT/i)).toBeInTheDocument()
   })
 
   it('should show a load error', async () => {

@@ -17,7 +17,7 @@ import { configurationApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import EditorWorkspace from '@/components/EditorWorkspace'
 
-import { useBackendConfigurationStyles } from './BackendConfiguration.styles'
+import { useConfigurationStyles } from './Configuration.styles'
 import CustomInitializerFiles from './CustomInitializerFiles'
 import EnvironmentFiles from './EnvironmentFiles'
 import YamlEditor from './YamlEditor'
@@ -29,8 +29,8 @@ interface StatusMessage {
 
 type ConfigurationTab = 'configuration' | 'environment' | 'custom-initializers'
 
-export default function BackendConfiguration() {
-  const styles = useBackendConfigurationStyles()
+export default function Configuration() {
+  const styles = useConfigurationStyles()
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [source, setSource] = useState('')
@@ -84,7 +84,7 @@ export default function BackendConfiguration() {
       setSource(response.source)
       setStatusMessage({
         intent: 'success',
-        text: 'Configuration saved. Restart the backend process to apply these changes.',
+        text: 'Configuration saved. Restart PyRIT to apply these changes.',
       })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
@@ -137,7 +137,7 @@ export default function BackendConfiguration() {
           selectedId="configuration"
           navigationLabel="Configuration files"
           emptyMessage="Configuration file is unavailable."
-          description="Edit YAML configuration loaded when the backend starts."
+          description="Edit YAML configuration loaded when PyRIT starts."
           actions={(
             <div className={styles.actions}>
               <Button
@@ -164,7 +164,7 @@ export default function BackendConfiguration() {
           <Field
             className={styles.editorField}
             label={source}
-            hint={hasUnsavedChanges ? 'Unsaved changes' : 'Changes take effect after the backend process restarts.'}
+            hint={hasUnsavedChanges ? 'Unsaved changes' : 'Changes take effect after PyRIT restarts.'}
           >
             <YamlEditor
               value={content}

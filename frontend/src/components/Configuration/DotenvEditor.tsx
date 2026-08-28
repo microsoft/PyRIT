@@ -4,7 +4,7 @@ import Prism from 'prismjs'
 
 import CodeEditorFrame from '@/components/CodeEditorFrame'
 
-import { useBackendConfigurationStyles } from './BackendConfiguration.styles'
+import { useConfigurationStyles } from './Configuration.styles'
 
 interface DotenvEditorProps {
   value: string
@@ -38,7 +38,7 @@ function highlightDotenv(value: string): string {
 }
 
 export default function DotenvEditor({ value, disabled, onChange }: DotenvEditorProps) {
-  const styles = useBackendConfigurationStyles()
+  const styles = useConfigurationStyles()
   const highlightRef = useRef<HTMLPreElement>(null)
 
   const handleScroll = (event: React.UIEvent<HTMLTextAreaElement>): void => {
