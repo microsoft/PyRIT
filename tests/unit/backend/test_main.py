@@ -102,6 +102,35 @@ class TestLifespan:
 
             assert str(load_mock.call_args.kwargs["config_file"]).endswith("foo.yaml")
 
+    async def test_lifespan_applies_key_vault_override_with_explicit_config(self) -> None:
+        """Test that the deployment Key Vault source overlays a blob config."""
+        fake_config = ConfigurationLoader()
+        secret_url = "https://example.vault.azure.net/secrets/env-global"
+        config_uri = "https://account.blob.core.windows.net/config/config.yaml"
+        with (
+            patch.dict(
+                os.environ,
+                {"PYRIT_CONFIG_FILE": config_uri, "PYRIT_ENV_AKV_REF": secret_url},
+                clear=False,
+            ),
+            patch(
+                "pyrit.backend.services.configuration_file_service._download_blob_config_async",
+                new=AsyncMock(return_value=b"operator: blob-user\n"),
+            ),
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config) as load_mock,
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch(
+                "pyrit.backend.main.get_initializer_service",
+                return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
+            ),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        assert load_mock.call_args.kwargs["env_akv_ref"] == [secret_url]
+        assert isinstance(load_mock.call_args.kwargs["config_file"], Path)
+
     async def test_lifespan_configures_custom_initializer_source_from_config(self) -> None:
         """Test that YAML config determines the custom script source."""
         fake_config = ConfigurationLoader(custom_initializers_source="C:/yaml/initializers")
@@ -150,8 +179,9 @@ class TestLifespan:
         config_content = b"operator: blob-user\n"
         loaded_path: Path | None = None
 
-        def load_config(*, config_file: Path) -> ConfigurationLoader:
+        def load_config(*, config_file: Path, env_akv_ref: list[str] | None = None) -> ConfigurationLoader:
             nonlocal loaded_path
+            assert env_akv_ref is None
             loaded_path = config_file
             assert config_file.suffix == ".yaml"
             assert config_file.read_bytes() == config_content

@@ -1,0 +1,48 @@
+name: Bicep Topology
+
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - 'infra/**/*.bicep'
+      - 'tests/unit/infra/**'
+      - '.github/workflows/bicep_topology.yml'
+  pull_request:
+    branches:
+      - "main"
+      - "release/**"
+    paths:
+      - 'infra/**/*.bicep'
+      - 'tests/unit/infra/**'
+      - '.github/workflows/bicep_topology.yml'
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  bicep-topology:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PYRIT_REQUIRE_BICEP: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - name: Install Bicep CLI
+        env:
+          AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
+        run: az bicep install --version v0.46.1
+
+      - name: Compile and test Bicep topology
+        env:
+          AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
+        run: python tests/unit/infra/test_bicep_topology.py -v

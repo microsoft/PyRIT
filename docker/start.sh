@@ -37,10 +37,9 @@ fi
 echo "Checking PyRIT installation..."
 python -c "import pyrit; print(f'Running PyRIT version: {pyrit.__version__}')"
 
-# Write .env file from PYRIT_ENV_CONTENTS (injected as the Container App's
-# inline `env-file` secret; previously a Key Vault secretRef, but ACA isn't on
-# Key Vault's "trusted services" list so SFI-locked-down KVs can't be read at
-# runtime — see infra/main.bicep for details).
+# Write .env when deploy_instance.py supplies inline content. Otherwise the
+# generated PyRIT config uses the Key Vault URL from PYRIT_ENV_AKV_REF so the
+# backend can read and update that environment source through managed identity.
 if [ -n "$PYRIT_ENV_CONTENTS" ]; then
     mkdir -p ~/.pyrit
     echo "$PYRIT_ENV_CONTENTS" > ~/.pyrit/.env
@@ -59,7 +58,7 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
     echo "Starting PyRIT GUI on port 8000..."
     if [ -n "${PYRIT_CONFIG_FILE:-}" ]; then
         CONFIG_FILE="$PYRIT_CONFIG_FILE"
-        echo "Using external PyRIT configuration: $CONFIG_FILE"
+        echo "Using external PyRIT configuration"
     else
         # Translate deployment settings into a runtime config file so the FastAPI
         # lifespan (ConfigurationLoader) picks them up on startup.
