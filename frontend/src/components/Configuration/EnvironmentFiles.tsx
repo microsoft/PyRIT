@@ -108,12 +108,13 @@ export default function EnvironmentFiles() {
   }
 
   const handleSave = async (): Promise<void> => {
-    if (!selectedFile) return
+    if (!selectedFile?.version) return
     setSaving(true)
     setStatusMessage(null)
     try {
       const updated = await configurationApi.updateEnvironmentFile(selectedFile.id, {
         content: selectedFile.content,
+        version: selectedFile.version,
       })
       setFiles((currentFiles) =>
         currentFiles.map((file) => file.id === updated.id ? updated : file),

@@ -126,6 +126,7 @@ async def get_initializer_settings(  # pyrit-async-suffix-exempt
     "/settings",
     response_model=AdditionalInitializer,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
     responses={
         400: {"model": ProblemDetail, "description": "Invalid initializer settings"},
         404: {"model": ProblemDetail, "description": "Initializer not found"},
@@ -162,6 +163,7 @@ async def create_additional_initializer(  # pyrit-async-suffix-exempt
 @router.put(
     "/settings/{additional_initializer_id}",
     response_model=AdditionalInitializer,
+    dependencies=[Depends(require_admin)],
     responses={
         400: {"model": ProblemDetail, "description": "Invalid initializer settings"},
         404: {"model": ProblemDetail, "description": "Additional initializer not found"},
@@ -200,6 +202,7 @@ async def update_additional_initializer(  # pyrit-async-suffix-exempt
 @router.delete(
     "/settings/{additional_initializer_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
 )
 async def delete_additional_initializer(  # pyrit-async-suffix-exempt
     additional_initializer_id: str,
@@ -217,6 +220,7 @@ async def delete_additional_initializer(  # pyrit-async-suffix-exempt
 @router.post(
     "/{initializer_name}/apply",
     response_model=ApplyInitializerResponse,
+    dependencies=[Depends(require_admin)],
     responses={
         400: {"model": ProblemDetail, "description": "Initializer apply failed"},
         404: {"model": ProblemDetail, "description": "Initializer not found"},

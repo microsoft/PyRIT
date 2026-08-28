@@ -65,12 +65,18 @@ export interface UpdateConfigurationFileRequest {
   content: string
 }
 
+export interface UpdateEnvironmentFileRequest {
+  content: string
+  version: string
+}
+
 export interface EnvironmentFileContent {
   id: string
   name: string
   path: string
   content: string
   exists: boolean
+  version?: string | null
 }
 
 export interface EnvironmentFileListResponse {

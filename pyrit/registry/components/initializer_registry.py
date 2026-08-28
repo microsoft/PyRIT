@@ -333,7 +333,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
 
         Raises:
             FileNotFoundError: If a script path does not exist.
-            ValueError: If a path is not a ``.py`` file or defines no initializer.
+            ValueError: If a path is not a ``.py`` file or does not define a concrete
+                ``PyRITInitializer`` subclass.
         """
         from pyrit.setup.pyrit_initializer import PyRITInitializer
 
@@ -389,8 +390,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
 
         Raises:
             ValueError: If the source cannot be compiled, does not
-                contain a valid initializer class, or *name* collides
-                with an existing entry.
+                define a concrete ``PyRITInitializer`` subclass, or
+                *name* collides with an existing entry.
         """
         self._ensure_discovered()
 

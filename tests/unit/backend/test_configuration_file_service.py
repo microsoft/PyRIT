@@ -11,6 +11,7 @@ import pytest
 from pyrit.backend.services.configuration_file_service import (
     ConfigurationFileService,
     _download_blob_config_async,
+    _is_azure_blob_uri,
     _upload_blob_config_async,
 )
 
@@ -27,6 +28,23 @@ async def test_configuration_file_service_reads_and_updates_local_file(tmp_path:
 
     assert config_path.read_text(encoding="utf-8") == "operator: after\n"
     assert service.source == str(config_path)
+
+
+@pytest.mark.parametrize(
+    "blob_uri",
+    [
+        "https://attacker.blob.example.com/config/config.yaml",
+        "https://blob.core.windows.net/config/config.yaml",
+        "https://account.blob.core.windows.net/config",
+        "http://account.blob.core.windows.net/config/config.yaml",
+    ],
+)
+def test_configuration_file_service_rejects_untrusted_blob_uri(blob_uri: str) -> None:
+    assert _is_azure_blob_uri(blob_uri) is False
+
+
+def test_configuration_file_service_accepts_known_azure_blob_host() -> None:
+    assert _is_azure_blob_uri("https://account.blob.core.windows.net/config/config.yaml") is True
 
 
 async def test_configuration_file_service_rejects_invalid_content_before_write(tmp_path: Path) -> None:

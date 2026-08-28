@@ -8,9 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from pyrit.backend.middleware.auth import AuthenticatedUser, AuthenticationError, EntraAuthMiddleware
+from pyrit.backend.middleware.auth import AuthenticatedUser, AuthenticationError, EntraAuthMiddleware, require_admin
 
 
 def _make_middleware(*, allowed_group_ids: str = "allowed-group", admin_group_id: str = "") -> EntraAuthMiddleware:
@@ -61,6 +63,32 @@ def test_init_allows_auth_disabled_when_configuration_is_absent() -> None:
         middleware = EntraAuthMiddleware(MagicMock())
 
     assert middleware._enabled is False
+
+
+def test_init_warns_when_admin_group_is_missing(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING"), patch.dict("os.environ", {"ENTRA_ADMIN_GROUP_ID": ""}, clear=False):
+        _make_middleware()
+
+    assert "ENTRA_ADMIN_GROUP_ID is not set" in caplog.text
+
+
+def test_require_admin_rejects_anonymous_request_by_default() -> None:
+    request = MagicMock(spec=Request)
+    request.state.user = None
+
+    with patch.dict("os.environ", {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": ""}, clear=False):
+        with pytest.raises(HTTPException) as error:
+            require_admin(request)
+
+    assert error.value.status_code == 403
+
+
+def test_require_admin_allows_explicit_local_development_override() -> None:
+    request = MagicMock(spec=Request)
+    request.state.user = None
+
+    with patch.dict("os.environ", {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "true"}, clear=False):
+        require_admin(request)
 
 
 async def test_authenticate_with_graph_resolves_groups_when_restricted() -> None:

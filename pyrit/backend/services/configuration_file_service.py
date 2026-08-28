@@ -9,23 +9,18 @@ import tempfile
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 import aiofiles
 import yaml
 
+from pyrit.common.azure_storage import has_sas_signature, is_azure_blob_uri, redact_url_credentials
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 
 def _is_azure_blob_uri(value: str) -> bool:
     """Return whether a value is an Azure Blob Storage HTTPS URI."""
-    parsed_uri = urlparse(value)
-    return (
-        parsed_uri.scheme == "https"
-        and parsed_uri.hostname is not None
-        and ".blob." in parsed_uri.hostname
-        and len(parsed_uri.path.strip("/").split("/")) >= 2
-    )
+    return is_azure_blob_uri(value, min_path_segments=2)
 
 
 async def _download_blob_config_async(blob_uri: str) -> bytes:
@@ -38,8 +33,7 @@ async def _download_blob_config_async(blob_uri: str) -> bytes:
     from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob.aio import BlobClient
 
-    parsed_uri = urlparse(blob_uri)
-    if "sig" in parse_qs(parsed_uri.query):
+    if has_sas_signature(blob_uri):
         async with BlobClient.from_blob_url(blob_url=blob_uri) as blob_client:
             blob_stream = await blob_client.download_blob()
             return bytes(await blob_stream.readall())
@@ -55,8 +49,7 @@ async def _upload_blob_config_async(*, blob_uri: str, content: bytes) -> None:
     from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob.aio import BlobClient
 
-    parsed_uri = urlparse(blob_uri)
-    if "sig" in parse_qs(parsed_uri.query):
+    if has_sas_signature(blob_uri):
         async with BlobClient.from_blob_url(blob_url=blob_uri) as blob_client:
             await blob_client.upload_blob(content, overwrite=True)
         return
@@ -124,8 +117,7 @@ class ConfigurationFileService:
     def source(self) -> str:
         """Configuration source without blob credentials."""
         if _is_azure_blob_uri(self._source):
-            parsed_uri = urlparse(self._source)
-            return parsed_uri._replace(query="", fragment="").geturl()
+            return redact_url_credentials(self._source)
         return self._source
 
     async def read_async(self) -> str:

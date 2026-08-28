@@ -8,33 +8,14 @@ from __future__ import annotations
 from contextlib import contextmanager, suppress
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import unquote, urlparse
+
+from pyrit.common.azure_storage import has_sas_signature, is_azure_blob_uri, redact_url_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
     from azure.storage.blob import ContainerClient
-
-_AZURE_BLOB_HOST_SUFFIXES = (
-    ".blob.core.windows.net",
-    ".blob.core.chinacloudapi.cn",
-    ".blob.core.usgovcloudapi.net",
-    ".blob.core.cloudapi.de",
-)
-
-
-def is_azure_blob_source_uri(value: str) -> bool:
-    """Return whether a value is an Azure Blob container URI with an optional blob prefix."""
-    parsed_uri = urlparse(value)
-    hostname = parsed_uri.hostname or ""
-    return (
-        parsed_uri.scheme == "https"
-        and any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in _AZURE_BLOB_HOST_SUFFIXES)
-        and parsed_uri.username is None
-        and parsed_uri.password is None
-        and parsed_uri.port is None
-        and bool(parsed_uri.path.strip("/"))
-    )
 
 
 class CustomInitializerStorage:
@@ -48,7 +29,7 @@ class CustomInitializerStorage:
             ValueError: If the source has an unsupported URI scheme.
         """
         self._source = source
-        self._is_blob = is_azure_blob_source_uri(source)
+        self._is_blob = is_azure_blob_uri(source)
         if not self._is_blob and urlparse(source).scheme and not Path(source).drive:
             raise ValueError(
                 "Custom initializer source must be a local directory or Azure Blob container URI "
@@ -61,8 +42,7 @@ class CustomInitializerStorage:
         """Storage source without Azure Blob credentials."""
         if not self._is_blob:
             return self._source
-        parsed_uri = urlparse(self._source)
-        return parsed_uri._replace(query="", fragment="").geturl()
+        return redact_url_credentials(self._source)
 
     def get_script_source(self, name: str) -> str:
         """
@@ -176,8 +156,7 @@ class CustomInitializerStorage:
         if self._container_url is None:
             raise RuntimeError("Azure Blob container URL is not configured")
 
-        parsed_uri = urlparse(self._container_url)
-        if "sig" in parse_qs(parsed_uri.query):
+        if has_sas_signature(self._container_url):
             with ContainerClient.from_container_url(container_url=self._container_url) as client:
                 yield client
             return

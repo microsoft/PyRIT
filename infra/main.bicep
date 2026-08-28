@@ -82,7 +82,8 @@ param sqlDatabaseName string
 @description('PyRIT initializer to run. Default "target" registers target configs.')
 param pyritInitializer string = 'target'
 
-@description('Optional Azure Blob HTTPS URI for the backend .pyrit_conf. The container managed identity must have blob data access. When empty, start.sh generates config from the SQL and initializer parameters.')
+@secure()
+@description('Optional Azure Blob HTTPS URI for the backend .pyrit_conf. The deployment helper accepts credential-free managed-identity URIs only. When empty, start.sh generates config from the SQL and initializer parameters.')
 param pyritConfigFileUri string = ''
 
 @description('Key Vault secret name containing the .env file contents. Used as env_akv_ref when envFileContents is empty.')
@@ -423,12 +424,20 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
 
-      secrets: useInlineEnvFile ? [
-        {
-          name: 'env-file'
-          value: envFileContents
-        }
-      ] : []
+      secrets: concat(
+        useInlineEnvFile ? [
+          {
+            name: 'env-file'
+            value: envFileContents
+          }
+        ] : [],
+        !empty(pyritConfigFileUri) ? [
+          {
+            name: 'config-file-uri'
+            value: pyritConfigFileUri
+          }
+        ] : []
+      )
     }
 
     template: {
@@ -458,12 +467,16 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'PYRIT_INITIALIZER'
               value: pyritInitializer
             }
-            // When set, start.sh passes this blob URI directly to pyrit_backend.
-            // DefaultAzureCredential uses the UAMI selected by AZURE_CLIENT_ID.
-            {
-              name: 'PYRIT_CONFIG_FILE'
-              value: pyritConfigFileUri
-            }
+            // Keep URI credentials out of plain Container App configuration.
+            !empty(pyritConfigFileUri)
+              ? {
+                  name: 'PYRIT_CONFIG_FILE'
+                  secretRef: 'config-file-uri'
+                }
+              : {
+                  name: 'PYRIT_CONFIG_FILE'
+                  value: ''
+                }
             useInlineEnvFile
               ? {
                   name: 'PYRIT_ENV_CONTENTS'

@@ -6,13 +6,15 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from azure.core.exceptions import ResourceNotFoundError
+from azure.core.exceptions import AzureError, ResourceNotFoundError
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import AuthenticatedUser, require_admin
+from pyrit.backend.models.configuration import EnvironmentFileContent
 from pyrit.backend.routes.configuration import (
+    _audit_configuration_access,
     _get_configuration_file_service,
     _get_environment_file_service,
 )
@@ -23,7 +25,11 @@ from pyrit.backend.services.environment_file_service import EnvironmentFileServi
 @pytest.fixture
 def client() -> TestClient:
     """Create a test client for the FastAPI app."""
-    return TestClient(app)
+    app.dependency_overrides[require_admin] = lambda: None
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(require_admin, None)
 
 
 def test_configuration_services_resolve_from_application_state() -> None:
@@ -147,36 +153,37 @@ def test_update_configuration_file_returns_400_for_invalid_content(client: TestC
 
 def test_list_environment_files_returns_configured_files(client: TestClient) -> None:
     """Test listing environment files through the API."""
-    item = {
-        "id": "0",
-        "name": ".env",
-        "path": "C:/Users/test/.pyrit/.env",
-        "content": "",
-        "exists": True,
-    }
+    item = EnvironmentFileContent(
+        id="0",
+        name=".env",
+        path="C:/Users/test/.pyrit/.env",
+        content="",
+        exists=True,
+    )
     service = MagicMock(list_async=AsyncMock(return_value=[item]))
     with patch("pyrit.backend.routes.configuration._get_environment_file_service", return_value=service):
         response = client.get("/api/config/env-files")
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == {"items": [item]}
+    assert response.json() == {"items": [item.model_dump()]}
 
 
 def test_get_environment_file_returns_selected_content(client: TestClient) -> None:
     """Test reading one selected environment source through the API."""
-    item = {
-        "id": "akv:0",
-        "name": "AKV: bootstrap",
-        "path": "https://vault.vault.azure.net/secrets/bootstrap",
-        "content": "API_KEY=value\n",
-        "exists": True,
-    }
+    item = EnvironmentFileContent(
+        id="akv:0",
+        name="AKV: bootstrap",
+        path="https://vault.vault.azure.net/secrets/bootstrap",
+        content="API_KEY=value\n",
+        exists=True,
+        version="version-1",
+    )
     service = MagicMock(read_async=AsyncMock(return_value=item))
     with patch("pyrit.backend.routes.configuration._get_environment_file_service", return_value=service):
         response = client.get("/api/config/env-files/akv%3A0")
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == item
+    assert response.json() == item.model_dump()
     service.read_async.assert_awaited_once_with(file_id="akv:0")
 
 
@@ -191,20 +198,28 @@ def test_get_environment_file_returns_404_for_unknown_id(client: TestClient) -> 
 
 def test_update_environment_file_persists_selected_file(client: TestClient) -> None:
     """Test updating a selected environment file through the API."""
-    item = {
-        "id": "1",
-        "name": ".env.local",
-        "path": "C:/Users/test/.pyrit/.env.local",
-        "content": "API_KEY=new\n",
-        "exists": True,
-    }
+    item = EnvironmentFileContent(
+        id="1",
+        name=".env.local",
+        path="C:/Users/test/.pyrit/.env.local",
+        content="API_KEY=new\n",
+        exists=True,
+        version="version-2",
+    )
     service = MagicMock(update_async=AsyncMock(return_value=item))
     with patch("pyrit.backend.routes.configuration._get_environment_file_service", return_value=service):
-        response = client.put("/api/config/env-files/1", json={"content": "API_KEY=new\n"})
+        response = client.put(
+            "/api/config/env-files/1",
+            json={"content": "API_KEY=new\n", "version": "version-1"},
+        )
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == item
-    service.update_async.assert_awaited_once_with(file_id="1", content="API_KEY=new\n")
+    assert response.json() == item.model_dump()
+    service.update_async.assert_awaited_once_with(
+        file_id="1",
+        content="API_KEY=new\n",
+        expected_version="version-1",
+    )
 
 
 def test_update_environment_file_returns_400_for_versioned_akv_source(client: TestClient) -> None:
@@ -213,7 +228,10 @@ def test_update_environment_file_returns_400_for_versioned_akv_source(client: Te
         update_async=AsyncMock(side_effect=ValueError("Versioned Azure Key Vault environment sources are read-only"))
     )
     with patch("pyrit.backend.routes.configuration._get_environment_file_service", return_value=service):
-        response = client.put("/api/config/env-files/akv%3A0", json={"content": "API_KEY=new\n"})
+        response = client.put(
+            "/api/config/env-files/akv%3A0",
+            json={"content": "API_KEY=new\n", "version": "version-1"},
+        )
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert response.json()["detail"] == "Versioned Azure Key Vault environment sources are read-only"
@@ -223,6 +241,66 @@ def test_update_environment_file_returns_404_for_unknown_id(client: TestClient) 
     """Test that updating an unknown environment source returns 404."""
     service = MagicMock(update_async=AsyncMock(side_effect=KeyError("missing")))
     with patch("pyrit.backend.routes.configuration._get_environment_file_service", return_value=service):
-        response = client.put("/api/config/env-files/missing", json={"content": "API_KEY=new\n"})
+        response = client.put(
+            "/api/config/env-files/missing",
+            json={"content": "API_KEY=new\n", "version": "version-1"},
+        )
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_get_configuration_file_maps_azure_error_to_503(client: TestClient) -> None:
+    service = MagicMock(spec=ConfigurationFileService)
+    service.read_async = AsyncMock(side_effect=AzureError("credential details"))
+    service.source = "https://account.blob.core.windows.net/config/config.yaml"
+
+    with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
+        response = client.get("/api/config")
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert response.json()["detail"] == "Configuration storage is temporarily unavailable"
+    assert "credential details" not in response.text
+
+
+def test_configuration_read_writes_secret_free_audit_record(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = MagicMock(spec=ConfigurationFileService)
+    service.read_async = AsyncMock(return_value="SECRET=value\n")
+    service.source = "C:/config/.pyrit_conf"
+
+    with (
+        caplog.at_level("INFO", logger="pyrit.backend.routes.configuration"),
+        patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service),
+    ):
+        response = client.get("/api/config")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert "oid=local-development" in caplog.text
+    assert "action=read-config" in caplog.text
+    assert "outcome=success" in caplog.text
+    assert "SECRET=value" not in caplog.text
+
+
+def test_configuration_audit_includes_authenticated_user_name(caplog: pytest.LogCaptureFixture) -> None:
+    request = MagicMock()
+    request.state.user = AuthenticatedUser(
+        oid="admin-1",
+        name="Admin User\nInjected",
+        email="admin@example.com",
+        groups=["admin-group"],
+        is_admin=True,
+    )
+
+    with caplog.at_level("INFO", logger="pyrit.backend.routes.configuration"):
+        _audit_configuration_access(
+            request=request,
+            action="read-config",
+            source="C:/config/.pyrit_conf",
+            outcome="success",
+        )
+
+    assert "oid=admin-1" in caplog.text
+    assert "user_name='Admin User\\nInjected'" in caplog.text
+    assert "Admin User\nInjected" not in caplog.text

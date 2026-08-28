@@ -31,14 +31,14 @@ describe('EnvironmentFiles', () => {
       items: [{ id: '0', name: '.env', path: 'C:/config/.env', content: '', exists: true }],
     })
     mockedConfigurationApi.getEnvironmentFile.mockResolvedValue({
-      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=before\n', exists: true,
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=before\n', exists: true, version: 'version-1',
     })
   })
 
   it('should load, edit, and save an environment file', async () => {
     const user = userEvent.setup()
     mockedConfigurationApi.updateEnvironmentFile.mockResolvedValue({
-      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=after\n', exists: true,
+      id: '0', name: '.env', path: 'C:/config/.env', content: 'VALUE=after\n', exists: true, version: 'version-2',
     })
     renderFiles()
 
@@ -49,6 +49,7 @@ describe('EnvironmentFiles', () => {
 
     expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenCalledWith('0', {
       content: 'VALUE=after\n',
+      version: 'version-1',
     })
     expect(await screen.findByText(/restart PyRIT/i)).toBeInTheDocument()
   })

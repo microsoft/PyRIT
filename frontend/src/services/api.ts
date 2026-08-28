@@ -32,6 +32,7 @@ import type {
   ChangeMainConversationResponse,
   ConfigurationFileContent,
   EnvironmentFileContent,
+  UpdateEnvironmentFileRequest,
   EnvironmentFileListResponse,
   UpdateConfigurationFileRequest,
 } from '../types'
@@ -177,7 +178,7 @@ export const configurationApi = {
 
   updateEnvironmentFile: async (
     fileId: string,
-    request: UpdateConfigurationFileRequest,
+    request: UpdateEnvironmentFileRequest,
   ): Promise<EnvironmentFileContent> => {
     const response = await apiClient.put(`/config/env-files/${encodeURIComponent(fileId)}`, request)
     return response.data

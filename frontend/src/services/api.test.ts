@@ -210,7 +210,7 @@ describe("api service", () => {
     });
 
     it("should update an environment file", async () => {
-      const request = { content: "KEY=value\n" };
+      const request = { content: "KEY=value\n", version: "version-1" };
       const response = {
         data: {
           id: "akv:0",

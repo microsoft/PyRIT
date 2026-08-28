@@ -27,6 +27,7 @@ class EnvironmentFileContent(BaseModel):
     path: str = Field(..., description="Resolved environment file path")
     content: str = Field(..., description="Raw dotenv file contents")
     exists: bool = Field(..., description="Whether the environment file currently exists")
+    version: str | None = Field(None, description="Opaque version token for optimistic concurrency")
 
 
 class EnvironmentFileListResponse(BaseModel):
@@ -39,3 +40,4 @@ class UpdateEnvironmentFileRequest(BaseModel):
     """Replacement contents for an environment file."""
 
     content: str = Field(..., description="Raw dotenv file contents")
+    version: str = Field(..., description="Version token returned by the latest content read")

@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.backend.services.environment_file_service import EnvironmentFileService, _update_akv_document_async
+from pyrit.backend.services.environment_file_service import (
+    EnvironmentFileConflictError,
+    EnvironmentFileService,
+    _update_akv_document_async,
+)
 
 
 async def test_environment_file_service_uses_default_candidates(tmp_path: Path) -> None:
@@ -31,14 +35,40 @@ async def test_environment_file_service_preserves_explicit_order_and_updates(tmp
     service = EnvironmentFileService(resolved_env_files=[first, second])
 
     items = await service.list_async()
-    loaded = await service.read_async(file_id="0")
-    updated = await service.update_async(file_id="0", content="FIRST=after\n")
+    first_id = items[0].id
+    loaded = await service.read_async(file_id=first_id)
+    updated = await service.update_async(
+        file_id=first_id,
+        content="FIRST=after\n",
+        expected_version=loaded.version or "",
+    )
 
     assert [item.path for item in items] == [str(first), str(second)]
     assert items[0].content == ""
     assert loaded.content == "FIRST=before\n"
     assert updated.content == "FIRST=after\n"
     assert first.read_text(encoding="utf-8") == "FIRST=after\n"
+
+    reordered = EnvironmentFileService(resolved_env_files=[second, first])
+    reordered_items = await reordered.list_async()
+    assert next(item.id for item in reordered_items if item.path == str(first)) == first_id
+
+
+async def test_environment_file_service_deduplicates_sources_in_order(tmp_path: Path) -> None:
+    """Test repeated source configuration produces one stable list entry."""
+    first = tmp_path / "first.env"
+    second = tmp_path / "second.env"
+    first_secret = "https://vault.vault.azure.net/secrets/first"
+    second_secret = "https://vault.vault.azure.net/secrets/second"
+    service = EnvironmentFileService(
+        resolved_env_files=[first, first, second],
+        env_akv_ref=[first_secret, first_secret, second_secret],
+    )
+
+    items = await service.list_async()
+
+    assert [item.path for item in items] == [first_secret, second_secret, str(first), str(second)]
+    assert len({item.id for item in items}) == 4
 
 
 async def test_environment_file_service_empty_list_has_no_files() -> None:
@@ -61,6 +91,7 @@ async def test_environment_file_service_lists_and_updates_akv_before_files(tmp_p
             new=AsyncMock(
                 side_effect=[
                     ("AKV=before\n", "https://vault.vault.azure.net"),
+                    ("AKV=before\n", "https://vault.vault.azure.net"),
                     ("AKV=after\n", "https://vault.vault.azure.net"),
                 ]
             ),
@@ -69,22 +100,33 @@ async def test_environment_file_service_lists_and_updates_akv_before_files(tmp_p
             "pyrit.backend.services.environment_file_service._update_akv_document_async",
             new=AsyncMock(return_value="AKV=after\n"),
         ) as update_mock,
+        patch(
+            "pyrit.backend.services.environment_file_service._validate_dotenv_document",
+            return_value="AKV=after\n",
+        ) as validate_mock,
     ):
         items = await service.list_async()
         fetch_mock.assert_not_awaited()
-        loaded = await service.read_async(file_id="akv:0")
-        updated = await service.update_async(file_id="akv:0", content="AKV=after\n")
-        loaded_after_update = await service.read_async(file_id="akv:0")
+        akv_id = items[0].id
+        loaded = await service.read_async(file_id=akv_id)
+        updated = await service.update_async(
+            file_id=akv_id,
+            content="AKV=after\n",
+            expected_version=loaded.version or "",
+        )
+        loaded_after_update = await service.read_async(file_id=akv_id)
 
-    assert [item.id for item in items] == ["akv:0", "0"]
+    assert items[0].id.startswith("akv-")
+    assert items[1].id.startswith("file-")
     assert items[0].name == "AKV: bootstrap"
     assert items[0].path == secret_url
     assert items[0].content == ""
     assert loaded.content == "AKV=before\n"
     assert loaded_after_update.content == "AKV=after\n"
-    assert fetch_mock.await_count == 2
+    assert fetch_mock.await_count == 3
     assert updated.content == "AKV=after\n"
-    update_mock.assert_awaited_once_with(secret_url=secret_url, content="AKV=after\n", strict=True)
+    validate_mock.assert_called_once_with("AKV=after\n", strict=True, silent=True)
+    update_mock.assert_awaited_once_with(secret_url=secret_url, content="AKV=after\n")
 
 
 async def test_environment_file_service_rejects_versioned_akv_update() -> None:
@@ -94,14 +136,13 @@ async def test_environment_file_service_rejects_versioned_akv_update() -> None:
             await _update_akv_document_async(
                 secret_url="https://vault.vault.azure.net/secrets/bootstrap/version-1",
                 content="AKV=after\n",
-                strict=True,
             )
 
     credential_mock.assert_not_called()
 
 
 async def test_environment_file_service_updates_unversioned_akv_document() -> None:
-    """Test validating and persisting an unversioned Key Vault document."""
+    """Test persisting an unversioned Key Vault document."""
     secret_url = "https://vault.vault.azure.net/secrets/bootstrap"
     credential = MagicMock()
     credential.__aenter__ = AsyncMock(return_value=credential)
@@ -114,33 +155,45 @@ async def test_environment_file_service_updates_unversioned_akv_document() -> No
     with (
         patch("azure.identity.aio.DefaultAzureCredential", return_value=credential),
         patch("pyrit.backend.services.environment_file_service._create_akv_secret_client", return_value=client),
-        patch(
-            "pyrit.backend.services.environment_file_service._validate_dotenv_document",
-            return_value="AKV=validated\n",
-        ) as validate_mock,
     ):
-        result = await _update_akv_document_async(secret_url=secret_url, content="AKV=value\n", strict=False)
+        result = await _update_akv_document_async(secret_url=secret_url, content="AKV=validated\n")
 
     assert result == "AKV=validated\n"
-    validate_mock.assert_called_once_with("AKV=value\n", strict=False, silent=True)
     client.set_secret.assert_awaited_once_with("bootstrap", "AKV=validated\n")
+
+
+async def test_environment_file_service_sanitizes_akv_content_before_write() -> None:
+    """Test non-strict AKV validation occurs before persistence."""
+    secret_url = "https://vault.vault.azure.net/secrets/bootstrap"
+    service = EnvironmentFileService(resolved_env_files=[], env_akv_ref=[secret_url], env_akv_strict=False)
+    file_id = (await service.list_async())[0].id
+
+    with patch(
+        "pyrit.backend.services.environment_file_service._update_akv_document_async",
+        new=AsyncMock(return_value="VALID=value\n"),
+    ) as update_mock:
+        result = await service._write_source_async(file_id=file_id, content="INVALID\nVALID=value\n")
+
+    assert result.content == "VALID=value\n"
+    update_mock.assert_awaited_once_with(secret_url=secret_url, content="VALID=value\n")
 
 
 async def test_environment_file_service_reads_latest_akv_content() -> None:
     """Test that every read observes the current AKV content."""
     secret_url = "https://vault.vault.azure.net/secrets/bootstrap"
     service = EnvironmentFileService(resolved_env_files=[], env_akv_ref=[secret_url])
+    file_id = (await service.list_async())[0].id
     with patch(
         "pyrit.backend.services.environment_file_service._fetch_akv_document_async",
         new=AsyncMock(side_effect=[("FIRST=1\n", "vault"), ("SECOND=2\n", "vault")]),
     ) as fetch_mock:
-        assert (await service.read_async(file_id="akv:0")).content == "FIRST=1\n"
-        assert (await service.read_async(file_id="akv:0")).content == "SECOND=2\n"
+        assert (await service.read_async(file_id=file_id)).content == "FIRST=1\n"
+        assert (await service.read_async(file_id=file_id)).content == "SECOND=2\n"
 
     assert fetch_mock.await_count == 2
 
 
-@pytest.mark.parametrize("file_id", ["akv:invalid", "akv:1", "akv:-1"])
+@pytest.mark.parametrize("file_id", ["akv-invalid", "akv-missing", "file-unknown"])
 def test_environment_file_service_rejects_invalid_akv_id(file_id: str) -> None:
     """Test malformed, out-of-range, and negative Key Vault identifiers."""
     service = EnvironmentFileService(
@@ -151,10 +204,45 @@ def test_environment_file_service_rejects_invalid_akv_id(file_id: str) -> None:
         service._get_akv_source(file_id)
 
 
-@pytest.mark.parametrize("file_id", ["invalid", "1", "-1"])
+@pytest.mark.parametrize("file_id", ["invalid", "file-missing", "akv-unknown"])
 def test_environment_file_service_rejects_invalid_file_id(file_id: str, tmp_path: Path) -> None:
     """Test malformed, out-of-range, and negative local file identifiers."""
     service = EnvironmentFileService(resolved_env_files=[tmp_path / ".env"])
 
     with pytest.raises(KeyError, match=file_id):
         service._get_file_path(file_id)
+
+
+async def test_environment_file_service_rejects_stale_update(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("VALUE=before\n", encoding="utf-8")
+    service = EnvironmentFileService(resolved_env_files=[env_file])
+    file_id = (await service.list_async())[0].id
+    loaded = await service.read_async(file_id=file_id)
+    env_file.write_text("VALUE=external\n", encoding="utf-8")
+
+    with pytest.raises(EnvironmentFileConflictError, match="reload"):
+        await service.update_async(
+            file_id=file_id,
+            content="VALUE=after\n",
+            expected_version=loaded.version or "",
+        )
+
+    assert env_file.read_text(encoding="utf-8") == "VALUE=external\n"
+
+
+async def test_environment_file_service_validates_before_replacing_file(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("VALUE=before\n", encoding="utf-8")
+    service = EnvironmentFileService(resolved_env_files=[env_file])
+    file_id = (await service.list_async())[0].id
+    loaded = await service.read_async(file_id=file_id)
+
+    with pytest.raises(ValueError):
+        await service.update_async(
+            file_id=file_id,
+            content="INVALID ENTRY\n",
+            expected_version=loaded.version or "",
+        )
+
+    assert env_file.read_text(encoding="utf-8") == "VALUE=before\n"

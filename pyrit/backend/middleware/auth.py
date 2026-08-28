@@ -53,7 +53,9 @@ def require_admin(request: Request) -> None:
     """Require an administrator when authentication is enabled."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return
+        allow_unauthenticated = os.getenv("PYRIT_ALLOW_UNAUTHENTICATED_ADMIN", "").strip().casefold() == "true"
+        if allow_unauthenticated:
+            return
     if not isinstance(user, AuthenticatedUser) or not user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -104,6 +106,10 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             ]
             if missing_settings:
                 raise ValueError(f"Incomplete Entra ID configuration: {', '.join(missing_settings)} must be set")
+            if not self._admin_group_id:
+                logger.warning(
+                    "ENTRA_ADMIN_GROUP_ID is not set; authenticated users cannot access administrator routes."
+                )
             logger.info("Entra ID auth middleware enabled (tenant=%s)", self._tenant_id)
         else:
             logger.warning(

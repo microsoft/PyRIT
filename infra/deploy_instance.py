@@ -40,6 +40,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -48,9 +49,39 @@ INFRA_DIR = Path(__file__).resolve().parent
 BICEP_TEMPLATE = INFRA_DIR / "main.bicep"
 _MICROSOFT_GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 _GRAPH_USER_READ_SCOPE_ID = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"
+_AZURE_BLOB_HOST_SUFFIXES = (
+    ".blob.core.windows.net",
+    ".blob.core.chinacloudapi.cn",
+    ".blob.core.usgovcloudapi.net",
+    ".blob.core.cloudapi.de",
+)
 
 # On Windows, az CLI is a .cmd script that requires shell=True for subprocess to find it.
 _SHELL = platform.system() == "Windows"
+
+
+def _managed_identity_blob_uri(value: str) -> str:
+    """Validate a credential-free Azure Blob URI for managed-identity access."""
+    if not value:
+        return value
+
+    parsed_uri = urlparse(value)
+    hostname = parsed_uri.hostname or ""
+    valid_hostname = any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in _AZURE_BLOB_HOST_SUFFIXES)
+    if (
+        parsed_uri.scheme != "https"
+        or not valid_hostname
+        or parsed_uri.username is not None
+        or parsed_uri.password is not None
+        or parsed_uri.port is not None
+        or parsed_uri.query
+        or parsed_uri.fragment
+        or len(parsed_uri.path.strip("/").split("/")) < 2
+    ):
+        raise argparse.ArgumentTypeError(
+            "--pyrit-config-file-uri must be a credential-free Azure Blob HTTPS URI; SAS URLs are not supported"
+        )
+    return value
 
 
 def run_az(
@@ -1102,7 +1133,8 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--pyrit-config-file-uri",
         default="",
-        help="Azure Blob HTTPS URI for .pyrit_conf (optional)",
+        type=_managed_identity_blob_uri,
+        help="Credential-free Azure Blob HTTPS URI for .pyrit_conf using managed identity (optional)",
     )
     parser.add_argument(
         "--allowed-groups",
@@ -1228,7 +1260,10 @@ def main(args: list[str] | None = None) -> int:
         logger.info("Admin group: %s", admin_group_id)
         logger.info("Env file: %s", env_file)
         logger.info("Container image: %s", parsed.container_image)
-        logger.info("PyRIT config file URI: %s", parsed.pyrit_config_file_uri or "(generated at startup)")
+        logger.info(
+            "PyRIT config file URI: %s",
+            "(configured; managed identity)" if parsed.pyrit_config_file_uri else "(generated at startup)",
+        )
         logger.info("ACR: %s", parsed.acr_name)
         logger.info("Location: %s", parsed.location)
         logger.info("Subscription: %s", parsed.subscription)

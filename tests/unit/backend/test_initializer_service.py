@@ -30,15 +30,23 @@ from pyrit.registry import InitializerMetadata
 @pytest.fixture
 def client() -> TestClient:
     """Create a test client for the FastAPI app."""
-    return TestClient(app)
+    app.dependency_overrides[require_admin] = lambda: None
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(require_admin, None)
 
 
 @pytest.fixture
 def client_with_custom_initializers_enabled():
     """Create a test client with allow_custom_initializers enabled."""
     app.state.allow_custom_initializers = True
-    yield TestClient(app)
-    app.state.allow_custom_initializers = False
+    app.dependency_overrides[require_admin] = lambda: None
+    try:
+        yield TestClient(app)
+    finally:
+        app.state.allow_custom_initializers = False
+        app.dependency_overrides.pop(require_admin, None)
 
 
 @pytest.fixture(autouse=True)
@@ -822,6 +830,31 @@ class TestInitializerRoutes:
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body"),
+        [
+            ("POST", "/api/initializers/settings", {"initializer_name": "target"}),
+            ("PUT", "/api/initializers/settings/a1", {}),
+            ("DELETE", "/api/initializers/settings/a1", None),
+            ("POST", "/api/initializers/target/apply", None),
+        ],
+    )
+    def test_initializer_execution_routes_require_admin(
+        self,
+        client: TestClient,
+        method: str,
+        path: str,
+        json_body: dict[str, str] | None,
+    ) -> None:
+        def reject_non_admin() -> None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access is required")
+
+        app.dependency_overrides[require_admin] = reject_non_admin
+
+        response = client.request(method, path, json=json_body)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
 
 # ============================================================================
 # Service Register/Unregister Tests
@@ -968,3 +1001,23 @@ class TestCustomInitializerRoutes:
             name="runtime_custom",
             script_content=_SAMPLE_SCRIPT,
         )
+
+    def test_post_rejects_script_without_initializer_subclass(
+        self, client_with_custom_initializers_enabled: TestClient
+    ) -> None:
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.register_initializer_async = AsyncMock(
+                side_effect=ValueError(
+                    "Uploaded script for 'not_an_initializer' does not contain a concrete PyRITInitializer subclass."
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client_with_custom_initializers_enabled.post(
+                "/api/initializers",
+                json={"name": "not_an_initializer", "script_content": "VALUE = 1\n"},
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "does not contain a concrete PyRITInitializer subclass" in response.json()["detail"]

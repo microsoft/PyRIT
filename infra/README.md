@@ -426,14 +426,15 @@ The backend can load `.pyrit_conf` directly from Azure Blob Storage. Set
 the URI to `pyrit_backend --config-file`; the backend downloads it with the
 Container App's user-assigned managed identity. Leave the parameter empty to
 generate the existing minimal config from `sqlServerFqdn` and
-`pyritInitializer` at container startup.
+`pyritInitializer` at container startup. The deployment helper rejects SAS
+URLs and redacts the configured URI from dry-run output. The Bicep parameter is
+marked `@secure()` and reaches the container through a secret reference.
 
 Grant the managed identity `Storage Blob Data Contributor` on the config blob,
 container, or storage account. Contributor access is needed because the GUI's
 configuration API can update the same blob; `Storage Blob Data Reader` is
 sufficient only for read-only startup. The storage firewall must also allow the
-Container App's network path. Prefer an identity-protected URI without a SAS
-token.
+Container App's network path. Use an identity-protected URI without a SAS token.
 
 The template accepts an existing blob URI rather than creating or seeding a
 storage account. `infra/deploy_instance.py` already creates per-instance blob
