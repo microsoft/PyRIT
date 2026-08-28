@@ -59,6 +59,7 @@ class TestBicepCiContract(unittest.TestCase):
 
         assert "bicep-topology:" in workflow
         assert "PYRIT_REQUIRE_BICEP: 'true'" in workflow
+        assert workflow.count("AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure") == 2
         assert "az bicep install --version v0.46.1" in workflow
         assert "python tests/unit/infra/test_bicep_topology.py -v" in workflow
 
