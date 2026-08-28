@@ -30,7 +30,11 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     CrescendoAttack,
 )
-from pyrit.models import SeedPrompt
+from pyrit.models import (
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    SeedPrompt,
+)
 from pyrit.models.parameter import Parameter
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -482,6 +486,40 @@ class Psychosocial(Scenario):
             rebuilt.max_dataset_size = per_subharm_cap * len(dataset_names)
             self._dataset_config = rebuilt
         return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
+
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the independent sub-harm technique sweeps and per-harm baselines.
+
+        Returns:
+            ScenarioRunSizeEstimate: Exact per-sub-harm estimate.
+        """
+        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        technique_count = len(self._scenario_techniques)
+        components: list[ScenarioRunSizeComponent] = []
+        for dataset_name, seed_groups in selected_groups.items():
+            seed_group_count = len(seed_groups)
+            components.append(
+                ScenarioRunSizeComponent(
+                    label=f"{dataset_name} technique sweep",
+                    count=seed_group_count * technique_count,
+                )
+            )
+            if self._include_baseline:
+                components.append(
+                    ScenarioRunSizeComponent(
+                        label=f"{dataset_name} baseline",
+                        count=seed_group_count,
+                        is_baseline=True,
+                        note="Psychosocial uses a distinct baseline and scorer for each sub-harm.",
+                    )
+                )
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note="Each default sub-harm is planned independently; retries and internal turns are excluded.",
+        )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """

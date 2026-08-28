@@ -313,6 +313,31 @@ def test_handles_empty_attack_results(sqlite_instance: MemoryInterface):
     assert len(results[0].attack_results) == 0
 
 
+def test_terminal_state_updates_completion_time_only_on_terminal_transition(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    old_completion = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    scenario_result = create_scenario_result(name="Timing Scenario")
+    scenario_result.completion_time = old_completion
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+
+    sqlite_instance.update_scenario_run_state(
+        scenario_result_id=str(scenario_result.id),
+        scenario_run_state=ScenarioRunState.IN_PROGRESS,
+    )
+    in_progress = sqlite_instance.get_scenario_result_header(scenario_result_id=str(scenario_result.id))
+    assert in_progress is not None
+    assert in_progress.completion_time == old_completion
+
+    sqlite_instance.update_scenario_run_state(
+        scenario_result_id=str(scenario_result.id),
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+    completed = sqlite_instance.get_scenario_result_header(scenario_result_id=str(scenario_result.id))
+    assert completed is not None
+    assert completed.completion_time > old_completion
+
+
 def test_preserves_metadata(sqlite_instance: MemoryInterface):
     """Test that scenario metadata is preserved correctly."""
 

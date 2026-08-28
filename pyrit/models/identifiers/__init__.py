@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from pyrit.models.identifiers.param_markers import Param, ParamMarker
     from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
     from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
-    from pyrit.models.identifiers.seed_identifier import SeedIdentifier
+    from pyrit.models.identifiers.seed_identifier import SeedIdentifier, compute_seed_group_hash
     from pyrit.models.identifiers.target_identifier import TargetIdentifier
 
 _LAZY_EXPORTS: dict[str, str] = {
@@ -74,6 +74,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScorerIdentifier": "pyrit.models.identifiers.scorer_identifier",
     "ScenarioIdentifier": "pyrit.models.identifiers.scenario_identifier",
     "SeedIdentifier": "pyrit.models.identifiers.seed_identifier",
+    "compute_seed_group_hash": "pyrit.models.identifiers.seed_identifier",
     "snake_case_to_class_name": "pyrit.models.identifiers.class_name_utils",
     "TARGET_EVAL_PARAM_FALLBACKS": "pyrit.models.identifiers.evaluation_identifier",
     "TARGET_EVAL_PARAMS": "pyrit.models.identifiers.evaluation_identifier",

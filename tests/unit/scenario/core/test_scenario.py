@@ -16,7 +16,16 @@ except ImportError:  # pragma: no cover - 3.10 only
 
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ScenarioRunState
+from pyrit.models import (
+    SCENARIO_RUN_PLAN_METADATA_KEY,
+    AttackOutcome,
+    AttackResult,
+    AttackSeedGroup,
+    ComponentIdentifier,
+    ScenarioRunState,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import (
     DatasetAttackConfiguration,
@@ -41,6 +50,16 @@ def save_attack_results_to_memory(attack_results):
     """Helper function to save attack results to memory (mimics what real attacks do)."""
     memory = CentralMemory.get_memory_instance()
     memory.add_attack_results_to_memory(attack_results=attack_results)
+
+
+def _make_identifiable_mock_attack() -> MagicMock:
+    """Create a mock attack with a valid canonical identifier for run-plan construction."""
+    attack = MagicMock()
+    attack.get_identifier.return_value = ComponentIdentifier(
+        class_name="MockAttack",
+        class_module="tests.unit.scenario.core.test_scenario",
+    )
+    return attack
 
 
 def _stamp_scenario_linkage(*, attack_results, atomic_attack):
@@ -260,6 +279,61 @@ class TestScenarioInitialization2:
 
         assert scenario.atomic_attack_count == len(mock_atomic_attacks)
         assert scenario._atomic_attacks == mock_atomic_attacks
+        [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+        assert stored.metadata["run_plan"]["version"] == 1
+        assert len(stored.metadata["run_plan"]["atomic_groups"]) == len(mock_atomic_attacks)
+
+    async def test_initialize_async_deduplicates_logical_seed_groups_in_run_plan(self, mock_objective_target) -> None:
+        duplicate_seed_groups = [
+            AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective")]),
+        ]
+        atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.atomic_attack_name = "duplicate_attack"
+        atomic_attack.display_group = "duplicate_attack"
+        atomic_attack.technique_eval_hash = "duplicate-technique"
+        type(atomic_attack).seed_groups = PropertyMock(return_value=duplicate_seed_groups)
+        scenario = ConcreteScenario(
+            name="Duplicate Seed Scenario",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack],
+        )
+
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+
+        [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+        persisted_plan = stored.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+        expected_seed_id = duplicate_seed_groups[0].logical_id
+        assert persisted_plan["atomic_groups"][0]["seed_group_ids"] == [expected_seed_id]
+        assert [seed_group["id"] for seed_group in persisted_plan["seed_groups"]] == [expected_seed_id]
+        assert scenario._build_run_plan().model_dump(mode="json") == persisted_plan
+        assert atomic_attack.seed_groups is duplicate_seed_groups
+        assert len(atomic_attack.seed_groups) == 2
+
+    async def test_build_run_plan_preserves_unique_seed_group_order(self, mock_objective_target) -> None:
+        seed_groups = [
+            AttackSeedGroup(seeds=[SeedObjective(value="first objective")]),
+            AttackSeedGroup(seeds=[SeedObjective(value="second objective")]),
+        ]
+        atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.atomic_attack_name = "unique_attack"
+        atomic_attack.display_group = "unique_attack"
+        atomic_attack.technique_eval_hash = "unique-technique"
+        type(atomic_attack).seed_groups = PropertyMock(return_value=seed_groups)
+        scenario = ConcreteScenario(
+            name="Unique Seed Scenario",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack],
+        )
+
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+
+        plan = scenario._build_run_plan()
+        expected_seed_ids = [seed_group.logical_id for seed_group in seed_groups]
+        assert plan.atomic_groups[0].seed_group_ids == expected_seed_ids
+        assert [seed_group.id for seed_group in plan.seed_groups] == expected_seed_ids
 
     async def test_initialize_async_sets_objective_target(self, mock_objective_target):
         """Test that initialize_async sets objective_target properly."""
@@ -420,6 +494,39 @@ class TestScenarioExecution:
         assert result.attack_results["attack_run_1"][0] == sample_attack_results[0]
         assert result.attack_results["attack_run_2"][0] == sample_attack_results[1]
         assert result.attack_results["attack_run_3"][0] == sample_attack_results[2]
+        assert scenario.active_atomic_group_ids == frozenset()
+
+    async def test_active_atomic_group_is_cleared_when_execution_is_cancelled(
+        self,
+        mock_atomic_attacks,
+        mock_objective_target,
+    ):
+        started = asyncio.Event()
+        blocked = asyncio.Event()
+
+        async def run_until_cancelled(**_kwargs):
+            started.set()
+            await blocked.wait()
+
+        atomic_attack = mock_atomic_attacks[0]
+        atomic_attack.run_async = AsyncMock(side_effect=run_until_cancelled)
+        scenario = ConcreteScenario(
+            name="Cancellation cleanup",
+            version=1,
+            atomic_attacks_to_return=[atomic_attack],
+        )
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+
+        task = asyncio.create_task(scenario.run_async())
+        await started.wait()
+        assert scenario.active_atomic_group_ids
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert scenario.active_atomic_group_ids == frozenset()
 
     async def test_run_async_with_custom_concurrency(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
@@ -513,6 +620,7 @@ class TestScenarioExecution:
         mock_atomic_attacks[1].run_async.assert_called_once()
         # Third run should not have been executed (worker stops pulling after failure)
         mock_atomic_attacks[2].run_async.assert_not_called()
+        assert scenario.active_atomic_group_ids == frozenset()
 
     async def test_run_async_fails_without_initialization(self, mock_objective_target):
         """Test that run_async fails if initialize_async was not called."""
@@ -1041,7 +1149,7 @@ class TestScenarioBaselineUniformObjectives:
                 attacks.append(
                     AtomicAttack(
                         atomic_attack_name="technique",
-                        attack_technique=AttackTechnique(attack=MagicMock()),
+                        attack_technique=AttackTechnique(attack=_make_identifiable_mock_attack()),
                         seed_groups=list(context.seed_groups),
                     )
                 )
@@ -1105,7 +1213,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             attacks.append(
                 AtomicAttack(
                     atomic_attack_name="strategy",
-                    attack_technique=AttackTechnique(attack=MagicMock()),
+                    attack_technique=AttackTechnique(attack=_make_identifiable_mock_attack()),
                     seed_groups=list(context.seed_groups),
                 )
             )
@@ -1128,7 +1236,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
             attacks.extend(
                 AtomicAttack(
                     atomic_attack_name=f"strategy-{index}",
-                    attack_technique=AttackTechnique(attack=MagicMock()),
+                    attack_technique=AttackTechnique(attack=_make_identifiable_mock_attack()),
                     seed_groups=[seed_group],
                 )
                 for index, seed_group in enumerate(context.seed_groups)
@@ -1164,6 +1272,9 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
 
         original_id = scenario._scenario_result_id
         assert original_id is not None
+        original_header = scenario._memory.get_scenario_result_header(scenario_result_id=original_id)
+        assert original_header is not None
+        original_plan = original_header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
         _, first_strategy = scenario._atomic_attacks
         persisted_objectives = set(first_strategy.objectives)
         assert persisted_objectives == {"obj0", "obj1", "obj2"}
@@ -1202,6 +1313,100 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         # Exactly the originally-persisted subset, not the divergent "last 3" draw.
         assert set(strategy.objectives) == persisted_objectives
         assert set(baseline.objectives) == persisted_objectives
+        resumed_header = resumed._memory.get_scenario_result_header(scenario_result_id=original_id)
+        assert resumed_header is not None
+        assert resumed_header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == original_plan
+
+    async def test_resume_rejects_changed_companion_seed_with_same_objective(self, mock_objective_target):
+        objective = "unchanged objective"
+        original_seed_group = AttackSeedGroup(
+            seeds=[SeedObjective(value=objective), SeedPrompt(value="original context")]
+        )
+        scenario = self._StrategyScenario(name="Changed seed-group resume", version=1)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": DatasetAttackConfiguration(seed_groups=[original_seed_group]),
+                "include_baseline": False,
+            }
+        )
+        await scenario.initialize_async()
+
+        scenario_result_id = scenario._scenario_result_id
+        assert scenario_result_id is not None
+        header = scenario._memory.get_scenario_result_header(scenario_result_id=scenario_result_id)
+        assert header is not None
+        persisted_plan = header.metadata[SCENARIO_RUN_PLAN_METADATA_KEY]
+        assert persisted_plan["atomic_groups"][0]["seed_group_ids"] == [original_seed_group.logical_id]
+
+        changed_seed_group = AttackSeedGroup(
+            seeds=[SeedObjective(value=objective), SeedPrompt(value="changed context")]
+        )
+        assert changed_seed_group.logical_id != original_seed_group.logical_id
+        resumed = self._StrategyScenario(
+            name="Changed seed-group resume",
+            version=1,
+            scenario_result_id=scenario_result_id,
+        )
+        resumed.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": DatasetAttackConfiguration(seed_groups=[changed_seed_group]),
+                "include_baseline": False,
+            }
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=r"cannot resume: atomic group 'strategy' is missing 1 planned seed group",
+        ):
+            await resumed.initialize_async()
+
+    async def test_resume_reconstructs_plan_for_legacy_resumable_run(self, mock_objective_target):
+        config = self._make_config()
+        with patch(
+            "pyrit.scenario.core.dataset_configuration.random.sample",
+            side_effect=lambda population, k: list(population)[:k],
+        ):
+            scenario = self._StrategyScenario(name="Legacy resume", version=1)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_strategies": None,
+                    "dataset_config": config,
+                }
+            )
+            await scenario.initialize_async()
+
+        scenario_result_id = scenario._scenario_result_id
+        assert scenario_result_id is not None
+        header = scenario._memory.get_scenario_result_header(scenario_result_id=scenario_result_id)
+        assert header is not None
+        legacy_metadata = dict(header.metadata)
+        legacy_metadata.pop(SCENARIO_RUN_PLAN_METADATA_KEY)
+        scenario._memory.update_scenario_metadata(
+            scenario_result_id=scenario_result_id,
+            metadata=legacy_metadata,
+        )
+
+        resumed = self._StrategyScenario(
+            name="Legacy resume",
+            version=1,
+            scenario_result_id=scenario_result_id,
+        )
+        resumed.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_strategies": None,
+                "dataset_config": self._make_config(),
+            }
+        )
+        await resumed.initialize_async()
+
+        reconstructed = resumed._memory.get_scenario_result_header(scenario_result_id=scenario_result_id)
+        assert reconstructed is not None
+        assert SCENARIO_RUN_PLAN_METADATA_KEY in reconstructed.metadata
+        assert reconstructed.metadata["objective_hashes"] == legacy_metadata["objective_hashes"]
 
     async def test_resume_discards_per_objective_attacks_outside_persisted_subset(self, mock_objective_target):
         def _sample_first_k(population, k):

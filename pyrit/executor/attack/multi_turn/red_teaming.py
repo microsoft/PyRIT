@@ -488,6 +488,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             objective=context.objective,
         ):
             # Send the message to the target
+            context._record_objective_target_invocation(conversation_id=context.session.conversation_id)
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 conversation_id=context.session.conversation_id,
