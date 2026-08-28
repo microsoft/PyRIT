@@ -72,16 +72,13 @@ class TestPromptInjectInitialization:
         assert scenario.VERSION == 2
 
     def test_required_datasets_are_internal_template_sources(self) -> None:
-        assert PromptInject.required_datasets() == [
-            "promptinject_contexts",
-            "promptinject_techniques",
-        ]
+        assert PromptInject.required_datasets() == ["promptinject_contexts"]
 
     def test_default_dataset_config_uses_standard_global_cap(self) -> None:
         config = PromptInject()._default_dataset_config
 
         assert isinstance(config, PromptInjectDatasetConfiguration)
-        assert config.dataset_names == ["promptinject_contexts", "promptinject_techniques"]
+        assert config.dataset_names == ["promptinject_contexts"]
         assert config.max_dataset_size == 64
 
     def test_default_technique_expands_to_all_five_forms(self) -> None:
@@ -142,7 +139,10 @@ class TestPromptInjectAtomicAttacks:
         await _initialize_async(
             scenario,
             target=mock_objective_target,
-            dataset_config=PromptInjectDatasetConfiguration(max_dataset_size=None),
+            dataset_config=PromptInjectDatasetConfiguration(
+                dataset_names=["promptinject_contexts"],
+                max_dataset_size=None,
+            ),
         )
 
         assert len(scenario._atomic_attacks) == 15
@@ -157,7 +157,10 @@ class TestPromptInjectAtomicAttacks:
             target=mock_objective_target,
             techniques=[PromptInjectTechnique.IgnorePrint, PromptInjectTechnique.IgnoreSay],
             goal_texts=["goal one", "goal two"],
-            dataset_config=PromptInjectDatasetConfiguration(max_dataset_size=10),
+            dataset_config=PromptInjectDatasetConfiguration(
+                dataset_names=["promptinject_contexts"],
+                max_dataset_size=10,
+            ),
         )
 
         assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 10
@@ -192,8 +195,8 @@ class TestPromptInjectAtomicAttacks:
     @pytest.mark.parametrize(
         ("goal_texts", "message"),
         [
-            ([], "goal_texts must contain at least one value"),
-            ([""], "goal_texts must contain only non-empty strings"),
+            ([], "goal_texts must contain non-empty strings"),
+            ([""], "goal_texts must contain non-empty strings"),
             (["duplicate", "duplicate"], "goal_texts must not contain duplicate values"),
         ],
     )
@@ -208,14 +211,14 @@ class TestPromptInjectAtomicAttacks:
         with pytest.raises(ValueError, match=message):
             await _initialize_async(scenario, target=mock_objective_target, goal_texts=goal_texts)
 
-    async def test_incomplete_source_dataset_selection_raises(self, mock_objective_target: PromptTarget) -> None:
+    async def test_unsupported_dataset_selection_raises(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
         config = PromptInjectDatasetConfiguration(
-            dataset_names=["promptinject_contexts"],
+            dataset_names=["promptinject_techniques"],
             max_dataset_size=1,
         )
 
-        with pytest.raises(DatasetConstraintError, match="requires datasets"):
+        with pytest.raises(DatasetConstraintError, match="only supports"):
             await _initialize_async(scenario, target=mock_objective_target, dataset_config=config)
 
     async def test_inline_dataset_is_rejected(self, mock_objective_target: PromptTarget) -> None:
