@@ -14,7 +14,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, TargetIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -41,6 +41,10 @@ def _mock_id(name: str) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test")
 
 
+def _mock_target_id(name: str) -> TargetIdentifier:
+    return TargetIdentifier(class_name=name, class_module="test")
+
+
 def _technique_class():
     """Get the dynamically-generated RapidResponseTechnique class."""
     from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
@@ -56,14 +60,14 @@ def _technique_class():
 @pytest.fixture
 def mock_objective_target():
     mock = MagicMock(spec=PromptTarget)
-    mock.get_identifier.return_value = _mock_id("MockObjectiveTarget")
+    mock.get_identifier.return_value = _mock_target_id("MockObjectiveTarget")
     return mock
 
 
 @pytest.fixture
 def mock_adversarial_target():
     mock = MagicMock(spec=PromptTarget)
-    mock.get_identifier.return_value = _mock_id("MockAdversarialTarget")
+    mock.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     return mock
 
 
@@ -90,6 +94,7 @@ def reset_technique_registry():
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
+    adv_target.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()

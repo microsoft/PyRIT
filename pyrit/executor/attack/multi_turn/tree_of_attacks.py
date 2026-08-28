@@ -74,7 +74,7 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
     from pyrit.models.literals import PromptDataType
@@ -377,6 +377,7 @@ class _TreeOfAttacksNode:
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
+        record_objective_conversation: Callable[..., None],
         use_score_as_feedback: bool = True,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
@@ -405,6 +406,8 @@ class _TreeOfAttacksNode:
                 whether prior media should travel back to the adversarial chat or forward to
                 the objective target, and fills adversarial-placeholder pieces in seed
                 messages. Typically shared across all nodes of the same attack.
+            record_objective_conversation (Callable[..., None]): Records an objective-target
+                conversation ID for cleanup before each objective send.
             use_score_as_feedback (bool): Whether subsequent adversarial prompts include
                 the objective score. Defaults to True.
             memory_labels (dict[str, str] | None): Labels for memory storage.
@@ -432,6 +435,7 @@ class _TreeOfAttacksNode:
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
         self._modality_router = modality_router
+        self._record_objective_conversation = record_objective_conversation
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         self._use_score_as_feedback = use_score_as_feedback
 
@@ -682,6 +686,7 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            self._record_objective_conversation(conversation_id=self.objective_target_conversation_id)
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
@@ -761,6 +766,7 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            self._record_objective_conversation(conversation_id=self.objective_target_conversation_id)
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
@@ -967,6 +973,7 @@ class _TreeOfAttacksNode:
             attack_id=self._attack_id,
             attack_strategy_name=self._attack_strategy_name,
             modality_router=self._modality_router,
+            record_objective_conversation=self._record_objective_conversation,
             use_score_as_feedback=self._use_score_as_feedback,
             memory_labels=self._memory_labels,
             desired_response_prefix=self._desired_response_prefix,
@@ -1392,9 +1399,9 @@ class _TreeOfAttacksNodeExecutor:
         """
         Execute nodes in ordered batches and yield each completed batch.
 
-        Node instances own all branch-specific mutable state. This executor only
-        schedules their existing execution protocol, so failures and cancellation
-        retain ``asyncio.gather`` semantics.
+        Node instances own all branch-specific mutable state. If one node fails,
+        the executor cancels and awaits the other nodes before it propagates the
+        error.
 
         Args:
             nodes (list[_TreeOfAttacksNode]): Nodes to execute.
@@ -1408,7 +1415,14 @@ class _TreeOfAttacksNodeExecutor:
             batch_nodes = nodes[batch_start : batch_start + self._batch_size]
             self._log_batch_start(batch_start=batch_start, batch_nodes=batch_nodes, total_nodes=len(nodes))
 
-            await asyncio.gather(*(node.send_prompt_async(objective=objective) for node in batch_nodes))
+            tasks = [asyncio.create_task(node.send_prompt_async(objective=objective)) for node in batch_nodes]
+            try:
+                await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
 
             yield batch_start, batch_nodes
 
@@ -2198,6 +2212,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_id=self.get_identifier(),
             attack_strategy_name=self.__class__.__name__,
             modality_router=self._modality_router,
+            record_objective_conversation=context._record_objective_target_invocation,
             use_score_as_feedback=self._attack_scoring_config.use_score_as_feedback,
             memory_labels=context.memory_labels,
             desired_response_prefix=self._configuration.desired_response_prefix,

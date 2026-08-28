@@ -4,7 +4,7 @@
 import asyncio
 import logging
 from dataclasses import replace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
     AttackStrategy,
     _DefaultAttackStrategyEventHandler,
+    _ObjectiveTargetConversationLifecycle,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackContext
@@ -101,6 +102,70 @@ def mock_logger():
 def event_handler(mock_logger):
     """Create an event handler for testing"""
     return _DefaultAttackStrategyEventHandler(logger=mock_logger)
+
+
+async def test_objective_target_conversation_lifecycle_resets_unique_conversations() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock()
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    async with lifecycle:
+        lifecycle.record_invocation(conversation_id="conversation-1")
+        lifecycle.record_invocation(conversation_id="conversation-1")
+        lifecycle.record_invocation(conversation_id="conversation-2")
+
+    assert target.reset_conversation_async.await_count == 2
+    reset_ids = {call.kwargs["conversation_id"] for call in target.reset_conversation_async.await_args_list}
+    assert reset_ids == {"conversation-1", "conversation-2"}
+
+
+async def test_objective_target_cleanup_error_does_not_replace_attack_error() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    mock_logger = MagicMock(spec=logging.Logger)
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=mock_logger,
+    )
+
+    with pytest.raises(ValueError, match="attack failed"):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-id")
+            raise ValueError("attack failed")
+
+    mock_logger.warning.assert_called_once()
+
+
+async def test_objective_target_cleanup_propagates_cancellation() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=asyncio.CancelledError())
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-id")
+
+
+async def test_objective_target_cleanup_attempts_all_resets_under_cancellation() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=asyncio.CancelledError())
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-1")
+            lifecycle.record_invocation(conversation_id="conversation-2")
+
+    assert target.reset_conversation_async.await_count == 2
 
 
 def test_next_message_override_can_clear_parameter_value_and_survive_copy():
@@ -726,6 +791,7 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context._attribution = AttackResultAttribution(
                 parent_id="scenario-1",
                 parent_collection="atomic_a",
+                seed_group_id="seed-a",
             )
 
             event_data = StrategyEventData(
@@ -740,6 +806,7 @@ class TestDefaultAttackStrategyEventHandler:
         assert sample_attack_result.attribution_parent_id == "scenario-1"
         assert sample_attack_result.attribution_data == {
             "parent_collection": "atomic_a",
+            "seed_group_id": "seed-a",
         }
 
     async def test_on_post_execute_no_attribution_leaves_fields_none(
@@ -775,6 +842,7 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context._attribution = AttackResultAttribution(
                 parent_id="scenario-err",
                 parent_collection="atomic_err",
+                seed_group_id="seed-error",
             )
 
             event_data = StrategyEventData(
@@ -793,6 +861,7 @@ class TestDefaultAttackStrategyEventHandler:
         assert persisted.attribution_parent_id == "scenario-err"
         assert persisted.attribution_data == {
             "parent_collection": "atomic_err",
+            "seed_group_id": "seed-error",
         }
 
     async def test_on_post_execute_stamps_targeted_harm_categories(self, sample_attack_result, mock_memory):

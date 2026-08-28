@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -115,6 +115,33 @@ memory.add_message_to_memory(request=response)
 system_prompt_scorer = SystemPromptExtractionScorer()
 leak_score = (await system_prompt_scorer.score_async(response))[0]  # type: ignore
 print(f"[system prompt extraction] overlap={leak_score.get_value()}")
+
+# %% [markdown]
+# ### RobloxPiiScorer
+#
+# `RobloxPiiScorer` runs [Roblox PII Classifier v2](https://huggingface.co/Roblox/roblox-pii-classifier-v2) locally and emits one `float_scale` score for each model category:
+#
+# - `privacy_asking_for_pii`
+# - `privacy_giving_pii`
+# - `directing_users_off_platform`
+#
+# Install the local runtime with `pip install "pyrit[huggingface]"`. The scorer uses a pinned model revision and reads `HUGGINGFACE_TOKEN` when authentication is needed. Construction is lightweight; the first scoring call downloads the roughly 2.2 GB model into the standard Hugging Face cache and loads it into memory. Applications can call `await scorer.load_model_async()` during startup to warm it.
+#
+# The values are uncalibrated sigmoid model scores in `[0, 1]`; this float scorer does not apply policy thresholds. The model card recommends `0.60` for asking, `0.55` for giving, and `0.10` for directing users off-platform. Validate those cutoffs against your own traffic before using them as decisions.
+#
+# For persisted `MessageScorable` evidence, the scorer formats chat history through the selected turn and treats that turn's role as target `t`. Later turns are excluded, so each score remains linked to one message and the context available at that point.
+#
+# Inspect all three categories rather than assuming that platform names map only to `directing_users_off_platform`: requests for handles often score as asking for PII, while sharing a handle often scores as giving PII.
+
+# %%
+from pyrit.score import RobloxPiiScorer
+
+scorer = RobloxPiiScorer()
+await scorer.load_model_async()  # optional warm-up
+scores = await scorer.score_text_async(text="add me on Discord; my username is skyfox_4821")
+
+for score in scores:
+    print(score.score_category, score.get_value())
 
 # %% [markdown]
 # ## Slow scorers (LLM self-ask)

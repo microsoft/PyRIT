@@ -4,18 +4,20 @@
 """
 CoPyRIT GUI — Deploy a new isolated instance.
 
-Automates the full deployment of an isolated CoPyRIT GUI instance:
-  1. Resource group
-  2. Entra app registration + delegated Microsoft Graph permission
-  3. Entra security group (optional — can use existing)
-  4. Azure SQL server + database
-  5. Storage account + blob container (auto-injects container URL into .env)
-  6. Key Vault + populate .env secret (auto-injects SQL connection string;
-     applies SFI network lockdown — backup/audit only, NOT read at runtime)
-  7. Managed identity + RBAC role assignments (AcrPull, Storage Blob Data Contributor)
-  7b. AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
-  8. Bicep deployment (Container App, networking, logging)
-  9. Post-deploy: SPA redirect URI + public-client device-code flow
+Automates the full deployment of an isolated CoPyRIT GUI instance in this sequence:
+
+- Resource group
+- Entra app registration + delegated Microsoft Graph permission
+- Entra security group (optional — can use existing)
+- Azure SQL server + database
+- Storage account + blob container (auto-injects container URL into .env)
+- Key Vault + populate .env secret (auto-injects SQL connection string;
+    applies SFI network lockdown — backup/audit only, NOT read at runtime)
+- Managed identity + RBAC role assignments (AcrPull, Storage Blob Data Contributor)
+- AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
+- Bicep deployment (Container App, VNet, NAT, static egress, logging)
+- Restrict SQL network access to the static egress IP
+- Post-deploy: SPA redirect URI + public-client device-code flow
 
 Usage:
     python infra/deploy_instance.py \\
@@ -30,6 +32,7 @@ Usage:
 """
 
 import argparse
+import ipaddress
 import json
 import logging
 import platform
@@ -39,6 +42,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import cast
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -47,9 +51,27 @@ INFRA_DIR = Path(__file__).resolve().parent
 BICEP_TEMPLATE = INFRA_DIR / "main.bicep"
 _MICROSOFT_GRAPH_APP_ID = "00000003-0000-0000-c000-000000000000"
 _GRAPH_USER_READ_SCOPE_ID = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"
+_INSTANCE_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,11}[a-z0-9])?$")
+_ACR_NAME_RE = re.compile(r"^[a-z0-9]{5,50}$")
+_GROUP_ID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_IMAGE_REPOSITORY_RE = r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*"
+_IMAGE_VERSION_RE = r"(?:[A-Za-z0-9_][A-Za-z0-9_.-]*|sha256:[0-9a-fA-F]{64})"
 
 # On Windows, az CLI is a .cmd script that requires shell=True for subprocess to find it.
 _SHELL = platform.system() == "Windows"
+
+
+def _deployment_tags(*, instance: str, owner: str) -> dict[str, str]:
+    """Build ownership and governance tags shared by all per-instance resources."""
+    tags = {
+        "Service": "pyrit-gui",
+        "Instance": instance,
+        "ManagedBy": "infra/deploy_instance.py",
+        "DataClass": "Confidential",
+    }
+    if owner:
+        tags["Owner"] = owner
+    return tags
 
 
 def run_az(
@@ -83,7 +105,28 @@ def run_az(
     )
 
 
-def run_az_json(*, args: list[str]) -> dict | list | str:
+def _expect_json_object(value: object, *, context: str) -> dict[str, object]:
+    """Require a JSON object with string keys at an Azure CLI response boundary."""
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Azure CLI returned invalid {context} data")
+    return cast("dict[str, object]", value)
+
+
+def _expect_json_array(value: object, *, context: str) -> list[object]:
+    """Require a JSON array at an Azure CLI response boundary."""
+    if not isinstance(value, list):
+        raise RuntimeError(f"Azure CLI returned invalid {context} data")
+    return cast("list[object]", value)
+
+
+def _expect_string(value: object, *, context: str) -> str:
+    """Require a nonempty string at an Azure CLI response boundary."""
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(f"Azure CLI returned invalid {context} data")
+    return value
+
+
+def run_az_json(*, args: list[str]) -> object:
     """
     Run an Azure CLI command and parse JSON output.
 
@@ -91,10 +134,11 @@ def run_az_json(*, args: list[str]) -> dict | list | str:
         args (list[str]): The az CLI arguments (without the leading 'az').
 
     Returns:
-        dict | list | str: The parsed JSON output.
+        object: The parsed JSON output. Callers validate its expected shape.
     """
     result = run_az(args=args + ["-o", "json"])
-    return json.loads(result.stdout)
+    parsed: object = json.loads(result.stdout)
+    return parsed
 
 
 def set_subscription(subscription: str) -> None:
@@ -124,7 +168,7 @@ def create_resource_group(*, name: str, location: str, tags: list[str] | None = 
     run_az(args=cmd)
 
 
-def create_entra_app(*, display_name: str, service_management_reference: str = "") -> dict:
+def create_entra_app(*, display_name: str, service_management_reference: str = "") -> dict[str, str]:
     """
     Create an Entra app registration with delegated Microsoft Graph access.
 
@@ -153,30 +197,36 @@ def create_entra_app(*, display_name: str, service_management_reference: str = "
         "--query",
         "{appId:appId, id:id}",
     ]
-    app_create_result = run_az_json(args=create_args)
-    app_id = app_create_result["appId"]
-    app_object_id = app_create_result["id"]
+    app_create_result = _expect_json_object(run_az_json(args=create_args), context="Entra application")
+    app_id = _expect_string(app_create_result.get("appId"), context="Entra application ID")
+    app_object_id = _expect_string(app_create_result.get("id"), context="Entra application object ID")
 
-    tenant_id = run_az_json(args=["account", "show", "--query", "tenantId"])
+    tenant_id = _expect_string(
+        run_az_json(args=["account", "show", "--query", "tenantId"]),
+        context="tenant ID",
+    )
 
     # Create service principal (enterprise app)
     logger.info("Creating service principal for app: %s", app_id)
     run_az(args=["ad", "sp", "create", "--id", app_id])
-    sp_info = run_az_json(
-        args=[
-            "ad",
-            "sp",
-            "show",
-            "--id",
-            app_id,
-            "--query",
-            "{id:id}",
-        ]
+    sp_info = _expect_json_object(
+        run_az_json(
+            args=[
+                "ad",
+                "sp",
+                "show",
+                "--id",
+                app_id,
+                "--query",
+                "{id:id}",
+            ]
+        ),
+        context="service principal",
     )
-    sp_id = sp_info["id"]
+    sp_id = _expect_string(sp_info.get("id"), context="service principal object ID")
 
     logger.info("Configuring delegated Microsoft Graph User.Read permission")
-    graph_access_body = {
+    graph_access_body: dict[str, object] = {
         "requiredResourceAccess": [
             {
                 "resourceAppId": _MICROSOFT_GRAPH_APP_ID,
@@ -234,7 +284,7 @@ def assign_groups_to_app(*, sp_id: str, group_ids: list[str]) -> None:
                 "--method",
                 "POST",
                 "--url",
-                f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_id}/appRoleAssignments",
+                f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_id}/appRoleAssignedTo",
                 "--body",
                 json.dumps(body),
             ]
@@ -248,7 +298,7 @@ def create_sql_server_and_db(
     server_name: str,
     database_name: str,
     tags: list[str] | None = None,
-) -> dict:
+) -> dict[str, str]:
     """
     Create an Azure SQL server with Entra-only auth and a database.
 
@@ -263,17 +313,22 @@ def create_sql_server_and_db(
         dict: A dict with keys 'server_fqdn' and 'database_name'.
     """
     # Get current user for Entra admin
-    current_user = run_az_json(
-        args=[
-            "ad",
-            "signed-in-user",
-            "show",
-            "--query",
-            "{displayName:displayName, id:id}",
-        ]
+    current_user = _expect_json_object(
+        run_az_json(
+            args=[
+                "ad",
+                "signed-in-user",
+                "show",
+                "--query",
+                "{displayName:displayName, id:id}",
+            ]
+        ),
+        context="signed-in user",
     )
+    current_user_name = _expect_string(current_user.get("displayName"), context="signed-in user display name")
+    current_user_id = _expect_string(current_user.get("id"), context="signed-in user object ID")
 
-    logger.info("Creating SQL server: %s (Entra admin: %s)", server_name, current_user["displayName"])
+    logger.info("Creating SQL server: %s (Entra admin: %s)", server_name, current_user_name)
     sql_server_cmd = [
         "sql",
         "server",
@@ -288,26 +343,29 @@ def create_sql_server_and_db(
         "--external-admin-principal-type",
         "User",
         "--external-admin-name",
-        current_user["displayName"],
+        current_user_name,
         "--external-admin-sid",
-        current_user["id"],
+        current_user_id,
     ]
     if tags:
         sql_server_cmd += ["--tags"] + tags
     run_az(args=sql_server_cmd)
 
-    server_fqdn = run_az_json(
-        args=[
-            "sql",
-            "server",
-            "show",
-            "--name",
-            server_name,
-            "--resource-group",
-            resource_group,
-            "--query",
-            "fullyQualifiedDomainName",
-        ]
+    server_fqdn = _expect_string(
+        run_az_json(
+            args=[
+                "sql",
+                "server",
+                "show",
+                "--name",
+                server_name,
+                "--resource-group",
+                resource_group,
+                "--query",
+                "fullyQualifiedDomainName",
+            ]
+        ),
+        context="SQL server FQDN",
     )
 
     logger.info("Creating database: %s on server %s", database_name, server_name)
@@ -329,27 +387,6 @@ def create_sql_server_and_db(
     if tags:
         sql_db_cmd += ["--tags"] + tags
     run_az(args=sql_db_cmd)
-
-    # Allow Azure services to access the SQL server
-    logger.info("Allowing Azure services to access SQL server")
-    run_az(
-        args=[
-            "sql",
-            "server",
-            "firewall-rule",
-            "create",
-            "--resource-group",
-            resource_group,
-            "--server",
-            server_name,
-            "--name",
-            "AllowAzureServices",
-            "--start-ip-address",
-            "0.0.0.0",
-            "--end-ip-address",
-            "0.0.0.0",
-        ]
-    )
 
     return {"server_fqdn": server_fqdn, "database_name": database_name}
 
@@ -471,7 +508,7 @@ def create_storage_account(
     account_name: str,
     container_name: str = _STORAGE_CONTAINER_NAME,
     tags: list[str] | None = None,
-) -> dict:
+) -> dict[str, str]:
     """
     Create a per-instance storage account and a private blob container.
 
@@ -479,7 +516,10 @@ def create_storage_account(
     (the ``AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`` env var). Container
     access is set to ``off`` (private) — the managed identity authenticates
     via ``Storage Blob Data Contributor``, granted in
-    :func:`create_managed_identity_and_grant_roles`.
+    :func:`create_managed_identity_and_grant_roles`. The public endpoint stays
+    network-reachable because Azure media is delivered directly to authorized
+    browsers through short-lived user-delegation SAS URLs. Anonymous blob
+    access remains disabled.
 
     Args:
         resource_group (str): The resource group name.
@@ -490,7 +530,7 @@ def create_storage_account(
 
     Returns:
         dict: A dict with keys 'account_id' (resource ID) and 'container_url'
-        (the full HTTPS URL the AIRT initializer expects).
+        (the full HTTPS URL the target initializer expects).
     """
     logger.info("Creating storage account: %s", account_name)
     sa_cmd = [
@@ -509,6 +549,10 @@ def create_storage_account(
         "StorageV2",
         "--allow-blob-public-access",
         "false",
+        "--public-network-access",
+        "Enabled",
+        "--default-action",
+        "Allow",
         "--min-tls-version",
         "TLS1_2",
     ]
@@ -516,18 +560,21 @@ def create_storage_account(
         sa_cmd += ["--tags"] + tags
     run_az(args=sa_cmd)
 
-    account_id = run_az_json(
-        args=[
-            "storage",
-            "account",
-            "show",
-            "--name",
-            account_name,
-            "--resource-group",
-            resource_group,
-            "--query",
-            "id",
-        ]
+    account_id = _expect_string(
+        run_az_json(
+            args=[
+                "storage",
+                "account",
+                "show",
+                "--name",
+                account_name,
+                "--resource-group",
+                resource_group,
+                "--query",
+                "id",
+            ]
+        ),
+        context="storage account resource ID",
     )
 
     logger.info("Creating blob container: %s/%s", account_name, container_name)
@@ -558,6 +605,39 @@ def create_storage_account(
         container_name=container_name,
     )
     return {"account_id": account_id, "container_url": container_url}
+
+
+def configure_sql_network_access(
+    *,
+    resource_group: str,
+    sql_server_name: str,
+    egress_ip: str,
+) -> None:
+    """Restrict the per-instance SQL public endpoint to the static NAT IP."""
+    try:
+        ipaddress.IPv4Address(egress_ip)
+    except ipaddress.AddressValueError as error:
+        raise RuntimeError("Bicep did not return a valid static egress IPv4 address") from error
+
+    logger.info("Allowlisting static egress IP %s on Azure SQL", egress_ip)
+    run_az(
+        args=[
+            "sql",
+            "server",
+            "firewall-rule",
+            "create",
+            "--resource-group",
+            resource_group,
+            "--server",
+            sql_server_name,
+            "--name",
+            "AllowContainerAppEgress",
+            "--start-ip-address",
+            egress_ip,
+            "--end-ip-address",
+            egress_ip,
+        ]
+    )
 
 
 def create_key_vault(
@@ -639,26 +719,32 @@ def create_key_vault(
         kv_cmd += ["--tags"] + tags
     run_az(args=kv_cmd)
 
-    kv_id = run_az_json(
-        args=[
-            "keyvault",
-            "show",
-            "--name",
-            vault_name,
-            "--query",
-            "id",
-        ]
+    kv_id = _expect_string(
+        run_az_json(
+            args=[
+                "keyvault",
+                "show",
+                "--name",
+                vault_name,
+                "--query",
+                "id",
+            ]
+        ),
+        context="Key Vault resource ID",
     )
 
     # Grant current user Secrets Officer so we can write the secret
-    current_user_id = run_az_json(
-        args=[
-            "ad",
-            "signed-in-user",
-            "show",
-            "--query",
-            "id",
-        ]
+    current_user_id = _expect_string(
+        run_az_json(
+            args=[
+                "ad",
+                "signed-in-user",
+                "show",
+                "--query",
+                "id",
+            ]
+        ),
+        context="signed-in user object ID",
     )
     logger.info("Granting Key Vault Secrets Officer to current user")
     run_az(
@@ -762,13 +848,14 @@ def deploy_bicep(
     tenant_id: str,
     client_id: str,
     group_ids: str,
+    allowed_cidr: str,
     sql_server_fqdn: str,
     sql_database_name: str,
     kv_resource_id: str,
     acr_name: str,
     env_file_contents: str,
-    owner_tag: str = "",
-) -> dict:
+    tags: dict[str, str],
+) -> dict[str, object]:
     """
     Deploy the Bicep template.
 
@@ -785,6 +872,7 @@ def deploy_bicep(
         tenant_id (str): The Entra tenant ID.
         client_id (str): The Entra app registration client ID.
         group_ids (str): Comma-separated group object IDs.
+        allowed_cidr (str): Optional public ingress IPv4 CIDR.
         sql_server_fqdn (str): The SQL server FQDN.
         sql_database_name (str): The SQL database name.
         kv_resource_id (str): The Key Vault resource ID (kept for the
@@ -792,30 +880,29 @@ def deploy_bicep(
         acr_name (str): The ACR name.
         env_file_contents (str): The prepared .env content to inject as
             the Container App's `env-file` secret.
-        owner_tag (str): Value for the Owner tag on Bicep-managed resources.
+        tags (dict[str, str]): Ownership and governance tags for Bicep-managed resources.
 
     Returns:
         dict: The deployment outputs.
     """
     logger.info("Deploying Bicep template to resource group: %s", resource_group)
 
-    parameters: dict = {
+    parameters: dict[str, object] = {
         "appName": {"value": app_name},
         "containerImage": {"value": container_image},
         "entraTenantId": {"value": tenant_id},
         "entraClientId": {"value": client_id},
         "allowedGroupObjectIds": {"value": group_ids},
+        "allowedCidr": {"value": allowed_cidr},
         "sqlServerFqdn": {"value": sql_server_fqdn},
         "sqlDatabaseName": {"value": sql_database_name},
         "keyVaultResourceId": {"value": kv_resource_id},
         "acrName": {"value": acr_name},
-        "enablePrivateEndpoint": {"value": False},
         "envFileContents": {"value": env_file_contents},
+        "tags": {"value": tags},
     }
-    if owner_tag:
-        parameters["tags"] = {"value": {"Service": "pyrit-gui", "Owner": owner_tag}}
 
-    parameters_doc = {
+    parameters_doc: dict[str, object] = {
         "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
         "contentVersion": "1.0.0.0",
         "parameters": parameters,
@@ -827,20 +914,23 @@ def deploy_bicep(
             params_path = tmp.name
             json.dump(parameters_doc, tmp)
 
-        return run_az_json(
-            args=[
-                "deployment",
-                "group",
-                "create",
-                "--resource-group",
-                resource_group,
-                "--template-file",
-                str(BICEP_TEMPLATE),
-                "--parameters",
-                f"@{params_path}",
-                "--query",
-                "properties.outputs",
-            ]
+        return _expect_json_object(
+            run_az_json(
+                args=[
+                    "deployment",
+                    "group",
+                    "create",
+                    "--resource-group",
+                    resource_group,
+                    "--template-file",
+                    str(BICEP_TEMPLATE),
+                    "--parameters",
+                    f"@{params_path}",
+                    "--query",
+                    "properties.outputs",
+                ]
+            ),
+            context="deployment outputs",
         )
     finally:
         if params_path:
@@ -861,7 +951,7 @@ def post_deploy(
     """
     # Keep browser PKCE and device-code clients on the same public app registration.
     logger.info("Setting SPA redirect URI: https://%s", fqdn)
-    spa_body = {
+    spa_body: dict[str, object] = {
         "spa": {"redirectUris": [f"https://{fqdn}"]},
         "isFallbackPublicClient": True,
     }
@@ -929,29 +1019,35 @@ def create_managed_identity_and_grant_roles(
         mi_cmd += ["--tags"] + tags
     run_az(args=mi_cmd)
 
-    mi_principal_id = run_az_json(
-        args=[
-            "identity",
-            "show",
-            "--name",
-            identity_name,
-            "--resource-group",
-            resource_group,
-            "--query",
-            "principalId",
-        ]
+    mi_principal_id = _expect_string(
+        run_az_json(
+            args=[
+                "identity",
+                "show",
+                "--name",
+                identity_name,
+                "--resource-group",
+                resource_group,
+                "--query",
+                "principalId",
+            ]
+        ),
+        context="managed identity principal ID",
     )
 
     # Grant AcrPull
-    acr_id = run_az_json(
-        args=[
-            "acr",
-            "show",
-            "--name",
-            acr_name,
-            "--query",
-            "id",
-        ]
+    acr_id = _expect_string(
+        run_az_json(
+            args=[
+                "acr",
+                "show",
+                "--name",
+                acr_name,
+                "--query",
+                "id",
+            ]
+        ),
+        context="ACR resource ID",
     )
     logger.info("Granting AcrPull to managed identity on ACR: %s", acr_name)
     run_az(
@@ -1011,9 +1107,8 @@ def _grant_aoai_roles(
     Returns:
         int: The number of successful role assignments.
     """
-    granted = 0
-    for name in aoai_resource_names:
-        resource_id = run_az_json(
+    accounts = _expect_json_array(
+        run_az_json(
             args=[
                 "cognitiveservices",
                 "account",
@@ -1021,9 +1116,21 @@ def _grant_aoai_roles(
                 "--subscription",
                 subscription,
                 "--query",
-                f"[?name=='{name}'].id | [0]",
+                "[].{name:name,id:id}",
             ]
-        )
+        ),
+        context="Cognitive Services accounts",
+    )
+    resource_ids: dict[str, str] = {}
+    for value in accounts:
+        account = _expect_json_object(value, context="Cognitive Services account")
+        account_name = _expect_string(account.get("name"), context="Cognitive Services account name")
+        account_id = _expect_string(account.get("id"), context="Cognitive Services account resource ID")
+        resource_ids[account_name] = account_id
+
+    granted = 0
+    for name in aoai_resource_names:
+        resource_id = resource_ids.get(name)
         if not resource_id:
             logger.warning("AOAI resource '%s' not found in subscription — skipping", name)
             continue
@@ -1100,6 +1207,11 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated Entra group object IDs to grant access",
     )
     parser.add_argument(
+        "--allowed-cidr",
+        default="",
+        help="Optional public ingress IPv4 CIDR; empty allows traffic from any source",
+    )
+    parser.add_argument(
         "--owner-tag",
         default="",
         help=(
@@ -1146,6 +1258,36 @@ def main(args: list[str] | None = None) -> int:
     instance = parsed.instance_name
     env_file = parsed.env_file.resolve()
 
+    if not _INSTANCE_NAME_RE.fullmatch(instance):
+        logger.error(
+            "--instance-name must be 1-13 lowercase letters, numbers, or internal hyphens, "
+            "and must start and end with a letter or number"
+        )
+        return 1
+
+    if not _ACR_NAME_RE.fullmatch(parsed.acr_name):
+        logger.error("--acr-name must be 5-50 lowercase alphanumeric characters")
+        return 1
+
+    expected_image = re.compile(
+        rf"^{re.escape(parsed.acr_name)}\.azurecr\.io/{_IMAGE_REPOSITORY_RE}(?::|@){_IMAGE_VERSION_RE}$"
+    )
+    if not expected_image.fullmatch(parsed.container_image) or parsed.container_image.endswith(":latest"):
+        logger.error(
+            "--container-image must use --acr-name and an immutable tag or sha256 digest; :latest is not allowed"
+        )
+        return 1
+
+    if parsed.allowed_cidr:
+        try:
+            allowed_network = ipaddress.ip_network(parsed.allowed_cidr, strict=True)
+        except ValueError:
+            logger.error("--allowed-cidr must be an IPv4 network in canonical CIDR notation")
+            return 1
+        if allowed_network.version != 4:
+            logger.error("--allowed-cidr must be an IPv4 network")
+            return 1
+
     if not env_file.exists():
         logger.error("Env file not found: %s", env_file)
         return 1
@@ -1164,8 +1306,8 @@ def main(args: list[str] | None = None) -> int:
     entra_app_name = f"CoPyRIT GUI ({instance})"
     group_ids = [g.strip() for g in parsed.allowed_groups.split(",") if g.strip()]
 
-    if not group_ids:
-        logger.error("--allowed-groups must contain at least one Entra group object ID")
+    if not group_ids or any(not _GROUP_ID_RE.fullmatch(group_id) for group_id in group_ids):
+        logger.error("--allowed-groups must contain one or more comma-separated Entra group object IDs")
         return 1
 
     # Validate Azure resource name length constraints
@@ -1206,6 +1348,7 @@ def main(args: list[str] | None = None) -> int:
         logger.info("Storage account: %s (container: %s)", storage_account_name, _STORAGE_CONTAINER_NAME)
         logger.info("Entra app: %s", entra_app_name)
         logger.info("Allowed groups: %s", group_ids)
+        logger.info("Allowed ingress CIDR: %s", parsed.allowed_cidr or "(unrestricted source IPs)")
         logger.info("Env file: %s", env_file)
         logger.info("Container image: %s", parsed.container_image)
         logger.info("ACR: %s", parsed.acr_name)
@@ -1218,11 +1361,16 @@ def main(args: list[str] | None = None) -> int:
         return 0
 
     try:
-        # Build tags list from --owner-tag
-        resource_tags = [f"Owner={parsed.owner_tag}"] if parsed.owner_tag else None
+        deployment_tags = _deployment_tags(instance=instance, owner=parsed.owner_tag)
+        resource_tags = [f"{key}={value}" for key, value in deployment_tags.items()]
 
         # Step 1: Set subscription
         set_subscription(parsed.subscription)
+        subscription_id = _expect_string(
+            run_az_json(args=["account", "show", "--query", "id"]),
+            context="active subscription ID",
+        )
+        resource_group_id = f"/subscriptions/{subscription_id}/resourceGroups/{rg_name}"
 
         # Step 2: Create resource group
         create_resource_group(name=rg_name, location=parsed.location, tags=resource_tags)
@@ -1300,15 +1448,29 @@ def main(args: list[str] | None = None) -> int:
             tenant_id=entra["tenant_id"],
             client_id=entra["app_id"],
             group_ids=",".join(group_ids),
+            allowed_cidr=parsed.allowed_cidr,
             sql_server_fqdn=sql["server_fqdn"],
             sql_database_name=sql["database_name"],
             kv_resource_id=kv_id,
             acr_name=parsed.acr_name,
             env_file_contents=env_content,
-            owner_tag=parsed.owner_tag,
+            tags=deployment_tags,
         )
 
-        fqdn = outputs["appFqdn"]["value"]
+        app_fqdn_output = _expect_json_object(outputs.get("appFqdn"), context="appFqdn deployment output")
+        egress_ip_output = _expect_json_object(
+            outputs.get("egressPublicIpAddress"),
+            context="egressPublicIpAddress deployment output",
+        )
+        fqdn = _expect_string(app_fqdn_output.get("value"), context="appFqdn output value")
+        egress_ip = _expect_string(egress_ip_output.get("value"), context="egress IP output value")
+
+        # Step 9b: Restrict SQL network access to the instance NAT IP.
+        configure_sql_network_access(
+            resource_group=rg_name,
+            sql_server_name=sql_server_name,
+            egress_ip=egress_ip,
+        )
 
         # Step 10: Post-deploy (SPA redirect)
         post_deploy(
@@ -1324,6 +1486,8 @@ def main(args: list[str] | None = None) -> int:
         logger.info("Instance:     %s", instance)
         logger.info("URL:          https://%s", fqdn)
         logger.info("Resource group: %s", rg_name)
+        logger.info("Resource group ID: %s", resource_group_id)
+        logger.info("Static egress IP: %s", egress_ip)
         logger.info("Entra app ID: %s", entra["app_id"])
         logger.info("SQL server:   %s", sql["server_fqdn"])
         logger.info("SQL database: %s", sql["database_name"])
@@ -1340,9 +1504,14 @@ def main(args: list[str] | None = None) -> int:
         logger.info("  2. Add users to the Entra security group(s)")
         if not aoai_names:
             logger.info("  3. Grant Cognitive Services roles if using MI-auth for AOAI:")
+            logger.info("     # Azure OpenAI")
             logger.info("     az role assignment create --assignee-object-id %s \\", mi_principal_id)
             logger.info("       --assignee-principal-type ServicePrincipal \\")
             logger.info("       --role 'Cognitive Services OpenAI User' --scope <aoai-resource-id>")
+            logger.info("     # Azure AI Content Safety")
+            logger.info("     az role assignment create --assignee-object-id %s \\", mi_principal_id)
+            logger.info("       --assignee-principal-type ServicePrincipal \\")
+            logger.info("       --role 'Cognitive Services User' --scope <content-safety-resource-id>")
         else:
             logger.info(
                 "  3. AOAI RBAC: %d/%d resources granted (via --aoai-resource-names)", aoai_granted, len(aoai_names)
@@ -1356,6 +1525,9 @@ def main(args: list[str] | None = None) -> int:
 
         return 0
 
+    except RuntimeError as error:
+        logger.error("%s", error)
+        return 1
     except subprocess.CalledProcessError as e:
         logger.error("Command failed (exit code %d): %s", e.returncode, " ".join(e.cmd))
         if e.stderr:

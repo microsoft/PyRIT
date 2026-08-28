@@ -37,10 +37,10 @@ fi
 echo "Checking PyRIT installation..."
 python -c "import pyrit; print(f'Running PyRIT version: {pyrit.__version__}')"
 
-# Write .env file from PYRIT_ENV_CONTENTS (injected as the Container App's
-# inline `env-file` secret; previously a Key Vault secretRef, but ACA isn't on
-# Key Vault's "trusted services" list so SFI-locked-down KVs can't be read at
-# runtime — see infra/main.bicep for details).
+# Write .env from the Container App's `env-file` secret. deploy_instance.py
+# supplies it inline. The optional Key Vault-backed Bicep path requires both
+# Key Vault Secrets User and an explicit vault network path because ACA is not
+# currently listed in Key Vault's trusted-services firewall bypass.
 if [ -n "$PYRIT_ENV_CONTENTS" ]; then
     mkdir -p ~/.pyrit
     echo "$PYRIT_ENV_CONTENTS" > ~/.pyrit/.env

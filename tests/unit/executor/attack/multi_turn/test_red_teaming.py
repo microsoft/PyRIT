@@ -21,6 +21,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import DEFAULT_ADVERSARIAL_FIRST_MESSAGE
+from pyrit.executor.attack.core.attack_strategy import _ObjectiveTargetConversationLifecycle
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import (
@@ -997,10 +998,16 @@ class TestObjectiveTargetSending:
         )
         basic_context.executed_turns = 1
 
-        await attack._send_prompt_to_objective_target_async(
-            context=basic_context,
-            message=Message.from_prompt(prompt="Second request", role="user"),
-        )
+        async with _ObjectiveTargetConversationLifecycle(
+            objective_target=objective_target,
+            logger=attack._logger,
+        ) as lifecycle:
+            basic_context._objective_target_conversation_lifecycle = lifecycle
+            await attack._send_prompt_to_objective_target_async(
+                context=basic_context,
+                message=Message.from_prompt(prompt="Second request", role="user"),
+            )
+            basic_context._objective_target_conversation_lifecycle = None
 
         assert basic_context.session.conversation_id == old_conversation_id
         assert objective_target.prompt_sent == ["custom formatted request"]

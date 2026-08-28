@@ -365,6 +365,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
+            context._record_objective_target_invocation(conversation_id=context.session.conversation_id)
             return await self._prompt_normalizer.send_prompt_async(
                 message=current_message,
                 target=self._objective_target,

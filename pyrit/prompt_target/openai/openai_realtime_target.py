@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from openai import AsyncOpenAI
 
 from pyrit.common import forward_init_parameters
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -479,21 +480,45 @@ class RealtimeTarget(OpenAITarget):
                 logger.warning(f"Error closing realtime client: {e}")
             self._realtime_client = None
 
-    async def cleanup_conversation_async(self, conversation_id: str) -> None:
+    async def reset_conversation_async(self, *, conversation_id: str) -> None:
         """
         Disconnects from the Realtime API for a specific conversation.
+
+        Closes the cached connection for ``conversation_id`` and drops it from
+        ``_existing_conversation``. Errors while closing are logged and
+        swallowed, and an unknown conversation id is a no-op, so this is safe
+        to call from attack lifecycle cleanup.
 
         Args:
             conversation_id (str): The conversation ID to disconnect from.
         """
-        connection = self._existing_conversation.get(conversation_id)
-        if connection:
-            try:
-                await connection.close()
-                logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
-            except Exception as e:
-                logger.warning(f"Error closing connection for {conversation_id}: {e}")
-            del self._existing_conversation[conversation_id]
+        connection = self._existing_conversation.pop(conversation_id, None)
+        if not connection:
+            return
+
+        try:
+            await connection.close()
+        except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            logger.warning(f"Error closing connection for {conversation_id}: {error}")
+            return
+
+        logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
+
+    async def cleanup_conversation_async(self, conversation_id: str) -> None:
+        """
+        Disconnect from the Realtime API for a specific conversation.
+
+        Deprecated. Use ``reset_conversation_async`` instead.
+
+        Args:
+            conversation_id (str): The conversation ID to disconnect from.
+        """
+        print_deprecation_message(
+            old_item="RealtimeTarget.cleanup_conversation_async",
+            new_item="RealtimeTarget.reset_conversation_async",
+            removed_in="1.3.0",
+        )
+        await self.reset_conversation_async(conversation_id=conversation_id)
 
     async def _connect_async(self, *, conversation_id: str) -> Any:
         """

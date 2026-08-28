@@ -1,17 +1,7 @@
-# CI/CD pipeline for CoPyRIT GUI deployment.
+# CI/CD pipeline for the CoPyRIT GUI.
 #
-# Triggers on changes to GUI-relevant paths on the main branch.
-# Builds Docker image, pushes to ACR, deploys to test ACA environment.
-# Production deployment is opt-in via the deployToProd parameter.
-#
-# All infrastructure details (IDs, connection strings, resource names) are
-# stored in ADO variable groups — nothing sensitive appears in this file.
-# Required variable groups:
-#   - copyrit-gui-common  (azureServiceConnection, acrName, acrLoginServer, imageName)
-#   - copyrit-gui-test    (resourceGroup, appName, entraTenantId, entraClientId,
-#                           allowedGroupObjectIds, sqlServerFqdn, sqlDatabaseName,
-#                           keyVaultResourceId, acrResourceId, enablePrivateEndpoint, enableOtel)
-#   - copyrit-gui-prod    (same keys as test, with production values)
+# Every deployment uses the single topology defined by infra/main.bicep:
+# public ACA-managed HTTPS ingress plus VNet-integrated fixed NAT egress.
 
 trigger:
   branches:
@@ -32,47 +22,28 @@ parameters:
     type: boolean
     default: false
 
-# Service connection must be a compile-time variable (not from a variable group)
-# because azureSubscription is validated during YAML parsing.
 variables:
   azureServiceConnection: 'copyrit-gui-azure'
 
 stages:
-  # ──────────────────────────────────────────────
-  # Stage 0: Validate runtime inputs
-  # ──────────────────────────────────────────────
   - stage: ValidateInputs
     displayName: 'Validate Inputs'
     pool:
       vmImage: 'ubuntu-latest'
     jobs:
-      - job: ValidateProdBranchGate
-        displayName: 'Validate production branch gate'
+      - job: ValidateProdSource
+        displayName: 'Validate production source'
         steps:
           - checkout: none
-          - task: Bash@3
-            displayName: 'Fail if prod deploy requested from non-release branch'
-            inputs:
-              targetType: 'inline'
-              script: |
-                set -euo pipefail
+          - bash: |
+              set -euo pipefail
+              if [[ '${{ parameters.deployToProd }}' == 'true' \
+                && "$BUILD_SOURCEBRANCH" != refs/heads/main ]]; then
+                echo "##vso[task.logissue type=error]Production deployment requires a commit merged to refs/heads/main"
+                exit 1
+              fi
+            displayName: 'Validate production source'
 
-                DEPLOY_TO_PROD='${{ parameters.deployToProd }}'
-                DEPLOY_TO_PROD_LOWER=$(echo "$DEPLOY_TO_PROD" | tr '[:upper:]' '[:lower:]')
-
-                echo "Build.SourceBranch=$BUILD_SOURCEBRANCH"
-                echo "deployToProd=$DEPLOY_TO_PROD"
-
-                if [[ "$DEPLOY_TO_PROD_LOWER" == "true" && "$BUILD_SOURCEBRANCH" != refs/heads/releases/* ]]; then
-                  echo "##vso[task.logissue type=error]deployToProd can only be used from refs/heads/releases/* branches. Current branch: $BUILD_SOURCEBRANCH"
-                  exit 1
-                fi
-
-                echo "Validation passed"
-
-  # ──────────────────────────────────────────────
-  # Stage 1: Build Docker image and push to ACR
-  # ──────────────────────────────────────────────
   - stage: Build
     displayName: 'Build and Push Image'
     dependsOn: ValidateInputs
@@ -82,13 +53,19 @@ stages:
       vmImage: 'ubuntu-latest'
     jobs:
       - job: BuildAndPush
-        displayName: 'Build Docker image and push to ACR'
+        displayName: 'Build and push immutable source image'
         steps:
           - checkout: self
             fetchDepth: 1
 
           - task: AzureCLI@2
+            name: BuildImage
             displayName: 'Build and push Docker image'
+            env:
+              PYRIT_ACR_NAME: $(acrName)
+              PYRIT_ACR_LOGIN_SERVER: $(acrLoginServer)
+              PYRIT_IMAGE_NAME: $(imageName)
+              PYRIT_SOURCE_VERSION: $(Build.SourceVersion)
             inputs:
               azureSubscription: '$(azureServiceConnection)'
               scriptType: 'bash'
@@ -96,44 +73,68 @@ stages:
               inlineScript: |
                 set -euo pipefail
 
-                echo "=== Building devcontainer base image ==="
+                required_variables=(
+                  PYRIT_ACR_NAME
+                  PYRIT_ACR_LOGIN_SERVER
+                  PYRIT_IMAGE_NAME
+                  PYRIT_SOURCE_VERSION
+                )
+                for variable_name in "${required_variables[@]}"; do
+                  if [[ -z "${!variable_name:-}" || "${!variable_name}" == '$('* ]]; then
+                    echo "##vso[task.logissue type=error]Required build value is missing: $variable_name"
+                    exit 1
+                  fi
+                done
+
+                repository_pattern='^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$'
+                if [[ ! "$PYRIT_ACR_NAME" =~ ^[a-z0-9]{5,50}$ \
+                  || "$PYRIT_ACR_LOGIN_SERVER" != "$PYRIT_ACR_NAME.azurecr.io" \
+                  || ! "$PYRIT_IMAGE_NAME" =~ $repository_pattern \
+                  || ! "$PYRIT_SOURCE_VERSION" =~ ^[0-9a-fA-F]{40}$ ]]; then
+                  echo "##vso[task.logissue type=error]Invalid registry, repository, or source version"
+                  exit 1
+                fi
+
                 docker build \
                   -f .devcontainer/Dockerfile \
                   -t pyrit-devcontainer \
                   .devcontainer/
 
-                echo "=== Building production image ==="
+                image="$PYRIT_ACR_LOGIN_SERVER/$PYRIT_IMAGE_NAME:$PYRIT_SOURCE_VERSION"
                 docker build --no-cache \
                   -f docker/Dockerfile \
-                  -t $(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
-                  -t $(acrLoginServer)/$(imageName):latest \
+                  -t "$image" \
                   --build-arg BASE_IMAGE=pyrit-devcontainer \
                   --build-arg PYRIT_SOURCE=local \
-                  --build-arg GIT_COMMIT=$(Build.SourceVersion) \
+                  --build-arg GIT_COMMIT="$PYRIT_SOURCE_VERSION" \
                   --build-arg GIT_MODIFIED=false \
                   .
 
-                echo "=== Pushing to ACR ==="
-                az acr login --name $(acrName)
-                docker push $(acrLoginServer)/$(imageName):$(Build.SourceVersion)
-                docker push $(acrLoginServer)/$(imageName):latest
+                az acr login --name "$PYRIT_ACR_NAME"
+                push_output=$(docker push "$image")
+                printf '%s\n' "$push_output"
+                digest=$(sed -nE 's/.*digest: (sha256:[0-9a-fA-F]{64}).*/\1/p' <<< "$push_output" | tail -n 1)
+                if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+                  echo "##vso[task.logissue type=error]Docker push did not return an immutable digest"
+                  exit 1
+                fi
+                immutable_image="$PYRIT_ACR_LOGIN_SERVER/$PYRIT_IMAGE_NAME@$digest"
+                echo "##vso[task.setvariable variable=immutableImage;isOutput=true]$immutable_image"
 
-                echo "✅ Image pushed: $(acrLoginServer)/$(imageName):$(Build.SourceVersion)"
-
-  # ──────────────────────────────────────────────
-  # Stage 2: Deploy to test environment
-  # ──────────────────────────────────────────────
   - stage: DeployTest
     displayName: 'Deploy to Test'
     dependsOn: Build
     variables:
       - group: copyrit-gui-common
       - group: copyrit-gui-test
+      - name: immutableImage
+        value: $[ stageDependencies.Build.BuildAndPush.outputs['BuildImage.immutableImage'] ]
     pool:
       vmImage: 'ubuntu-latest'
     jobs:
       - deployment: DeployToTest
-        displayName: 'Deploy to test environment'
+        displayName: 'Deploy test environment'
+        timeoutInMinutes: 120
         environment: 'copyrit-test'
         strategy:
           runOnce:
@@ -143,80 +144,92 @@ stages:
                   fetchDepth: 1
 
                 - task: AzureCLI@2
-                  displayName: 'Deploy Bicep to test'
+                  displayName: 'Preview, deploy, and verify test'
+                  env:
+                    PYRIT_SLOT: test
+                    PYRIT_BUILD_ID: $(Build.BuildId)
+                    PYRIT_SOURCE_DIRECTORY: $(Build.SourcesDirectory)
+                    PYRIT_AGENT_TEMP_DIRECTORY: $(Agent.TempDirectory)
+                    PYRIT_DEPLOYMENT_RESOURCE_GROUP: $(deploymentResourceGroup)
+                    PYRIT_APP_NAME: $(deploymentAppName)
+                    PYRIT_CONTAINER_IMAGE: $(immutableImage)
+                    PYRIT_VNET_ADDRESS_PREFIX: $(deploymentVnetAddressPrefix)
+                    PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX: $(deploymentInfrastructureSubnetAddressPrefix)
+                    PYRIT_ALLOWED_CLIENT_CIDR: $(deploymentAllowedClientCidr)
+                    PYRIT_MANAGED_IDENTITY_RESOURCE_ID: $(managedIdentityResourceId)
+                    PYRIT_ENTRA_TENANT_ID: $(entraTenantId)
+                    PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
+                    PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
+                    PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
+                    PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
+                    PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
+                    PYRIT_ACR_RESOURCE_ID: $(acrResourceId)
+                    PYRIT_ENABLE_OTEL: $(enableOtel)
+                    PYRIT_ENV_SECRET_NAME: $(envSecretName)
                   inputs:
                     azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
-                    scriptLocation: 'inlineScript'
-                    inlineScript: |
-                      set -euo pipefail
+                    scriptLocation: 'scriptPath'
+                    scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'
 
-                      az deployment group create \
-                        --resource-group $(resourceGroup) \
-                        --template-file $(Build.SourcesDirectory)/infra/main.bicep \
-                        --parameters appName=$(appName) \
-                        --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
-                        --parameters entraTenantId=$(entraTenantId) \
-                        --parameters entraClientId=$(entraClientId) \
-                        --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
-                        --parameters sqlServerFqdn=$(sqlServerFqdn) \
-                        --parameters sqlDatabaseName=$(sqlDatabaseName) \
-                        --parameters keyVaultResourceId=$(keyVaultResourceId) \
-                        --parameters acrResourceId=$(acrResourceId) \
-                        --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
-                        --parameters enableOtel=$(enableOtel) \
-                        --parameters envSecretName=$(envSecretName)
+  - stage: ApproveProd
+    displayName: 'Approve Production Deployment'
+    dependsOn: DeployTest
+    condition: and(succeeded('DeployTest'), eq('${{ parameters.deployToProd }}', 'true'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    variables:
+      - group: copyrit-gui-prod
+    jobs:
+      - job: ValidateProdConfiguration
+        displayName: 'Validate production authorization configuration'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: none
+          - bash: |
+              set -euo pipefail
+              if [[ -z "${PROD_APPROVERS:-}" || "$PROD_APPROVERS" == '$('* ]]; then
+                echo "##vso[task.logissue type=error]copyrit-gui-prod must define prodApprovers before production deployment"
+                exit 1
+              fi
+            displayName: 'Validate production approvers'
+            env:
+              PROD_APPROVERS: $(prodApprovers)
 
-                - task: AzureCLI@2
-                  displayName: 'Health check'
-                  inputs:
-                    azureSubscription: '$(azureServiceConnection)'
-                    scriptType: 'bash'
-                    scriptLocation: 'inlineScript'
-                    inlineScript: |
-                      set -euo pipefail
+      - job: WaitForProdApproval
+        displayName: 'Validate production readiness'
+        dependsOn: ValidateProdConfiguration
+        pool: server
+        timeoutInMinutes: 1440
+        steps:
+          - task: ManualValidation@1
+            timeoutInMinutes: 1440
+            inputs:
+              notifyUsers: '$(prodApprovers)'
+              approvers: '$(prodApprovers)'
+              allowApproversToApproveTheirOwnRuns: false
+              instructions: |
+                Confirm test is healthy, Entra and backend group authorization work,
+                the static test egress IP is allow-listed, and production variables
+                describe the same public ACA plus fixed NAT topology.
+              onTimeout: reject
 
-                      IMAGE="$(acrLoginServer)/$(imageName):$(Build.SourceVersion)"
-                      HEALTH=""
-
-                      for i in {1..5}; do
-                        HEALTH="$(az containerapp revision list \
-                          --resource-group "$(resourceGroup)" \
-                          --name "$(appName)" \
-                          --query "[?properties.template.containers[0].image=='$IMAGE'] | sort_by(@,&properties.createdTime)[-1].properties.healthState" \
-                          -o tsv)"
-
-                        echo "Attempt $i/5 - Image: $IMAGE - Health: ${HEALTH:-<not-found>}"
-
-                        if [[ "$HEALTH" == "Healthy" ]]; then
-                          echo "✅ Test environment health check passed"
-                          exit 0
-                        fi
-
-                        if [[ "$i" -lt 5 ]]; then
-                          echo "Revision is not healthy yet. Waiting 2 minutes before retry..."
-                          sleep 120
-                        fi
-                      done
-
-                      echo "❌ Test environment health check failed after 5 attempts"
-                      exit 1
-
-  # ──────────────────────────────────────────────
-  # Stage 3: Deploy to production (manual trigger)
-  # ──────────────────────────────────────────────
   - stage: DeployProd
     displayName: 'Deploy to Production'
-    dependsOn: DeployTest
-    condition: and(succeeded('DeployTest'), eq('${{ parameters.deployToProd }}', 'true'), startsWith(variables['Build.SourceBranch'], 'refs/heads/releases/'))
+    dependsOn:
+      - ApproveProd
+      - Build
+    condition: succeeded('ApproveProd')
     variables:
       - group: copyrit-gui-common
       - group: copyrit-gui-prod
+      - name: immutableImage
+        value: $[ stageDependencies.Build.BuildAndPush.outputs['BuildImage.immutableImage'] ]
     pool:
       vmImage: 'ubuntu-latest'
     jobs:
       - deployment: DeployToProd
-        displayName: 'Deploy to production environment'
+        displayName: 'Deploy production environment'
+        timeoutInMinutes: 120
         environment: 'copyrit-prod'
         strategy:
           runOnce:
@@ -226,61 +239,30 @@ stages:
                   fetchDepth: 1
 
                 - task: AzureCLI@2
-                  displayName: 'Deploy Bicep to prod'
+                  displayName: 'Preview, deploy, and verify production'
+                  env:
+                    PYRIT_SLOT: prod
+                    PYRIT_BUILD_ID: $(Build.BuildId)
+                    PYRIT_SOURCE_DIRECTORY: $(Build.SourcesDirectory)
+                    PYRIT_AGENT_TEMP_DIRECTORY: $(Agent.TempDirectory)
+                    PYRIT_DEPLOYMENT_RESOURCE_GROUP: $(deploymentResourceGroup)
+                    PYRIT_APP_NAME: $(deploymentAppName)
+                    PYRIT_CONTAINER_IMAGE: $(immutableImage)
+                    PYRIT_VNET_ADDRESS_PREFIX: $(deploymentVnetAddressPrefix)
+                    PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX: $(deploymentInfrastructureSubnetAddressPrefix)
+                    PYRIT_ALLOWED_CLIENT_CIDR: $(deploymentAllowedClientCidr)
+                    PYRIT_MANAGED_IDENTITY_RESOURCE_ID: $(managedIdentityResourceId)
+                    PYRIT_ENTRA_TENANT_ID: $(entraTenantId)
+                    PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
+                    PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
+                    PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
+                    PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
+                    PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
+                    PYRIT_ACR_RESOURCE_ID: $(acrResourceId)
+                    PYRIT_ENABLE_OTEL: $(enableOtel)
+                    PYRIT_ENV_SECRET_NAME: $(envSecretName)
                   inputs:
                     azureSubscription: '$(azureServiceConnection)'
                     scriptType: 'bash'
-                    scriptLocation: 'inlineScript'
-                    inlineScript: |
-                      set -euo pipefail
-
-                      az deployment group create \
-                        --resource-group $(resourceGroup) \
-                        --template-file $(Build.SourcesDirectory)/infra/main.bicep \
-                        --parameters appName=$(appName) \
-                        --parameters containerImage=$(acrLoginServer)/$(imageName):$(Build.SourceVersion) \
-                        --parameters entraTenantId=$(entraTenantId) \
-                        --parameters entraClientId=$(entraClientId) \
-                        --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
-                        --parameters sqlServerFqdn=$(sqlServerFqdn) \
-                        --parameters sqlDatabaseName=$(sqlDatabaseName) \
-                        --parameters keyVaultResourceId=$(keyVaultResourceId) \
-                        --parameters acrResourceId=$(acrResourceId) \
-                        --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
-                        --parameters enableOtel=$(enableOtel) \
-                        --parameters envSecretName=$(envSecretName)
-
-                - task: AzureCLI@2
-                  displayName: 'Health check'
-                  inputs:
-                    azureSubscription: '$(azureServiceConnection)'
-                    scriptType: 'bash'
-                    scriptLocation: 'inlineScript'
-                    inlineScript: |
-                      set -euo pipefail
-
-                      IMAGE="$(acrLoginServer)/$(imageName):$(Build.SourceVersion)"
-                      HEALTH=""
-
-                      for i in {1..5}; do
-                        HEALTH="$(az containerapp revision list \
-                          --resource-group "$(resourceGroup)" \
-                          --name "$(appName)" \
-                          --query "[?properties.template.containers[0].image=='$IMAGE'] | sort_by(@,&properties.createdTime)[-1].properties.healthState" \
-                          -o tsv)"
-
-                        echo "Attempt $i/5 - Image: $IMAGE - Health: ${HEALTH:-<not-found>}"
-
-                        if [[ "$HEALTH" == "Healthy" ]]; then
-                          echo "✅ Production health check passed"
-                          exit 0
-                        fi
-
-                        if [[ "$i" -lt 5 ]]; then
-                          echo "Revision is not healthy yet. Waiting 2 minutes before retry..."
-                          sleep 120
-                        fi
-                      done
-
-                      echo "❌ Production health check failed after 5 attempts"
-                      exit 1
+                    scriptLocation: 'scriptPath'
+                    scriptPath: '$(Build.SourcesDirectory)/infra/pipelines/deploy_public_nat.sh'
