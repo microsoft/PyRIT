@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import {
   Button,
@@ -18,10 +18,13 @@ import {
 } from '@fluentui/react-components'
 import {
   ArrowSyncRegular,
+  ChevronDownRegular,
+  ChevronUpRegular,
   SearchRegular,
 } from '@fluentui/react-icons'
 import { Link } from 'react-router'
 
+import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { RegisteredScenario, ScenarioDatasetSummary } from '@/types'
@@ -31,12 +34,13 @@ import { useScenarioCatalogStyles } from './ScenarioCatalog.styles'
 import {
   ScenarioRunEstimateSummary,
 } from './ScenarioRunEstimate'
+import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
 import { techniqueSetName } from './scenarioTechniqueSets'
 
 /** Items requested per catalog page while paging through the full list. */
 const CATALOG_PAGE_SIZE = 200
-
+const DESCRIPTION_OVERFLOW_TOLERANCE_PX = 2
 function matchesSearch(scenario: RegisteredScenario, query: string): boolean {
   if (!query) {
     return true
@@ -118,11 +122,75 @@ interface ScenarioCatalogRowProps {
   scenario: RegisteredScenario
 }
 
+interface ScenarioDescriptionProps {
+  content: string
+  scenarioName: string
+}
+
+function ScenarioDescription({ content, scenarioName }: ScenarioDescriptionProps) {
+  const styles = useScenarioCatalogStyles()
+  const descriptionId = useId()
+  const descriptionRef = useRef<HTMLDivElement>(null)
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+  const [descriptionClipped, setDescriptionClipped] = useState(false)
+
+  useEffect(() => {
+    const description = descriptionRef.current
+    if (!description) {
+      return
+    }
+
+    const updateClippedState = () => {
+      if (!descriptionExpanded) {
+        setDescriptionClipped(
+          description.scrollHeight - description.clientHeight > DESCRIPTION_OVERFLOW_TOLERANCE_PX,
+        )
+      }
+    }
+    updateClippedState()
+
+    const resizeObserver = new ResizeObserver(updateClippedState)
+    resizeObserver.observe(description)
+    return () => resizeObserver.disconnect()
+  }, [content, descriptionExpanded])
+
+  return (
+    <>
+      <div
+        id={descriptionId}
+        ref={descriptionRef}
+        className={descriptionExpanded ? undefined : styles.purposePreviewCollapsed}
+      >
+        <MarkdownContent
+          content={content}
+          className={styles.purposePreview}
+          testId={`scenario-description-${scenarioName}`}
+        />
+      </div>
+      {descriptionClipped && (
+        <Button
+          appearance="transparent"
+          size="small"
+          className={styles.descriptionToggle}
+          icon={descriptionExpanded ? <ChevronUpRegular /> : <ChevronDownRegular />}
+          aria-controls={descriptionId}
+          aria-expanded={descriptionExpanded}
+          aria-label={`${descriptionExpanded ? 'Collapse' : 'Expand'} description for ${scenarioName}`}
+          onClick={() => setDescriptionExpanded((expanded) => !expanded)}
+        />
+      )}
+    </>
+  )
+}
+
 function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
   const styles = useScenarioCatalogStyles()
   const defaultConcreteTechniques = uniqueNames(scenario.default_techniques)
   const estimateState = mapScenarioRunEstimate(scenario.default_run_size, 'default')
   const scenarioPath = `/scanner/${encodeURIComponent(scenario.scenario_name)}`
+  const descriptionMarkdown = normalizeScenarioMarkdown(
+    scenario.description_markdown || scenario.description,
+  )
 
   return (
     <TableRow
@@ -139,7 +207,10 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
           <Link to={scenarioPath} className={styles.scenarioLink}>
             {scenario.scenario_name}
           </Link>
-          <Text size={200} className={styles.purposePreview}>{scenario.description}</Text>
+          <ScenarioDescription
+            content={descriptionMarkdown}
+            scenarioName={scenario.scenario_name}
+          />
         </div>
       </TableCell>
       <TableCell

@@ -114,6 +114,63 @@ describe('ScenarioCatalog', () => {
     expect(mockListCatalog).toHaveBeenCalledTimes(1)
   })
 
+  it('renders Markdown descriptions and lets users expand long previews', async () => {
+    const user = userEvent.setup()
+    const clientHeight = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60)
+    const scrollHeight = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120)
+    mockListCatalog.mockResolvedValueOnce({
+      items: [
+        makeScenario({
+          scenario_name: 'scenario.markdown',
+          description_markdown: [
+            'Tests **formatted text** and ``inline_code``.',
+            '',
+            'This additional detail makes the description long enough to collapse in the catalog preview. ',
+            'Users can expand the row to read the complete scenario purpose without leaving the catalog.',
+          ].join('\n'),
+        }),
+      ],
+      pagination: { limit: 200, has_more: false },
+    })
+
+    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+
+    const row = await screen.findByTestId('scenario-card-scenario.markdown')
+    expect(within(row).getByText('formatted text').tagName).toBe('STRONG')
+    expect(within(row).getByText('inline_code').tagName).toBe('CODE')
+
+    const expandButton = await within(row).findByRole('button', {
+      name: 'Expand description for scenario.markdown',
+    })
+    expect(expandButton).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(expandButton)
+
+    expect(within(row).getByRole('button', {
+      name: 'Collapse description for scenario.markdown',
+    })).toHaveAttribute('aria-expanded', 'true')
+    clientHeight.mockRestore()
+    scrollHeight.mockRestore()
+  })
+
+  it('does not show an expand control for a fully visible description', async () => {
+    const clientHeight = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60)
+    const scrollHeight = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(61)
+    mockListCatalog.mockResolvedValueOnce({
+      items: [makeScenario({ scenario_name: 'scenario.visible' })],
+      pagination: { limit: 200, has_more: false },
+    })
+
+    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+
+    const row = await screen.findByTestId('scenario-card-scenario.visible')
+    expect(within(row).queryByRole('button', {
+      name: 'Expand description for scenario.visible',
+    })).not.toBeInTheDocument()
+    clientHeight.mockRestore()
+    scrollHeight.mockRestore()
+  })
+
   it('ignores a catalog response that resolves after unmount', async () => {
     let resolveRequest: ((value: {
       items: RegisteredScenario[]

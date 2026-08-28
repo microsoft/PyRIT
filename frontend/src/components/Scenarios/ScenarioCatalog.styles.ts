@@ -136,10 +136,10 @@ export const useScenarioCatalogStyles = makeStyles({
     width: '20%',
   },
   techniqueColumn: {
-    width: '16%',
+    width: '20%',
   },
   datasetColumn: {
-    width: '24%',
+    width: '20%',
   },
   summaryRow: {
     color: tokens.colorNeutralForeground1,
@@ -214,6 +214,30 @@ export const useScenarioCatalogStyles = makeStyles({
   },
   purposePreview: {
     color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase300,
+    '& p': {
+      marginBottom: tokens.spacingVerticalXS,
+    },
+    '& ul, & ol': {
+      marginBottom: tokens.spacingVerticalXS,
+    },
+    '& h1, & h2, & h3, & h4, & h5, & h6': {
+      margin: `${tokens.spacingVerticalXS} 0`,
+      fontSize: tokens.fontSizeBase300,
+      lineHeight: tokens.lineHeightBase300,
+    },
+  },
+  purposePreviewCollapsed: {
+    maxHeight: '3.75rem',
+    overflow: 'hidden',
+  },
+  descriptionToggle: {
+    alignSelf: 'flex-start',
+    minWidth: 0,
+    width: '2rem',
+    height: '2rem',
+    padding: 0,
   },
   compactStack: {
     display: 'flex',
