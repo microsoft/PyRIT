@@ -59,6 +59,9 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
     if [ -n "${PYRIT_CONFIG_FILE:-}" ]; then
         CONFIG_FILE="$PYRIT_CONFIG_FILE"
         echo "Using external PyRIT configuration"
+        if [ -n "${PYRIT_ENV_AKV_REF:-}" ]; then
+            echo "WARNING: Ignoring PYRIT_ENV_AKV_REF because the external PyRIT configuration controls environment sources" >&2
+        fi
     else
         # Translate deployment settings into a runtime config file so the FastAPI
         # lifespan (ConfigurationLoader) picks them up on startup.

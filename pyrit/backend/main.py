@@ -62,11 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
     app.state.configuration_file_service = configuration_file_service
     async with configuration_file_service.resolve_async() as config_file:
-        env_akv_ref = os.getenv("PYRIT_ENV_AKV_REF", "").strip()
-        config = ConfigurationLoader.load_with_overrides(
-            config_file=config_file,
-            env_akv_ref=[env_akv_ref] if env_akv_ref else None,
-        )
+        config = ConfigurationLoader.load_with_overrides(config_file=config_file)
     resolved_env_files = config.resolve_env_files()
     app.state.environment_file_service = EnvironmentFileService(
         resolved_env_files=list(resolved_env_files) if resolved_env_files is not None else None,
