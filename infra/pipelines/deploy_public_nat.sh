@@ -269,7 +269,7 @@ parameters=(
   "disableContainerAppsPublicAccess=true"
   "vnetAddressPrefix=$PYRIT_VNET_ADDRESS_PREFIX"
   "infrastructureSubnetAddressPrefix=$PYRIT_INFRASTRUCTURE_SUBNET_ADDRESS_PREFIX"
-  "egressPublicIpIpTags=$existing_pip_ip_tags"
+  "egressPublicIpTags=$existing_pip_ip_tags"
   "protectEgressPublicIp=true"
   "tags=$deployment_tags"
 )

@@ -14,7 +14,7 @@ param vnetAddressPrefix string
 param infrastructureSubnetAddressPrefix string
 
 @description('Existing Azure Policy IP tags to preserve when adopting a reserved egress public IP')
-param egressPublicIpIpTags array = []
+param egressPublicIpTags array = []
 
 @description('Protect the static egress public IP from accidental deletion')
 param protectEgressPublicIp bool = false
@@ -33,7 +33,7 @@ resource egressPublicIp 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
     ddosSettings: {
       protectionMode: 'VirtualNetworkInherited'
     }
-    ipTags: egressPublicIpIpTags
+    ipTags: egressPublicIpTags
     publicIPAllocationMethod: 'Static'
     publicIPAddressVersion: 'IPv4'
     idleTimeoutInMinutes: 4

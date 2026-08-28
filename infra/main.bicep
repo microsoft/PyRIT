@@ -108,7 +108,7 @@ param vnetAddressPrefix string = '10.0.0.0/16'
 param infrastructureSubnetAddressPrefix string = '10.0.1.0/26'
 
 @description('Existing Azure Policy IP tags to preserve when adopting a reserved egress public IP')
-param egressPublicIpIpTags array = []
+param egressPublicIpTags array = []
 
 @description('Protect the static egress public IP from accidental deletion')
 param protectEgressPublicIp bool = false
@@ -185,7 +185,7 @@ module acaNatNetwork './modules/aca_nat_network.bicep' = {
     tags: tags
     vnetAddressPrefix: vnetAddressPrefix
     infrastructureSubnetAddressPrefix: infrastructureSubnetAddressPrefix
-    egressPublicIpIpTags: egressPublicIpIpTags
+    egressPublicIpTags: egressPublicIpTags
     protectEgressPublicIp: protectEgressPublicIp
   }
 }

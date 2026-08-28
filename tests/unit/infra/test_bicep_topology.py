@@ -18,6 +18,7 @@ MAIN_BICEP = REPO_ROOT / "infra" / "main.bicep"
 NETWORK_BICEP = REPO_ROOT / "infra" / "modules" / "aca_nat_network.bicep"
 FRONT_DOOR_BICEP = REPO_ROOT / "infra" / "modules" / "aca_front_door.bicep"
 PRIVATE_ENDPOINT_APPROVAL_BICEP = REPO_ROOT / "infra" / "modules" / "aca_private_endpoint_approval.bicep"
+BUILD_AND_TEST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build_and_test.yml"
 
 
 def _find_bicep_cli() -> str | None:
@@ -32,11 +33,13 @@ def _find_bicep_cli() -> str | None:
 
 
 BICEP_CLI = _find_bicep_cli()
+BICEP_REQUIRED = os.environ.get("PYRIT_REQUIRE_BICEP", "").strip().casefold() == "true"
 
 
 def _compile_bicep(source: Path, output: Path) -> dict[str, Any]:
     """Compile one Bicep file and return its generated ARM template."""
-    assert BICEP_CLI is not None
+    if BICEP_CLI is None:
+        raise RuntimeError("Bicep CLI is required to compile infrastructure topology tests")
     command = [BICEP_CLI, "build", str(source), "--outfile", str(output)]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
@@ -48,7 +51,19 @@ def _resources(template: dict[str, Any], resource_type: str) -> list[dict[str, A
     return [resource for resource in template["resources"] if resource["type"] == resource_type]
 
 
-@unittest.skipIf(BICEP_CLI is None, "Bicep CLI is not already installed")
+class TestBicepCiContract(unittest.TestCase):
+    """Keep one fail-closed CI path for compiling the infrastructure templates."""
+
+    def test_workflow_installs_bicep_and_requires_topology_tests(self):
+        workflow = BUILD_AND_TEST_WORKFLOW.read_text(encoding="utf-8")
+
+        assert "bicep-topology:" in workflow
+        assert "PYRIT_REQUIRE_BICEP: 'true'" in workflow
+        assert "az bicep install --version v0.46.1" in workflow
+        assert "python tests/unit/infra/test_bicep_topology.py -v" in workflow
+
+
+@unittest.skipIf(BICEP_CLI is None and not BICEP_REQUIRED, "Bicep CLI is not already installed")
 class TestBicepTopology(unittest.TestCase):
     """Verify the only supported public ACA topology with fixed NAT egress."""
 
@@ -163,7 +178,7 @@ class TestBicepTopology(unittest.TestCase):
         assert public_ip["properties"]["publicIPAllocationMethod"] == "Static"
         assert public_ip["properties"]["publicIPAddressVersion"] == "IPv4"
         assert public_ip["properties"]["ddosSettings"]["protectionMode"] == "VirtualNetworkInherited"
-        assert public_ip["properties"]["ipTags"] == "[parameters('egressPublicIpIpTags')]"
+        assert public_ip["properties"]["ipTags"] == "[parameters('egressPublicIpTags')]"
 
         locks = _resources(template, "Microsoft.Authorization/locks")
         assert len(locks) == 1

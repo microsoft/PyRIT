@@ -132,7 +132,7 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert "Front Door cannot use an ACA client CIDR restriction" in self.deploy_script
         assert "Internal deployments must adopt an existing app" in self.deploy_script
         assert '"tags=$deployment_tags"' in self.deploy_script
-        assert '"egressPublicIpIpTags=$existing_pip_ip_tags"' in self.deploy_script
+        assert '"egressPublicIpTags=$existing_pip_ip_tags"' in self.deploy_script
         assert '"protectEgressPublicIp=true"' in self.deploy_script
         assert "--result-format FullResourcePayloads" in self.deploy_script
         assert "--expected-pip-id" in self.deploy_script

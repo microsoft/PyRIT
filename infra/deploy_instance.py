@@ -4,19 +4,20 @@
 """
 CoPyRIT GUI — Deploy a new isolated instance.
 
-Automates the full deployment of an isolated CoPyRIT GUI instance:
-  1. Resource group
-  2. Entra app registration + delegated Microsoft Graph permission
-  3. Entra security group (optional — can use existing)
-  4. Azure SQL server + database
-  5. Storage account + blob container (auto-injects container URL into .env)
-  6. Key Vault + populate .env secret (auto-injects SQL connection string;
-     applies SFI network lockdown — backup/audit only, NOT read at runtime)
-  7. Managed identity + RBAC role assignments (AcrPull, Storage Blob Data Contributor)
-  7b. AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
-  8. Bicep deployment (Container App, VNet, NAT, static egress, logging)
-    9. Restrict SQL network access to the static egress IP
-    10. Post-deploy: SPA redirect URI + public-client device-code flow
+Automates the full deployment of an isolated CoPyRIT GUI instance in this sequence:
+
+- Resource group
+- Entra app registration + delegated Microsoft Graph permission
+- Entra security group (optional — can use existing)
+- Azure SQL server + database
+- Storage account + blob container (auto-injects container URL into .env)
+- Key Vault + populate .env secret (auto-injects SQL connection string;
+    applies SFI network lockdown — backup/audit only, NOT read at runtime)
+- Managed identity + RBAC role assignments (AcrPull, Storage Blob Data Contributor)
+- AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
+- Bicep deployment (Container App, VNet, NAT, static egress, logging)
+- Restrict SQL network access to the static egress IP
+- Post-deploy: SPA redirect URI + public-client device-code flow
 
 Usage:
     python infra/deploy_instance.py \\
