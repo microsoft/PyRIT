@@ -94,10 +94,8 @@ class ScenarioResult(BaseModel):
     error_type: str | None = None
     #: IDs of attack results that errored during the scenario run.
     error_attack_result_ids: list[str] = Field(default_factory=list)
-    #: Free-form JSON metadata persisted with the scenario result. Currently used to record
-    #: ``objective_hashes`` — the objective ``sha256`` set chosen on the first run, replayed
-    #: on resume so a fresh ``random.sample`` can't silently change which objectives the
-    #: scenario operates on. Keys are not part of any public contract and may evolve.
+    #: Free-form JSON metadata persisted with the scenario result. Stores the normalized
+    #: run plan and, for sampled runs, ``objective_hashes`` used to replay the original subset.
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")

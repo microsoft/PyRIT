@@ -726,6 +726,7 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context._attribution = AttackResultAttribution(
                 parent_id="scenario-1",
                 parent_collection="atomic_a",
+                seed_group_id="seed-a",
             )
 
             event_data = StrategyEventData(
@@ -740,6 +741,7 @@ class TestDefaultAttackStrategyEventHandler:
         assert sample_attack_result.attribution_parent_id == "scenario-1"
         assert sample_attack_result.attribution_data == {
             "parent_collection": "atomic_a",
+            "seed_group_id": "seed-a",
         }
 
     async def test_on_post_execute_no_attribution_leaves_fields_none(
@@ -775,6 +777,7 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context._attribution = AttackResultAttribution(
                 parent_id="scenario-err",
                 parent_collection="atomic_err",
+                seed_group_id="seed-error",
             )
 
             event_data = StrategyEventData(
@@ -793,6 +796,7 @@ class TestDefaultAttackStrategyEventHandler:
         assert persisted.attribution_parent_id == "scenario-err"
         assert persisted.attribution_data == {
             "parent_collection": "atomic_err",
+            "seed_group_id": "seed-error",
         }
 
     async def test_on_post_execute_stamps_targeted_harm_categories(self, sample_attack_result, mock_memory):

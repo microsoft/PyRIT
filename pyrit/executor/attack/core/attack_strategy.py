@@ -315,6 +315,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         }
         if attribution.parent_eval_hash is not None:
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
+        if attribution.seed_group_id is not None:
+            attribution_data["seed_group_id"] = attribution.seed_group_id
         result.attribution_data = attribution_data
 
     @staticmethod
