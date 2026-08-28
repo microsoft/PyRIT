@@ -109,11 +109,14 @@ describe("MainLayout", () => {
     });
   });
 
-  it("displays version from API in tooltip", async () => {
+  it("displays the version, commit, and database for a development release", async () => {
     mockedVersionApi.getVersion.mockResolvedValue({
-      version: "1.0.0",
-      display: "v1.0.0-beta",
+      version: "1.1.0.dev0",
+      commit: "729b7dd0446cc95412345662a1a921e2a4bf1979",
+      display: "729b7dd0446cc95412345662a1a921e2a4bf1979",
+      database_info: "AzureSQLMemory (airtprod)",
     });
+    const user = userEvent.setup();
 
     renderWithProvider(
       <MainLayout {...defaultProps}>
@@ -124,6 +127,42 @@ describe("MainLayout", () => {
     await waitFor(() => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
+
+    await user.hover(screen.getByAltText("Co-PyRIT Logo"));
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("PyRIT 1.1.0.dev0");
+    expect(tooltip).toHaveTextContent(
+      "Commit: 729b7dd0446cc95412345662a1a921e2a4bf1979"
+    );
+    expect(tooltip).toHaveTextContent("AzureSQLMemory (airtprod)");
+  });
+
+  it("does not display the commit for a release version", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({
+      version: "1.1.0",
+      commit: "729b7dd0446cc95412345662a1a921e2a4bf1979",
+      display: "729b7dd0446cc95412345662a1a921e2a4bf1979",
+      database_info: "AzureSQLMemory (airtprod)",
+    });
+    const user = userEvent.setup();
+
+    renderWithProvider(
+      <MainLayout {...defaultProps}>
+        <div>Content</div>
+      </MainLayout>
+    );
+
+    await waitFor(() => {
+      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
+    });
+
+    await user.hover(screen.getByAltText("Co-PyRIT Logo"));
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("PyRIT 1.1.0");
+    expect(tooltip).not.toHaveTextContent("Commit:");
+    expect(tooltip).toHaveTextContent("AzureSQLMemory (airtprod)");
   });
 
   it("displays 'Unknown' when version API fails", async () => {

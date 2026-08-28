@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
+    from pyrit.cli._auth import AuthMode, TokenProvider
     from pyrit.models import ScenarioResult
     from pyrit.models.catalog import (
         RegisteredInitializer,
@@ -44,7 +46,14 @@ class PyRITApiClient:
             scenarios = await client.list_scenarios_async()
     """
 
-    def __init__(self, *, base_url: str, request_timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        request_timeout: float | None = None,
+        auth_mode: AuthMode = "none",
+        interactive: bool | None = None,
+    ) -> None:
         """
         Initialize the API client.
 
@@ -55,10 +64,15 @@ class PyRITApiClient:
                 the live scenario-run endpoint always uses ``read=None`` regardless
                 of this value, because the server may legitimately take many seconds
                 to respond while a scenario is executing. Defaults to ``60.0``.
+            auth_mode: Authentication behavior for protected remote backends.
+            interactive: Optional terminal-interactivity override.
         """
         self._base_url = base_url.rstrip("/")
         self._request_timeout = request_timeout if request_timeout is not None else 60.0
+        self._auth_mode = auth_mode
+        self._interactive = interactive
         self._client: Any = None  # httpx.AsyncClient (typed Any to avoid top-level import)
+        self._token_provider: TokenProvider | None = None
 
     async def __aenter__(self) -> PyRITApiClient:
         """
@@ -66,10 +80,28 @@ class PyRITApiClient:
 
         Returns:
             PyRITApiClient: ``self``, with the HTTP client opened.
+
+        Raises:
+            CliAuthenticationError: If authentication discovery or login fails.
+            httpx.HTTPError: If the authentication discovery request fails.
         """
         import httpx
 
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=self._request_timeout)
+        client_kwargs: dict[str, Any] = {
+            "base_url": self._base_url,
+            "timeout": self._request_timeout,
+        }
+        if self._auth_mode != "none":
+            client_kwargs["event_hooks"] = {"request": [self._add_authorization_header_async]}
+        self._client = httpx.AsyncClient(**client_kwargs)
+        if self._auth_mode != "none":
+            from pyrit.cli._auth import CliAuthenticationError
+
+            try:
+                await self._configure_authentication_async()
+            except (CliAuthenticationError, httpx.HTTPError):
+                await self.close_async()
+                raise
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -359,13 +391,66 @@ class PyRITApiClient:
 
     async def close_async(self) -> None:
         """Close the underlying HTTP client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        client = self._client
+        token_provider = self._token_provider
+        self._client = None
+        self._token_provider = None
+
+        try:
+            if client is not None:
+                await client.aclose()
+        finally:
+            if token_provider is not None:
+                await token_provider.close_async()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    async def _configure_authentication_async(self) -> None:
+        """
+        Discover backend authentication requirements and select a credential.
+
+        Raises:
+            CliAuthenticationError: If the server contract or selected credential is invalid.
+            httpx.HTTPError: If the discovery request fails.
+        """
+        from pyrit.cli._auth import BackendAuthConfig, CliAuthenticationError, create_token_provider_async
+
+        client = self._get_client()
+        response = await client.get("/api/auth/config")
+        if response.status_code == 404:
+            return
+        self._raise_for_status(response)
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CliAuthenticationError("The server returned invalid JSON from /api/auth/config.") from exc
+
+        auth_config = BackendAuthConfig.from_payload(payload)
+        if auth_config.enabled and not self._uses_secure_auth_transport():
+            raise CliAuthenticationError(
+                "Refusing to send an Entra access token over a non-HTTPS connection. Use HTTPS for remote backends."
+            )
+        self._token_provider = await create_token_provider_async(
+            auth_config=auth_config,
+            auth_mode=self._auth_mode,
+            interactive=self._interactive,
+        )
+
+    def _uses_secure_auth_transport(self) -> bool:
+        """Return whether the server URL protects bearer tokens in transit."""
+        parsed = urlparse(self._base_url)
+        if parsed.scheme == "https":
+            return True
+        return parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+
+    async def _add_authorization_header_async(self, request: Any) -> None:
+        """Attach a current bearer token to protected backend requests."""
+        if self._token_provider is None or request.url.path in {"/api/auth/config", "/api/health"}:
+            return
+        token = await self._token_provider.get_token_async()
+        request.headers["Authorization"] = f"Bearer {token}"
 
     def _get_client(self) -> Any:
         """

@@ -9,6 +9,7 @@ import {
   MenuPopover,
   MenuTrigger,
   mergeClasses,
+  Spinner,
   Switch,
   Text,
   Tooltip,
@@ -23,6 +24,7 @@ import ChatInputArea from './ChatInputArea'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
+import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
 import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
@@ -94,6 +96,8 @@ interface ChatWindowProps {
   isLoadingAttack?: boolean
   /** Number of related (non-main) conversations in the loaded attack. */
   relatedConversationCount?: number
+  /** The loaded attack's objective (empty for new/manual attacks). */
+  objective?: string
 }
 
 export default function ChatWindow({
@@ -113,6 +117,7 @@ export default function ChatWindow({
   onRetryTargetResolution,
   isLoadingAttack,
   relatedConversationCount,
+  objective = '',
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
@@ -126,6 +131,8 @@ export default function ChatWindow({
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null)
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
   // Conversation-wide preference for rendering message text as Markdown.
@@ -720,8 +727,22 @@ export default function ChatWindow({
     !isLoadingMessages &&
     !awaitingConversationLoad
 
-  const handleExport = (format: ExportFormat) => {
-    exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+  const handleExport = async (format: ExportFormat) => {
+    // A ref, not the state flag: two clicks in the same tick would both read
+    // the pre-render value and start duplicate exports.
+    if (isExportingRef.current) {
+      return
+    }
+    isExportingRef.current = true
+    setIsExporting(true)
+    try {
+      await exportConversation({ messages, conversationId: activeConversationId ?? conversationId, format })
+    } catch (err) {
+      console.error('Failed to export conversation:', err)
+    } finally {
+      isExportingRef.current = false
+      setIsExporting(false)
+    }
   }
 
   return (
@@ -767,7 +788,7 @@ export default function ChatWindow({
                   <Button
                     appearance="subtle"
                     className={styles.ribbonAction}
-                    icon={<ArrowDownloadRegular />}
+                    icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
                     disabled={!canExportConversation}
                     aria-label="Export conversation"
                     data-testid="export-conversation-btn"
@@ -776,11 +797,18 @@ export default function ChatWindow({
               </MenuTrigger>
               <MenuPopover>
                 <MenuList>
-                  <MenuItem onClick={() => handleExport('markdown')} data-testid="export-markdown-item">
+                  <MenuItem
+                    onClick={() => handleExport('markdown')}
+                    disabled={isExporting}
+                    data-testid="export-markdown-item"
+                  >
                     Export as Markdown (.md)
                   </MenuItem>
-                  <MenuItem onClick={() => handleExport('json')} data-testid="export-json-item">
+                  <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
                     Export as JSON (.json)
+                  </MenuItem>
+                  <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+                    Export as HTML (.html)
                   </MenuItem>
                 </MenuList>
               </MenuPopover>
@@ -814,6 +842,7 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
+        <ObjectiveHeader key={objective} objective={objective} />
         {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
