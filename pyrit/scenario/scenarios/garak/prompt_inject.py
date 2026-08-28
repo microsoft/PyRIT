@@ -282,10 +282,9 @@ class PromptInject(Scenario):
             PromptInjectDatasetConfiguration.CONTEXT_DATASET_NAME,
             self.TECHNIQUE_DATASET_NAME,
         }
-        if (
-            PromptInjectDatasetConfiguration.CONTEXT_DATASET_NAME not in dataset_names
-            or not set(dataset_names).issubset(allowed_dataset_names)
-        ):
+        if PromptInjectDatasetConfiguration.CONTEXT_DATASET_NAME not in dataset_names or not set(
+            dataset_names
+        ).issubset(allowed_dataset_names):
             raise DatasetConstraintError(
                 "PromptInject dataset selection only supports prompt_inject_contexts; "
                 "technique templates are loaded automatically."
@@ -307,9 +306,7 @@ class PromptInject(Scenario):
         Raises:
             DatasetConstraintError: If a selected technique has no template.
         """
-        seeds = CentralMemory.get_memory_instance().get_seeds(
-            dataset_name=self.TECHNIQUE_DATASET_NAME
-        )
+        seeds = CentralMemory.get_memory_instance().get_seeds(dataset_name=self.TECHNIQUE_DATASET_NAME)
         templates = {seed.name: seed for seed in seeds if isinstance(seed, SeedPrompt) and seed.name}
         selected = {technique.value for technique in self._scenario_techniques}
         missing = selected - templates.keys()
@@ -317,9 +314,7 @@ class PromptInject(Scenario):
             raise DatasetConstraintError(f"PromptInject technique templates are missing: {sorted(missing)}.")
         return templates
 
-    def _render_technique(
-        self, *, group: AttackSeedGroup, technique_name: str, goal_text: str
-    ) -> AttackSeedGroup:
+    def _render_technique(self, *, group: AttackSeedGroup, technique_name: str, goal_text: str) -> AttackSeedGroup:
         """
         Render one technique into a copy of an attack group.
 
@@ -344,8 +339,5 @@ class PromptInject(Scenario):
         """
         return TrueFalseCompositeScorer(
             aggregator=TrueFalseScoreAggregator.OR,
-            scorers=[
-                SubStringScorer(substring=goal_text, categories=["prompt_injection"])
-                for goal_text in goal_texts
-            ],
+            scorers=[SubStringScorer(substring=goal_text, categories=["prompt_injection"]) for goal_text in goal_texts],
         )

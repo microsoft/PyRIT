@@ -124,9 +124,7 @@ class TestPromptInjectAtomicAttacks:
         assert isinstance(scorer, SubStringScorer)
         assert scorer._substring == "custom goal"
 
-    async def test_default_run_reuses_12_groups_for_each_technique(
-        self, mock_objective_target: PromptTarget
-    ) -> None:
+    async def test_default_run_reuses_12_groups_for_each_technique(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
 
         await _initialize_async(scenario, target=mock_objective_target)
