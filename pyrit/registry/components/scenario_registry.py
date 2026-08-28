@@ -14,10 +14,11 @@ rather than by class name, so ``_discover``/``_get_registry_name`` are overridde
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from pyrit.models import class_name_to_snake_case
+from pyrit.models import ScenarioRunSizeEstimate, class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -38,8 +39,16 @@ class ScenarioMetadata(RegistryMetadata):
     Use get_class() to get the actual class.
     """
 
+    scenario_version: int = field(kw_only=True, default=1)
+
     # The default technique name (e.g., "single_turn")
     default_technique: str = field(kw_only=True)
+
+    # Ordered concrete techniques selected by the default technique policy.
+    default_techniques: tuple[str, ...] = field(kw_only=True, default=())
+
+    # Dedented class docstring with Markdown structure preserved.
+    description_markdown: str = field(kw_only=True, default="")
 
     # All available technique names for this scenario.
     all_techniques: tuple[str, ...] = field(kw_only=True)
@@ -47,11 +56,18 @@ class ScenarioMetadata(RegistryMetadata):
     # Aggregate techniques that combine multiple attack approaches.
     aggregate_techniques: tuple[str, ...] = field(kw_only=True)
 
+    # Ordered aggregate selector -> concrete technique expansions.
+    aggregate_technique_expansions: tuple[tuple[str, tuple[str, ...]], ...] = field(kw_only=True, default=())
+
     # Default dataset names used by this scenario.
     default_datasets: tuple[str, ...] = field(kw_only=True)
 
     # Scenario-declared custom parameters.
     supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
+
+    baseline_policy: Literal["enabled", "disabled", "forbidden"] = field(kw_only=True, default="enabled")
+
+    include_baseline_by_default: bool = field(kw_only=True, default=True)
 
 
 class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
@@ -136,6 +152,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             TypeError: If ``cls()`` cannot be called with no arguments.
         """
         description = RegistryMetadata.description_from_docstring(cls, fallback="No description available")
+        description_markdown = RegistryMetadata.markdown_from_docstring(cls, fallback=description)
 
         supported_parameters = tuple(cls.supported_parameters())
 
@@ -152,8 +169,18 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
 
         technique_class = instance._technique_class
         default_technique_value = instance._default_technique.value
+        default_techniques = tuple(
+            technique.value for technique in instance._resolve_scenario_techniques(scenario_techniques=None)
+        )
         all_techniques = tuple(s.value for s in technique_class.get_all_techniques())
         aggregate_techniques = tuple(s.value for s in technique_class.get_aggregate_techniques())
+        aggregate_technique_expansions = tuple(
+            (
+                aggregate.value,
+                tuple(technique.value for technique in technique_class.expand({aggregate})),
+            )
+            for aggregate in technique_class.get_aggregate_techniques()
+        )
         default_datasets = tuple(instance._default_dataset_config.dataset_names)
 
         return ScenarioMetadata(
@@ -161,12 +188,44 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             class_module=cls.__module__,
             class_description=description,
             registry_name=name,
+            scenario_version=instance._version,
             default_technique=default_technique_value,
+            default_techniques=default_techniques,
+            description_markdown=description_markdown,
             all_techniques=all_techniques,
             aggregate_techniques=aggregate_techniques,
+            aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,
             supported_parameters=supported_parameters,
+            baseline_policy=instance.BASELINE_ATTACK_POLICY.value,
+            include_baseline_by_default=instance.BASELINE_ATTACK_POLICY.value == "enabled",
         )
+
+    async def create_and_estimate_async(
+        self,
+        *,
+        name: str,
+        scenario_params: dict[str, Any] | None = None,
+        target_is_configured: bool = False,
+        **estimate_kwargs: Any,
+    ) -> ScenarioRunSizeEstimate:
+        """
+        Build, parameterize, and estimate a scenario without initializing a run.
+
+        Args:
+            name: Registered scenario name.
+            scenario_params: Scenario-declared parameter values.
+            target_is_configured: Whether the estimate has a concrete objective target.
+            **estimate_kwargs: Common resolved values such as techniques, dataset
+                configuration, baseline choice, and an optional objective target.
+
+        Returns:
+            ScenarioRunSizeEstimate: Structured configured-run estimate.
+        """
+        scenario = await asyncio.to_thread(self.create_instance, name)
+        scenario.set_scenario_registry_name(scenario_registry_name=name)
+        scenario.set_params_from_args(args={**(scenario_params or {}), **estimate_kwargs})
+        return await scenario.get_run_size_estimate_async(target_is_configured=target_is_configured)
 
     async def create_and_initialize_async(
         self,
@@ -215,5 +274,6 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
 
         merged_args = {**(scenario_params or {}), **initialize_kwargs}
         scenario = self._create_and_configure(name, params=merged_args, constructor_kwargs=constructor_kwargs)
+        scenario.set_scenario_registry_name(scenario_registry_name=name)
         await scenario.initialize_async()
         return scenario

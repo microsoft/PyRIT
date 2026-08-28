@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from pyrit.memory.azure_sql_memory import AzureSQLMemory
     from pyrit.memory.central_memory import CentralMemory
     from pyrit.memory.memory_embedding import MemoryEmbedding
-    from pyrit.memory.memory_interface import AttackResultsKeysetCursor, MemoryInterface
+    from pyrit.memory.memory_interface import AttackResultKeysetCursor, MemoryInterface
     from pyrit.memory.memory_models import AttackResultEntry, EmbeddingDataEntry, PromptMemoryEntry, SeedEntry
     from pyrit.memory.sqlite_memory import SQLiteMemory
     from pyrit.memory.storage import (
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AllowedCategories": "pyrit.memory.storage",
     "AttackResultEntry": "pyrit.memory.memory_models",
-    "AttackResultsKeysetCursor": "pyrit.memory.memory_interface",
+    "AttackResultKeysetCursor": "pyrit.memory.memory_interface",
     "AudioPathDataTypeSerializer": "pyrit.memory.storage",
     "AzureBlobStorageIO": "pyrit.memory.storage",
     "AzureSQLMemory": "pyrit.memory.azure_sql_memory",

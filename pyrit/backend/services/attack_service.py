@@ -58,7 +58,7 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.memory import AttackResultsKeysetCursor, CentralMemory, data_serializer_factory
+from pyrit.memory import AttackResultKeysetCursor, CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -182,7 +182,7 @@ class AttackService:
         page_results = list(results[:limit])
         next_cursor = (
             self._encode_attack_cursor(
-                cursor=AttackResultsKeysetCursor.from_attack_result(page_results[-1]),
+                cursor=AttackResultKeysetCursor.from_attack_result(page_results[-1]),
                 fingerprint=filter_fingerprint,
             )
             if has_next_page and page_results
@@ -919,7 +919,7 @@ class AttackService:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
-    def _encode_attack_cursor(*, cursor: AttackResultsKeysetCursor, fingerprint: str) -> str:
+    def _encode_attack_cursor(*, cursor: AttackResultKeysetCursor, fingerprint: str) -> str:
         """
         Encode a keyset anchor and its filter fingerprint into an opaque pagination cursor.
 
@@ -940,7 +940,7 @@ class AttackService:
         return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
     @staticmethod
-    def _decode_attack_cursor(*, cursor: str | None, fingerprint: str) -> AttackResultsKeysetCursor | None:
+    def _decode_attack_cursor(*, cursor: str | None, fingerprint: str) -> AttackResultKeysetCursor | None:
         """
         Decode the opaque list-attacks cursor into a keyset (seek) anchor.
 
@@ -952,7 +952,7 @@ class AttackService:
         raising or seeking within the wrong result set.
 
         Returns:
-            The decoded ``AttackResultsKeysetCursor``, or ``None`` to start at the first page.
+            The decoded ``AttackResultKeysetCursor``, or ``None`` to start at the first page.
         """
         if not cursor:
             return None
@@ -985,7 +985,7 @@ class AttackService:
             # A crafted cursor near datetime's min/max with a large UTC offset overflows the
             # representable range when shifted to UTC; treat it as malformed and restart at page one.
             return None
-        return AttackResultsKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
+        return AttackResultKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
 
     # ========================================================================
     # Private Helper Methods - Duplicate / Branch

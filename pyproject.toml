@@ -102,6 +102,7 @@ dev = [
 [project.optional-dependencies]
 # always make sure the individual ones are in sync with the all group
 huggingface = [
+    "sentencepiece>=0.2.0",
     "torch>=2.7.0",
 ]
 gcg = [
@@ -156,6 +157,7 @@ all = [
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
     "pyarrow>=22.0.0; python_version >= '3.14'",
+    "sentencepiece>=0.2.0",
     "spacy>=3.8.13,!=3.8.14,!=3.8.15",  # 3.8.14-3.8.15 missing cp314 wheels
     "torch>=2.7.0",
 ]

@@ -40,7 +40,25 @@
     "enableOtel": {
       "value": false
     },
-    "enablePrivateEndpoint": {
+    "enableFrontDoor": {
+      "value": false
+    },
+    "enableFrontDoorPrivateLink": {
+      "value": false
+    },
+    "frontDoorPrivateLinkRequestMessage": {
+      "value": "Azure Front Door private access to copyrit-INSTANCE_NAME"
+    },
+    "disableContainerAppsPublicAccess": {
+      "value": false
+    },
+    "vnetAddressPrefix": {
+      "value": "10.0.0.0/16"
+    },
+    "infrastructureSubnetAddressPrefix": {
+      "value": "10.0.1.0/26"
+    },
+    "protectEgressPublicIp": {
       "value": false
     },
     "tags": {
@@ -54,11 +72,11 @@
     "acrName": {
       "value": "REPLACE_ACR_NAME"
     },
+    "existingManagedIdentityResourceId": {
+      "value": "REPLACE_MANAGED_IDENTITY_RESOURCE_ID"
+    },
     "keyVaultResourceId": {
       "value": "REPLACE_KEY_VAULT_RESOURCE_ID"
-    },
-    "infrastructureSubnetId": {
-      "value": ""
     },
     "logAnalyticsWorkspaceId": {
       "value": ""

@@ -174,6 +174,21 @@ def test_run_schema_migrations_applies_head_revision():
             engine.dispose()
 
 
+def test_scenario_progress_migration_adds_composite_index():
+    """The migration head contains the parent/timestamp/id keyset index."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "scenario-progress-index.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "head")
+                indexes = {index["name"] for index in inspect(connection).get_indexes("AttackResultEntries")}
+            assert "ix_AttackResultEntries_attribution_parent_timestamp_id" in indexes
+        finally:
+            engine.dispose()
+
+
 def test_migration_online_mode():
     """
     Test that online migration configuration is valid.
