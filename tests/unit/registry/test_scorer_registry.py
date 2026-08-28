@@ -272,6 +272,7 @@ class TestDiscovery:
 
     def test_discovers_known_scorers(self, registry: ScorerRegistry):
         names = registry.get_class_names()
+        assert "RobloxPiiScorer" in names
         assert "SelfAskRefusalScorer" in names
         assert "TrueFalseCompositeScorer" in names
 
