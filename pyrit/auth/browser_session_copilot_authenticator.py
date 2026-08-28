@@ -173,7 +173,7 @@ class BrowserSessionCopilotAuthenticator(Authenticator):
         if self._access_token is None:
             return False
 
-        expires_at = self._claims.get("exp")
+        expires_at: object = self._claims.get("exp")
         if not isinstance(expires_at, (int, float)):
             return False
 

@@ -689,7 +689,12 @@ def collect_top_level_modules(api_json_dir: Path) -> list[dict]:
     modules: list[dict] = []
     for jf in sorted(api_json_dir.glob("*.json")):
         data = json.loads(jf.read_text(encoding="utf-8"))
-        modules.extend(_expand_module(data))
+        if jf.stem.endswith("_all"):
+            submodules = [member for member in data.get("members", []) if member.get("kind") == "module"]
+            for submodule in submodules:
+                modules.extend(_expand_module(submodule))
+        else:
+            modules.extend(_expand_module(data))
 
     # Drop excluded and empty modules
     return [

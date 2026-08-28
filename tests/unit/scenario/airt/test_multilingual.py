@@ -3,13 +3,22 @@
 
 """Tests for the Multilingual scenario."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from pyrit.converter import Base64Converter, QRCodeConverter, RandomTranslationConverter, TranslationConverter
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
+from pyrit.memory import CentralMemory
+from pyrit.models import (
+    AttackOutcome,
+    AttackSeedGroup,
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    ScenarioRunState,
+    SeedObjective,
+)
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -23,7 +32,7 @@ from pyrit.scenario.scenarios.airt.multilingual import (
     Multilingual,
     _build_multilingual_technique,
 )
-from pyrit.score import TrueFalseScorer
+from pyrit.score import SubStringScorer, TrueFalseScorer
 
 
 def _mock_identifier(name: str) -> ComponentIdentifier:
@@ -108,6 +117,20 @@ def _request_converters(atomic_attack):
     """Return the flattened request converter chain configured on an atomic attack."""
     configurations = atomic_attack.attack_technique.attack.get_request_converters()
     return [converter for configuration in configurations for converter in configuration.converters]
+
+
+def _response(text: str) -> list[Message]:
+    return [
+        Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value=text,
+                    original_value_data_type="text",
+                )
+            ]
+        )
+    ]
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -335,3 +358,101 @@ class TestMultilingual:
                 hashes.append(scenario._atomic_attacks[0].technique_eval_hash)
 
         assert hashes[0] != hashes[1]
+
+    async def test_converter_retry_exhaustion_retries_only_failed_language(
+        self, mock_objective_target, mock_adversarial_chat, mock_memory_seed_groups
+    ) -> None:
+        objective_scorer = SubStringScorer(substring="RECOVERED")
+        translation_schedule = [
+            _response("objectif traduit en francais"),
+            RuntimeError("Spanish translation failed once"),
+            RuntimeError("Spanish translation failed twice"),
+            RuntimeError("Spanish translation failed three times"),
+            _response("objetivo traducido al espanol"),
+        ]
+        mock_adversarial_chat.send_prompt_async = AsyncMock(side_effect=translation_schedule)
+        mock_objective_target.send_prompt_async = AsyncMock(
+            side_effect=[
+                _response("RECOVERED in French"),
+                _response("RECOVERED in Spanish"),
+            ]
+        )
+
+        scenario = Multilingual(
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=objective_scorer,
+        )
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "languages": ["French", "Spanish"],
+                "translation_strategies": [_TRANSLATION],
+                "include_baseline": False,
+                "max_concurrency": 1,
+                "max_retries": 1,
+                "memory_labels": {"test": "multilingual-retry"},
+            }
+        )
+
+        memory = CentralMemory.get_memory_instance()
+        with (
+            _patch_seed_groups(mock_memory_seed_groups),
+            patch("asyncio.sleep", new_callable=AsyncMock) as sleep_mock,
+            patch.object(
+                memory,
+                "update_scenario_run_state",
+                wraps=memory.update_scenario_run_state,
+            ) as update_state,
+        ):
+            await scenario.initialize_async()
+            result = await scenario.run_async()
+
+        french_name = "prompt_sending_translation_french_harmbench"
+        spanish_name = "prompt_sending_translation_spanish_harmbench"
+        french_results = result.attack_results[french_name]
+        spanish_results = result.attack_results[spanish_name]
+
+        assert result.scenario_run_state == ScenarioRunState.COMPLETED
+        assert result.number_tries == 2
+        assert result.error_message is None
+        assert result.error_type is None
+        assert result.metadata[_LANGUAGES_METADATA_KEY] == ["French", "Spanish"]
+        assert [attack_result.outcome for attack_result in french_results] == [AttackOutcome.SUCCESS]
+        assert [attack_result.outcome for attack_result in spanish_results] == [
+            AttackOutcome.ERROR,
+            AttackOutcome.SUCCESS,
+        ]
+        assert spanish_results[0].error_type == "RuntimeError"
+        for attack_result in [french_results[0], spanish_results[1]]:
+            assert attack_result.last_response is not None
+            assert attack_result.last_score is not None
+            assert attack_result.last_score.get_value() is True
+            assert attack_result.last_score.objective == "test objective"
+            assert attack_result.last_score.message_piece_id == attack_result.last_response.id
+        assert all(
+            attack_result.labels == {"test": "multilingual-retry"}
+            for attack_result in [*french_results, *spanish_results]
+        )
+        assert len({attack_result.attack_result_id for attack_result in [*french_results, *spanish_results]}) == 3
+        assert len({attack_result.conversation_id for attack_result in [*french_results, *spanish_results]}) == 3
+
+        assert mock_adversarial_chat.send_prompt_async.await_count == 5
+        translation_prompts = [
+            awaited.kwargs["message"].message_pieces[0].converted_value or ""
+            for awaited in mock_adversarial_chat.send_prompt_async.await_args_list
+        ]
+        assert ["french" in prompt for prompt in translation_prompts] == [True, False, False, False, False]
+        assert ["spanish" in prompt for prompt in translation_prompts] == [False, True, True, True, True]
+        assert mock_objective_target.send_prompt_async.await_count == 2
+        assert [
+            awaited.kwargs["message"].get_value() for awaited in mock_objective_target.send_prompt_async.await_args_list
+        ] == ["objectif traduit en francais", "objetivo traducido al espanol"]
+        assert sleep_mock.await_args_list == [call(1.0), call(2.0)]
+        persisted_results = memory.get_attack_results(scenario_result_id=scenario._scenario_result_id)
+        assert len(persisted_results) == 3
+        observed_states = [call.kwargs["scenario_run_state"] for call in update_state.call_args_list]
+        assert observed_states == [
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.COMPLETED,
+        ]

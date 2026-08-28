@@ -17,10 +17,12 @@
 # - Playwright installed: `pip install playwright && playwright install chromium`
 #
 # Some environments are not suited for automated authentication (e.g. they have security policies with retrieving tokens or have MFA). For interactive authentication compatible with MFA and Conditional Access, see [Browser Session Authentication](#browser-session-authentication). To provide a token manually, see [Alternative Authentication](#alternative-authentication-with-manualcopilotauthenticator).
+
 # %% [markdown]
 # ## Basic Usage with `PromptSendingAttack`
 #
 # The simplest way to interact with the `WebSocketCopilotTarget` is through the `PromptSendingAttack` class.
+
 # %%
 # type: ignore
 from pyrit.executor.attack import PromptSendingAttack
@@ -37,6 +39,7 @@ objective = "Tell me a joke about AI"
 
 result = await attack.execute_async(objective=objective)
 await output_attack_async(result)
+
 # %% [markdown]
 # ## Multi-Turn Conversations
 #
@@ -49,6 +52,7 @@ await output_attack_async(result)
 # %%
 from pyrit.executor.attack import MultiPromptSendingAttack
 from pyrit.models import Message
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import WebSocketCopilotTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -72,6 +76,7 @@ result = await multi_turn_attack.execute_async(
 )
 
 await output_attack_async(result)
+
 # %% [markdown]
 # ## Browser Session Authentication
 #
@@ -104,6 +109,7 @@ async with BrowserSessionCopilotAuthenticator() as auth:
     attack = PromptSendingAttack(objective_target=target)
     result = await attack.execute_async(objective=objective)
     await output_attack_async(result)
+
 # %% [markdown]
 # ## Alternative Authentication with `ManualCopilotAuthenticator`
 #
@@ -124,6 +130,7 @@ async with BrowserSessionCopilotAuthenticator() as auth:
 # %%
 from pyrit.auth import ManualCopilotAuthenticator
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import WebSocketCopilotTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
@@ -140,6 +147,7 @@ attack_manual = PromptSendingAttack(objective_target=target)
 
 result_manual = await attack_manual.execute_async(objective="Hello! Who are you?")
 await output_attack_async(result_manual)
+
 # %% [markdown]
 # ## Multimodal Support (Text and Images)
 #
@@ -152,6 +160,7 @@ from pathlib import Path
 
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import Message, MessagePiece
+from pyrit.output import output_attack_async
 from pyrit.prompt_target import WebSocketCopilotTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 

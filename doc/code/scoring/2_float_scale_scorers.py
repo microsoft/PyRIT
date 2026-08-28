@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -43,7 +43,7 @@ from uuid import uuid4
 
 from pyrit.auth import get_azure_token_provider
 from pyrit.memory import CentralMemory
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, MessageScorable
 from pyrit.score import AzureContentFilterScorer
 
 azure_content_filter = AzureContentFilterScorer(
@@ -64,7 +64,7 @@ response = Message(
 # The score table has a foreign key on the message, so write it to memory first.
 CentralMemory.get_memory_instance().add_message_to_memory(request=response)
 
-scores = await azure_content_filter.score_async(response)  # type: ignore
+scores = await azure_content_filter.score_async(scorable=MessageScorable.from_message(response))  # type: ignore
 for score in scores:
     # One score per harm category; score_metadata holds the original 0-7 severity.
     print(f"{score.score_category}: value={score.get_value()} metadata={score.score_metadata}")
@@ -117,6 +117,33 @@ leak_score = (await system_prompt_scorer.score_async(response))[0]  # type: igno
 print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 
 # %% [markdown]
+# ### RobloxPiiScorer
+#
+# `RobloxPiiScorer` runs [Roblox PII Classifier v2](https://huggingface.co/Roblox/roblox-pii-classifier-v2) locally and emits one `float_scale` score for each model category:
+#
+# - `privacy_asking_for_pii`
+# - `privacy_giving_pii`
+# - `directing_users_off_platform`
+#
+# Install the local runtime with `pip install "pyrit[huggingface]"`. The scorer uses a pinned model revision and reads `HUGGINGFACE_TOKEN` when authentication is needed. Construction is lightweight; the first scoring call downloads the roughly 2.2 GB model into the standard Hugging Face cache and loads it into memory. Applications can call `await scorer.load_model_async()` during startup to warm it.
+#
+# The values are uncalibrated sigmoid model scores in `[0, 1]`; this float scorer does not apply policy thresholds. The model card recommends `0.60` for asking, `0.55` for giving, and `0.10` for directing users off-platform. Validate those cutoffs against your own traffic before using them as decisions.
+#
+# For persisted `MessageScorable` evidence, the scorer formats chat history through the selected turn and treats that turn's role as target `t`. Later turns are excluded, so each score remains linked to one message and the context available at that point.
+#
+# Inspect all three categories rather than assuming that platform names map only to `directing_users_off_platform`: requests for handles often score as asking for PII, while sharing a handle often scores as giving PII.
+
+# %%
+from pyrit.score import RobloxPiiScorer
+
+scorer = RobloxPiiScorer()
+await scorer.load_model_async()  # optional warm-up
+scores = await scorer.score_text_async(text="add me on Discord; my username is skyfox_4821")
+
+for score in scores:
+    print(score.score_category, score.get_value())
+
+# %% [markdown]
 # ## Slow scorers (LLM self-ask)
 #
 # These ask a chat target to rate a response on a scale, then normalize the rating to 0–1.
@@ -146,7 +173,7 @@ print(f"[likert] benign text    -> {low.get_value()} ({low.score_value_descripti
 #
 # Rates how risky a code snippet is, flagging vulnerabilities like injection or weak auth.
 # %%
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, MessageScorable
 from pyrit.score import InsecureCodeScorer
 
 insecure_code_scorer = InsecureCodeScorer.from_harm_categories(chat_target=OpenAIChatTarget())
@@ -159,7 +186,7 @@ def authenticate_user(username, password):
 request = MessagePiece(role="assistant", original_value=snippet, conversation_id=str(uuid4())).to_message()
 insecure_code_scorer._memory.add_message_to_memory(request=request)
 
-scored = (await insecure_code_scorer.score_async(request))[0]  # type: ignore
+scored = (await insecure_code_scorer.score_async(scorable=MessageScorable.from_message(request)))[0]  # type: ignore
 print(f"[insecure code] risk={scored.get_value()}")
 print(f"rationale: {scored.score_rationale}")
 

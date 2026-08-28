@@ -147,7 +147,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             str | None: Resolved SAS token or None if not provided.
         """
         try:
-            return default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)
+            value = default_values.get_required_value(env_var_name=env_var_name, passed_value=passed_value)
+            # get_required_value() is typed to return Any because it can also preserve callables
+            # (e.g. token providers). This call site only ever passes a str | None, so the
+            # runtime value is guaranteed to be a str.
+            resolved_value: str = value
+            return resolved_value
         except ValueError:
             return None
 

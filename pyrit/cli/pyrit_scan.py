@@ -18,8 +18,11 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_args, get_origin
+from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
 
+import aiofiles
+
+from pyrit.cli._auth import AUTH_MODES, AuthMode
 from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
@@ -113,9 +116,11 @@ Examples:
   pyrit_scan run airt.rapid_response --target openai_chat
     --techniques role_play_movie_script:converter.translation_spanish:converter.leetspeak
 
-  # List recent runs, then inspect one (overview by default; --view attacks for per-attack rows)
+  # List recent runs, then inspect one (overview by default; --view attacks for per-attack rows,
+  # --view conversations/full for message transcripts)
   pyrit_scan scenario-history 20
   pyrit_scan scenario-results 605d715b-7c07-4bde-a8f9-22fea0b50c4f --view attacks
+  pyrit_scan scenario-results 605d715b-7c07-4bde-a8f9-22fea0b50c4f --view conversations --limit 3
 
   # Register a custom initializer from a Python script
   pyrit_scan add-initializer ./my_custom_init.py
@@ -156,6 +161,10 @@ _REQUEST_TIMEOUT_HELP = (
     "(catalog/results/cancel/etc). Defaults to 60. Polling a live "
     "scenario run always waits indefinitely regardless of this value."
 )
+_AUTH_MODE_HELP = (
+    "Backend authentication mode (default: server.auth_mode or auto). "
+    "Auto uses exact-scope device-code authentication in an interactive terminal."
+)
 
 
 def _add_common_options(*, parser: ArgumentParser, suppress_defaults: bool) -> None:
@@ -177,6 +186,7 @@ def _add_common_options(*, parser: ArgumentParser, suppress_defaults: bool) -> N
     group = parser.add_argument_group("global options")
     group.add_argument("--server-url", type=str, default=default, help=_SERVER_URL_HELP)
     group.add_argument("--config-file", type=Path, default=default, help=_CONFIG_FILE_HELP)
+    group.add_argument("--auth-mode", choices=AUTH_MODES, default=default, help=_AUTH_MODE_HELP)
     group.add_argument("--log-level", type=validate_log_level_argparse, default=log_default, help=_LOG_LEVEL_HELP)
 
 
@@ -394,7 +404,7 @@ def _discover_verbs() -> frozenset[str]:
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             return frozenset(action.choices)
-    return frozenset()
+    return frozenset[str]()
 
 
 #: Every valid subcommand verb (used by the legacy-argv shim to detect new-style calls).
@@ -634,12 +644,17 @@ async def _resolve_server_url_async(*, parsed_args: Namespace) -> str | None:
 
     Returns:
         str | None: The server base URL, or ``None`` if unreachable.
+
+    Raises:
+        TypeError: If the configured server URL is not a string.
     """
     from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_settings
     from pyrit.cli._server_launcher import ServerLauncher, parse_local_server_address
 
     server_settings = read_server_settings(config_file=parsed_args.config_file)
     base_url = parsed_args.server_url or server_settings.url or DEFAULT_SERVER_URL
+    if not isinstance(base_url, str):
+        raise TypeError(f"Configured server URL must be a string, got {type(base_url).__name__}")
     startup_timeout = getattr(parsed_args, "startup_timeout", None) or server_settings.startup_timeout
 
     # Probe existing server
@@ -679,10 +694,37 @@ def _resolve_configured_server_url(*, parsed_args: Namespace) -> str:
 
     Returns:
         str: The configured server URL, falling back to the built-in default.
+
+    Raises:
+        TypeError: If the configured server URL is not a string.
     """
     from pyrit.cli._config_reader import DEFAULT_SERVER_URL, read_server_url
 
-    return parsed_args.server_url or read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
+    server_url = parsed_args.server_url or read_server_url(config_file=parsed_args.config_file) or DEFAULT_SERVER_URL
+    if not isinstance(server_url, str):
+        raise TypeError(f"Configured server URL must be a string, got {type(server_url).__name__}")
+    return server_url
+
+
+def _resolve_auth_mode(*, parsed_args: Namespace) -> AuthMode:
+    """
+    Resolve the authentication mode from CLI and layered configuration.
+
+    Returns:
+        The selected authentication mode.
+
+    Raises:
+        ValueError: If an unsupported mode is supplied programmatically.
+    """
+    from pyrit.cli._config_reader import read_server_settings
+
+    configured_mode = read_server_settings(config_file=parsed_args.config_file).auth_mode
+    raw_auth_mode = getattr(parsed_args, "auth_mode", None)
+    if raw_auth_mode is None:
+        return configured_mode
+    if raw_auth_mode not in AUTH_MODES:
+        raise ValueError(f"Unsupported authentication mode: {raw_auth_mode}")
+    return cast("AuthMode", raw_auth_mode)
 
 
 async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
@@ -750,12 +792,13 @@ async def _handle_add_initializer_async(*, client: Any, parsed_args: Namespace) 
     from pyrit.cli.api_client import ServerNotAvailableError
 
     for script_path_str in parsed_args.files:
-        script_path = Path(script_path_str).resolve()
-        if not script_path.exists():
+        script_path = await asyncio.to_thread(Path(script_path_str).resolve)
+        if not await asyncio.to_thread(script_path.exists):
             print(f"Error: File not found: {script_path}")
             return 1
         try:
-            script_content = script_path.read_text()
+            async with aiofiles.open(script_path) as script_file:
+                script_content = await script_file.read()
             await client.register_initializer_async(
                 name=script_path.stem,
                 script_content=script_content,
@@ -776,11 +819,16 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     """
     from pyrit.cli import _output
     from pyrit.cli._cli_args import ScenarioResultView
-    from pyrit.cli._results import apply_view_limit_policy, build_attacks_table_payload, resolve_view
+    from pyrit.cli._results import (
+        apply_view_limit_policy,
+        build_attacks_table_payload,
+        build_conversations_payload_async,
+        resolve_view,
+    )
 
     scenario_result_id = parsed_args.scenario_result_id
     view = resolve_view(view=parsed_args.view)
-    limit = apply_view_limit_policy(view=view, limit=parsed_args.limit)
+    limit = apply_view_limit_policy(view=view, limit=parsed_args.limit, attack_result_ids=parsed_args.attack_result_ids)
 
     try:
         result = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
@@ -792,13 +840,29 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
         await _output.print_scenario_result_async(result=result)
         return 0
 
-    payload = build_attacks_table_payload(
-        result=result,
-        scenario_result_id=scenario_result_id,
-        attack_result_ids=parsed_args.attack_result_ids,
-        limit=limit,
-    )
-    _output.print_attacks_table(payload=payload)
+    if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
+        attacks_payload = build_attacks_table_payload(
+            result=result,
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=parsed_args.attack_result_ids,
+            limit=limit,
+        )
+        _output.print_attacks_table(payload=attacks_payload)
+        if view is ScenarioResultView.ATTACKS:
+            return 0
+
+    try:
+        conversations_payload = await build_conversations_payload_async(
+            result=result,
+            client=client,
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=parsed_args.attack_result_ids,
+            limit=limit,
+        )
+    except Exception as exc:
+        _print_cli_exception(exc=exc)
+        return 1
+    _output.print_conversations(payload=conversations_payload)
     return 0
 
 
@@ -918,7 +982,7 @@ async def _poll_until_terminal_async(
 
     seen_retry_attack_ids: set[str] = set()
     while True:
-        run = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
+        run: ScenarioRunSummary = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
         _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen_retry_attack_ids)
         _output.print_scenario_run_progress(run=run, total_techniques=total_techniques)
         if run.status in terminal_states:
@@ -1034,9 +1098,17 @@ async def _dispatch_with_client_async(*, client: Any, parsed_args: Namespace) ->
 
     Returns:
         int: Exit code from the dispatched command.
+
+    Raises:
+        TypeError: If the dispatched handler returns a non-int exit code.
     """
     handler = _CLIENT_HANDLERS[parsed_args.command]
-    return await handler(client=client, parsed_args=parsed_args)
+    result = await handler(client=client, parsed_args=parsed_args)
+    if not isinstance(result, int):
+        raise TypeError(
+            f"Handler for '{parsed_args.command}' must return an int exit code, got {type(result).__name__}"
+        )
+    return result
 
 
 async def _run_async(*, parsed_args: Namespace) -> int:
@@ -1076,6 +1148,7 @@ async def _run_async(*, parsed_args: Namespace) -> int:
         async with PyRITApiClient(
             base_url=base_url_result,
             request_timeout=getattr(parsed_args, "request_timeout", None),
+            auth_mode=_resolve_auth_mode(parsed_args=parsed_args),
         ) as client:
             return await _dispatch_with_client_async(client=client, parsed_args=parsed_args)
     except ServerNotAvailableError as exc:

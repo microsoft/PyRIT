@@ -67,6 +67,13 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
 
     _DISCOVERY_PACKAGE = "pyrit.scenario.scenarios"
 
+    def _discover(self) -> None:
+        """Materialize every built-in scenario before subclass discovery."""
+        from pyrit.scenario.scenarios import _materialize_scenarios
+
+        _materialize_scenarios()
+        super()._discover()
+
     def _identifier_type(self) -> type[ComponentIdentifier] | None:
         """Return ``ScenarioIdentifier`` so ``Param.*`` markers drive derivation."""
         return ScenarioIdentifier

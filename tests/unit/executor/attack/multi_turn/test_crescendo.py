@@ -458,12 +458,14 @@ class TestCrescendoAttackInitialization:
         """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
         from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
-        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: (
-            capability != CapabilityName(missing_capability)
-        )
+        missing = {
+            "multi_turn": CapabilityName.MULTI_TURN,
+            "system_prompt": CapabilityName.SYSTEM_PROMPT,
+        }[missing_capability]
+        mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: capability != missing
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
 
-        with pytest.raises(ValueError, match=f"CrescendoAttack .*{missing_capability}"):
+        with pytest.raises(ValueError, match=f"supports_{missing_capability}"):
             CrescendoAttack(
                 objective_target=mock_objective_target,
                 attack_adversarial_config=adversarial_config,
@@ -1224,10 +1226,10 @@ class TestResponseScoring:
 
         await attack._check_refusal_async(context=basic_context, objective="test task")
 
-        # Verify score_async was called with skip_on_error_result=False
+        # Verify message policy does not skip error results
         mock_refusal_scorer.score_async.assert_called_once()
-        call_kwargs = mock_refusal_scorer.score_async.call_args.kwargs
-        assert call_kwargs.get("skip_on_error_result") is False, (
+        message_options = mock_refusal_scorer.score_async.call_args.kwargs["message_options"]
+        assert message_options.skip_on_error_result is False, (
             "Refusal scorer must be called with skip_on_error_result=False "
             "to ensure error responses are scored (treated as refusals) rather than skipped"
         )
