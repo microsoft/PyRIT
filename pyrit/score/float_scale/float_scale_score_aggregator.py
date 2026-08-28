@@ -31,6 +31,53 @@ def _float_values(scores: list[Score]) -> list[float] | None:
         return None
 
 
+def _empty_result(*, name: str) -> ScoreAggregatorResult:
+    """
+    Build the neutral result for an aggregation that received no scores.
+
+    Args:
+        name (str): Name of the aggregator variant.
+
+    Returns:
+        ScoreAggregatorResult: A zero-valued result that names the aggregator.
+    """
+    return ScoreAggregatorResult(
+        value=0.0,
+        description=f"No scores provided to {name} composite scorer.",
+        rationale="",
+        metadata={},
+        category=[],
+    )
+
+
+def _undetermined_result(
+    scores: list[Score],
+    *,
+    name: str,
+    metadata: dict,
+    category: list[str],
+) -> ScoreAggregatorResult:
+    """
+    Build the result for an aggregation whose constituents did not all reach a verdict.
+
+    Args:
+        scores (list[Score]): The constituent scores, reported in the rationale.
+        name (str): Name of the aggregator variant.
+        metadata (dict): Combined metadata of the constituents.
+        category (list[str]): Combined categories of the constituents.
+
+    Returns:
+        ScoreAggregatorResult: A result with no value that explains why.
+    """
+    return ScoreAggregatorResult(
+        value=None,
+        description=f"No verdict was reachable in a {name} composite scorer.",
+        rationale="\n".join(format_score_for_rationale(s) for s in scores),
+        metadata=metadata,
+        category=category,
+    )
+
+
 def _build_rationale(scores: list[Score], *, aggregate_description: str) -> tuple[str, str]:
     """
     Build description and rationale for aggregated scores.
@@ -87,28 +134,12 @@ def _create_aggregator(
             if raise_on_empty:
                 raise ValueError("No scores available for aggregation")
             # No scores; return a neutral result
-            return [
-                ScoreAggregatorResult(
-                    value=0.0,
-                    description=f"No scores provided to {name} composite scorer.",
-                    rationale="",
-                    metadata={},
-                    category=[],
-                )
-            ]
+            return [_empty_result(name=name)]
 
         metadata, category = combine_metadata_and_categories(scores_list)
         float_values = _float_values(scores_list)
         if float_values is None:
-            return [
-                ScoreAggregatorResult(
-                    value=None,
-                    description=f"No verdict was reachable in a {name} composite scorer.",
-                    rationale="\n".join(format_score_for_rationale(s) for s in scores_list),
-                    metadata=metadata,
-                    category=category,
-                )
-            ]
+            return [_undetermined_result(scores_list, name=name, metadata=metadata, category=category)]
         result = result_func(float_values)
 
         # Clamp result to [0, 1] defensively
@@ -217,30 +248,14 @@ def _create_aggregator_by_category(
 
         if not scores_list:
             # No scores; return a neutral result
-            return [
-                ScoreAggregatorResult(
-                    value=0.0,
-                    description=f"No scores provided to {name} composite scorer.",
-                    rationale="",
-                    metadata={},
-                    category=[],
-                )
-            ]
+            return [_empty_result(name=name)]
 
         if not group_by_category:
             # Original behavior: aggregate all scores together
             metadata, category = combine_metadata_and_categories(scores_list)
             float_values = _float_values(scores_list)
             if float_values is None:
-                return [
-                    ScoreAggregatorResult(
-                        value=None,
-                        description=f"No verdict was reachable in a {name} composite scorer.",
-                        rationale="\n".join(format_score_for_rationale(s) for s in scores_list),
-                        metadata=metadata,
-                        category=category,
-                    )
-                ]
+                return [_undetermined_result(scores_list, name=name, metadata=metadata, category=category)]
             result = result_func(float_values)
             result = max(0.0, min(1.0, result))
 
@@ -281,13 +296,7 @@ def _create_aggregator_by_category(
             float_values = _float_values(category_scores)
             if float_values is None:
                 results.append(
-                    ScoreAggregatorResult(
-                        value=None,
-                        description=f"No verdict was reachable in a {name} composite scorer.",
-                        rationale="\n".join(format_score_for_rationale(s) for s in category_scores),
-                        metadata=metadata,
-                        category=category_list,
-                    )
+                    _undetermined_result(category_scores, name=name, metadata=metadata, category=category_list)
                 )
                 continue
             result = result_func(float_values)

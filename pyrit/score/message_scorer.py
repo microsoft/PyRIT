@@ -92,6 +92,28 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     )
 
 
+def _readable_pieces(*, message: Message, should_score_blocked_content: bool) -> list[MessagePiece]:
+    """
+    Select the pieces of a message that a scorer can read.
+
+    This is the one place that decides what "readable" means. Every caller that asks whether a
+    message is readable, or that needs the readable pieces themselves, goes through here, so the
+    two questions cannot drift apart.
+
+    Args:
+        message (Message): The message to filter.
+        should_score_blocked_content (bool): Whether content emitted before a block counts as readable.
+
+    Returns:
+        list[MessagePiece]: The pieces worth scoring, in their original order.
+    """
+    return [
+        piece
+        for piece in message.message_pieces
+        if _piece_has_readable_content(piece=piece, should_score_blocked_content=should_score_blocked_content)
+    ]
+
+
 def message_has_readable_content(*, message: Message, should_score_blocked_content: bool) -> bool:
     """
     Decide whether a message carries anything a scorer can read.
@@ -108,10 +130,7 @@ def message_has_readable_content(*, message: Message, should_score_blocked_conte
     Returns:
         bool: True when at least one piece is worth scoring.
     """
-    return any(
-        _piece_has_readable_content(piece=piece, should_score_blocked_content=should_score_blocked_content)
-        for piece in message.message_pieces
-    )
+    return bool(_readable_pieces(message=message, should_score_blocked_content=should_score_blocked_content))
 
 
 def _piece_has_readable_content(*, piece: MessagePiece, should_score_blocked_content: bool) -> bool:
@@ -149,6 +168,12 @@ class MessageScorer(Scorer):
 
     #: When True, a blocked response that still carries content the target emitted before the
     #: block is scored on that content. Turn off to treat any block as unreadable.
+    #:
+    #: This defaults to True, where the former ``score_blocked_content`` defaulted to False. The
+    #: change is deliberate. Partial content is text the target actually produced, so discarding
+    #: it reported a refusal the target never made and understated attack success. A block is a
+    #: transport outcome, not a verdict, and reading the content the target emitted keeps the
+    #: verdict with the scorer. Set this to False to score only responses that were never blocked.
     should_score_blocked_content: bool = True
 
     def __init__(
@@ -525,9 +550,13 @@ class MessageScorer(Scorer):
         if response.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
-        if isinstance(scorer, MessageScorer) and skip_on_error_result and not message_has_readable_content(
-            message=response,
-            should_score_blocked_content=scorer.should_score_blocked_content,
+        if (
+            isinstance(scorer, MessageScorer)
+            and skip_on_error_result
+            and not message_has_readable_content(
+                message=response,
+                should_score_blocked_content=scorer.should_score_blocked_content,
+            )
         ):
             return []
         return await scorer.score_async(
@@ -662,6 +691,13 @@ class MessageScorer(Scorer):
         """
         objective = expectation.objective if expectation else None
 
+        if options.role_filter is not None and message.message_pieces[0].role != options.role_filter:
+            logger.debug("Skipping scoring due to role filter mismatch.")
+            return []
+
+        # This gate runs before _build_scoring_message because that method is an override hook:
+        # a wrapper may keep a piece the filter would drop. Both use _readable_pieces, so the
+        # gate and the filter agree on what "readable" means.
         if options.skip_on_error_result and not message_has_readable_content(
             message=message,
             should_score_blocked_content=self.should_score_blocked_content,
@@ -669,10 +705,6 @@ class MessageScorer(Scorer):
             return []
 
         scoring_message = self._build_scoring_message(message=message)
-
-        if options.role_filter is not None and message.message_pieces[0].role != options.role_filter:
-            logger.debug("Skipping scoring due to role filter mismatch.")
-            return []
 
         if infer_objective_from_request and (not objective):
             objective = extract_objective_from_previous_turn(message=message, memory=self._memory)
@@ -825,8 +857,12 @@ class MessageScorer(Scorer):
         keeping only when readable content sits behind it, and that content is exactly what the
         scorer is handed. A structured refusal becomes its refusal text but stays marked
         blocked, so refusal scorers keep their deterministic path; content emitted before a
-        block becomes ordinary text once the scorer opts into reading it. A wrapper that uses
-        the message only to locate wider evidence can override this method.
+        block becomes ordinary text once the scorer opts into reading it.
+
+        This shares ``_readable_pieces`` with the caller's ``skip_on_error_result`` gate, so the
+        two agree on what is readable. It stays a separate step because it is an override hook:
+        a wrapper that uses the message only to locate wider evidence keeps a piece this filter
+        would drop (see ``ConversationScorer``), and the gate still runs before that override.
 
         Args:
             message (Message): The acquired message.
@@ -834,19 +870,15 @@ class MessageScorer(Scorer):
         Returns:
             Message | None: The message to score, or None when no piece is readable.
         """
-        readable_pieces = [
-            piece
-            for piece in message.message_pieces
-            if _piece_has_readable_content(
-                piece=piece,
-                should_score_blocked_content=self.should_score_blocked_content,
-            )
-        ]
-        if not readable_pieces:
+        pieces = _readable_pieces(
+            message=message,
+            should_score_blocked_content=self.should_score_blocked_content,
+        )
+        if not pieces:
             logger.debug("Skipping scoring: every piece of the message errored with nothing behind it.")
             return None
 
-        scoring_message = Message(message_pieces=readable_pieces)
+        scoring_message = Message(message_pieces=pieces)
         scoring_message = self._apply_structured_refusal_substitution(scoring_message)
         if self.should_score_blocked_content:
             scoring_message = self._apply_blocked_content_substitution(scoring_message)

@@ -484,16 +484,27 @@ class ScorerEvaluator(abc.ABC):
         """
         Select the one score that corresponds to a labeled response.
 
+        A lone score is taken as the answer, because most scorers report one verdict and leave
+        ``score_category`` empty. It is rejected only when it names categories and the labeled
+        harm is not among them, which is a real mismatch rather than a missing label.
+
         Returns:
             Score | None: The selected score, or None if the scorer returned no scores.
 
         Raises:
-            ValueError: If multiple scores do not contain one unique category match.
+            ValueError: If the scores do not hold exactly one match for the labeled harm.
         """
         if not scores:
             return None
+
         if len(scores) == 1:
-            return scores[0]
+            categories = scores[0].score_category or []
+            if harm_category is None or not categories or harm_category in categories:
+                return scores[0]
+            raise ValueError(
+                f"Scorer evaluation requires a score for harm category '{harm_category}', "
+                f"but the single score returned is categorized as {categories}."
+            )
 
         category_matches = [
             score for score in scores if harm_category is not None and harm_category in (score.score_category or [])

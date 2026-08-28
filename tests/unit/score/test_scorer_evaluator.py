@@ -83,7 +83,10 @@ async def test_evaluate_dataset_async_harm(mock_harm_scorer):
         harm_definition_version="1.0",
     )
     # Patch scorer to return fixed scores
-    entry_values = [MagicMock(get_value=lambda: 0.2), MagicMock(get_value=lambda: 0.4)]
+    entry_values = [
+        MagicMock(get_value=lambda: 0.2, score_category=["hate_speech"]),
+        MagicMock(get_value=lambda: 0.4, score_category=["hate_speech"]),
+    ]
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(return_value=[[score] for score in entry_values])
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
@@ -658,7 +661,7 @@ async def test_evaluate_dataset_async_harm_passes_harm_definition_version(mock_h
         harm_definition="hate_speech.yaml",
         harm_definition_version="1.0",
     )
-    entry_values = [MagicMock(get_value=lambda: 0.3)]
+    entry_values = [MagicMock(get_value=lambda: 0.3, score_category=["hate_speech"])]
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(return_value=[[score] for score in entry_values])
 
@@ -717,9 +720,9 @@ async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(
         return_value=[
-            [MagicMock(get_value=lambda: 0.2)],
-            [MagicMock(get_value=lambda: 0.2)],
-            [MagicMock(get_value=lambda: 0.2)],
+            [MagicMock(get_value=lambda: 0.2, score_category=["hate_speech"])],
+            [MagicMock(get_value=lambda: 0.2, score_category=["hate_speech"])],
+            [MagicMock(get_value=lambda: 0.2, score_category=["hate_speech"])],
         ]
     )
     dataset_files = ScorerEvalDatasetFiles(
@@ -784,7 +787,10 @@ async def test_run_evaluation_async_combines_mixed_dataset_versions(
 
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(
-        return_value=[[MagicMock(get_value=lambda: 0.2)], [MagicMock(get_value=lambda: 0.2)]]
+        return_value=[
+            [MagicMock(get_value=lambda: 0.2, score_category=["violence"])],
+            [MagicMock(get_value=lambda: 0.2, score_category=["violence"])],
+        ]
     )
     dataset_files = ScorerEvalDatasetFiles(
         human_labeled_datasets_files=["harm/*.csv"],
@@ -941,3 +947,41 @@ def test_write_metrics_to_registry_returns_early_when_eval_hash_is_none(mock_rep
     evaluator._write_metrics_to_registry(metrics=metrics, result_file_path=result_file)
 
     mock_replace.assert_not_called()
+
+
+class TestSelectEvaluationScore:
+    """Cover how the evaluator picks the one score that matches a labeled response."""
+
+    @staticmethod
+    def _score(*, category: list[str] | None) -> Score:
+        return Score(score_type="float_scale", score_value="0.5", score_category=category)
+
+    def test_returns_none_when_the_scorer_returned_nothing(self):
+        assert ScorerEvaluator._select_evaluation_score(scores=[], harm_category="hate_speech") is None
+
+    def test_accepts_a_lone_score_that_names_no_category(self):
+        score = self._score(category=None)
+        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="hate_speech") is score
+
+    def test_accepts_a_lone_score_when_no_harm_category_is_labeled(self):
+        score = self._score(category=["violence"])
+        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category=None) is score
+
+    def test_accepts_a_lone_score_that_matches_the_labeled_harm(self):
+        score = self._score(category=["hate_speech"])
+        assert ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="hate_speech") is score
+
+    def test_rejects_a_lone_score_that_names_a_different_harm(self):
+        score = self._score(category=["violence"])
+        with pytest.raises(ValueError, match="requires a score for harm category 'hate_speech'"):
+            ScorerEvaluator._select_evaluation_score(scores=[score], harm_category="hate_speech")
+
+    def test_picks_the_single_category_match_from_several_scores(self):
+        match = self._score(category=["hate_speech"])
+        other = self._score(category=["violence"])
+        assert ScorerEvaluator._select_evaluation_score(scores=[other, match], harm_category="hate_speech") is match
+
+    def test_rejects_several_scores_with_no_category_match(self):
+        scores = [self._score(category=["violence"]), self._score(category=["self_harm"])]
+        with pytest.raises(ValueError, match="requires exactly one score per response"):
+            ScorerEvaluator._select_evaluation_score(scores=scores, harm_category="hate_speech")
