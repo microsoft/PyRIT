@@ -9,7 +9,6 @@ from unit.mocks import store_message
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     ComponentIdentifier,
-    ContentEntryScorable,
     MatchesObjective,
     Message,
     MessagePiece,
@@ -19,13 +18,11 @@ from pyrit.models import (
 from pyrit.score import (
     MessageFloatScaleScorer,
     MessageScorable,
-    MessageScorer,
     MessageTrueFalseScorer,
     ScorerPromptValidator,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.message_scorer import MessageScoringOptions
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -248,31 +245,6 @@ async def test_composite_scorer_anchors_where_its_children_anchored(true_scorer,
     assert str(scores[0].message_piece_id) == str(message.get_piece().id)
 
 
-async def test_composite_delegates_partial_blocked_content_policy(true_scorer, patch_central_database):
-    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
-    blocked_response = store_message(
-        MessagePiece(
-            role="assistant",
-            original_value='{"message": "content_filter"}',
-            converted_value='{"message": "content_filter"}',
-            original_value_data_type="error",
-            converted_value_data_type="error",
-            response_error="blocked",
-            prompt_metadata={"partial_content": "readable partial response"},
-        ).to_message()
-    )
-
-    result = await MessageScorer.score_response_async(
-        response=blocked_response,
-        objective_scorer=scorer,
-        objective="test objective",
-        skip_on_error_result=True,
-    )
-
-    assert len(result["objective_scores"]) == 1
-    assert result["objective_scores"][0].get_value() is True
-
-
 def test_get_chat_target_returns_first_available(patch_central_database):
     """get_chat_target returns the target from the first sub-scorer that has one."""
     mock_target = MagicMock()
@@ -298,73 +270,3 @@ def test_get_chat_target_returns_none_when_no_sub_scorer_has_target(patch_centra
         scorers=[scorer1, scorer2],
     )
     assert composite.get_chat_target() is None
-
-
-async def test_composite_legacy_message_call_uses_message_capable_children(true_scorer):
-    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
-    message = MessagePiece(role="assistant", original_value="ephemeral response").to_message()
-
-    with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
-        scores = await scorer.score_async(message=message, objective="legacy objective")
-
-    assert len(scores) == 1
-    assert scores[0].get_value() is True
-    assert scores[0].message_piece_id is None
-    assert isinstance(scores[0].scorable, ContentEntryScorable)
-    memory = CentralMemory.get_memory_instance()
-    resolved = memory.get_scorable_content(content_ids=[scores[0].scorable.content_id])
-    assert resolved[scores[0].scorable.content_id].value == "ephemeral response"
-    assert true_scorer.received_expectations[-1] == ScoringExpectation(objective="legacy objective")
-
-
-async def test_composite_score_message_async_applies_message_options(true_scorer):
-    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
-    message = MessagePiece(role="user", original_value="request").to_message()
-
-    scores = await scorer.score_message_async(
-        message=message,
-        message_options=MessageScoringOptions(role_filter="assistant"),
-    )
-
-    assert scores == []
-
-
-async def test_composite_legacy_batch_infers_objective_and_skips_errors(true_scorer):
-    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
-    conversation_id = "legacy-batch"
-    store_message(
-        MessagePiece(
-            role="user",
-            original_value="inferred objective",
-            conversation_id=conversation_id,
-            sequence=0,
-        ).to_message()
-    )
-    response = store_message(
-        MessagePiece(
-            role="assistant",
-            original_value="response",
-            conversation_id=conversation_id,
-            sequence=1,
-        ).to_message()
-    )
-
-    scores = await scorer.score_prompts_batch_async(
-        messages=[response],
-        infer_objective_from_request=True,
-    )
-
-    assert len(scores) == 1
-    assert true_scorer.received_expectations[-1] == ScoringExpectation(objective="inferred objective")
-
-    error_message = MessagePiece(
-        role="assistant",
-        original_value="",
-        converted_value_data_type="error",
-        response_error="blocked",
-    ).to_message()
-    skipped_scores = await scorer.score_prompts_batch_async(
-        messages=[error_message],
-        skip_on_error_result=True,
-    )
-    assert skipped_scores == []

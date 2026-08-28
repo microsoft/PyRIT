@@ -1095,6 +1095,13 @@ class _TreeOfAttacksNode:
         max_retries = get_retry_max_num_attempts()
         for attempt in range(max_retries):
             topic_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
+            if topic_score.is_undetermined:
+                logger.info(
+                    f"Node {self.node_id}: On-topic scorer could not reach a verdict; "
+                    "continuing without off-topic pruning"
+                )
+                return prompt
+
             is_on_topic = score_is_true(topic_score)
 
             if is_on_topic:
@@ -1119,6 +1126,13 @@ class _TreeOfAttacksNode:
 
         # Final check after all retries
         final_topic_score = (await self._on_topic_scorer.score_text_async(text=prompt))[0]
+        if final_topic_score.is_undetermined:
+            logger.info(
+                f"Node {self.node_id}: On-topic scorer could not reach a verdict after retries; "
+                "continuing without off-topic pruning"
+            )
+            return prompt
+
         is_on_topic = score_is_true(final_topic_score)
         if not is_on_topic:
             logger.info(f"Node {self.node_id}: Prompt still off-topic after {max_retries} retries, pruning branch")

@@ -771,6 +771,31 @@ class TestAttackExecution:
         assert result.last_response == sample_response.get_piece()
         assert attack._send_prompt_to_objective_target_async.call_count == 2
 
+    async def test_retry_without_response_does_not_reuse_previous_score(
+        self,
+        mock_target,
+        mock_true_false_scorer,
+        basic_context,
+        sample_response,
+        failure_score,
+    ):
+        attack = PromptSendingAttack(
+            objective_target=mock_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
+            max_attempts_on_failure=1,
+        )
+        attack._get_prompt_group = MagicMock(
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
+        )
+        attack._send_prompt_to_objective_target_async = AsyncMock(side_effect=[sample_response, None])
+        attack._evaluate_response_async = AsyncMock(return_value=failure_score)
+
+        result = await attack._perform_async(context=basic_context)
+
+        assert result.last_response is None
+        assert result.last_score is None
+        assert result.outcome is AttackOutcome.FAILURE
+
     async def test_perform_async_sets_atomic_attack_identifier(self, mock_target, basic_context, sample_response):
         """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)

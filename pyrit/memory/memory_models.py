@@ -1197,6 +1197,7 @@ class ScoreEntry(Base):
         Args:
             entry (Score): The score object to convert into a database entry.
         """
+        entry = Score.model_validate(entry.model_dump())
         self.id = entry.id
         self.score_value = entry.score_value
         self.score_value_description = entry.score_value_description

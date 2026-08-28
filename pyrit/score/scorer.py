@@ -115,68 +115,6 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
             cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
 
     cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
-    _lend_legacy_message_api(cls)
-
-
-async def _legacy_score_prepared_message_async(
-    self: Scorer,
-    *,
-    message: Message,
-    expectation: ScoringExpectation | None,
-) -> list[Score]:
-    """
-    Run a pre-2.0 scorer body over a message the compatibility adapter already prepared.
-
-    Returns:
-        list[Score]: The scores the legacy scorer body produced.
-    """
-    legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
-    scores: list[Score] = await legacy_score_async(message, objective=expectation.objective if expectation else None)
-    return scores
-
-
-def _lend_legacy_message_api(cls: type) -> None:
-    """
-    Give a pre-2.0 subclass back the message entry points its family base used to carry.
-
-    ``TrueFalseScorer`` and ``FloatScaleScorer`` no longer run the message pipeline, so a
-    subclass written against the pre-2.0 shape would otherwise lose ``score_async(message=...)``,
-    ``score_message_async``, ``score_prompts_batch_async`` and its default validator. Lend it
-    the compatibility mixin's implementations, then register it so the wrappers that dispatch
-    on ``LegacyMessageScorerCompatibility`` accept it as a child.
-    """
-    from pyrit.score.message_scorer import LegacyMessageScorerCompatibility
-    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-
-    def defines_before_scorer(name: str) -> bool:
-        for base in cls.__mro__:
-            if base is Scorer:
-                return False
-            if name in base.__dict__:
-                return True
-        return False
-
-    lent: dict[str, Any] = {
-        name: LegacyMessageScorerCompatibility.__dict__[name]
-        for name in (
-            "score_async",
-            "score_message_async",
-            "score_prompts_batch_async",
-            "_get_message_compatibility_adapter",
-            "_score_nested_message_compatibility_async",
-        )
-    }
-    lent["_score_prepared_message_compatibility_async"] = _legacy_score_prepared_message_async
-    lent["should_score_blocked_content"] = True
-    # The pre-2.0 family base defaulted the validator, so a subclass that passes none still
-    # needs one. An instance assignment in the subclass shadows this class-level default.
-    lent["_validator"] = ScorerPromptValidator()
-
-    for name, member in lent.items():
-        if not defines_before_scorer(name):
-            setattr(cls, name, member)
-
-    LegacyMessageScorerCompatibility.register(cls)
 
 
 class Scorer(Identifiable, abc.ABC):

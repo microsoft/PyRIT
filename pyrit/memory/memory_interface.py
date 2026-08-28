@@ -1990,7 +1990,22 @@ class MemoryInterface(abc.ABC):
             batch_values=list(original_ids),
             other_conditions=[],
         )
-        return [entry.get_score() for entry in score_entries]
+        entries_by_id = {entry.id: entry for entry in score_entries}
+
+        original_id_values = [str(original_id) for original_id in original_ids]
+        json_batch_size = max(1, self._MAX_BIND_VARS - 1)
+        for start in range(0, len(original_id_values), json_batch_size):
+            batch = original_id_values[start : start + json_batch_size]
+            scorable_condition = self._get_condition_json_array_match(
+                json_column=ScoreEntry.scorable,
+                property_path="$.message_piece_ids",
+                array_to_match=batch,
+                match_mode="any",
+            )
+            anchored_entries = self._query_entries(ScoreEntry, conditions=scorable_condition)
+            entries_by_id.update({entry.id: entry for entry in anchored_entries})
+
+        return [entry.get_score() for entry in entries_by_id.values()]
 
     def get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
         """

@@ -108,9 +108,9 @@ print(df.to_string(index=False))
 # subclass that evaluates a whole conversation.
 #
 # Generic family scorers consume a `Scorable` without assuming that it resolves to a
-# message. Message scorers also support message-specific entry points and policy. A generic
-# wrapper can contain scorers for any evidence kind, but its message and conversation helpers
-# work only when every scorer in the wrapped path is message-capable. See
+# message. Message scorers also support message-specific entry points and policy. Generic
+# wrappers do not inherit those message APIs from their children; use their canonical
+# `score_async(scorable=..., expectation=...)` entry point. See
 # [Combining & stacking scorers](3_combining_scorers.ipynb).
 # %% [markdown]
 # ## Evidence and score status

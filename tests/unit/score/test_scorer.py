@@ -23,6 +23,7 @@ from pyrit.score import (
     MessageTrueFalseScorer,
     Scorer,
     ScorerPromptValidator,
+    TrueFalseInverterScorer,
     TrueFalseScorer,
 )
 from pyrit.score.llm_scoring import _run_llm_scoring_async
@@ -76,6 +77,7 @@ class MockScorer(MessageTrueFalseScorer):
         return self._create_identifier()
 
     async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+        message_piece = message.get_piece()
         return [
             Score(
                 score_value="true",
@@ -85,7 +87,7 @@ class MockScorer(MessageTrueFalseScorer):
                 score_metadata=None,
                 score_rationale="rationale",
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id="mock_id",
+                message_piece_id=message_piece.id,
                 objective=objective,
             )
         ]
@@ -100,7 +102,7 @@ class MockScorer(MessageTrueFalseScorer):
                 score_metadata=None,
                 score_rationale="rationale",
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id="mock_id",
+                message_piece_id=message_piece.id,
                 objective=objective,
             )
         ]
@@ -1493,6 +1495,9 @@ class TestLegacyDirectScorerSubclass:
     @staticmethod
     def _build_legacy_family_scorer_class():
         class LegacyFamilyScorer(TrueFalseScorer):
+            def __init__(self) -> None:
+                super().__init__(validator=DummyValidator())
+
             def _build_identifier(self) -> ComponentIdentifier:
                 return self._create_identifier()
 
@@ -1503,55 +1508,17 @@ class TestLegacyDirectScorerSubclass:
 
         return LegacyFamilyScorer
 
-    async def test_legacy_family_scorer_keeps_message_keyword(self, patch_central_database):
-        scorer = self._build_legacy_family_scorer_class()()
-        message = store_message(
-            MessagePiece(role="assistant", original_value="legacy", conversation_id="legacy-kw").to_message()
-        )
-
-        with pytest.warns(DeprecationWarning):
-            scores = await scorer.score_async(message=message, objective="legacy objective")
-
-        assert scores[0].get_value() is True
-        assert scores[0].objective == "legacy objective"
-
-    async def test_legacy_family_scorer_keeps_score_message_async(self, patch_central_database):
-        scorer = self._build_legacy_family_scorer_class()()
-        message = store_message(
-            MessagePiece(role="assistant", original_value="legacy", conversation_id="legacy-msg").to_message()
-        )
-
-        scores = await scorer.score_message_async(message=message)
-
-        assert scores[0].get_value() is True
-
-    async def test_legacy_family_scorer_keeps_batch_api(self, patch_central_database):
-        scorer = self._build_legacy_family_scorer_class()()
-        messages = [
-            store_message(
-                MessagePiece(
-                    role="assistant", original_value=f"legacy {index}", conversation_id=f"batch-{index}"
-                ).to_message()
-            )
-            for index in range(2)
-        ]
-
-        scores = await scorer.score_prompts_batch_async(messages=messages)
-
-        assert len(scores) == 2
-
     async def test_legacy_family_scorer_can_nest_in_a_wrapper(self, patch_central_database):
         from pyrit.score import TrueFalseCompositeScorer, TrueFalseScoreAggregator
 
-        composite = TrueFalseCompositeScorer(
-            aggregator=TrueFalseScoreAggregator.AND, scorers=[self._build_legacy_family_scorer_class()()]
-        )
+        with pytest.warns(DeprecationWarning, match="Scorer.__init__"):
+            legacy_scorer = self._build_legacy_family_scorer_class()()
+        composite = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[legacy_scorer])
         message = store_message(
             MessagePiece(role="assistant", original_value="legacy", conversation_id="legacy-nested").to_message()
         )
 
-        with pytest.warns(DeprecationWarning):
-            scores = await composite.score_async(message=message)
+        scores = await composite.score_async(scorable=MessageScorable.from_message(message))
 
         assert scores[0].get_value() is True
 
@@ -2688,3 +2655,18 @@ class TestScoreResponseAsyncBlockedContent:
         assert len(scores) == 2
         assert len(scorer1.scored_pieces) == 1
         assert len(scorer2.scored_pieces) == 1
+
+    async def test_score_response_async_does_not_filter_generic_wrapper_content(self):
+        leaf_scorer = _BlockedContentScorer()
+        objective_scorer = TrueFalseInverterScorer(scorer=leaf_scorer)
+        msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
+
+        result = await MessageScorer.score_response_async(
+            response=store_message(msg),
+            objective_scorer=objective_scorer,
+            objective="test",
+            skip_on_error_result=True,
+        )
+
+        assert len(result["objective_scores"]) == 1
+        assert leaf_scorer.scored_pieces[0].converted_value == "harmful text"

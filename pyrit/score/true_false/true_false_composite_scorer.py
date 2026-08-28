@@ -12,23 +12,17 @@ if TYPE_CHECKING:
 from pyrit.models import (
     ComponentIdentifier,
     Condition,
-    Message,
     Scorable,
     ScorableUnion,
     Score,
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.score.message_scorer import (
-    LegacyMessageScorerCompatibility,
-    score_nested_message_compatibility_async,
-    should_score_blocked_content,
-)
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
-class TrueFalseCompositeScorer(LegacyMessageScorerCompatibility, TrueFalseScorer):
+class TrueFalseCompositeScorer(TrueFalseScorer):
     """
     Composite true/false scorer that aggregates results from other true/false scorers.
 
@@ -116,15 +110,6 @@ class TrueFalseCompositeScorer(LegacyMessageScorerCompatibility, TrueFalseScorer
             conditions.update(scorer.required_conditions())
         return frozenset(conditions)
 
-    def _should_score_nested_blocked_content(self) -> bool:
-        """
-        Score partial blocked content only when every child permits it.
-
-        Returns:
-            bool: Whether every child permits partial blocked content.
-        """
-        return all(should_score_blocked_content(scorer=scorer) for scorer in self._scorers)
-
     async def _score_scorable_async(
         self,
         *,
@@ -154,37 +139,6 @@ class TrueFalseCompositeScorer(LegacyMessageScorerCompatibility, TrueFalseScorer
                 # Score rejects a kind outside the union when it is constructed below.
                 scorable=cast("ScorableUnion | None", scorable),
                 message_piece_id=self._piece_id_from_scorable(scorable),
-            )
-        ]
-
-    async def _score_prepared_message_compatibility_async(
-        self,
-        *,
-        message: Message,
-        expectation: ScoringExpectation | None,
-    ) -> list[Score]:
-        """
-        Run message-capable children and apply the normal composite aggregation.
-
-        Returns:
-            list[Score]: The composite score.
-        """
-        score_list_results = await asyncio.gather(
-            *(
-                score_nested_message_compatibility_async(
-                    scorer=scorer,
-                    message=message,
-                    expectation=expectation,
-                )
-                for scorer in self._scorers
-            )
-        )
-        return [
-            self._build_aggregate_score(
-                score_list_results=list(score_list_results),
-                expectation=expectation,
-                scorable=None,
-                message_piece_id=message.message_pieces[0].id if message.message_pieces else None,
             )
         ]
 

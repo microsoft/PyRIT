@@ -1951,11 +1951,11 @@ class TestTreeOfAttacksNode:
         on_topic_scorer = MagicMock(spec=Scorer)
 
         # Create a score that indicates off-topic
-        on_topic_score = MagicMock(spec=Score)
-        on_topic_score.get_value = MagicMock(return_value=False)  # False = off-topic
-        on_topic_score.score_value = "False"
-        on_topic_score.score_type = "true_false"
-        on_topic_score.score_rationale = "Prompt is not relevant to the objective"
+        on_topic_score = Score(
+            score_value="False",
+            score_type="true_false",
+            score_rationale="Prompt is not relevant to the objective",
+        )
         on_topic_scorer.score_text_async = AsyncMock(return_value=[on_topic_score])
 
         components_with_scorer = node_components.copy()
@@ -1984,6 +1984,38 @@ class TestTreeOfAttacksNode:
         red_teaming_mock.assert_called_once()
         # Verify the on-topic scorer was called multiple times (initial + retries + final check)
         assert on_topic_scorer.score_text_async.call_count >= 2
+
+    async def test_node_undetermined_topic_score_does_not_prune(self, node_components):
+        on_topic_scorer = MagicMock(spec=Scorer)
+        on_topic_scorer.score_text_async = AsyncMock(
+            return_value=[
+                Score(
+                    score_type="true_false",
+                    status=ScoreStatus.UNDETERMINED,
+                    score_rationale="The scorer could not reach a verdict.",
+                )
+            ]
+        )
+        components_with_scorer = node_components.copy()
+        components_with_scorer["on_topic_scorer"] = on_topic_scorer
+        node = _TreeOfAttacksNode(**components_with_scorer)
+        send_feedback = AsyncMock(return_value="unused prompt")
+
+        with (
+            patch.object(
+                node,
+                "_generate_single_red_teaming_prompt_async",
+                new_callable=AsyncMock,
+                return_value="candidate prompt",
+            ),
+            patch.object(node, "_send_to_adversarial_chat_async", send_feedback),
+        ):
+            prompt = await node._generate_red_teaming_prompt_async(objective="Test objective")
+
+        assert prompt == "candidate prompt"
+        assert node.off_topic is False
+        on_topic_scorer.score_text_async.assert_awaited_once_with(text="candidate prompt")
+        send_feedback.assert_not_awaited()
 
     async def test_node_auxiliary_scoring(self, node_components):
         """Test auxiliary scoring functionality."""

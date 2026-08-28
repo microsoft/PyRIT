@@ -9,14 +9,11 @@ from unit.mocks import get_image_message_piece, store_message
 
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ComponentIdentifier, MessagePiece, Scorable, Score, ScoringExpectation
+from pyrit.models import MessagePiece
 from pyrit.score import (
     MessageScorable,
-    MessageTrueFalseScorer,
-    ScorerPromptValidator,
     SubStringScorer,
     TrueFalseInverterScorer,
-    TrueFalseScorer,
 )
 
 
@@ -68,43 +65,3 @@ async def test_substring_scorer_adds_to_memory():
         await scorer.score_text_async(text="string")
 
         memory.add_scores_to_memory.assert_called_once()
-
-
-async def test_inverter_score_message_async_uses_message_capable_child(patch_central_database):
-    class AlwaysTrueScorer(MessageTrueFalseScorer):
-        def __init__(self):
-            super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
-
-        def _build_identifier(self) -> ComponentIdentifier:
-            return self._create_identifier()
-
-        async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-            return [Score(score_value="true", score_type="true_false", message_piece_id=message_piece.id)]
-
-    scorer = TrueFalseInverterScorer(scorer=AlwaysTrueScorer())
-
-    scores = await scorer.score_message_async(
-        message=MessagePiece(role="assistant", original_value="response").to_message()
-    )
-
-    assert len(scores) == 1
-    assert scores[0].get_value() is False
-
-
-async def test_inverter_message_api_rejects_non_message_child(patch_central_database):
-    class ContentOnlyScorer(TrueFalseScorer):
-        def _build_identifier(self) -> ComponentIdentifier:
-            return self._create_identifier()
-
-        async def _score_scorable_async(
-            self,
-            *,
-            scorable: Scorable,
-            expectation: ScoringExpectation | None,
-        ) -> list[Score]:
-            return [Score(score_value="true", score_type="true_false", scorable=scorable)]
-
-    scorer = TrueFalseInverterScorer(scorer=ContentOnlyScorer())
-
-    with pytest.raises(RuntimeError, match="not message-capable"):
-        await scorer.score_message_async(message=MessagePiece(role="assistant", original_value="test").to_message())

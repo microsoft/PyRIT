@@ -195,6 +195,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Execute with retries
         for attempt in range(self._max_attempts_on_failure + 1):
             self._logger.debug(f"Attempt {attempt + 1}/{self._max_attempts_on_failure + 1}")
+            score = None
 
             # Prepare a fresh message for each attempt to avoid duplicate ID errors in database
             message = self._get_message(context)

@@ -260,6 +260,42 @@ def test_add_score_duplicate_prompt(sqlite_instance: MemoryInterface):
     assert sqlite_instance.get_prompt_scores(prompt_ids=[str(original_id)])[0].id == score_id
 
 
+def test_get_prompt_scores_finds_secondary_message_anchor(sqlite_instance: MemoryInterface):
+    first_id = uuid4()
+    second_id = uuid4()
+    conversation_id = str(uuid4())
+    sqlite_instance.add_message_pieces_to_memory(
+        message_pieces=[
+            MessagePiece(
+                id=first_id,
+                role="assistant",
+                original_value="first piece",
+                conversation_id=conversation_id,
+                sequence=0,
+            ),
+            MessagePiece(
+                id=second_id,
+                role="assistant",
+                original_value="second piece",
+                conversation_id=conversation_id,
+                sequence=0,
+            ),
+        ]
+    )
+    score = Score(
+        score_value="True",
+        score_type="true_false",
+        scorer_class_identifier=_test_scorer_id(),
+        message_piece_id=first_id,
+        scorable=MessageScorable(message_piece_ids=(first_id, second_id)),
+    )
+    sqlite_instance.add_scores_to_memory(scores=[score])
+
+    scores = sqlite_instance.get_prompt_scores(prompt_ids=[second_id])
+
+    assert [stored_score.id for stored_score in scores] == [score.id]
+
+
 def test_get_scores_by_memory_labels(sqlite_instance: MemoryInterface):
     prompt_id = uuid4()
     conversation_id = str(uuid4())

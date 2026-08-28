@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -13,7 +13,6 @@ from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import PyritException, ScorerLLMResponseBlockedException
 from pyrit.models import (
     ChatMessageRole,
-    ComponentIdentifier,
     Condition,
     ContentScorable,
     MatchesObjective,
@@ -24,7 +23,6 @@ from pyrit.models import (
     Scorable,
     ScorableUnion,
     Score,
-    ScoreType,
     ScoringExpectation,
 )
 from pyrit.models.score.scorable import SCORABLE_TYPES
@@ -38,7 +36,6 @@ if TYPE_CHECKING:
 
     from pyrit.memory import MemoryInterface
     from pyrit.prompt_target import PromptTarget
-    from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
@@ -131,22 +128,6 @@ def _piece_has_readable_content(*, piece: MessagePiece, should_score_blocked_con
         return True
     # Content the target emitted before the block is real output, when the caller opted in.
     return should_score_blocked_content and piece.is_blocked() and bool(piece.prompt_metadata.get("partial_content"))
-
-
-def should_score_blocked_content(*, scorer: Scorer) -> bool:
-    """
-    Return the effective partial-blocked-content policy for a scorer tree.
-
-    Message scorers own this policy. Generic wrappers expose it only through the
-    legacy message compatibility adapter and delegate the value to their children.
-
-    Args:
-        scorer (Scorer): The scorer or wrapping scorer to inspect.
-
-    Returns:
-        bool: Whether partial content from blocked responses can be scored.
-    """
-    return bool(getattr(scorer, "should_score_blocked_content", False))
 
 
 class MessageScorer(Scorer):
@@ -301,36 +282,6 @@ class MessageScorer(Scorer):
                 infer_objective_from_request=infer_objective,
             )
         return await self._validate_and_persist_scores_async(scores=scores)
-
-    async def _score_nested_message_async(
-        self,
-        *,
-        message: Message,
-        expectation: ScoringExpectation | None,
-    ) -> list[Score]:
-        """
-        Score a prepared message as a child in a scorer tree.
-
-        Conditions addressed to sibling leaves are ignored here because the root scorer
-        already validates that every supplied condition reaches at least one leaf. The
-        root scorer owns persistence, so this path only validates child output.
-
-        Returns:
-            list[Score]: The validated child scores.
-        """
-        self._validate_expectation(
-            expectation=expectation,
-            allow_unmatched_conditions=True,
-        )
-        scores = await self._score_resolved_message_async(
-            message=message,
-            expectation=expectation,
-            options=MessageScoringOptions(),
-            infer_objective_from_request=False,
-        )
-        if scores:
-            self.validate_return_scores(scores=scores)
-        return scores
 
     async def score_message_async(
         self,
@@ -574,9 +525,9 @@ class MessageScorer(Scorer):
         if response.get_piece().role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
             return []
-        if skip_on_error_result and not message_has_readable_content(
+        if isinstance(scorer, MessageScorer) and skip_on_error_result and not message_has_readable_content(
             message=response,
-            should_score_blocked_content=should_score_blocked_content(scorer=scorer),
+            should_score_blocked_content=scorer.should_score_blocked_content,
         ):
             return []
         return await scorer.score_async(
@@ -1195,268 +1146,3 @@ class MessageScorer(Scorer):
                 objective=objective,
             )
         ]
-
-
-class LegacyMessageScorerCompatibility(ABC):
-    """
-    Preserve pre-2.0 message entry points on generic wrapping scorers.
-
-    The adapter runs message acquisition and policy through ``MessageScorer``. Wrappers
-    supply only their normal score transformation for an already prepared message.
-    Pre-2.0 subclasses of a scorer family are registered as virtual subclasses, so an
-    ``isinstance`` check here recognizes them too.
-    """
-
-    _should_score_blocked_content_override: bool | None = None
-
-    @property
-    def should_score_blocked_content(self) -> bool:
-        """The explicit override or policy delegated by the wrapped scorer tree."""
-        if self._should_score_blocked_content_override is not None:
-            return self._should_score_blocked_content_override
-        return self._should_score_nested_blocked_content()
-
-    @should_score_blocked_content.setter
-    def should_score_blocked_content(self, value: bool) -> None:
-        """Override the delegated blocked-content policy for compatibility calls."""
-        self._should_score_blocked_content_override = value
-
-    def _should_score_nested_blocked_content(self) -> bool:
-        """Return the blocked-content policy delegated by this wrapper's children."""
-        return False
-
-    async def score_async(
-        self,
-        message: Message | None = None,
-        *,
-        scorable: Scorable | None = None,
-        expectation: ScoringExpectation | None = None,
-        message_options: MessageScoringOptions | None = None,
-        objective: str | None = None,
-        role_filter: ChatMessageRole | None = None,
-        skip_on_error_result: bool | None = None,
-        infer_objective_from_request: bool | None = None,
-    ) -> list[Score]:
-        """
-        Score through the compatibility adapter only when message policy is requested.
-
-        Returns:
-            list[Score]: The scores produced by the generic or message-compatible path.
-        """
-        uses_message_compatibility = (
-            message is not None
-            or scorable is None
-            or message_options is not None
-            or objective is not None
-            or role_filter is not None
-            or skip_on_error_result is not None
-            or infer_objective_from_request is not None
-        )
-        if uses_message_compatibility:
-            return await self._get_message_compatibility_adapter().score_async(
-                message,
-                scorable=scorable,
-                expectation=expectation,
-                message_options=message_options,
-                objective=objective,
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-                infer_objective_from_request=infer_objective_from_request,
-            )
-
-        return await Scorer.score_async(
-            cast("Scorer", self),
-            scorable=scorable,
-            expectation=expectation,
-        )
-
-    async def score_message_async(
-        self,
-        *,
-        message: Message,
-        expectation: ScoringExpectation | None = None,
-        message_options: MessageScoringOptions | None = None,
-    ) -> list[Score]:
-        """
-        Score an in-hand message through the compatibility adapter.
-
-        Returns:
-            list[Score]: The scores produced for the message.
-        """
-        return await self._get_message_compatibility_adapter().score_message_async(
-            message=message,
-            expectation=expectation,
-            message_options=message_options,
-        )
-
-    async def score_prompts_batch_async(
-        self,
-        *,
-        messages: Sequence[Message],
-        objectives: Sequence[str] | None = None,
-        batch_size: int = 10,
-        role_filter: ChatMessageRole | None = None,
-        skip_on_error_result: bool = False,
-        infer_objective_from_request: bool = False,
-    ) -> list[Score]:
-        """
-        Score an in-hand message batch through the compatibility adapter.
-
-        Returns:
-            list[Score]: The scores produced for the message batch.
-        """
-        return await self._get_message_compatibility_adapter().score_prompts_batch_async(
-            messages=messages,
-            objectives=objectives,
-            batch_size=batch_size,
-            role_filter=role_filter,
-            skip_on_error_result=skip_on_error_result,
-            infer_objective_from_request=infer_objective_from_request,
-        )
-
-    def _get_message_compatibility_adapter(self) -> _LegacyMessageScorerAdapter:
-        """
-        Create a message-policy adapter for this wrapping scorer.
-
-        Returns:
-            _LegacyMessageScorerAdapter: The configured message-policy adapter.
-        """
-        return _LegacyMessageScorerAdapter(scorer=cast("Scorer", self))
-
-    async def _score_nested_message_compatibility_async(
-        self,
-        *,
-        message: Message,
-        expectation: ScoringExpectation | None,
-    ) -> list[Score]:
-        """
-        Score a message without persisting an intermediate wrapper result.
-
-        Returns:
-            list[Score]: The wrapper scores before outer persistence.
-        """
-        return await self._get_message_compatibility_adapter()._score_nested_message_async(
-            message=message,
-            expectation=expectation,
-        )
-
-    @abstractmethod
-    async def _score_prepared_message_compatibility_async(
-        self,
-        *,
-        message: Message,
-        expectation: ScoringExpectation | None,
-    ) -> list[Score]:
-        """Transform scores for an already prepared compatibility message."""
-        ...
-
-
-async def score_nested_message_compatibility_async(
-    *,
-    scorer: Scorer,
-    message: Message,
-    expectation: ScoringExpectation | None,
-) -> list[Score]:
-    """
-    Dispatch a prepared message only to a message-capable scorer tree.
-
-    Returns:
-        list[Score]: Scores produced without persistence.
-
-    Raises:
-        TypeError: If the scorer has no message-capable compatibility path.
-    """
-    if isinstance(scorer, MessageScorer):
-        return await scorer._score_nested_message_async(
-            message=message,
-            expectation=expectation,
-        )
-    if isinstance(scorer, LegacyMessageScorerCompatibility):
-        return await scorer._score_nested_message_compatibility_async(
-            message=message,
-            expectation=expectation,
-        )
-    raise TypeError(
-        f"{type(scorer).__name__} is not message-capable. Use the wrapper's scorable API for non-message scorers."
-    )
-
-
-class _LegacyMessageScorerAdapter(MessageScorer):
-    """Run message-only compatibility policy for a generic wrapping scorer."""
-
-    def __init__(self, *, scorer: Scorer) -> None:
-        from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-
-        self._scorer = scorer
-        super().__init__(
-            # A pre-2.0 scorer carries its own validator; keep it so the piece rules it was
-            # written with still decide what this scorer reads.
-            validator=getattr(scorer, "_validator", None) or ScorerPromptValidator(),
-            chat_target=scorer.get_chat_target(),
-        )
-        self.should_score_blocked_content = should_score_blocked_content(scorer=scorer)
-        # The wrapped scorer used to carry this policy itself, so keep honoring its choice.
-        self.raise_if_scorer_blocks = bool(getattr(scorer, "raise_if_scorer_blocks", True))
-
-    @property
-    def scorer_type(self) -> ScoreType:
-        """The wrapped scorer's family."""
-        return self._scorer.scorer_type
-
-    def matched_conditions(self) -> frozenset[type[Condition]]:
-        """Return the wrapped scorer tree's matched conditions."""
-        return self._scorer.matched_conditions()
-
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """Return the wrapped scorer tree's required conditions."""
-        return self._scorer.required_conditions()
-
-    def _build_identifier(self) -> ComponentIdentifier:
-        """
-        Use the wrapped scorer's persisted identity.
-
-        Returns:
-            ComponentIdentifier: The wrapped scorer's identifier.
-        """
-        return self._scorer.get_identifier()
-
-    async def _score_piece_async(
-        self,
-        message_piece: MessagePiece,
-        *,
-        objective: str | None = None,
-    ) -> list[Score]:
-        raise NotImplementedError("The compatibility adapter scores prepared messages.")
-
-    async def _score_prepared_message_async(
-        self,
-        *,
-        message: Message,
-        expectation: ScoringExpectation | None,
-    ) -> list[Score]:
-        compatible_scorer = cast("LegacyMessageScorerCompatibility", self._scorer)
-        return await compatible_scorer._score_prepared_message_compatibility_async(
-            message=message,
-            expectation=expectation,
-        )
-
-    def _build_fallback_score(
-        self,
-        *,
-        message: Message,
-        objective: str | None,
-    ) -> list[Score]:
-        neutral_value = "false" if self.scorer_type == "true_false" else "0.0"
-        return self._build_neutral_fallback_score(
-            message=message,
-            objective=objective,
-            neutral_value=neutral_value,
-        )
-
-    def validate_return_scores(self, scores: list[Score]) -> None:
-        """Validate through the wrapped scorer."""
-        self._scorer.validate_return_scores(scores)
-
-    def get_scorer_metrics(self) -> ScorerMetrics | None:
-        """Return the wrapped scorer's evaluation metrics."""
-        return self._scorer.get_scorer_metrics()
