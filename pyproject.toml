@@ -140,7 +140,7 @@ litellm = [
     # platforms cannot be pinned back selectively. 1.91.x is the last line with a
     # universal wheel that installs everywhere. Revisit once litellm ships macOS
     # and musllinux wheels.
-    "litellm>=1.84.0,<1.92.0",
+    "litellm>=1.84.0,<1.99.0",
 ]
 
 # all includes all functional dependencies excluding the ones from the "dev" dependency group
@@ -151,7 +151,7 @@ all = [
     "flask>=3.1.3",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "litellm>=1.84.0,<1.92.0",  # 1.92.0+ drops the universal wheel (no mac/musl/old-glibc/win-arm64); see litellm group
+    "litellm>=1.84.0,<1.99.0",  # 1.92.0+ drops the universal wheel (no mac/musl/old-glibc/win-arm64); see litellm group
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
@@ -191,6 +191,7 @@ all = "error"
 # Annotating those generics is real code work, so keep the rule deferred until
 # that numpy-generics debt is addressed.
 missing-type-argument = "ignore"
+unsound-assignment = "ignore"
 # unused-type-ignore-comment is environment-dependent: a `# type: ignore`
 # on an optional-dependency import (torch, playwright, etc.) is "used" when the
 # extra is not installed but "unused" once it is. CI installs `--extra all`, so

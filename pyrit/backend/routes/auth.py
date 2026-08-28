@@ -13,10 +13,11 @@ import os
 from fastapi import APIRouter
 
 router = APIRouter()
+_GRAPH_SCOPES = ["https://graph.microsoft.com/User.Read"]
 
 
 @router.get("/auth/config")
-async def get_auth_config_async() -> dict[str, str]:
+async def get_auth_config_async() -> dict[str, str | bool | list[str]]:
     """
     Return Entra ID configuration for the frontend MSAL client.
 
@@ -25,10 +26,18 @@ async def get_auth_config_async() -> dict[str, str]:
     are included so the frontend can show appropriate error messages.
 
     Returns:
-        dict: Auth configuration with clientId, tenantId, allowedGroupIds.
+        dict: Auth configuration with enabled state, clientId, tenantId,
+            allowedGroupIds, and delegated Microsoft Graph scopes.
     """
+    client_id = os.getenv("ENTRA_CLIENT_ID", "").strip()
+    tenant_id = os.getenv("ENTRA_TENANT_ID", "").strip()
+    allowed_group_ids = os.getenv("ENTRA_ALLOWED_GROUP_IDS", "").strip()
+    enabled = bool(client_id and tenant_id and allowed_group_ids)
+
     return {
-        "clientId": os.getenv("ENTRA_CLIENT_ID", ""),
-        "tenantId": os.getenv("ENTRA_TENANT_ID", ""),
-        "allowedGroupIds": os.getenv("ENTRA_ALLOWED_GROUP_IDS", ""),
+        "enabled": enabled,
+        "clientId": client_id,
+        "tenantId": tenant_id,
+        "allowedGroupIds": allowed_group_ids,
+        "scopes": list(_GRAPH_SCOPES) if enabled else [],
     }

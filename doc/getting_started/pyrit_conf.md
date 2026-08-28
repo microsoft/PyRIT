@@ -264,6 +264,7 @@ Client settings for connecting to or launching a PyRIT backend.
 | --- | --- | --- |
 | `url` | Backend URL used when `--server-url` is omitted | `http://localhost:8000` |
 | `startup_timeout` | Seconds `pyrit_scan start-server` waits for a healthy backend before terminating the spawned process | `120` |
+| `auth_mode` | Backend authentication mode: `auto`, `azure_cli`, `device_code`, or `none` | `auto` |
 
 `startup_timeout` must be a finite number greater than zero. The `--startup-timeout` CLI option overrides the configured value for an individual scanner invocation.
 
@@ -273,7 +274,36 @@ Set `server: null` to reset all server settings, including values inherited from
 server:
   url: http://localhost:8000
   startup_timeout: 120
+  auth_mode: auto
 ```
+
+In `auto` mode, the CLI reads the backend's public `/api/auth/config` endpoint. It sends no
+token when authentication is disabled. For an authenticated backend, it uses Entra device-code
+login with the exact Microsoft Graph `User.Read` scope. The encrypted persistent token cache
+normally prevents a new prompt on each run. A non-interactive process fails instead of waiting
+for a prompt.
+
+Use an explicit mode when needed:
+
+```yaml
+server:
+  url: https://copyrit.example.com/
+  auth_mode: azure_cli
+```
+
+`azure_cli` is an explicit compatibility mode. It can send a Microsoft Graph token with
+permissions beyond `User.Read` because the Azure CLI application controls the token's granted
+permissions. Prefer `auto` or `device_code`. If you accept this behavior, sign in to the
+backend's tenant before using `azure_cli`:
+
+```bash
+az login --tenant <tenant-id>
+pyrit_scan --config-file ./.pyrit_conf list-scenarios
+```
+
+Use `device_code` to require the same exact-scope interactive flow as `auto`. Use `none` only
+when you intentionally need to suppress authentication discovery. Access tokens are not stored
+in `.pyrit_conf`.
 
 ## Configuration Precedence
 
