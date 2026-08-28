@@ -365,6 +365,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
+            context._record_objective_target_invocation(conversation_id=context.session.conversation_id)
             return await self._prompt_normalizer.send_prompt_async(
                 message=current_message,
                 target=self._objective_target,
@@ -375,7 +376,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                     prepended_history_send_context=context.prepended_history_send_context,
                 ),
                 send_context=context.prepended_history_send_context,
-                target_invocation_callback=context._record_objective_target_invocation,
             )
 
     async def _evaluate_response_async(self, *, response: Message, objective: str) -> Score | None:

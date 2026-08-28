@@ -74,11 +74,10 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
     from pyrit.models.literals import PromptDataType
-    from pyrit.prompt_target.common.target_send_context import TargetInvocationCallback
 
 logger = logging.getLogger(__name__)
 
@@ -378,7 +377,7 @@ class _TreeOfAttacksNode:
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
-        target_invocation_callback: TargetInvocationCallback,
+        record_objective_conversation: Callable[..., None],
         use_score_as_feedback: bool = True,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
@@ -407,8 +406,8 @@ class _TreeOfAttacksNode:
                 whether prior media should travel back to the adversarial chat or forward to
                 the objective target, and fills adversarial-placeholder pieces in seed
                 messages. Typically shared across all nodes of the same attack.
-            target_invocation_callback (TargetInvocationCallback): Callback for objective-target
-                provider invocations.
+            record_objective_conversation (Callable[..., None]): Records an objective-target
+                conversation ID for cleanup before each objective send.
             use_score_as_feedback (bool): Whether subsequent adversarial prompts include
                 the objective score. Defaults to True.
             memory_labels (dict[str, str] | None): Labels for memory storage.
@@ -436,7 +435,7 @@ class _TreeOfAttacksNode:
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
         self._modality_router = modality_router
-        self._target_invocation_callback = target_invocation_callback
+        self._record_objective_conversation = record_objective_conversation
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         self._use_score_as_feedback = use_score_as_feedback
 
@@ -687,6 +686,7 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            self._record_objective_conversation(conversation_id=self.objective_target_conversation_id)
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
@@ -698,7 +698,6 @@ class _TreeOfAttacksNode:
                     prepended_history_send_context=self._prepended_history_send_context,
                 ),
                 send_context=self._prepended_history_send_context,
-                target_invocation_callback=self._target_invocation_callback,
             )
 
         # Store the full response so subsequent turns can forward media when supported.
@@ -767,6 +766,7 @@ class _TreeOfAttacksNode:
             objective_target_conversation_id=self.objective_target_conversation_id,
             objective=self._objective,
         ):
+            self._record_objective_conversation(conversation_id=self.objective_target_conversation_id)
             response = await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 request_converter_configurations=self._request_converters,
@@ -778,7 +778,6 @@ class _TreeOfAttacksNode:
                     prepended_history_send_context=self._prepended_history_send_context,
                 ),
                 send_context=self._prepended_history_send_context,
-                target_invocation_callback=self._target_invocation_callback,
             )
 
         # Store the full response so subsequent turns can forward media when supported.
@@ -974,7 +973,7 @@ class _TreeOfAttacksNode:
             attack_id=self._attack_id,
             attack_strategy_name=self._attack_strategy_name,
             modality_router=self._modality_router,
-            target_invocation_callback=self._target_invocation_callback,
+            record_objective_conversation=self._record_objective_conversation,
             use_score_as_feedback=self._use_score_as_feedback,
             memory_labels=self._memory_labels,
             desired_response_prefix=self._desired_response_prefix,
@@ -2213,7 +2212,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_id=self.get_identifier(),
             attack_strategy_name=self.__class__.__name__,
             modality_router=self._modality_router,
-            target_invocation_callback=context._record_objective_target_invocation,
+            record_objective_conversation=context._record_objective_target_invocation,
             use_score_as_feedback=self._attack_scoring_config.use_score_as_feedback,
             memory_labels=context.memory_labels,
             desired_response_prefix=self._configuration.desired_response_prefix,

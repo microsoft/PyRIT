@@ -491,24 +491,14 @@ class RealtimeTarget(OpenAITarget):
 
         Args:
             conversation_id (str): The conversation ID to disconnect from.
-
-        Raises:
-            asyncio.CancelledError: If cleanup is cancelled after the connection has finished closing.
         """
         connection = self._existing_conversation.pop(conversation_id, None)
         if not connection:
             return
 
-        close_future = asyncio.ensure_future(connection.close())
         try:
-            await asyncio.shield(close_future)
-        except asyncio.CancelledError as cancellation_error:
-            try:
-                await close_future
-            except BaseException as close_error:
-                raise cancellation_error from close_error
-            raise
-        except Exception as error:
+            await connection.close()
+        except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
             logger.warning(f"Error closing connection for {conversation_id}: {error}")
             return
 

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging  # noqa: TC003
 import time
@@ -103,15 +104,21 @@ class _ObjectiveTargetConversationLifecycle:
         traceback: TracebackType | None,
     ) -> None:
         """Release each conversation invoked during the attack."""
+        pending_cancellation: asyncio.CancelledError | None = None
         for conversation_id in self._conversation_ids:
             try:
                 await self._objective_target.reset_conversation_async(conversation_id=conversation_id)
+            except asyncio.CancelledError as cancellation:
+                # Attempt every reset, then honor the first cancellation after the loop.
+                pending_cancellation = pending_cancellation or cancellation
             except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
                 self._logger.warning(
                     "Failed to reset objective-target conversation %s: %s",
                     conversation_id,
                     error,
                 )
+        if pending_cancellation is not None:
+            raise pending_cancellation
 
     def record_invocation(self, *, conversation_id: str) -> None:
         """
@@ -228,15 +235,15 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         """
         Record an objective-target invocation for lifecycle cleanup.
 
+        Recording is a no-op when no objective-target scope is active, so attack
+        helpers remain callable outside a full execution.
+
         Args:
             conversation_id (str): The conversation ID used by the target.
-
-        Raises:
-            RuntimeError: If called outside this context's attack execution.
         """
         lifecycle = self._objective_target_conversation_lifecycle
         if lifecycle is None:
-            raise RuntimeError("Objective-target invocation occurred outside the attack lifecycle.")
+            return
         lifecycle.record_invocation(conversation_id=conversation_id)
 
 

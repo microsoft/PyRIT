@@ -317,6 +317,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             objective_target_conversation_id=context.conversation_id,
             objective=context.params.objective,
         ):
+            context._record_objective_target_invocation(conversation_id=context.conversation_id)
             return await self._prompt_normalizer.send_prompt_async(
                 message=message,
                 target=self._objective_target,
@@ -327,7 +328,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                     prepended_history_send_context=context.prepended_history_send_context,
                 ),
                 send_context=context.prepended_history_send_context,
-                target_invocation_callback=context._record_objective_target_invocation,
             )
 
     async def _evaluate_response_async(

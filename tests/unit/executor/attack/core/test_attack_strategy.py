@@ -152,6 +152,22 @@ async def test_objective_target_cleanup_propagates_cancellation() -> None:
             lifecycle.record_invocation(conversation_id="conversation-id")
 
 
+async def test_objective_target_cleanup_attempts_all_resets_under_cancellation() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=asyncio.CancelledError())
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-1")
+            lifecycle.record_invocation(conversation_id="conversation-2")
+
+    assert target.reset_conversation_async.await_count == 2
+
+
 def test_next_message_override_can_clear_parameter_value_and_survive_copy():
     """An explicit None override must not fall back to the immutable parameter after copying."""
 

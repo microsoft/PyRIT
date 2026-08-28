@@ -31,7 +31,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import ConverterConfiguration, NormalizerRequest
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.prompt_target.common.target_send_context import TargetInvocationCallback, TargetSendContext
+from pyrit.prompt_target.common.target_send_context import TargetSendContext
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,6 @@ class PromptNormalizer:
         response_converter_configurations: list[ConverterConfiguration] | None = None,
         normalizer_overrides: Mapping[CapabilityName, MessageListNormalizer[Message]] | None = None,
         send_context: TargetSendContext | None = None,
-        target_invocation_callback: TargetInvocationCallback | None = None,
     ) -> Message:
         """
         Send a single request to a target.
@@ -92,8 +91,6 @@ class PromptNormalizer:
             normalizer_overrides: Optional per-send target normalizer overrides.
             send_context: Optional internal coordination contract for caller-owned
                 history selection and send lifecycle state.
-            target_invocation_callback: Optional callback invoked immediately before
-                target-specific execution.
 
         Returns:
             Message: The response received from the target.
@@ -133,7 +130,6 @@ class PromptNormalizer:
                 message=request,
                 normalizer_overrides=normalizer_overrides,
                 send_context=send_context,
-                target_invocation_callback=target_invocation_callback,
             )
             self.memory.add_message_to_memory(request=request)
         except EmptyResponseException as ex:
