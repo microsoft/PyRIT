@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -1197,12 +1197,14 @@ class MessageScorer(Scorer):
         ]
 
 
-class LegacyMessageScorerCompatibility:
+class LegacyMessageScorerCompatibility(ABC):
     """
     Preserve pre-2.0 message entry points on generic wrapping scorers.
 
     The adapter runs message acquisition and policy through ``MessageScorer``. Wrappers
     supply only their normal score transformation for an already prepared message.
+    Pre-2.0 subclasses of a scorer family are registered as virtual subclasses, so an
+    ``isinstance`` check here recognizes them too.
     """
 
     _score_blocked_content_override: bool | None = None
@@ -1379,39 +1381,6 @@ async def score_nested_message_compatibility_async(
     )
 
 
-async def score_prepared_message_compatibility_async(
-    *,
-    scorer: Scorer,
-    message: Message,
-    expectation: ScoringExpectation | None,
-) -> list[Score]:
-    """
-    Hand an already prepared message to a message-capable scorer tree.
-
-    The caller has already applied message policy, so this skips straight to the scorer's
-    transformation and leaves persistence to the caller.
-
-    Returns:
-        list[Score]: Scores produced without persistence.
-
-    Raises:
-        TypeError: If the scorer has no message-capable compatibility path.
-    """
-    if isinstance(scorer, MessageScorer):
-        return await scorer._score_prepared_message_async(
-            message=message,
-            expectation=expectation,
-        )
-    if isinstance(scorer, LegacyMessageScorerCompatibility):
-        return await scorer._score_prepared_message_compatibility_async(
-            message=message,
-            expectation=expectation,
-        )
-    raise TypeError(
-        f"{type(scorer).__name__} is not message-capable. Use the wrapper's scorable API for non-message scorers."
-    )
-
-
 class _LegacyMessageScorerAdapter(MessageScorer):
     """Run message-only compatibility policy for a generic wrapping scorer."""
 
@@ -1426,6 +1395,8 @@ class _LegacyMessageScorerAdapter(MessageScorer):
             chat_target=scorer.get_chat_target(),
         )
         self.score_blocked_content = score_blocked_content_enabled(scorer=scorer)
+        # The wrapped scorer used to carry this policy itself, so keep honoring its choice.
+        self.raise_if_scorer_blocks = bool(getattr(scorer, "raise_if_scorer_blocks", True))
 
     @property
     def scorer_type(self) -> ScoreType:

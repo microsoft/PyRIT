@@ -142,8 +142,8 @@ def _lend_legacy_message_api(cls: type) -> None:
     ``TrueFalseScorer`` and ``FloatScaleScorer`` no longer run the message pipeline, so a
     subclass written against the pre-2.0 shape would otherwise lose ``score_async(message=...)``,
     ``score_message_async``, ``score_prompts_batch_async`` and its default validator. Lend it
-    the same compatibility adapter the generic wrapping scorers use, along with the
-    message-policy defaults its family base used to declare.
+    the compatibility mixin's implementations, then register it so the wrappers that dispatch
+    on ``LegacyMessageScorerCompatibility`` accept it as a child.
     """
     from pyrit.score.message_scorer import LegacyMessageScorerCompatibility
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -168,7 +168,6 @@ def _lend_legacy_message_api(cls: type) -> None:
     }
     lent["_score_prepared_message_compatibility_async"] = _legacy_score_prepared_message_async
     lent["score_blocked_content"] = True
-    lent["raise_if_scorer_blocks"] = True
     # The pre-2.0 family base defaulted the validator, so a subclass that passes none still
     # needs one. An instance assignment in the subclass shadows this class-level default.
     lent["_validator"] = ScorerPromptValidator()
@@ -176,6 +175,8 @@ def _lend_legacy_message_api(cls: type) -> None:
     for name, member in lent.items():
         if not defines_before_scorer(name):
             setattr(cls, name, member)
+
+    LegacyMessageScorerCompatibility.register(cls)
 
 
 class Scorer(Identifiable, abc.ABC):

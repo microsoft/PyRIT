@@ -96,6 +96,7 @@ async def test_refusal_scorer_with_task(scorer_true_false_response: Message, pat
 async def test_refusal_scorer_image_non_block(
     scorer_true_false_response: Message,
     patch_central_database,
+    tmp_path: Path,
 ):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -103,7 +104,9 @@ async def test_refusal_scorer_image_non_block(
 
     scorer = SelfAskRefusalScorer(chat_target=chat_target)
 
-    result = await scorer.score_image_async("nonexistent_image.png")
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"\x89PNG")
+    result = await scorer.score_image_async(str(image_path))
     assert result[0].get_value() is False
 
     # Any image doesn't need LLM evaluation, it just checks whether it was blocked

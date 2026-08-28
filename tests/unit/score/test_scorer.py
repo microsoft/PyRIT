@@ -1540,6 +1540,21 @@ class TestLegacyDirectScorerSubclass:
 
         assert len(scores) == 2
 
+    async def test_legacy_family_scorer_can_nest_in_a_wrapper(self, patch_central_database):
+        from pyrit.score import TrueFalseCompositeScorer, TrueFalseScoreAggregator
+
+        composite = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND, scorers=[self._build_legacy_family_scorer_class()()]
+        )
+        message = store_message(
+            MessagePiece(role="assistant", original_value="legacy", conversation_id="legacy-nested").to_message()
+        )
+
+        with pytest.warns(DeprecationWarning):
+            scores = await composite.score_async(message=message)
+
+        assert scores[0].get_value() is True
+
     async def test_scorer_score_response_async_still_dispatches(self, patch_central_database):
         scorer = MockScorer()
         message = store_message(

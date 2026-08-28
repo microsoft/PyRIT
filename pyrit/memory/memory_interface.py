@@ -1626,12 +1626,7 @@ class MemoryInterface(abc.ABC):
         self._add_scores_to_memory(scores=scores, prepared_content_hashes={})
 
     async def add_scores_to_memory_async(self, *, scores: Sequence[Score]) -> None:
-        """
-        Prepare file-backed loose content, then persist the scores and their anchors.
-
-        Archiving is best effort. When a source file cannot be read, the score is still
-        persisted, but without its loose-content anchor.
-        """
+        """Prepare file-backed loose content, then persist the scores and their anchors."""
         media_scorables = list(
             dict.fromkeys(
                 score.scorable
@@ -1643,37 +1638,16 @@ class MemoryInterface(abc.ABC):
             self.add_scores_to_memory(scores=scores)
             return
 
-        results = await asyncio.gather(
-            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables),
-            return_exceptions=True,
+        prepared_content = await asyncio.gather(
+            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
         )
-        prepared_by_source: dict[ContentScorable, _PreparedScorableContent] = {}
-        unarchived: set[ContentScorable] = set()
-        for scorable, result in zip(media_scorables, results, strict=True):
-            if isinstance(result, BaseException):
-                # Archiving evidence is best effort. A verdict the scorer already reached is
-                # worth keeping even when its input can no longer be read, so the score is
-                # persisted without a loose-content anchor rather than lost.
-                logger.warning(
-                    "Could not copy %s content from %r into results storage: %s. "
-                    "The score is stored without a loose-content anchor.",
-                    scorable.data_type,
-                    scorable.value,
-                    result,
-                )
-                unarchived.add(scorable)
-                continue
-            prepared_by_source[scorable] = result
-        prepared_hashes = {content.stored: content.value_sha256 for content in prepared_by_source.values()}
+        prepared_by_source = {content.source: content for content in prepared_content}
+        prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
 
         copied_scores: list[tuple[Score, Score]] = []
         scores_to_persist: list[Score] = []
         for score in scores:
             scorable = score.scorable
-            if isinstance(scorable, ContentScorable) and scorable in unarchived:
-                # Keep the in-hand anchor so the caller still knows what was scored.
-                scores_to_persist.append(score.model_copy(update={"scorable": None}))
-                continue
             prepared = prepared_by_source.get(scorable) if isinstance(scorable, ContentScorable) else None
             if prepared is None:
                 scores_to_persist.append(score)

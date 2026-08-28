@@ -432,14 +432,15 @@ def test_factory_raises_error_for_unsupported_scorer_type():
     ids=["composite", "inverter", "threshold"],
 )
 def test_factory_accepts_generic_wrapper_scorers(make_wrapper):
-    """Composite, inverter, and threshold wrappers reach messages through the compatibility mixin."""
+    """Composite, inverter, and threshold wrappers reach messages through the compatibility adapter."""
     wrapper = make_wrapper()
 
     conv_scorer = create_conversation_scorer(scorer=wrapper)
 
     assert isinstance(conv_scorer, MessageTrueFalseScorer)
     assert isinstance(conv_scorer, ConversationScorer)
-    assert conv_scorer._get_wrapped_scorer() is wrapper
+    # The wrapper is not a MessageScorer, so the factory stores its compatibility adapter.
+    assert conv_scorer._get_wrapped_scorer()._scorer is wrapper  # type: ignore[attr-defined]
 
 
 def test_factory_creates_unique_instances():
@@ -466,7 +467,7 @@ def test_get_wrapped_scorer_raises_when_wrapped_scorer_reassigned_to_non_scorer(
 
     conv_scorer._wrapped_scorer = "not-a-scorer"  # type: ignore[assignment]
 
-    with pytest.raises(TypeError, match="Wrapped conversation scorer must be message-capable"):
+    with pytest.raises(TypeError, match="Wrapped conversation scorer must inherit from MessageScorer"):
         conv_scorer._get_wrapped_scorer()
 
 
