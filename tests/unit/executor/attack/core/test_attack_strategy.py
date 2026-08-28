@@ -4,7 +4,7 @@
 import asyncio
 import logging
 from dataclasses import replace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,19 +20,16 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
     AttackStrategy,
     _DefaultAttackStrategyEventHandler,
+    _ObjectiveTargetConversationLifecycle,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackContext
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.executor.attack.single_turn.single_turn_attack_strategy import SingleTurnAttackContext
 from pyrit.executor.core import StrategyEvent, StrategyEventData
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
-    ConversationReference,
-    ConversationType,
     Message,
     SeedPrompt,
 )
@@ -42,7 +39,6 @@ from pyrit.models.identifiers import (
 )
 from pyrit.models.retry_event import RetryEvent
 from pyrit.prompt_target import PromptTarget
-from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
@@ -106,6 +102,54 @@ def mock_logger():
 def event_handler(mock_logger):
     """Create an event handler for testing"""
     return _DefaultAttackStrategyEventHandler(logger=mock_logger)
+
+
+async def test_objective_target_conversation_lifecycle_resets_unique_conversations() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock()
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    async with lifecycle:
+        lifecycle.record_invocation(conversation_id="conversation-1")
+        lifecycle.record_invocation(conversation_id="conversation-1")
+        lifecycle.record_invocation(conversation_id="conversation-2")
+
+    assert target.reset_conversation_async.await_count == 2
+    reset_ids = {call.kwargs["conversation_id"] for call in target.reset_conversation_async.await_args_list}
+    assert reset_ids == {"conversation-1", "conversation-2"}
+
+
+async def test_objective_target_cleanup_error_does_not_replace_attack_error() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    mock_logger = MagicMock(spec=logging.Logger)
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=mock_logger,
+    )
+
+    with pytest.raises(ValueError, match="attack failed"):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-id")
+            raise ValueError("attack failed")
+
+    mock_logger.warning.assert_called_once()
+
+
+async def test_objective_target_cleanup_propagates_cancellation() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=asyncio.CancelledError())
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-id")
 
 
 def test_next_message_override_can_clear_parameter_value_and_survive_copy():
@@ -332,150 +376,6 @@ class TestAttackStrategyExecution:
         )
 
         assert result is not None
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestAttackStrategyTeardown:
-    """Tests for the objective target conversation reset in _teardown_async"""
-
-    def _strategy(self, target):
-        class TeardownStrategy(AttackStrategy):
-            def __init__(self, **kwargs):
-                super().__init__(context_type=AttackContext, logger=logging.getLogger(), **kwargs)
-
-            def _validate_context(self, *, context):
-                pass
-
-            async def _setup_async(self, *, context):
-                pass
-
-            async def _perform_async(self, *, context):
-                raise NotImplementedError
-
-        return TeardownStrategy(objective_target=target)
-
-    def _target(self):
-        target = MagicMock(spec=PromptTarget)
-        target.get_identifier.return_value = _mock_target_id()
-        return target
-
-    async def test_teardown_resets_single_turn_conversation(self):
-        target = self._target()
-        context = SingleTurnAttackContext(params=AttackParameters(objective="o"))
-
-        await self._strategy(target)._teardown_async(context=context)
-
-        target.reset_conversation_async.assert_awaited_once_with(conversation_id=context.conversation_id)
-
-    async def test_teardown_resets_multi_turn_session_conversation(self):
-        target = self._target()
-        context = MultiTurnAttackContext(params=AttackParameters(objective="o"))
-
-        await self._strategy(target)._teardown_async(context=context)
-
-        target.reset_conversation_async.assert_awaited_once_with(conversation_id=context.session.conversation_id)
-
-    async def test_teardown_also_resets_pruned_conversations(self):
-        target = self._target()
-        context = SingleTurnAttackContext(params=AttackParameters(objective="o"))
-        context.related_conversations.add(
-            ConversationReference(conversation_id="pruned-1", conversation_type=ConversationType.PRUNED)
-        )
-
-        await self._strategy(target)._teardown_async(context=context)
-
-        reset_ids = {call.kwargs["conversation_id"] for call in target.reset_conversation_async.await_args_list}
-        assert reset_ids == {context.conversation_id, "pruned-1"}
-
-    async def test_teardown_ignores_non_pruned_related_conversations(self):
-        target = self._target()
-        context = SingleTurnAttackContext(params=AttackParameters(objective="o"))
-        context.related_conversations.add(
-            ConversationReference(conversation_id="adv-1", conversation_type=ConversationType.ADVERSARIAL)
-        )
-
-        await self._strategy(target)._teardown_async(context=context)
-
-        target.reset_conversation_async.assert_awaited_once_with(conversation_id=context.conversation_id)
-
-    async def test_teardown_skips_reset_without_conversation_id(self, sample_attack_context):
-        target = self._target()
-
-        # The base AttackContext carries neither a conversation_id nor a session.
-        await self._strategy(target)._teardown_async(context=sample_attack_context)
-
-        target.reset_conversation_async.assert_not_awaited()
-
-    async def test_teardown_swallows_target_errors(self):
-        target = self._target()
-        target.reset_conversation_async.side_effect = RuntimeError("connection already closed")
-        context = SingleTurnAttackContext(params=AttackParameters(objective="o"))
-
-        # Teardown runs in a finally block, so it must not replace the attack's own error.
-        await self._strategy(target)._teardown_async(context=context)
-
-        target.reset_conversation_async.assert_awaited_once()
-
-
-class _RecordingTarget(MockPromptTarget):
-    """Objective target that records every conversation it is asked to release."""
-
-    def __init__(self, *, failure: Exception | None = None, block: asyncio.Event | None = None) -> None:
-        super().__init__()
-        self.reset_calls: list[str] = []
-        self.started = asyncio.Event()
-        self._failure = failure
-        self._block = block
-
-    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
-        self.started.set()
-        if self._failure:
-            raise self._failure
-        if self._block:
-            await self._block.wait()
-        return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
-
-    async def reset_conversation_async(self, *, conversation_id: str) -> None:
-        self.reset_calls.append(conversation_id)
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestObjectiveConversationRelease:
-    """The reset has to reach every way a run can end, not only the ones that return a result."""
-
-    async def test_the_context_lookup_matches_the_result_contract(self):
-        target = _RecordingTarget()
-        attack = PromptSendingAttack(objective_target=target)
-
-        result = await attack.execute_async(objective="o")
-
-        # _get_objective_conversation_ids is AttackResult.get_active_conversation_ids
-        # read off the context. Pinned equal here so the two cannot drift apart.
-        assert set(target.reset_calls) == result.get_active_conversation_ids()
-
-    async def test_a_failed_run_still_releases_its_conversation(self):
-        target = _RecordingTarget(failure=RuntimeError("target exploded mid-run"))
-        attack = PromptSendingAttack(objective_target=target)
-
-        with pytest.raises(Exception):  # noqa: B017 - the wrapper type is not the point
-            await attack.execute_async(objective="o")
-
-        # execute_async re-raises rather than returning, so a caller holding only the
-        # return value has no conversation id to release.
-        assert len(target.reset_calls) == 1
-
-    async def test_a_cancelled_run_still_releases_its_conversation(self):
-        block = asyncio.Event()
-        target = _RecordingTarget(block=block)
-        attack = PromptSendingAttack(objective_target=target)
-
-        task = asyncio.create_task(attack.execute_async(objective="o"))
-        await asyncio.wait_for(target.started.wait(), timeout=10)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-        assert len(target.reset_calls) == 1
 
 
 @pytest.mark.usefixtures("patch_central_database")

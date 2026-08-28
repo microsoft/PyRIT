@@ -187,8 +187,8 @@ class WebsocketTarget(PromptTarget):
         """
         Close and remove one conversation connection.
 
-        Called from attack teardown once a conversation is finished. An unknown
-        conversation id is a no-op, so this is safe to call more than once.
+        Called from attack lifecycle cleanup once a conversation is finished. An
+        unknown conversation id is a no-op, so this is safe to call more than once.
 
         Args:
             conversation_id (str): PyRIT conversation ID.

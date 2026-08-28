@@ -145,6 +145,7 @@ async def test_send_prompt_async_forwards_normalizer_overrides_and_context(mock_
         seed_message_ids=(uuid4(),),
         replay_seed_each_send=False,
     )
+    target_invocation_callback = MagicMock()
 
     await normalizer.send_prompt_async(
         message=Message.from_prompt(prompt="first request", role="user"),
@@ -152,11 +153,13 @@ async def test_send_prompt_async_forwards_normalizer_overrides_and_context(mock_
         conversation_id=conversation_id,
         normalizer_overrides=normalizer_overrides,
         send_context=target_context,
+        target_invocation_callback=target_invocation_callback,
     )
 
     call = prompt_target.send_prompt_async.await_args
     assert call.kwargs["normalizer_overrides"] == normalizer_overrides
     assert call.kwargs["send_context"] is target_context
+    assert call.kwargs["target_invocation_callback"] is target_invocation_callback
 
 
 async def test_send_prompt_async_conversion_failure_does_not_call_target(mock_memory_instance):

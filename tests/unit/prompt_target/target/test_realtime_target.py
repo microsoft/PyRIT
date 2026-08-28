@@ -1433,6 +1433,32 @@ async def test_reset_conversation_async_swallows_close_error(target):
     assert "conv" not in target._existing_conversation
 
 
+async def test_reset_conversation_async_cancellation_finishes_closing_connection(target):
+    mock_connection = AsyncMock()
+    target._existing_conversation["conv"] = mock_connection
+    close_started = asyncio.Event()
+    finish_close = asyncio.Event()
+
+    async def close_connection():
+        close_started.set()
+        await finish_close.wait()
+
+    mock_connection.close.side_effect = close_connection
+    cleanup_task = asyncio.create_task(target.reset_conversation_async(conversation_id="conv"))
+    await close_started.wait()
+
+    cleanup_task.cancel()
+    await asyncio.sleep(0)
+    assert not cleanup_task.done()
+    finish_close.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup_task
+
+    mock_connection.close.assert_awaited_once()
+    assert "conv" not in target._existing_conversation
+
+
 async def test_cleanup_conversation_async_warns_and_delegates(target):
     mock_connection = AsyncMock()
     target._existing_conversation["conv"] = mock_connection

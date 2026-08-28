@@ -462,6 +462,15 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         result.backtrack_count = context.backtrack_count
         return result
 
+    async def _teardown_async(self, *, context: CrescendoAttackContext) -> None:
+        """
+        Clean up after attack execution.
+
+        Args:
+            context (CrescendoAttackContext): The attack context.
+        """
+        # Nothing to be done here, no-op
+
     def _build_adversarial_manager(self, *, context: CrescendoAttackContext) -> _AdversarialConversationManager:
         """
         Build the adversarial-conversation manager that owns Crescendo's adversarial-chat turn.
@@ -636,6 +645,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
                     prepended_history_send_context=context.prepended_history_send_context,
                 ),
                 send_context=context.prepended_history_send_context,
+                target_invocation_callback=context._record_objective_target_invocation,
             )
 
         if not response:

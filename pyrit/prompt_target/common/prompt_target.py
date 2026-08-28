@@ -24,7 +24,7 @@ from pyrit.prompt_target.common.target_capabilities import (
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
-from pyrit.prompt_target.common.target_send_context import TargetSendContext
+from pyrit.prompt_target.common.target_send_context import TargetInvocationCallback, TargetSendContext
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,7 @@ class PromptTarget(Identifiable):
         message: Message,
         normalizer_overrides: Mapping[CapabilityName, MessageListNormalizer[Message]] | None = None,
         send_context: TargetSendContext | None = None,
+        target_invocation_callback: TargetInvocationCallback | None = None,
     ) -> list[Message]:
         """
         Validate, normalize, and send a prompt to the target.
@@ -161,6 +162,8 @@ class PromptTarget(Identifiable):
             normalizer_overrides: Optional per-send target normalizer overrides.
             send_context: Optional internal coordination contract for caller-owned
                 history selection and send lifecycle state.
+            target_invocation_callback: Optional callback invoked immediately before
+                target-specific execution.
 
         Returns:
             list[Message]: Response messages from the target.
@@ -185,6 +188,8 @@ class PromptTarget(Identifiable):
             if not normalized_conversation:
                 raise ValueError("Normalization pipeline returned an empty conversation. Cannot send an empty request.")
             self._validate_request(normalized_conversation=normalized_conversation)
+            if target_invocation_callback:
+                target_invocation_callback(conversation_id=conversation_id)
             if send_context:
                 send_context.mark_target_invoked()
             response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
@@ -364,11 +369,11 @@ class PromptTarget(Identifiable):
         """
         Release any target-side state held for a conversation.
 
-        Attacks call this from ``_teardown_async`` once they are done with a
-        conversation id. Targets that keep external state keyed by conversation
-        (a websocket connection, a browser page, an upstream session) override
-        this to close or discard it. Targets that are stateless between calls
-        need not override it.
+        The attack execution scope calls this for objective-target conversations
+        recorded at the common dispatch boundary. Targets that keep external state
+        keyed by conversation (a websocket connection, a browser page, an upstream
+        session) override this to close or discard it. Targets that are stateless
+        between calls need not override it.
 
         This is best-effort cleanup, so implementations should not raise for a
         conversation id they do not recognize, and should be safe to call more

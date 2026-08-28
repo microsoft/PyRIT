@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai.types.chat import ChatCompletion
-from unit.mocks import get_sample_conversations, openai_chat_response_json_dict
+from unit.mocks import MockPromptTarget, get_sample_conversations, openai_chat_response_json_dict
 
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory.memory_interface import MemoryInterface
@@ -54,6 +54,46 @@ def mock_attack_strategy():
         class_module="pyrit.executor.attack.test_attack",
     )
     return strategy
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_target_invocation_callback_runs_immediately_before_target_send() -> None:
+    target = MockPromptTarget()
+    events: list[str] = []
+
+    def record_invocation(*, conversation_id: str) -> None:
+        assert conversation_id == "conversation-id"
+        events.append("callback")
+
+    async def send_to_target(*, normalized_conversation: list[Message]) -> list[Message]:
+        events.append("send")
+        return []
+
+    target._send_prompt_to_target_async = send_to_target  # type: ignore[method-assign]
+    message = Message.from_prompt(prompt="request", role="user")
+    message.message_pieces[0].conversation_id = "conversation-id"
+
+    await target.send_prompt_async(
+        message=message,
+        target_invocation_callback=record_invocation,
+    )
+
+    assert events == ["callback", "send"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_target_invocation_callback_does_not_run_when_validation_fails() -> None:
+    target = MockPromptTarget()
+    target._validate_request = MagicMock(side_effect=ValueError("invalid request"))  # type: ignore[method-assign]
+    target_invocation_callback = MagicMock()
+
+    with pytest.raises(ValueError, match="invalid request"):
+        await target.send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target_invocation_callback=target_invocation_callback,
+        )
+
+    target_invocation_callback.assert_not_called()
 
 
 def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy):

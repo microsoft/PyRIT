@@ -29,8 +29,8 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TAPAttackConfiguration,
     _TreeOfAttacksNode,
+    _TreeOfAttacksNodeExecutor,
 )
-from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
     AttackOutcome,
@@ -49,6 +49,40 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
 
 logger = logging.getLogger(__name__)
+
+
+async def test_node_executor_cancels_and_awaits_siblings_after_failure() -> None:
+    sibling_started = asyncio.Event()
+    sibling_finished = asyncio.Event()
+
+    async def fail_after_sibling_starts(*, objective: str) -> None:
+        await sibling_started.wait()
+        raise RuntimeError("node failed")
+
+    async def block_until_cancelled(*, objective: str) -> None:
+        sibling_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            sibling_finished.set()
+
+    failed_node = MagicMock()
+    failed_node.send_prompt_async = AsyncMock(side_effect=fail_after_sibling_starts)
+    sibling_node = MagicMock()
+    sibling_node.send_prompt_async = AsyncMock(side_effect=block_until_cancelled)
+    executor = _TreeOfAttacksNodeExecutor(
+        batch_size=2,
+        logger=logger,
+    )
+
+    with pytest.raises(RuntimeError, match="node failed"):
+        async for _ in executor.execute_nodes_async(
+            nodes=[failed_node, sibling_node],
+            objective="objective",
+        ):
+            pass
+
+    assert sibling_finished.is_set()
 
 
 # Mirrors the shipped ``adversarial_chat.yaml``: every key required, no extras allowed. Used to
@@ -1088,7 +1122,7 @@ class TestBlockedScoringDefaults:
                 adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
-            report_objective_conversation=lambda conversation_id: None,
+            target_invocation_callback=lambda *, conversation_id: None,
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1156,7 +1190,7 @@ class TestBlockedScoringDefaults:
                 adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
-            report_objective_conversation=lambda conversation_id: None,
+            target_invocation_callback=lambda *, conversation_id: None,
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1566,7 +1600,7 @@ class TestTreeOfAttacksNode:
             "attack_id": {"id": "test_attack"},
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
-            "report_objective_conversation": lambda conversation_id: None,
+            "target_invocation_callback": lambda *, conversation_id: None,
             "memory_labels": {"test": "label"},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -1619,19 +1653,6 @@ class TestTreeOfAttacksNode:
         assert child_node.node_id != parent_node.node_id
         assert child_node.parent_id == parent_node.node_id
         assert child_node.completed is False
-
-    def test_node_duplicate_keeps_reporting_its_conversations(self, node_components):
-        """A child sends on its own conversation, so it needs the same recorder as its parent."""
-        reported: list[str] = []
-        components = {**node_components, "report_objective_conversation": reported.append}
-        parent_node = _TreeOfAttacksNode(**components)
-
-        with patch.object(parent_node._memory, "duplicate_conversation", return_value="new_conv_id"):
-            child_node = parent_node.duplicate()
-
-        child_node._report_objective_conversation(child_node.objective_target_conversation_id)
-
-        assert reported == ["new_conv_id"]
 
     def _node_with_schema(self, node_components, schema):
         """Build a real node whose adversarial system prompt advertises ``schema``.
@@ -3012,7 +3033,7 @@ class TestModalityRouterIntegration:
             "attack_id": {"id": "test_attack"},
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
-            "report_objective_conversation": lambda conversation_id: None,
+            "target_invocation_callback": lambda *, conversation_id: None,
             "memory_labels": {},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -3296,298 +3317,3 @@ class TestTAPAdversarialIdentity:
         )
         assert attack._adversarial_chat_system_seed_prompt.value == "tap persona {{ desired_prefix }}"
         assert attack.get_identifier().params["adversarial_system_prompt"] == "tap persona {{ desired_prefix }}"
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestTAPConversationReset:
-    """Every objective-target conversation TAP opens has to stay reachable.
-
-    TAP keeps one conversation per node and rotates it per turn against a
-    single-turn target. Anything it abandons without recording is a conversation
-    no caller can name afterwards, so the base teardown cannot release it and the
-    result under-reports what the run opened.
-    """
-
-    def _context_with_nodes(self, *node_ids: str) -> TAPAttackContext:
-        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
-        for node_id in node_ids:
-            node = MagicMock(spec=_TreeOfAttacksNode)
-            node.objective_target_conversation_id = node_id
-            context.nodes.append(node)
-        return context
-
-    def test_the_base_lookup_finds_the_best_conversation(self, basic_attack):
-        context = self._context_with_nodes("node-a")
-        context.best_conversation_id = "best-1"
-
-        ids = basic_attack._get_objective_conversation_ids(context=context)
-
-        assert "best-1" in ids
-
-    def test_the_base_lookup_does_not_use_the_unused_session_conversation_id(self, basic_attack):
-        context = self._context_with_nodes("node-a")
-        context.best_conversation_id = "best-1"
-
-        ids = basic_attack._get_objective_conversation_ids(context=context)
-
-        # TAP never sends anything on session.conversation_id.
-        assert context.session.conversation_id not in ids
-
-    def test_a_conversation_is_recorded_as_soon_as_it_is_sent_on(self, basic_attack):
-        context = self._context_with_nodes("node-a")
-        record = basic_attack._make_objective_conversation_recorder(context=context)
-
-        record("turn-1")
-        record("turn-2")
-
-        # Recorded while the run is still going, so a run that raises or is
-        # cancelled can still name them.
-        ids = set(basic_attack._get_objective_conversation_ids(context=context))
-        assert {"turn-1", "turn-2"} <= ids
-
-    def test_recording_the_same_conversation_twice_records_it_once(self, basic_attack):
-        context = self._context_with_nodes()
-        record = basic_attack._make_objective_conversation_recorder(context=context)
-
-        record("turn-1")
-        record("turn-1")
-
-        assert {ref.conversation_id for ref in context.related_conversations} == {"turn-1"}
-
-    def test_the_winning_branch_stops_being_reported_as_pruned(self, basic_attack):
-        context = self._context_with_nodes()
-        record = basic_attack._make_objective_conversation_recorder(context=context)
-        record("node-a")
-        record("node-b")
-        context.best_conversation_id = "node-a"
-
-        basic_attack._release_best_conversation(context)
-
-        # It is still released, through the live conversation rather than the pruned list.
-        assert {ref.conversation_id for ref in context.related_conversations} == {"node-b"}
-        assert set(basic_attack._get_objective_conversation_ids(context=context)) == {"node-a", "node-b"}
-
-    def test_releasing_the_best_branch_without_one_is_a_noop(self, basic_attack):
-        context = self._context_with_nodes()
-        basic_attack._make_objective_conversation_recorder(context=context)("node-a")
-
-        basic_attack._release_best_conversation(context)
-
-        assert {ref.conversation_id for ref in context.related_conversations} == {"node-a"}
-
-    def test_returns_no_duplicates(self, basic_attack):
-        context = self._context_with_nodes("node-a")
-        context.best_conversation_id = "node-a"
-        context.related_conversations.add(
-            ConversationReference(conversation_id="node-a", conversation_type=ConversationType.PRUNED)
-        )
-
-        ids = basic_attack._get_objective_conversation_ids(context=context)
-
-        assert ids == ["node-a"]
-
-
-@pytest.mark.usefixtures("patch_central_database")
-class TestTAPConversationsAreAllReachable:
-    """End to end, with real nodes: nothing the objective target served goes missing.
-
-    ``TestTAPConversationReset`` covers the pieces in isolation. This drives the
-    real ``_TreeOfAttacksNode`` so the wiring is covered too, which is where a
-    conversation actually goes missing: the per-turn rotation against a
-    single-turn target, and the branch a run walks away from.
-    """
-
-    def _run_and_collect(self, *, attack_builder, supports_multi_turn, depth, width, branching):
-        """Run TAP and return (ids the target served, ids the run can still name)."""
-        served: list[str] = []
-
-        attack = (
-            attack_builder.with_supports_multi_turn(supports_multi_turn)
-            .with_default_mocks()
-            .with_tree_params(tree_depth=depth, tree_width=width, branching_factor=branching)
-            .build()
-        )
-        objective_target = attack._objective_target
-        memory = CentralMemory.get_memory_instance()
-
-        async def record_and_reply(**kwargs):
-            conversation_id = kwargs.get("conversation_id")
-            reply = Message(
-                message_pieces=[
-                    MessagePiece(
-                        role="assistant",
-                        original_value="response",
-                        converted_value="response",
-                        conversation_id=conversation_id,
-                    )
-                ]
-            )
-            if kwargs.get("target") is not objective_target:
-                return reply
-            served.append(conversation_id)
-            request = Message(
-                message_pieces=[
-                    MessagePiece(
-                        role="user",
-                        original_value="request",
-                        converted_value="request",
-                        conversation_id=conversation_id,
-                    )
-                ]
-            )
-            for message in (request, reply):
-                for piece in message.message_pieces:
-                    piece.not_in_memory = False
-                memory.add_message_to_memory(request=message)
-            return reply
-
-        normalizer = MagicMock(spec=PromptNormalizer)
-        normalizer.send_prompt_async = AsyncMock(side_effect=record_and_reply)
-        attack._prompt_normalizer = normalizer
-        attack._node_executor._prompt_normalizer = normalizer
-
-        return attack, served
-
-    async def _execute(self, attack, context):
-        async def score(node_self, *, response, objective):
-            node_self.objective_score = MagicMock(
-                spec=Score, get_value=MagicMock(return_value=0.1), score_metadata=None
-            )
-
-        with patch.object(
-            _TreeOfAttacksNode, "_generate_adversarial_prompt_async", new_callable=AsyncMock, return_value="prompt"
-        ):
-            with patch.object(_TreeOfAttacksNode, "_score_response_async", new=score):
-                await attack._setup_async(context=context)
-                return await attack._perform_async(context=context)
-
-    @pytest.mark.parametrize(
-        "supports_multi_turn, depth, width, branching",
-        [
-            pytest.param(False, 3, 1, 1, id="single_turn_rotates_per_turn"),
-            pytest.param(True, 3, 2, 2, id="multi_turn_branches_per_node"),
-        ],
-    )
-    async def test_every_conversation_the_target_served_stays_reachable(
-        self, attack_builder, supports_multi_turn, depth, width, branching
-    ):
-        attack, served = self._run_and_collect(
-            attack_builder=attack_builder,
-            supports_multi_turn=supports_multi_turn,
-            depth=depth,
-            width=width,
-            branching=branching,
-        )
-        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
-
-        result = await self._execute(attack, context)
-
-        assert served, "the run has to have sent something for this to mean anything"
-        # Nothing the target served may be left without a name: the teardown reset
-        # and the result readers both work from these two.
-        assert set(served) <= set(attack._get_objective_conversation_ids(context=context))
-        assert set(served) <= result.get_active_conversation_ids()
-
-    async def test_a_conversation_that_was_never_used_is_not_recorded(self, attack_builder):
-        attack, served = self._run_and_collect(
-            attack_builder=attack_builder, supports_multi_turn=False, depth=3, width=1, branching=1
-        )
-        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
-
-        result = await self._execute(attack, context)
-
-        # A node is constructed with a conversation id it rotates away from before
-        # its first send. That conversation has no messages, so recording it would
-        # put an empty conversation in front of the user. Checked on an unbranched
-        # tree, where every conversation that exists is one the target served;
-        # branching also duplicates conversations, which are real but never sent.
-        assert result.get_active_conversation_ids() == set(served)
-
-    async def test_the_context_and_the_result_agree(self, attack_builder):
-        attack, _ = self._run_and_collect(
-            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=2, branching=2
-        )
-        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
-
-        result = await self._execute(attack, context)
-
-        assert set(attack._get_objective_conversation_ids(context=context)) == result.get_active_conversation_ids()
-
-    async def test_a_branched_node_reports_its_own_conversations(self, attack_builder):
-        """A child gets its own conversation from duplicate(), and must report on it too."""
-        attack, served = self._run_and_collect(
-            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=1, branching=2
-        )
-        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
-
-        result = await self._execute(attack, context)
-
-        # width=1 keeps one node per level, so every conversation beyond the first
-        # belongs to a branch, and nothing else records those for us.
-        assert len(set(served)) > 1, "branching has to have produced more than one conversation"
-        assert set(served) <= result.get_active_conversation_ids()
-
-    async def test_the_winning_conversation_is_not_also_reported_as_pruned(self, attack_builder):
-        attack, served = self._run_and_collect(
-            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=2, branching=2
-        )
-        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
-
-        result = await self._execute(attack, context)
-
-        assert result.conversation_id, "the run has to have picked a best branch"
-        # Every conversation is recorded while the run is in flight, before there is
-        # any way to know which branch wins. The winner has to come back out.
-        assert result.conversation_id not in result.get_pruned_conversation_ids()
-        assert result.conversation_id in result.get_active_conversation_ids()
-
-    async def test_a_run_that_raises_does_not_report_its_own_conversation_as_pruned(self, attack_builder):
-        """The backend adds the main conversation's messages to the pruned ones, so it cannot be in both."""
-        attack, served = self._run_and_collect(
-            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=2, branching=1
-        )
-        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
-
-        iterations = {"count": 0}
-        prepare = type(attack)._prepare_nodes_for_iteration_async
-
-        async def fail_on_the_second_iteration(self, context):
-            iterations["count"] += 1
-            if iterations["count"] >= 2:
-                raise ValueError("blew up mid-run")
-            await prepare(self, context=context)
-
-        with patch.object(type(attack), "_prepare_nodes_for_iteration_async", new=fail_on_the_second_iteration):
-            with pytest.raises(ValueError):
-                await self._execute(attack, context)
-
-        # No result is built on this path, so the invariant has to already hold on
-        # the context the error result is assembled from.
-        assert context.best_conversation_id, "a branch has to have taken the lead"
-        pruned = {ref.conversation_id for ref in context.related_conversations}
-        assert context.best_conversation_id not in pruned
-
-    async def test_a_run_that_raises_still_names_everything_it_served(self, attack_builder):
-        """The path that matters most, because a run that blew up is the one holding connections."""
-        attack, served = self._run_and_collect(
-            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=3, branching=1
-        )
-        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
-
-        iterations = {"count": 0}
-        prepare = type(attack)._prepare_nodes_for_iteration_async
-
-        async def fail_on_the_second_iteration(self, context):
-            iterations["count"] += 1
-            if iterations["count"] >= 2:
-                raise ValueError("blew up mid-run")
-            await prepare(self, context=context)
-
-        with patch.object(type(attack), "_prepare_nodes_for_iteration_async", new=fail_on_the_second_iteration):
-            with pytest.raises(ValueError):
-                await self._execute(attack, context)
-
-        assert served, "the run has to have sent something for this to mean anything"
-        # No result is built on this path, so anything recorded only at result time
-        # would be lost, and teardown is the only hook that still runs.
-        assert set(served) <= set(attack._get_objective_conversation_ids(context=context))

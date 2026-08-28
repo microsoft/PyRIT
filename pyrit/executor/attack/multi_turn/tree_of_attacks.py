@@ -74,10 +74,11 @@ from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator
     from pathlib import Path
 
     from pyrit.models.literals import PromptDataType
+    from pyrit.prompt_target.common.target_send_context import TargetInvocationCallback
 
 logger = logging.getLogger(__name__)
 
@@ -377,7 +378,7 @@ class _TreeOfAttacksNode:
         attack_id: ComponentIdentifier,
         attack_strategy_name: str,
         modality_router: _ModalityFeedbackRouter,
-        report_objective_conversation: Callable[[str], None],
+        target_invocation_callback: TargetInvocationCallback,
         use_score_as_feedback: bool = True,
         memory_labels: dict[str, str] | None = None,
         parent_id: str | None = None,
@@ -406,10 +407,8 @@ class _TreeOfAttacksNode:
                 whether prior media should travel back to the adversarial chat or forward to
                 the objective target, and fills adversarial-placeholder pieces in seed
                 messages. Typically shared across all nodes of the same attack.
-            report_objective_conversation (Callable[[str], None]): Called with each
-                objective-target conversation id this node sends on, as soon as the send
-                returns. The attack records them so a conversation stays nameable even
-                if the run ends before a result is built.
+            target_invocation_callback (TargetInvocationCallback): Callback for objective-target
+                provider invocations.
             use_score_as_feedback (bool): Whether subsequent adversarial prompts include
                 the objective score. Defaults to True.
             memory_labels (dict[str, str] | None): Labels for memory storage.
@@ -437,6 +436,7 @@ class _TreeOfAttacksNode:
         self._attack_strategy_name = attack_strategy_name
         self._memory_labels = memory_labels or {}
         self._modality_router = modality_router
+        self._target_invocation_callback = target_invocation_callback
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         self._use_score_as_feedback = use_score_as_feedback
 
@@ -454,9 +454,6 @@ class _TreeOfAttacksNode:
         # Conversation tracking
         self.objective_target_conversation_id = str(uuid.uuid4())
         self.adversarial_chat_conversation_id = str(uuid.uuid4())
-        # Reports every objective-target conversation this node actually sends on, so
-        # the attack can record it while the run is still going.
-        self._report_objective_conversation = report_objective_conversation
 
         # Execution results (populated after send_prompt_async)
         self.completed = False
@@ -701,12 +698,8 @@ class _TreeOfAttacksNode:
                     prepended_history_send_context=self._prepended_history_send_context,
                 ),
                 send_context=self._prepended_history_send_context,
+                target_invocation_callback=self._target_invocation_callback,
             )
-
-        # Report before returning. From here the target holds state for this
-        # conversation, and a single-turn rotation replaces the id on the next turn
-        # without telling anything else.
-        self._report_objective_conversation(self.objective_target_conversation_id)
 
         # Store the full response so subsequent turns can forward media when supported.
         self.last_response = response
@@ -785,12 +778,8 @@ class _TreeOfAttacksNode:
                     prepended_history_send_context=self._prepended_history_send_context,
                 ),
                 send_context=self._prepended_history_send_context,
+                target_invocation_callback=self._target_invocation_callback,
             )
-
-        # Report before returning. From here the target holds state for this
-        # conversation, and a single-turn rotation replaces the id on the next turn
-        # without telling anything else.
-        self._report_objective_conversation(self.objective_target_conversation_id)
 
         # Store the full response so subsequent turns can forward media when supported.
         self.last_response = response
@@ -985,7 +974,7 @@ class _TreeOfAttacksNode:
             attack_id=self._attack_id,
             attack_strategy_name=self._attack_strategy_name,
             modality_router=self._modality_router,
-            report_objective_conversation=self._report_objective_conversation,
+            target_invocation_callback=self._target_invocation_callback,
             use_score_as_feedback=self._use_score_as_feedback,
             memory_labels=self._memory_labels,
             desired_response_prefix=self._desired_response_prefix,
@@ -1411,9 +1400,9 @@ class _TreeOfAttacksNodeExecutor:
         """
         Execute nodes in ordered batches and yield each completed batch.
 
-        Node instances own all branch-specific mutable state. This executor only
-        schedules their existing execution protocol, so failures and cancellation
-        retain ``asyncio.gather`` semantics.
+        Node instances own all branch-specific mutable state. If one node fails,
+        the executor cancels and awaits the other nodes before it propagates the
+        error.
 
         Args:
             nodes (list[_TreeOfAttacksNode]): Nodes to execute.
@@ -1427,7 +1416,14 @@ class _TreeOfAttacksNodeExecutor:
             batch_nodes = nodes[batch_start : batch_start + self._batch_size]
             self._log_batch_start(batch_start=batch_start, batch_nodes=batch_nodes, total_nodes=len(nodes))
 
-            await asyncio.gather(*(node.send_prompt_async(objective=objective) for node in batch_nodes))
+            tasks = [asyncio.create_task(node.send_prompt_async(objective=objective)) for node in batch_nodes]
+            try:
+                await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
 
             yield batch_start, batch_nodes
 
@@ -1893,65 +1889,22 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         return self._create_failure_result(context)
 
-    def _make_objective_conversation_recorder(self, *, context: TAPAttackContext) -> Callable[[str], None]:
+    async def _teardown_async(self, *, context: TAPAttackContext) -> None:
         """
-        Build the callback nodes use to report an objective-target conversation.
+        Clean up after attack execution.
 
-        TAP keeps one conversation per node and, against a single-turn target, mints
-        a fresh id every turn. Recording them only when the result is built would
-        lose every conversation opened by a run that raises or is cancelled, which
-        are the runs most likely to leave a connection open. Recording as each send
-        returns means a conversation is nameable from the moment the target holds
-        state for it.
+        This method is called automatically after attack execution completes,
+        regardless of success or failure. It provides an opportunity to clean
+        up resources, close connections, or perform other finalization tasks.
+
+        Currently, the TAP attack does not require any specific cleanup operations
+        as all resources are managed by the parent components.
 
         Args:
-            context (TAPAttackContext): The attack context to record onto.
-
-        Returns:
-            Callable[[str], None]: Recorder for one objective-target conversation id.
+            context (TAPAttackContext): The attack context containing the final
+                state after execution.
         """
-
-        def record(conversation_id: str) -> None:
-            context.related_conversations.add(
-                ConversationReference(
-                    conversation_id=conversation_id,
-                    conversation_type=ConversationType.PRUNED,
-                )
-            )
-
-        return record
-
-    def _release_best_conversation(self, context: TAPAttackContext, *, previous_best: str | None = None) -> None:
-        """
-        Stop reporting the current best branch as pruned.
-
-        Every conversation is recorded while the run is in flight, before there is
-        any way to know which branch will lead. Whichever one does becomes
-        ``result.conversation_id``, so leaving it in ``related_conversations``
-        would report it twice: the backend adds the main conversation's message
-        count to the pruned ones, and the report printers list it in both places.
-
-        Called whenever the lead is recomputed, which is the last step of every
-        iteration, so the invariant holds at every instant rather than only once a
-        result exists. A run that raises never builds a result and would otherwise
-        report its own conversation twice. A branch that led and then lost it is an
-        abandoned branch again, so it goes back.
-
-        Args:
-            context (TAPAttackContext): The attack context.
-            previous_best (str | None): The branch that was leading before, if the
-                lead just changed.
-        """
-        if previous_best and previous_best != context.best_conversation_id:
-            self._make_objective_conversation_recorder(context=context)(previous_best)
-        if not context.best_conversation_id:
-            return
-        context.related_conversations.discard(
-            ConversationReference(
-                conversation_id=context.best_conversation_id,
-                conversation_type=ConversationType.PRUNED,
-            )
-        )
+        # No specific teardown needed for TAP attack
 
     async def _prepare_nodes_for_iteration_async(self, context: TAPAttackContext) -> None:
         """
@@ -2204,7 +2157,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # but we ensure it is sorted to avoid making any assumptions
         # about the order of nodes in context.nodes.
         completed_nodes = self._get_completed_nodes_sorted_by_score(context.nodes)
-        previous_best = context.best_conversation_id
 
         if completed_nodes:
             best_node = completed_nodes[0]
@@ -2221,8 +2173,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                     context.best_objective_score = node.objective_score
                     context.best_adversarial_conversation_id = node.adversarial_chat_conversation_id
                     break
-
-        self._release_best_conversation(context, previous_best=previous_best)
 
     def _create_attack_node(
         self,
@@ -2263,7 +2213,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             attack_id=self.get_identifier(),
             attack_strategy_name=self.__class__.__name__,
             modality_router=self._modality_router,
-            report_objective_conversation=self._make_objective_conversation_recorder(context=context),
+            target_invocation_callback=context._record_objective_target_invocation,
             use_score_as_feedback=self._attack_scoring_config.use_score_as_feedback,
             memory_labels=context.memory_labels,
             desired_response_prefix=self._configuration.desired_response_prefix,

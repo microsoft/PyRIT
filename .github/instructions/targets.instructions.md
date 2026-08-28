@@ -43,40 +43,11 @@ class MyTarget(PromptTarget):
 ``send_prompt_async`` (the public entry point) is ``@final`` and MUST NOT
 be overridden. Override ``_send_prompt_to_target_async`` instead.
 
-## Releasing per-conversation state
-
-Attacks call ``reset_conversation_async(*, conversation_id)`` from
-``_teardown_async`` when they are done with a conversation id. The base
-implementation is a no-op, so a target that keeps no state between calls
-does not need to do anything.
-
-The attack decides when a conversation is over and says so; the target only
-releases what it holds. Only the **objective** target is reset. Adversarial,
-scorer and converter targets have their own lifetimes and are out of scope.
-
-An attack whose context keeps the live conversation somewhere other than
-``conversation_id`` or ``session.conversation_id`` should expose it as a
-``conversation_id`` property, the way ``TAPAttackContext`` reports the best
-branch. That is the same property the error-result builder reads.
-
 Targets that hold external state keyed by conversation (a websocket
-connection, a browser page, an upstream session) SHOULD override it to
-release that state:
-
-```python
-async def reset_conversation_async(self, *, conversation_id: str) -> None:
-    connection = self._connections.pop(conversation_id, None)
-    if connection:
-        await connection.close()
-```
-
-It is best-effort cleanup, so an implementation SHOULD NOT raise for an
-unknown conversation id and SHOULD be safe to call more than once for the
-same id. The attack logs and swallows anything that does raise, so a
-failure here never replaces the error the attack was reporting.
-
-Closing the whole target rather than one conversation is a different
-concern and stays in ``cleanup_target_async``.
+connection, browser page, or upstream session) SHOULD override
+``reset_conversation_async``. It must be safe to call more than once and for
+unknown conversation IDs. Whole-target cleanup stays in
+``cleanup_target_async``.
 
 ## Keyword-only ``__init__`` is enforced
 

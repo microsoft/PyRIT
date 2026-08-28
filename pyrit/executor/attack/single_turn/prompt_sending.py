@@ -272,6 +272,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # No response at all (all attempts filtered/failed)
         return AttackOutcome.FAILURE, "All attempts were filtered or failed to get a response"
 
+    async def _teardown_async(self, *, context: SingleTurnAttackContext[Any]) -> None:
+        """Clean up after attack execution."""
+        # Nothing to be done here, no-op
+
     def _get_message(self, context: SingleTurnAttackContext[Any]) -> Message:
         """
         Prepare the message for the attack.
@@ -323,6 +327,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                     prepended_history_send_context=context.prepended_history_send_context,
                 ),
                 send_context=context.prepended_history_send_context,
+                target_invocation_callback=context._record_objective_target_invocation,
             )
 
     async def _evaluate_response_async(

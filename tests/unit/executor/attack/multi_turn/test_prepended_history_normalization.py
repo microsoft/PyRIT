@@ -296,7 +296,7 @@ def _make_tap_node(*, target: PromptTarget) -> _TreeOfAttacksNode:
             adversarial_chat=adversarial_chat,
             objective_target=target,
         ),
-        report_objective_conversation=lambda conversation_id: None,
+        target_invocation_callback=lambda *, conversation_id: None,
     )
 
 

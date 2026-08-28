@@ -727,11 +727,9 @@ class TestEdgeCasesAndErrorHandling:
         assert attack1.get_identifier().hash == attack2.get_identifier().hash
         assert attack1.get_identifier().class_name == "MultiPromptSendingAttack"
 
-    async def test_teardown_async_resets_target_conversation(self, mock_target, basic_context):
+    async def test_teardown_async_is_noop(self, mock_target, basic_context):
         attack = MultiPromptSendingAttack(objective_target=mock_target)
 
+        # Should complete without error
         await attack._teardown_async(context=basic_context)
-
-        mock_target.reset_conversation_async.assert_awaited_once_with(
-            conversation_id=basic_context.session.conversation_id
-        )
+        # No assertions needed - we just want to ensure it runs without exceptions

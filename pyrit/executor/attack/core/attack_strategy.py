@@ -37,7 +37,6 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     ConversationReference,
-    ConversationType,
     ConverterIdentifier,
     Identifiable,
     Message,
@@ -48,6 +47,8 @@ from pyrit.models import (
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
     from pyrit.executor.attack.component.prepended_conversation_config import (
         PrependedConversationConfig,
     )
@@ -71,6 +72,55 @@ class _NextMessageOverrideState(Enum):
     """State marker distinguishing an unset override from an explicit ``None``."""
 
     UNSET = "unset"
+
+
+class _ObjectiveTargetConversationLifecycle:
+    """Track and release objective-target conversations for one attack execution."""
+
+    def __init__(
+        self,
+        *,
+        objective_target: PromptTarget,
+        logger: logging.Logger | logging.LoggerAdapter[logging.Logger],
+    ) -> None:
+        self._objective_target = objective_target
+        self._logger = logger
+        self._conversation_ids: set[str] = set()
+
+    async def __aenter__(self) -> _ObjectiveTargetConversationLifecycle:
+        """
+        Start tracking target invocations.
+
+        Returns:
+            _ObjectiveTargetConversationLifecycle: This lifecycle instance.
+        """
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Release each conversation invoked during the attack."""
+        for conversation_id in self._conversation_ids:
+            try:
+                await self._objective_target.reset_conversation_async(conversation_id=conversation_id)
+            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+                self._logger.warning(
+                    "Failed to reset objective-target conversation %s: %s",
+                    conversation_id,
+                    error,
+                )
+
+    def record_invocation(self, *, conversation_id: str) -> None:
+        """
+        Record one objective-target invocation.
+
+        Args:
+            conversation_id (str): The conversation ID used by the target.
+        """
+        self._conversation_ids.add(conversation_id)
 
 
 @dataclass
@@ -102,6 +152,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
     _error_result_persistence_error: Exception | None = field(default=None, init=False, repr=False)
+    _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     # Per-execution prepended-history boundary and send lifecycle. Never persisted.
     prepended_history_send_context: PrependedHistorySendContext | None = field(
@@ -168,30 +224,20 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         """Set the next message (for attacks that generate internally)."""
         self._next_message_override = value
 
+    def _record_objective_target_invocation(self, *, conversation_id: str) -> None:
+        """
+        Record an objective-target invocation for lifecycle cleanup.
 
-def _resolve_live_conversation_id(*, context: AttackContext[Any]) -> str | None:
-    """
-    Return the objective-target conversation the run is currently using.
+        Args:
+            conversation_id (str): The conversation ID used by the target.
 
-    Single-turn contexts expose it directly and multi-turn contexts keep it on
-    their conversation session. ``TAPAttackContext`` overrides
-    ``conversation_id`` to report the best branch, so the first lookup covers it.
-
-    This is the lookup #2322 gave the error-result builder, moved here so that
-    builder and the teardown reset resolve a run's conversation the same way
-    rather than walking the context twice.
-
-    Args:
-        context (AttackContext[Any]): The context for the attack.
-
-    Returns:
-        str | None: The conversation id, or ``None`` when the context exposes
-            neither layout.
-    """
-    candidate = getattr(context, "conversation_id", None) or getattr(
-        getattr(context, "session", None), "conversation_id", None
-    )
-    return candidate if isinstance(candidate, str) and candidate else None
+        Raises:
+            RuntimeError: If called outside this context's attack execution.
+        """
+        lifecycle = self._objective_target_conversation_lifecycle
+        if lifecycle is None:
+            raise RuntimeError("Objective-target invocation occurred outside the attack lifecycle.")
+        lifecycle.record_invocation(conversation_id=conversation_id)
 
 
 class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT]):
@@ -410,7 +456,11 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         collector = get_retry_collector()
         retry_events = collector.events if collector else []
 
-        conversation_id = _resolve_live_conversation_id(context=context) or str(uuid.uuid4())
+        # Multi-turn contexts keep the active ID on their conversation session.
+        conversation_id = getattr(context, "conversation_id", None)
+        if not conversation_id:
+            conversation_id = getattr(getattr(context, "session", None), "conversation_id", None)
+        conversation_id = conversation_id or str(uuid.uuid4())
 
         error_result = AttackResult(
             conversation_id=conversation_id,
@@ -707,83 +757,6 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         return self._request_converters
 
-    def _get_objective_conversation_ids(self, *, context: AttackStrategyContextT) -> list[str]:
-        """
-        Collect every objective-target conversation id this run used.
-
-        This is ``AttackResult.get_active_conversation_ids()`` read off the
-        context instead of the result: the live conversation plus the ones
-        recorded as ``PRUNED``. A run leaves conversations behind whenever it
-        mints a fresh id mid-run, which a ``PromptSendingAttack`` retry, a
-        Crescendo backtrack, the single-turn rotation in multi-turn attacks and
-        TAP branching all do. Those still hold target-side state.
-
-        The two are pinned equal by test. Reading the context rather than the
-        result is what lets teardown run on the paths where no result exists,
-        which is every failed and every cancelled run.
-
-        Adversarial, scorer and converter conversations belong to other targets
-        and are deliberately not included; ``get_active_conversation_ids()``
-        excludes them for the same reason.
-
-        An attack that keeps its live conversation somewhere else should expose
-        it as ``conversation_id`` on its context, the way ``TAPAttackContext``
-        reports the best branch, rather than overriding this. That keeps one
-        lookup, and it is the same property the error-result builder reads.
-
-        Args:
-            context (AttackStrategyContextT): The context for the attack.
-
-        Returns:
-            list[str]: Conversation ids to release, in no particular order and
-                without duplicates.
-        """
-        ids: list[str] = []
-
-        live = _resolve_live_conversation_id(context=context)
-        if live:
-            ids.append(live)
-
-        ids.extend(
-            ref.conversation_id
-            for ref in context.related_conversations
-            if ref.conversation_type == ConversationType.PRUNED
-        )
-        return list(dict.fromkeys(ids))
-
-    async def _teardown_async(self, *, context: AttackStrategyContextT) -> None:
-        """
-        Release the objective target's state for the run's conversations.
-
-        Hands each conversation id to ``PromptTarget.reset_conversation_async``
-        so targets holding external state keyed by conversation (a websocket
-        connection, a browser page) can close it. The base target
-        implementation is a no-op, so this is inert for stateless targets.
-
-        This pass covers the objective target only. Adversarial, scorer and
-        converter targets have their own lifetimes and are not released here.
-
-        This runs in the ``finally`` of the execution lifecycle, so it covers
-        runs that succeed, runs that raise and runs that are cancelled. An
-        ``Exception`` from a target is logged rather than allowed to replace
-        whatever error the attack was already reporting. Cancellation is not
-        caught: if the run is cancelled while this is releasing, it propagates
-        and the conversations after it are left to ``cleanup_target_async``,
-        because swallowing a ``CancelledError`` to finish a cleanup loop is
-        worse than not finishing it.
-
-        Subclasses that need their own teardown should override this and call
-        ``await super()._teardown_async(context=context)``.
-
-        Args:
-            context (AttackStrategyContextT): The context for the attack.
-        """
-        for conversation_id in self._get_objective_conversation_ids(context=context):
-            try:
-                await self._objective_target.reset_conversation_async(conversation_id=conversation_id)
-            except Exception as e:  # noqa: BLE001 - teardown runs in a finally; never mask the attack's own error
-                self._logger.warning(f"Error resetting conversation {conversation_id} on the objective target: {e}")
-
     async def execute_with_context_async(self, *, context: AttackStrategyContextT) -> AttackStrategyResultT:
         """
         Execute an attack and persist its completed result after teardown.
@@ -798,16 +771,25 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             ExceptionGroup: If attack execution and recording its error result both fail.
         """
         context._error_result_persistence_error = None
+        lifecycle = _ObjectiveTargetConversationLifecycle(
+            objective_target=self._objective_target,
+            logger=self._logger,
+        )
+        context._objective_target_conversation_lifecycle = lifecycle
         try:
-            result = await super().execute_with_context_async(context=context)
-        except Exception as attack_error:
-            persistence_error = context._error_result_persistence_error
-            if persistence_error is not None:
-                raise ExceptionGroup(
-                    "Attack execution and error result persistence failed",
-                    [attack_error, persistence_error],
-                ) from None
-            raise
+            async with lifecycle:
+                try:
+                    result = await super().execute_with_context_async(context=context)
+                except Exception as attack_error:
+                    persistence_error = context._error_result_persistence_error
+                    if persistence_error is not None:
+                        raise ExceptionGroup(
+                            "Attack execution and error result persistence failed",
+                            [attack_error, persistence_error],
+                        ) from None
+                    raise
+        finally:
+            context._objective_target_conversation_lifecycle = None
 
         self._default_event_handler._persist_result(result=result)
         return result

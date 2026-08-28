@@ -9,6 +9,19 @@ if TYPE_CHECKING:
     from pyrit.models import Message
 
 
+class TargetInvocationCallback(Protocol):
+    """Callback invoked immediately before target-specific execution."""
+
+    def __call__(self, *, conversation_id: str) -> None:
+        """
+        Record one target invocation.
+
+        Args:
+            conversation_id (str): The conversation ID for the invocation.
+        """
+        ...
+
+
 class TargetSendContext(Protocol):
     """Internal contract coordinating one target send with caller-owned state."""
 
