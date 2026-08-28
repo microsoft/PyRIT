@@ -18,7 +18,7 @@ MAIN_BICEP = REPO_ROOT / "infra" / "main.bicep"
 NETWORK_BICEP = REPO_ROOT / "infra" / "modules" / "aca_nat_network.bicep"
 FRONT_DOOR_BICEP = REPO_ROOT / "infra" / "modules" / "aca_front_door.bicep"
 PRIVATE_ENDPOINT_APPROVAL_BICEP = REPO_ROOT / "infra" / "modules" / "aca_private_endpoint_approval.bicep"
-BUILD_AND_TEST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build_and_test.yml"
+BICEP_TOPOLOGY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "bicep_topology.yml"
 
 
 def _find_bicep_cli() -> str | None:
@@ -55,13 +55,18 @@ class TestBicepCiContract(unittest.TestCase):
     """Keep one fail-closed CI path for compiling the infrastructure templates."""
 
     def test_workflow_installs_bicep_and_requires_topology_tests(self):
-        workflow = BUILD_AND_TEST_WORKFLOW.read_text(encoding="utf-8")
+        workflow = BICEP_TOPOLOGY_WORKFLOW.read_text(encoding="utf-8")
 
         assert "bicep-topology:" in workflow
         assert "PYRIT_REQUIRE_BICEP: 'true'" in workflow
         assert workflow.count("AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure") == 2
         assert "az bicep install --version v0.46.1" in workflow
         assert "python tests/unit/infra/test_bicep_topology.py -v" in workflow
+        assert workflow.count("'infra/**/*.bicep'") == 2
+        assert workflow.count("'tests/unit/infra/**'") == 2
+        assert workflow.count("'.github/workflows/bicep_topology.yml'") == 2
+        assert "merge_group:" in workflow
+        assert "workflow_dispatch:" in workflow
 
 
 @unittest.skipIf(BICEP_CLI is None and not BICEP_REQUIRED, "Bicep CLI is not already installed")
