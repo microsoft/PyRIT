@@ -818,11 +818,10 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
         int: Exit code (``0`` on success, ``1`` on error).
     """
     from pyrit.cli import _output
-    from pyrit.cli._cli_args import ScenarioResultView
+    from pyrit.cli._cli_args import OutputFormat
     from pyrit.cli._results import (
         apply_view_limit_policy,
-        build_attacks_table_payload,
-        build_conversations_payload_async,
+        build_results_payload_async,
         resolve_view,
     )
 
@@ -832,27 +831,8 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
 
     try:
         result = await client.get_scenario_run_results_async(scenario_result_id=scenario_result_id)
-    except Exception as exc:
-        _print_cli_exception(exc=exc)
-        return 1
-
-    if view is ScenarioResultView.OVERVIEW:
-        await _output.print_scenario_result_async(result=result)
-        return 0
-
-    if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
-        attacks_payload = build_attacks_table_payload(
-            result=result,
-            scenario_result_id=scenario_result_id,
-            attack_result_ids=parsed_args.attack_result_ids,
-            limit=limit,
-        )
-        _output.print_attacks_table(payload=attacks_payload)
-        if view is ScenarioResultView.ATTACKS:
-            return 0
-
-    try:
-        conversations_payload = await build_conversations_payload_async(
+        payload = await build_results_payload_async(
+            view=view,
             result=result,
             client=client,
             scenario_result_id=scenario_result_id,
@@ -862,7 +842,11 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
     except Exception as exc:
         _print_cli_exception(exc=exc)
         return 1
-    _output.print_conversations(payload=conversations_payload)
+
+    if parsed_args.output is OutputFormat.JSON:
+        _output.print_results_json(payload=payload)
+    else:
+        await _output.print_results_console_async(result=result, payload=payload)
     return 0
 
 

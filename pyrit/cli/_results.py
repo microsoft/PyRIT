@@ -16,9 +16,10 @@ This module imports ``pydantic`` and is therefore loaded only from deferred
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from pyrit.cli._cli_args import ScenarioResultView
 
@@ -31,6 +32,36 @@ if TYPE_CHECKING:
 #: ``--limit``. Unlike ``attacks`` (a single embedded read), these views make a
 #: per-attack message fetch, so an unbounded run could pull many transcripts.
 _DEFAULT_HEAVY_VIEW_LIMIT = 5
+
+
+class GroupSummary(BaseModel):
+    """One display group's totals and success rate in the ``overview`` view."""
+
+    name: str
+    total_results: int
+    success_rate: int
+
+
+class ScenarioOverviewPayload(BaseModel):
+    """
+    The ``overview`` view: scenario-level aggregates and per-group success rates.
+
+    Captures the numbers the console pretty printer computes inline, but as a
+    typed object so ``--output json`` can emit the same aggregates the console
+    shows. The console path still renders via the framework pretty printer while
+    JSON serializes this payload, so the two compute independently; the aggregates
+    are kept in lockstep by ``test_overview_payload_matches_framework_printer``.
+    """
+
+    scenario_result_id: str
+    scenario_name: str
+    scenario_version: int
+    pyrit_version: str
+    total_techniques: int
+    total_attack_results: int
+    overall_success_rate: int
+    unique_objectives: int
+    groups: list[GroupSummary] = Field(default_factory=list)
 
 
 class AttackRow(BaseModel):
@@ -49,13 +80,20 @@ class AttacksTablePayload(BaseModel):
     The ``attacks`` view: one row per attack result in a scenario run.
 
     ``total`` is the number of attacks that matched the selection before
-    ``--limit`` was applied; ``len(rows)`` is how many are actually included.
-    Exposing both lets any renderer show a "showing N of M" note.
+    ``--limit`` was applied; ``shown`` (== ``len(rows)``) is how many are actually
+    included. Exposing both lets any renderer — or a JSON consumer — detect when
+    the list was truncated.
     """
 
     scenario_result_id: str
     rows: list[AttackRow] = Field(default_factory=list)
     total: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def shown(self) -> int:
+        """Rows actually included, i.e. ``total`` minus any ``--limit`` truncation."""
+        return len(self.rows)
 
 
 class TranscriptScore(BaseModel):
@@ -98,13 +136,39 @@ class ConversationsPayload(BaseModel):
     The ``conversations`` view: the main-conversation transcript per attack.
 
     ``total`` is the number of attacks that matched the selection before
-    ``--limit`` was applied; ``len(conversations)`` is how many are actually
-    included. Exposing both lets any renderer show a "showing N of M" note.
+    ``--limit`` was applied; ``shown`` (== ``len(conversations)``) is how many are
+    actually included. Exposing both lets any renderer — or a JSON consumer —
+    detect when the list was truncated.
     """
 
     scenario_result_id: str
     conversations: list[AttackConversation] = Field(default_factory=list)
     total: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def shown(self) -> int:
+        """Transcripts actually included, i.e. ``total`` minus any ``--limit`` truncation."""
+        return len(self.conversations)
+
+
+class FullPayload(BaseModel):
+    """
+    The ``full`` view: the ``attacks`` table together with the ``conversations``.
+
+    Bundling both sub-payloads into one model lets ``--output json`` emit a
+    single well-formed document (rather than two concatenated ones) while the
+    console renderer prints the table then the transcripts.
+    """
+
+    scenario_result_id: str
+    attacks: AttacksTablePayload
+    conversations: ConversationsPayload
+
+
+#: Any of the per-view payloads a ``scenario-results`` render can produce. Named
+#: so the builder, the JSON renderer, and both front-ends share one type.
+ResultsPayload = ScenarioOverviewPayload | AttacksTablePayload | ConversationsPayload | FullPayload
 
 
 def resolve_view(*, view: ScenarioResultView | None) -> ScenarioResultView:
@@ -155,18 +219,59 @@ def apply_view_limit_policy(
     """
     if view is ScenarioResultView.OVERVIEW:
         if limit is not None:
-            print("Note: --limit has no effect with --view overview; ignoring it.")
+            print("Note: --limit has no effect with --view overview; ignoring it.", file=sys.stderr)
         return None
     if view in (ScenarioResultView.CONVERSATIONS, ScenarioResultView.FULL):
         if limit is None and not attack_result_ids:
             print(
                 f"Note: no --attack-result-ids or --limit given; showing at most "
                 f"{_DEFAULT_HEAVY_VIEW_LIMIT} conversations. Pass --limit or "
-                "--attack-result-ids to see more."
+                "--attack-result-ids to see more.",
+                file=sys.stderr,
             )
             return _DEFAULT_HEAVY_VIEW_LIMIT
         return limit
     return limit
+
+
+def build_overview_payload(*, result: ScenarioResult, scenario_result_id: str) -> ScenarioOverviewPayload:
+    """
+    Build the ``overview`` payload from an already-fetched scenario result.
+
+    Reproduces the console pretty printer's "Overall Statistics" and "Per-Group
+    Breakdown" by calling the same ``ScenarioResult`` aggregate methods. The
+    console printer computes the same numbers independently, so
+    ``test_overview_payload_matches_framework_printer`` locks the two in sync and
+    fails if the printer's math changes.
+
+    Args:
+        result (ScenarioResult): The scenario result to aggregate.
+        scenario_result_id (str): The run id, echoed back on the payload.
+
+    Returns:
+        ScenarioOverviewPayload: The scenario-level aggregates and per-group rates.
+    """
+    from pyrit.models import AttackOutcome
+
+    groups: list[GroupSummary] = []
+    for group_name, group_results in result.get_display_groups().items():
+        total_group = len(group_results)
+        successful = sum(1 for attack_result in group_results if attack_result.outcome == AttackOutcome.SUCCESS)
+        success_rate = int((successful / total_group) * 100) if total_group else 0
+        groups.append(GroupSummary(name=group_name, total_results=total_group, success_rate=success_rate))
+
+    total_attack_results = sum(len(results) for results in result.attack_results.values())
+    return ScenarioOverviewPayload(
+        scenario_result_id=scenario_result_id,
+        scenario_name=result.scenario_name,
+        scenario_version=result.scenario_version,
+        pyrit_version=result.pyrit_version,
+        total_techniques=len(result.get_techniques_used()),
+        total_attack_results=total_attack_results,
+        overall_success_rate=result.objective_achieved_rate(),
+        unique_objectives=len(result.get_objectives()),
+        groups=groups,
+    )
 
 
 def build_attacks_table_payload(
@@ -276,6 +381,76 @@ async def build_conversations_payload_async(
         scenario_result_id=scenario_result_id,
         conversations=conversations,
         total=total,
+    )
+
+
+async def build_results_payload_async(
+    *,
+    view: ScenarioResultView,
+    result: ScenarioResult,
+    client: PyRITApiClient,
+    scenario_result_id: str,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+) -> ResultsPayload:
+    """
+    Build the payload for *view*, dispatching to the per-view builder.
+
+    A single entry point so both front-ends ask for "the payload for this view"
+    without special-casing which one: the ``overview`` / ``attacks`` builders are
+    pure and local, while ``conversations`` / ``full`` fetch each attack's
+    transcript, and this hides that async/sync split behind one ``await``.
+
+    Args:
+        view (ScenarioResultView): The resolved view to build.
+        result (ScenarioResult): The already-fetched scenario result.
+        client (PyRITApiClient): Client used by the transcript-fetching views.
+        scenario_result_id (str): The run id, echoed back on the payload.
+        attack_result_ids (list[str] | None): Restrict to these attack ids.
+            Defaults to None (all attacks).
+        limit (int | None): Effective attack cap from ``apply_view_limit_policy``.
+            Defaults to None.
+
+    Returns:
+        ResultsPayload: The payload matching *view*.
+    """
+    if view is ScenarioResultView.OVERVIEW:
+        return build_overview_payload(result=result, scenario_result_id=scenario_result_id)
+
+    if view is ScenarioResultView.ATTACKS:
+        return build_attacks_table_payload(
+            result=result,
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=attack_result_ids,
+            limit=limit,
+        )
+
+    if view is ScenarioResultView.CONVERSATIONS:
+        return await build_conversations_payload_async(
+            result=result,
+            client=client,
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=attack_result_ids,
+            limit=limit,
+        )
+
+    attacks = build_attacks_table_payload(
+        result=result,
+        scenario_result_id=scenario_result_id,
+        attack_result_ids=attack_result_ids,
+        limit=limit,
+    )
+    conversations = await build_conversations_payload_async(
+        result=result,
+        client=client,
+        scenario_result_id=scenario_result_id,
+        attack_result_ids=attack_result_ids,
+        limit=limit,
+    )
+    return FullPayload(
+        scenario_result_id=scenario_result_id,
+        attacks=attacks,
+        conversations=conversations,
     )
 
 

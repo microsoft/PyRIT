@@ -824,6 +824,138 @@ def test_print_conversations_shows_truncation_note(capsys):
 
 
 # ---------------------------------------------------------------------------
+# print_results_json
+# ---------------------------------------------------------------------------
+
+
+def test_print_results_json_emits_parseable_payload(capsys):
+    import json
+
+    payload = _attacks_payload(
+        rows=[
+            {
+                "attack_result_id": "aid-1",
+                "atomic_attack_name": "tech_a",
+                "objective": "extract secrets",
+                "outcome": "success",
+                "executed_turns": 3,
+                "score_value": "0.9",
+            }
+        ],
+        total=1,
+    )
+    _output.print_results_json(payload=payload)
+    out = capsys.readouterr().out
+    # stdout is a single parseable document matching the payload's own serialization.
+    assert json.loads(out) == json.loads(payload.model_dump_json())
+    assert json.loads(out)["rows"][0]["attack_result_id"] == "aid-1"
+    # The computed `shown` sibling is serialized so JSON consumers see truncation.
+    assert json.loads(out)["shown"] == 1
+
+
+# ---------------------------------------------------------------------------
+# print_results_console_async (payload -> renderer dispatch)
+# ---------------------------------------------------------------------------
+
+
+async def test_render_console_overview_uses_framework_printer():
+    from pyrit.cli._results import ScenarioOverviewPayload
+
+    payload = ScenarioOverviewPayload(
+        scenario_result_id="SID",
+        scenario_name="TestScenario",
+        scenario_version=1,
+        pyrit_version="1.0.0",
+        total_techniques=1,
+        total_attack_results=1,
+        overall_success_rate=100,
+        unique_objectives=1,
+    )
+    result = make_scenario_result(scenario_name="TestScenario", attack_results={})
+    with patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock) as mock_print:
+        await _output.print_results_console_async(result=result, payload=payload)
+    # overview keeps the rich framework printer (reads result, ignores payload).
+    mock_print.assert_awaited_once()
+
+
+async def test_render_console_attacks_prints_table(capsys):
+    result = make_scenario_result(scenario_name="TestScenario", attack_results={})
+    payload = _attacks_payload(
+        rows=[
+            {
+                "attack_result_id": "aid-1",
+                "atomic_attack_name": "tech_a",
+                "objective": "extract secrets",
+                "outcome": "success",
+                "executed_turns": 1,
+                "score_value": None,
+            }
+        ],
+        total=1,
+    )
+    await _output.print_results_console_async(result=result, payload=payload)
+    assert "extract secrets" in capsys.readouterr().out
+
+
+async def test_render_console_conversations_prints_transcripts(capsys):
+    result = make_scenario_result(scenario_name="TestScenario", attack_results={})
+    payload = _conversations_payload(
+        conversations=[
+            {
+                "attack_result_id": "aid-1",
+                "atomic_attack_name": "tech_a",
+                "objective": "extract secrets",
+                "outcome": "success",
+                "conversation_id": "conv-1",
+                "messages": [{"role": "user", "turn": 0, "text": "hello there", "score": None}],
+            }
+        ],
+        total=1,
+    )
+    await _output.print_results_console_async(result=result, payload=payload)
+    out = capsys.readouterr().out
+    assert "Conversations" in out
+    assert "hello there" in out
+
+
+async def test_render_console_full_prints_table_then_transcripts(capsys):
+    from pyrit.cli._results import FullPayload
+
+    result = make_scenario_result(scenario_name="TestScenario", attack_results={})
+    attacks = _attacks_payload(
+        rows=[
+            {
+                "attack_result_id": "aid-1",
+                "atomic_attack_name": "tech_a",
+                "objective": "extract secrets",
+                "outcome": "success",
+                "executed_turns": 1,
+                "score_value": None,
+            }
+        ],
+        total=1,
+    )
+    conversations = _conversations_payload(
+        conversations=[
+            {
+                "attack_result_id": "aid-1",
+                "atomic_attack_name": "tech_a",
+                "objective": "extract secrets",
+                "outcome": "success",
+                "conversation_id": "conv-1",
+                "messages": [],
+            }
+        ],
+        total=1,
+    )
+    payload = FullPayload(scenario_result_id="SID", attacks=attacks, conversations=conversations)
+    await _output.print_results_console_async(result=result, payload=payload)
+    out = capsys.readouterr().out
+    assert "Attack Results" in out
+    assert "Conversations" in out
+
+
+# ---------------------------------------------------------------------------
 # print_scenario_runs_list
 # ---------------------------------------------------------------------------
 

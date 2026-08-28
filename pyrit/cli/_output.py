@@ -16,7 +16,12 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pyrit.cli._results import AttacksTablePayload, ConversationsPayload, TranscriptMessage
+    from pyrit.cli._results import (
+        AttacksTablePayload,
+        ConversationsPayload,
+        ResultsPayload,
+        TranscriptMessage,
+    )
     from pyrit.models import ScenarioResult
     from pyrit.models.catalog import (
         RegisteredInitializer,
@@ -457,7 +462,7 @@ def print_attacks_table(*, payload: AttacksTablePayload) -> None:
         print(f"       technique: {row.atomic_attack_name}")
         print(f"       objective: {row.objective}")
 
-    shown = len(payload.rows)
+    shown = payload.shown
     if shown < payload.total:
         print(f"\nShowing {shown} of {payload.total} attacks (use --limit to change).")
     else:
@@ -487,7 +492,7 @@ def print_conversations(*, payload: ConversationsPayload) -> None:
         print(f"       objective: {convo.objective}")
         _print_transcript(messages=convo.messages)
 
-    shown = len(payload.conversations)
+    shown = payload.shown
     if shown < payload.total:
         print(f"\nShowing {shown} of {payload.total} attacks (use --limit or --attack-result-ids to change).")
     else:
@@ -512,6 +517,50 @@ def _print_transcript(*, messages: list[TranscriptMessage]) -> None:
             _cprint(f"         {label}: {value}", color="magenta", bold=True)
             if message.score.rationale:
                 print(_wrap(text=f"rationale: {message.score.rationale}", indent="           "))
+
+
+def print_results_json(*, payload: ResultsPayload) -> None:
+    """
+    Serialize a results payload as JSON to stdout.
+
+    Emits the payload's own ``model_dump_json`` so the JSON always matches its
+    fields; informational notes are routed to stderr elsewhere so this stdout
+    document stays parseable.
+
+    Args:
+        payload (ResultsPayload): The view payload to serialize.
+    """
+    print(payload.model_dump_json(indent=2))
+
+
+async def print_results_console_async(*, result: ScenarioResult, payload: ResultsPayload) -> None:
+    """
+    Render a results payload to the console, dispatching on its concrete type.
+
+    The ``overview`` payload keeps the rich framework pretty printer (which reads
+    *result* directly), so its typed payload is used only by the JSON format; the
+    other views render from *payload*.
+
+    Args:
+        result (ScenarioResult): The scenario result, used by the overview printer.
+        payload (ResultsPayload): The payload built for the requested view.
+    """
+    from pyrit.cli._results import (
+        AttacksTablePayload,
+        ConversationsPayload,
+        FullPayload,
+        ScenarioOverviewPayload,
+    )
+
+    if isinstance(payload, ScenarioOverviewPayload):
+        await print_scenario_result_async(result=result)
+    elif isinstance(payload, AttacksTablePayload):
+        print_attacks_table(payload=payload)
+    elif isinstance(payload, ConversationsPayload):
+        print_conversations(payload=payload)
+    elif isinstance(payload, FullPayload):
+        print_attacks_table(payload=payload.attacks)
+        print_conversations(payload=payload.conversations)
 
 
 # ---------------------------------------------------------------------------

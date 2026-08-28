@@ -601,6 +601,7 @@ class PyRITShell(cmd.Cmd):
             scenario-results <scenario_result_id>
                 [--view overview|attacks|conversations|full]
                 [--attack-result-ids <id> ...] [--limit N]
+                [--output console|json]
 
         Views:
             overview       Scenario-level aggregate: totals and per-group success
@@ -611,6 +612,10 @@ class PyRITShell(cmd.Cmd):
                            (messages plus their scores and full rationale).
             full           The attacks table followed by the transcripts.
 
+        Output:
+            --output console (default) renders human-readable text; --output json
+            emits the same data as JSON on stdout (informational notes go to stderr).
+
         For conversations/full, when neither --attack-result-ids nor --limit is
         given, at most 5 attacks are shown to avoid dumping a whole run.
         """
@@ -619,12 +624,11 @@ class PyRITShell(cmd.Cmd):
 
         import shlex
 
-        from pyrit.cli._cli_args import ScenarioResultView, build_scenario_results_parser
-        from pyrit.cli._output import print_attacks_table, print_conversations, print_scenario_result_async
+        from pyrit.cli._cli_args import OutputFormat, build_scenario_results_parser
+        from pyrit.cli._output import print_results_console_async, print_results_json
         from pyrit.cli._results import (
             apply_view_limit_policy,
-            build_attacks_table_payload,
-            build_conversations_payload_async,
+            build_results_payload_async,
             resolve_view,
         )
 
@@ -636,7 +640,8 @@ class PyRITShell(cmd.Cmd):
         if not tokens:
             print(
                 "Usage: scenario-results <scenario_result_id> "
-                "[--view overview|attacks|conversations|full] [--attack-result-ids <id> ...] [--limit N]"
+                "[--view overview|attacks|conversations|full] [--attack-result-ids <id> ...] "
+                "[--limit N] [--output console|json]"
             )
             print("Use 'scenario-history' to see available run IDs.")
             return
@@ -654,28 +659,9 @@ class PyRITShell(cmd.Cmd):
             result = self._run_async(
                 self._api_client.get_scenario_run_results_async(scenario_result_id=parsed.scenario_result_id)
             )
-        except Exception as exc:
-            print(f"Error: {exc}")
-            return
-
-        if view is ScenarioResultView.OVERVIEW:
-            self._run_async(print_scenario_result_async(result=result))
-            return
-
-        if view in (ScenarioResultView.ATTACKS, ScenarioResultView.FULL):
-            attacks_payload = build_attacks_table_payload(
-                result=result,
-                scenario_result_id=parsed.scenario_result_id,
-                attack_result_ids=parsed.attack_result_ids,
-                limit=limit,
-            )
-            print_attacks_table(payload=attacks_payload)
-            if view is ScenarioResultView.ATTACKS:
-                return
-
-        try:
-            conversations_payload = self._run_async(
-                build_conversations_payload_async(
+            payload = self._run_async(
+                build_results_payload_async(
+                    view=view,
                     result=result,
                     client=self._api_client,
                     scenario_result_id=parsed.scenario_result_id,
@@ -686,7 +672,11 @@ class PyRITShell(cmd.Cmd):
         except Exception as exc:
             print(f"Error: {exc}")
             return
-        print_conversations(payload=conversations_payload)
+
+        if parsed.output is OutputFormat.JSON:
+            print_results_json(payload=payload)
+        else:
+            self._run_async(print_results_console_async(result=result, payload=payload))
 
     def do_print_scenario(self, arg: str) -> None:
         """
