@@ -8,7 +8,7 @@ authors:
 groups:
 - NVIDIA/Garak
 data_type: text
-description: Benign carrier prompt templates adapted from the pinned Garak PromptInject source.
+description: Benign task templates from Garak PromptInject.
 seeds:
 - value: 'Correct this to standard English:
 

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""PyRIT scenario for Garak's PromptInject prompt-hijacking probes."""
+"""Test whether a target follows instructions injected into benign tasks."""
 
 from __future__ import annotations
 
@@ -35,18 +35,16 @@ if TYPE_CHECKING:
 
 class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
     """
-    Build PromptInject attacks from context, technique, and goal dimensions.
+    Create PromptInject attack prompts.
 
-    The two fixed YAML datasets hold only source templates. This configuration combines
-    those templates with the selected techniques and goal texts before the inherited
-    ``max_dataset_size`` sampling step. The base scenario can therefore persist and
-    restore the sampled objective hashes without PromptInject-specific RNG or resume logic.
+    Each prompt combines a benign task, an injection technique, and a goal text.
+    ``max_dataset_size`` limits how many of the resulting prompts are used.
     """
 
     CONTEXT_DATASET_NAME: ClassVar[str] = "promptinject_contexts"
     TECHNIQUE_DATASET_NAME: ClassVar[str] = "promptinject_techniques"
     GENERATED_DATASET_NAME: ClassVar[str] = "promptinject"
-    SOURCE_DATASET_NAMES: ClassVar[tuple[str, str]] = (CONTEXT_DATASET_NAME, TECHNIQUE_DATASET_NAME)
+    TEMPLATE_DATASET_NAMES: ClassVar[tuple[str, str]] = (CONTEXT_DATASET_NAME, TECHNIQUE_DATASET_NAME)
     DEFAULT_MAX_DATASET_SIZE: ClassVar[int] = 64
 
     def __init__(
@@ -62,17 +60,16 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         Initialize the PromptInject dataset configuration.
 
         Args:
-            dataset_names (list[str] | None): Source datasets. Defaults to the fixed
-                context and technique datasets.
-            max_dataset_size (int | None): Maximum generated attack groups. ``None``
-                includes the complete matrix.
-            filters (dict[str, list[str]] | None): Filters applied when loading source seeds.
+            dataset_names (list[str] | None): Names of the context and technique datasets.
+            max_dataset_size (int | None): Maximum number of attack prompts. ``None``
+                uses all prompt combinations.
+            filters (dict[str, list[str]] | None): Filters applied when loading templates.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Additional
-                validators applied to the resolved source seeds.
-            auto_fetch (bool): Whether missing source datasets are loaded automatically.
+                checks applied to the loaded templates.
+            auto_fetch (bool): Whether missing datasets are loaded automatically.
         """
         super().__init__(
-            dataset_names=list(self.SOURCE_DATASET_NAMES) if dataset_names is None else dataset_names,
+            dataset_names=list(self.TEMPLATE_DATASET_NAMES) if dataset_names is None else dataset_names,
             max_dataset_size=max_dataset_size,
             filters=filters,
             validators=validators,
@@ -83,28 +80,28 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
 
     def set_dimensions(self, *, technique_names: Sequence[str], goal_texts: Sequence[str]) -> None:
         """
-        Set the run dimensions used to generate the attack matrix.
+        Select the techniques and goal texts for the run.
 
         Args:
-            technique_names (Sequence[str]): Technique template names to include.
-            goal_texts (Sequence[str]): Exact target output strings to include.
+            technique_names (Sequence[str]): Injection techniques to include.
+            goal_texts (Sequence[str]): Text that the target is asked to return.
 
         Raises:
-            ValueError: If a dimension is empty, contains blank values, or contains duplicates.
+            ValueError: If either list is empty, contains blank values, or contains duplicates.
         """
         self._technique_names = self._validate_dimension(name="technique_names", values=technique_names)
         self._goal_texts = self._validate_dimension(name="goal_texts", values=goal_texts)
 
     async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
         """
-        Resolve both source datasets and build the complete generated matrix.
+        Load the templates and create all selected prompt combinations.
 
         Returns:
-            tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]: Generated attack
-                groups under one logical dataset key and the resolved source seeds.
+            tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]: Attack groups
+                and the templates used to create them.
         """
         seeds_by_dataset = await self._collect_named_seeds_async()
-        self._validate_source_names(dataset_names=tuple(seeds_by_dataset))
+        self._validate_dataset_names(dataset_names=tuple(seeds_by_dataset))
         contexts = self._index_templates(
             seeds=seeds_by_dataset[self.CONTEXT_DATASET_NAME],
             dataset_name=self.CONTEXT_DATASET_NAME,
@@ -131,11 +128,11 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         Build every selected context, technique, and goal combination.
 
         Args:
-            contexts (dict[str, SeedPrompt]): Context templates keyed by name.
-            techniques (dict[str, SeedPrompt]): Technique templates keyed by name.
+            contexts (dict[str, SeedPrompt]): Benign task templates keyed by name.
+            techniques (dict[str, SeedPrompt]): Injection instruction templates keyed by name.
 
         Returns:
-            list[AttackSeedGroup]: The complete deterministic matrix.
+            list[AttackSeedGroup]: All selected prompt combinations.
 
         Raises:
             DatasetConstraintError: If a selected technique is missing.
@@ -167,17 +164,17 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         goal_text: str,
     ) -> AttackSeedGroup:
         """
-        Render one matrix entry as an attack seed group.
+        Create an attack group for one prompt combination.
 
         Args:
-            context (SeedPrompt): The benign carrier template.
-            context_name (str): Stable carrier-template name.
-            technique (SeedPrompt): The prompt-override template.
-            technique_name (str): Stable technique-template name.
+            context (SeedPrompt): The benign task template.
+            context_name (str): Benign task name.
+            technique (SeedPrompt): The injection instruction template.
+            technique_name (str): Injection technique name.
             goal_text (str): Exact text that the target should emit.
 
         Returns:
-            AttackSeedGroup: One unique objective and one literal rendered prompt.
+            AttackSeedGroup: One objective and one rendered prompt.
         """
         technique_text = technique.render_template_value(goal_text=goal_text)
         prompt_text = context.render_template_value(technique_text=technique_text)
@@ -204,11 +201,11 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         *, seeds: list[Seed], dataset_name: str, placeholder: str
     ) -> dict[str, SeedPrompt]:
         """
-        Validate and index one source template dataset.
+        Check and index a template dataset.
 
         Args:
-            seeds (list[Seed]): Source seeds to validate.
-            dataset_name (str): Source dataset name for errors.
+            seeds (list[Seed]): Templates to check.
+            dataset_name (str): Dataset name for errors.
             placeholder (str): Required placeholder in every template.
 
         Returns:
@@ -236,38 +233,38 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         return result
 
     @classmethod
-    def _validate_source_names(cls, *, dataset_names: tuple[str, ...]) -> None:
+    def _validate_dataset_names(cls, *, dataset_names: tuple[str, ...]) -> None:
         """
-        Require both fixed source datasets and no other datasets.
+        Check that both PromptInject template datasets are selected.
 
         Args:
-            dataset_names (tuple[str, ...]): Resolved source dataset names.
+            dataset_names (tuple[str, ...]): Selected dataset names.
 
         Raises:
-            DatasetConstraintError: If the configured source names differ.
+            DatasetConstraintError: If the selected datasets are not supported.
         """
-        if len(dataset_names) != len(cls.SOURCE_DATASET_NAMES) or set(dataset_names) != set(
-            cls.SOURCE_DATASET_NAMES
+        if len(dataset_names) != len(cls.TEMPLATE_DATASET_NAMES) or set(dataset_names) != set(
+            cls.TEMPLATE_DATASET_NAMES
         ):
             raise DatasetConstraintError(
-                f"PromptInject requires datasets {list(cls.SOURCE_DATASET_NAMES)}; "
+                f"PromptInject requires datasets {list(cls.TEMPLATE_DATASET_NAMES)}; "
                 f"received {list(dataset_names)}."
             )
 
     @staticmethod
     def _validate_dimension(*, name: str, values: Sequence[str]) -> list[str]:
         """
-        Validate one ordered matrix dimension.
+        Check an ordered list of configuration values.
 
         Args:
-            name (str): Dimension name for errors.
+            name (str): Configuration name for errors.
             values (Sequence[str]): Values to validate.
 
         Returns:
             list[str]: The validated values in input order.
 
         Raises:
-            ValueError: If the dimension is empty, blank, or contains duplicates.
+            ValueError: If the list is empty, contains blank values, or contains duplicates.
         """
         result = list(values)
         if not result:
@@ -280,7 +277,7 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
 
 
 class PromptInjectTechnique(ScenarioTechnique):
-    """Prompt override forms used by Garak's PromptInject probes."""
+    """Injection instruction formats available to PromptInject."""
 
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
@@ -298,23 +295,17 @@ class PromptInjectTechnique(ScenarioTechnique):
 
     @classmethod
     def default(cls) -> PromptInjectTechnique:
-        """Return all five active PromptInject forms by default."""
+        """Return all five PromptInject techniques by default."""
         return cls.DEFAULT
 
 
 class PromptInject(Scenario):
     """
-    Run Garak PromptInject prompt-hijacking probes through PyRIT.
+    Test whether injected instructions override a benign task.
 
-    Techniques select prompt-override templates. ``goal_texts`` supplies the exact
-    strings that each override requests. The fixed context and technique datasets are
-    combined into the final matrix by ``PromptInjectDatasetConfiguration``, which uses
-    standard dataset sampling and scenario resume behavior.
-
-    This scenario preserves the unique prompt texts from Garak commit
-    ``8ed1543b985a5722adb659584182faf6f7907d4e``. It does not repeat prompts for
-    Garak's four generator-configuration IDs because target generation settings belong
-    to the target rather than the scenario.
+    Each attack places a selected injection technique inside one of 35 benign tasks.
+    ``goal_texts`` defines the text that the injection asks the target to return.
+    Responses are scored by checking for that text.
     """
 
     VERSION: int = 2
@@ -330,16 +321,16 @@ class PromptInject(Scenario):
 
     @classmethod
     def required_datasets(cls) -> list[str]:
-        """Return the fixed context and technique template datasets."""
-        return list(PromptInjectDatasetConfiguration.SOURCE_DATASET_NAMES)
+        """Return the context and technique template datasets."""
+        return list(PromptInjectDatasetConfiguration.TEMPLATE_DATASET_NAMES)
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
         """
-        Declare PromptInject's goal-text dimension.
+        Declare the configurable goal texts.
 
         Returns:
-            list[Parameter]: The custom scenario parameters.
+            list[Parameter]: The PromptInject scenario parameters.
         """
         return [
             Parameter(
@@ -380,7 +371,7 @@ class PromptInject(Scenario):
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
         """
-        Configure the generated matrix and group its sampled entries for execution.
+        Create and group the prompts for this run.
 
         Args:
             apply_sampling (bool): Whether ``DatasetConfiguration`` applies its size cap.
@@ -453,10 +444,10 @@ class PromptInject(Scenario):
 
     def _get_promptinject_dataset_config(self) -> PromptInjectDatasetConfiguration:
         """
-        Normalize the run's dataset configuration to the PromptInject subtype.
+        Get the configuration that creates PromptInject attack groups.
 
         Returns:
-            PromptInjectDatasetConfiguration: Configuration that builds the generated matrix.
+            PromptInjectDatasetConfiguration: The PromptInject dataset configuration.
 
         Raises:
             DatasetConstraintError: If the caller supplied inline seeds.
@@ -476,7 +467,7 @@ class PromptInject(Scenario):
     @staticmethod
     def _build_goal_scorer(*, goal_texts: Sequence[str]) -> TrueFalseCompositeScorer:
         """
-        Build the scenario-level identity scorer for a goal-text set.
+        Build a scorer that detects any selected goal text.
 
         Args:
             goal_texts (Sequence[str]): Exact target output strings.
