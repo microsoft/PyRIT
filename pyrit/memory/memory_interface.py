@@ -3,6 +3,7 @@
 
 import abc
 import atexit
+import json
 import logging
 import re
 import uuid
@@ -55,6 +56,7 @@ from pyrit.models import (
     AdditionalInitializer,
     AtomicAttackIdentifier,
     AttackIdentifier,
+    AttackOutcome,
     AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
@@ -67,6 +69,8 @@ from pyrit.models import (
     IdentifierType,
     Message,
     MessagePiece,
+    RetryEvent,
+    ScenarioAttackResultDelta,
     ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
@@ -92,7 +96,7 @@ Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
-class AttackResultsKeysetCursor(NamedTuple):
+class AttackResultKeysetCursor(NamedTuple):
     """
     Keyset (seek) anchor identifying the last attack result on a page.
 
@@ -108,12 +112,12 @@ class AttackResultsKeysetCursor(NamedTuple):
     attack_result_id: str
 
     @classmethod
-    def from_attack_result(cls, result: AttackResult) -> "AttackResultsKeysetCursor":
+    def from_attack_result(cls, result: AttackResult) -> "AttackResultKeysetCursor":
         """
         Build the keyset anchor for ``result`` (typically the last row of a page).
 
         Returns:
-            AttackResultsKeysetCursor: Anchor capturing the result's recency sort key.
+            AttackResultKeysetCursor: Anchor capturing the result's recency sort key.
         """
         return cls(
             timestamp=result.timestamp,
@@ -157,7 +161,7 @@ class _AttackResultQuery:
     min_turns: int | None = None
     max_turns: int | None = None
     limit: int | None = None
-    after: AttackResultsKeysetCursor | None = None
+    after: AttackResultKeysetCursor | None = None
 
     def __post_init__(self) -> None:
         """Snapshot mutable sequence and mapping inputs."""
@@ -413,7 +417,7 @@ class MemoryInterface(abc.ABC):
         """
         return [AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
 
-    def _attack_results_keyset_seek_condition(self, *, after: AttackResultsKeysetCursor) -> Any:
+    def _attack_results_keyset_seek_condition(self, *, after: AttackResultKeysetCursor) -> Any:
         """
         Build the keyset seek predicate selecting rows strictly after ``after``.
 
@@ -3103,7 +3107,7 @@ class MemoryInterface(abc.ABC):
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int | None = None,
-        after: AttackResultsKeysetCursor | None = None,
+        after: AttackResultKeysetCursor | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -3169,7 +3173,7 @@ class MemoryInterface(abc.ABC):
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
                 deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
                 instead of loading every row into memory. Defaults to None (return all).
-            after (AttackResultsKeysetCursor | None, optional): Keyset (seek) anchor from a
+            after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
                 under the recency sort are returned, giving insert/delete-stable pagination
                 without a drifting numeric offset. Defaults to None (start at the first page).
@@ -3454,7 +3458,7 @@ class MemoryInterface(abc.ABC):
         min_turns: int | None,
         max_turns: int | None,
         limit: int | None,
-        after: AttackResultsKeysetCursor | None,
+        after: AttackResultKeysetCursor | None,
     ) -> list[AttackResult]:
         """
         Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
@@ -3475,7 +3479,7 @@ class MemoryInterface(abc.ABC):
             min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
             max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
             limit (int | None): Maximum number of results to return.
-            after (AttackResultsKeysetCursor | None): Keyset anchor; only rows ordered strictly
+            after (AttackResultKeysetCursor | None): Keyset anchor; only rows ordered strictly
                 after it are returned. ``None`` starts at the first page.
 
         Returns:
@@ -3644,6 +3648,12 @@ class MemoryInterface(abc.ABC):
             entry.scenario_run_state = scenario_run_state.value
             entry.error_message = error_message
             entry.error_type = error_type
+            if scenario_run_state in (
+                ScenarioRunState.COMPLETED,
+                ScenarioRunState.FAILED,
+                ScenarioRunState.CANCELLED,
+            ):
+                entry.completion_time = datetime.now(tz=timezone.utc)
 
             session.commit()
 
@@ -3676,6 +3686,122 @@ class MemoryInterface(abc.ABC):
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
             entry.scenario_metadata = metadata if metadata else None
             session.commit()
+
+    def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
+        """Return one ScenarioResult header without hydrating linked attack results."""
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            return entry.get_scenario_result() if entry is not None else None
+
+    def get_scenario_result_headers(self, *, limit: int = 100) -> Sequence[ScenarioResult]:
+        """
+        Return recent ScenarioResult headers without hydrating linked attack results.
+
+        Returns:
+            Sequence[ScenarioResult]: Recent scenario metadata ordered newest first.
+
+        Raises:
+            ValueError: If limit is outside the bounded run-history range.
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("Scenario run history limit must be between 1 and 100.")
+        entries = self._query_entries(
+            ScenarioResultEntry,
+            order_by=[
+                ScenarioResultEntry.timestamp.desc(),
+                ScenarioResultEntry.id.desc(),
+            ],
+            limit=limit,
+        )
+        return [entry.get_scenario_result() for entry in entries]
+
+    def get_scenario_attack_result_deltas(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Return bounded scenario-linked result deltas in ascending keyset order.
+
+        This projection intentionally selects only progress fields and never
+        hydrates PromptMemoryEntry, ScoreEntry, or a full ScenarioResult.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: The page and whether more rows exist.
+
+        Raises:
+            ValueError: If the limit or cursor identifiers are invalid.
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("Scenario progress limit must be between 1 and 500.")
+
+        scenario_uuid = uuid.UUID(scenario_result_id)
+        conditions: list[Any] = [AttackResultEntry.attribution_parent_id == scenario_uuid]
+        if cursor is not None:
+            cursor_uuid = uuid.UUID(cursor.attack_result_id)
+            conditions.append(
+                or_(
+                    AttackResultEntry.timestamp > cursor.timestamp,
+                    and_(
+                        AttackResultEntry.timestamp == cursor.timestamp,
+                        AttackResultEntry.id > cursor_uuid,
+                    ),
+                )
+            )
+
+        statement = (
+            select(
+                AttackResultEntry.id,
+                AttackResultEntry.objective,
+                AttackResultEntry.objective_sha256,
+                AttackResultEntry.atomic_attack_identifier,
+                AttackResultEntry.outcome,
+                AttackResultEntry.execution_time_ms,
+                AttackResultEntry.timestamp,
+                AttackResultEntry.retry_events_json,
+                AttackResultEntry.total_retries,
+                AttackResultEntry.error_type,
+                AttackResultEntry.error_message,
+                AttackResultEntry.attribution_data,
+            )
+            .where(and_(*conditions))
+            .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
+            .limit(limit + 1)
+        )
+        with closing(self.get_session()) as session:
+            rows = session.execute(statement).all()
+
+        has_more = len(rows) > limit
+        deltas: list[ScenarioAttackResultDelta] = []
+        for row in rows[:limit]:
+            retry_events = [
+                RetryEvent.model_validate(event)
+                for event in (json.loads(row.retry_events_json) if row.retry_events_json else [])
+            ]
+            atomic_identifier = (
+                AtomicAttackIdentifier.model_validate(row.atomic_attack_identifier)
+                if row.atomic_attack_identifier
+                else None
+            )
+            deltas.append(
+                ScenarioAttackResultDelta(
+                    attack_result_id=str(row.id),
+                    objective=row.objective,
+                    objective_sha256=row.objective_sha256,
+                    atomic_attack_identifier=atomic_identifier,
+                    outcome=AttackOutcome(row.outcome),
+                    execution_time_ms=row.execution_time_ms,
+                    timestamp=row.timestamp,
+                    retry_events=retry_events,
+                    total_retries=row.total_retries or 0,
+                    error_type=row.error_type,
+                    error_message=row.error_message,
+                    attribution_data=row.attribution_data or {},
+                )
+            )
+        return deltas, has_more
 
     def get_scenario_results(
         self,

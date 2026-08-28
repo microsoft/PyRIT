@@ -22,7 +22,13 @@ from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
-from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, AttackSeedGroup
+from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
+    AttackResult,
+    AttackSeedGroup,
+    config_hash,
+)
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -192,6 +198,16 @@ class AtomicAttack:
         return AtomicAttackEvaluationIdentifier(composite).eval_hash
 
     @property
+    def logical_group_id(self) -> str:
+        """The stable identity of this planned atomic-attack group."""
+        return config_hash(
+            {
+                "atomic_attack_name": self.atomic_attack_name,
+                "technique_eval_hash": self.technique_eval_hash,
+            }
+        )
+
+    @property
     def objectives(self) -> list[str]:
         """
         The objectives from the seed groups.
@@ -324,13 +340,17 @@ class AtomicAttack:
             # a Scenario. The same attribution object is stamped on every
             # per-task AttackContext; per-task identity is reconstructed from
             # the row's own objective_sha256 (no positional state required).
-            attribution: AttackResultAttribution | None = None
+            attributions: list[AttackResultAttribution] | None = None
             if self._scenario_result_id is not None:
-                attribution = AttackResultAttribution(
-                    parent_id=self._scenario_result_id,
-                    parent_collection=self.atomic_attack_name,
-                    parent_eval_hash=self.technique_eval_hash,
-                )
+                attributions = [
+                    AttackResultAttribution(
+                        parent_id=self._scenario_result_id,
+                        parent_collection=self.atomic_attack_name,
+                        parent_eval_hash=self.technique_eval_hash,
+                        seed_group_id=seed_group.logical_id,
+                    )
+                    for seed_group in self._seed_groups
+                ]
 
             untyped_results = await executor.execute_attack_from_seed_groups_async(
                 attack=technique.attack,
@@ -339,7 +359,7 @@ class AtomicAttack:
                 objective_scorer=self._objective_scorer,
                 memory_labels=self._memory_labels,
                 return_partial_on_failure=return_partial_on_failure,
-                attribution=attribution,
+                attributions=attributions,
                 **self._attack_execute_params,
             )
             completed_results: list[AttackResult] = []

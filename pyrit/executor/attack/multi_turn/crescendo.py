@@ -635,6 +635,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
+            context._record_objective_target_invocation(conversation_id=context.session.conversation_id)
             response = await self._prompt_normalizer.send_prompt_async(
                 message=attack_message,
                 target=self._objective_target,

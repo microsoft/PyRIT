@@ -1555,6 +1555,13 @@ class AttackResultEntry(Base):
         Index("ix_AttackResultEntries_conversation_id", "conversation_id"),
         # Serves the History recency ORDER BY timestamp DESC, id DESC and its keyset seek.
         Index("ix_AttackResultEntries_timestamp_id", "timestamp", "id"),
+        # Serves scenario progress deltas scoped by parent and ordered oldest-first.
+        Index(
+            "ix_AttackResultEntries_attribution_parent_timestamp_id",
+            "attribution_parent_id",
+            "timestamp",
+            "id",
+        ),
         {"extend_existing": True},
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
@@ -1864,12 +1871,9 @@ class ScenarioResultEntry(Base):
     error_message: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     error_type: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # Free-form JSON metadata stamped by the scenario. Currently used to record
-    # ``objective_hashes`` — the objective sha256 set chosen on the
-    # first run, replayed on resume so a fresh ``random.sample`` can't
-    # silently change which objectives the scenario operates on. Column is
-    # named ``scenario_metadata`` because SQLAlchemy's ``DeclarativeBase``
-    # reserves ``metadata`` as a class attribute on the model.
+    # Free-form JSON metadata stamped by the scenario. Stores the normalized run
+    # plan and sampled objective hashes. Column is named ``scenario_metadata``
+    # because SQLAlchemy's ``DeclarativeBase`` reserves ``metadata``.
     scenario_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: ScenarioResult) -> None:

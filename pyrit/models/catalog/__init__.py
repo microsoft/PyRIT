@@ -25,6 +25,12 @@ if TYPE_CHECKING:
         AttackRetrySummary,
         RegisteredScenario,
         RunScenarioRequest,
+        ScenarioDatasetSizeCap,
+        ScenarioDatasetSummary,
+        ScenarioRunListItem,
+        ScenarioRunSizeComponent,
+        ScenarioRunSizeEstimate,
+        ScenarioRunSizeEstimateRequest,
         ScenarioRunSummary,
     )
     from pyrit.models.catalog.target import TargetInstance
@@ -35,6 +41,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "RegisteredInitializer": "pyrit.models.catalog.initializer",
     "RegisteredScenario": "pyrit.models.catalog.scenario",
     "RunScenarioRequest": "pyrit.models.catalog.scenario",
+    "ScenarioDatasetSizeCap": "pyrit.models.catalog.scenario",
+    "ScenarioDatasetSummary": "pyrit.models.catalog.scenario",
+    "ScenarioRunListItem": "pyrit.models.catalog.scenario",
+    "ScenarioRunSizeComponent": "pyrit.models.catalog.scenario",
+    "ScenarioRunSizeEstimate": "pyrit.models.catalog.scenario",
+    "ScenarioRunSizeEstimateRequest": "pyrit.models.catalog.scenario",
     "ScenarioRunSummary": "pyrit.models.catalog.scenario",
     "TargetInstance": "pyrit.models.catalog.target",
 }

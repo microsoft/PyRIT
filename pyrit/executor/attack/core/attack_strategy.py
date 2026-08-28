@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging  # noqa: TC003
 import time
@@ -47,6 +48,8 @@ from pyrit.models import (
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
     from pyrit.executor.attack.component.prepended_conversation_config import (
         PrependedConversationConfig,
     )
@@ -70,6 +73,61 @@ class _NextMessageOverrideState(Enum):
     """State marker distinguishing an unset override from an explicit ``None``."""
 
     UNSET = "unset"
+
+
+class _ObjectiveTargetConversationLifecycle:
+    """Track and release objective-target conversations for one attack execution."""
+
+    def __init__(
+        self,
+        *,
+        objective_target: PromptTarget,
+        logger: logging.Logger | logging.LoggerAdapter[logging.Logger],
+    ) -> None:
+        self._objective_target = objective_target
+        self._logger = logger
+        self._conversation_ids: set[str] = set()
+
+    async def __aenter__(self) -> _ObjectiveTargetConversationLifecycle:
+        """
+        Start tracking target invocations.
+
+        Returns:
+            _ObjectiveTargetConversationLifecycle: This lifecycle instance.
+        """
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Release each conversation invoked during the attack."""
+        pending_cancellation: asyncio.CancelledError | None = None
+        for conversation_id in self._conversation_ids:
+            try:
+                await self._objective_target.reset_conversation_async(conversation_id=conversation_id)
+            except asyncio.CancelledError as cancellation:
+                # Attempt every reset, then honor the first cancellation after the loop.
+                pending_cancellation = pending_cancellation or cancellation
+            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+                self._logger.warning(
+                    "Failed to reset objective-target conversation %s: %s",
+                    conversation_id,
+                    error,
+                )
+        if pending_cancellation is not None:
+            raise pending_cancellation
+
+    def record_invocation(self, *, conversation_id: str) -> None:
+        """
+        Record one objective-target invocation.
+
+        Args:
+            conversation_id (str): The conversation ID used by the target.
+        """
+        self._conversation_ids.add(conversation_id)
 
 
 @dataclass
@@ -101,6 +159,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
     _error_result_persistence_error: Exception | None = field(default=None, init=False, repr=False)
+    _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     # Per-execution prepended-history boundary and send lifecycle. Never persisted.
     prepended_history_send_context: PrependedHistorySendContext | None = field(
@@ -166,6 +230,21 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     def next_message(self, value: Message | None) -> None:
         """Set the next message (for attacks that generate internally)."""
         self._next_message_override = value
+
+    def _record_objective_target_invocation(self, *, conversation_id: str) -> None:
+        """
+        Record an objective-target invocation for lifecycle cleanup.
+
+        Recording is a no-op when no objective-target scope is active, so attack
+        helpers remain callable outside a full execution.
+
+        Args:
+            conversation_id (str): The conversation ID used by the target.
+        """
+        lifecycle = self._objective_target_conversation_lifecycle
+        if lifecycle is None:
+            return
+        lifecycle.record_invocation(conversation_id=conversation_id)
 
 
 class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT]):
@@ -315,6 +394,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         }
         if attribution.parent_eval_hash is not None:
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
+        if attribution.seed_group_id is not None:
+            attribution_data["seed_group_id"] = attribution.seed_group_id
         result.attribution_data = attribution_data
 
     @staticmethod
@@ -699,16 +780,25 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             ExceptionGroup: If attack execution and recording its error result both fail.
         """
         context._error_result_persistence_error = None
+        lifecycle = _ObjectiveTargetConversationLifecycle(
+            objective_target=self._objective_target,
+            logger=self._logger,
+        )
+        context._objective_target_conversation_lifecycle = lifecycle
         try:
-            result = await super().execute_with_context_async(context=context)
-        except Exception as attack_error:
-            persistence_error = context._error_result_persistence_error
-            if persistence_error is not None:
-                raise ExceptionGroup(
-                    "Attack execution and error result persistence failed",
-                    [attack_error, persistence_error],
-                ) from None
-            raise
+            async with lifecycle:
+                try:
+                    result = await super().execute_with_context_async(context=context)
+                except Exception as attack_error:
+                    persistence_error = context._error_result_persistence_error
+                    if persistence_error is not None:
+                        raise ExceptionGroup(
+                            "Attack execution and error result persistence failed",
+                            [attack_error, persistence_error],
+                        ) from None
+                    raise
+        finally:
+            context._objective_target_conversation_lifecycle = None
 
         self._default_event_handler._persist_result(result=result)
         return result

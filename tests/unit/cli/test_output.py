@@ -20,6 +20,7 @@ from pyrit.models.catalog import (
     AttackRetrySummary,
     RegisteredInitializer,
     RegisteredScenario,
+    ScenarioRunListItem,
     ScenarioRunSummary,
     TargetInstance,
 )
@@ -836,21 +837,20 @@ def test_print_scenario_runs_list_empty(capsys):
 
 def test_print_scenario_runs_list_populated(capsys):
     runs = [
-        _make_run(
+        ScenarioRunListItem(
             status=ScenarioRunState.COMPLETED,
             scenario_name="scen-a",
             scenario_result_id="abcdefgh1234",
             total_attacks=4,
-            objective_achieved_rate=75,
             created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         ),
-        _make_run(
+        ScenarioRunListItem(
             status=ScenarioRunState.IN_PROGRESS,
             scenario_name="scen-b",
             scenario_result_id="ijklmnop5678",
-            total_attacks=0,
-            objective_achieved_rate=0,
             created_at=datetime(2024, 2, 2, tzinfo=timezone.utc),
+            updated_at=datetime(2024, 2, 2, tzinfo=timezone.utc),
         ),
     ]
     _output.print_scenario_runs_list(runs=runs)
@@ -859,6 +859,8 @@ def test_print_scenario_runs_list_populated(capsys):
     assert "scen-b" in captured.out
     assert "abcdefgh1234" in captured.out
     assert "ijklmnop5678" in captured.out
+    assert "success" not in captured.out
+    assert "planned attacks unknown" in captured.out
     assert "…" not in captured.out
     assert "Total runs: 2" in captured.out
 

@@ -2,13 +2,14 @@
 // PyRIT GUI — Azure Container Apps Deployment (Security-Hardened)
 //
 // Deploys the CoPyRIT GUI as an Azure Container App with:
-// - Workload profiles environment with public ingress + optional IP restriction
+// - Azure Front Door Premium public entry point
+// - VNet-integrated public workload-profiles environment with fixed NAT egress
 // - MSAL PKCE authentication (frontend) + Microsoft Graph-backed auth (backend)
 // - User-assigned managed identity for Azure SQL, ACR, Azure OpenAI, Key Vault
 // - Azure SQL (existing) via managed identity — no passwords
-// - Key Vault for secrets (referenced via ACA secretRef, not embedded)
+// - ACA secret populated inline or backed by a Key Vault reference
 // - Centralized logging via Log Analytics (configurable retention)
-// - No storage account keys, no embedded secrets, no :latest tags
+// - No storage account keys or secrets embedded in source/container images
 //
 // Prerequisites:
 // 1. An Entra ID app registration (no secrets/certs needed — PKCE public client)
@@ -33,6 +34,8 @@
 // --- Parameters ---
 
 @description('Name for the Container App and related resources')
+@minLength(2)
+@maxLength(32)
 param appName string = 'pyrit-gui'
 
 @description('Azure region for all resources')
@@ -48,8 +51,7 @@ param entraTenantId string
 @description('Entra ID app registration client ID (no secrets needed)')
 param entraClientId string
 
-@description('Object ID of the Entra security group allowed to access the GUI')
-@metadata({ description: 'Find this in Azure Portal → Entra ID → Groups → your group → Object ID' })
+@description('Comma-separated object IDs of Entra security groups allowed to access the GUI. Find each ID in Azure Portal → Entra ID → Groups → your group → Object ID.')
 @minLength(1)
 param allowedGroupObjectIds string
 
@@ -58,7 +60,7 @@ var normalizedAllowedGroupObjectIds = filter(
   groupId => !empty(groupId)
 )
 
-@description('CIDR range allowed to reach the app (e.g., your corp VPN CIDR). Empty = no IP restriction, all traffic allowed.')
+@description('CIDR range allowed to reach ACA directly. Empty = unrestricted. Must be empty when Front Door is enabled because ACA sees Front Door backend IPs, not client IPs.')
 param allowedCidr string = ''
 
 @description('Human-readable description for the IP restriction rule')
@@ -99,18 +101,17 @@ param maxReplicas int = 1
 @description('Azure Container Registry name (for managed identity pull). Used if acrResourceId is not provided.')
 param acrName string = ''
 
-@description('Enable Private Endpoint for the ACA environment. When false, uses public access with IP restrictions.')
-param enablePrivateEndpoint bool = true
-
-@description('VNet address prefix (used only when creating a new VNet)')
+@description('Virtual network address prefix')
 param vnetAddressPrefix string = '10.0.0.0/16'
 
-@description('Subnet address prefix for the Private Endpoint (used only when creating a new subnet)')
-param subnetAddressPrefix string = '10.0.0.0/24'
+@description('Dedicated ACA infrastructure subnet prefix')
+param infrastructureSubnetAddressPrefix string = '10.0.1.0/26'
 
-@description('Resource ID of an existing subnet for the Private Endpoint. If empty, a new VNet + subnet is created.')
-@metadata({ example: '/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>' })
-param infrastructureSubnetId string = ''
+@description('Existing Azure Policy IP tags to preserve when adopting a reserved egress public IP')
+param egressPublicIpTags array = []
+
+@description('Protect the static egress public IP from accidental deletion')
+param protectEgressPublicIp bool = false
 
 @description('Log Analytics retention in days (used only when creating a new workspace)')
 param logRetentionDays int = 90
@@ -131,6 +132,9 @@ param keyVaultResourceId string
 @description('Resource ID of the Azure Container Registry (for AcrPull role assignment). Recommended over acrName for IaC-managed access.')
 param acrResourceId string = ''
 
+@description('Optional existing user-assigned managed identity resource ID. Empty creates a new identity using the existing naming behavior.')
+param existingManagedIdentityResourceId string = ''
+
 @description('Resource tags applied to all resources (ownership + data classification)')
 param tags object = {
   Service: 'pyrit-gui'
@@ -141,49 +145,56 @@ param tags object = {
 @description('Enable OpenTelemetry managed agent for audit logging. Creates Application Insights and wires the ACA managed OTel collector.')
 param enableOtel bool = false
 
-// Soft guardrail: detect :latest usage (enforced via output warning)
-var imageUsesLatest = endsWith(containerImage, ':latest')
+@description('Create Azure Front Door Premium as the public application endpoint')
+param enableFrontDoor bool = false
+
+@description('Connect Azure Front Door Premium to the ACA environment through Private Link')
+param enableFrontDoorPrivateLink bool = false
+
+@description('Deterministic message used to discover and approve the ACA Private Link request')
+param frontDoorPrivateLinkRequestMessage string = 'Azure Front Door private access to ${appName}'
+
+@description('Disable the ACA environment public endpoint after Front Door Private Link is configured')
+param disableContainerAppsPublicAccess bool = false
 
 // Determine whether to create or reference existing resources
+var effectiveAllowedCidr = enableFrontDoor && !empty(allowedCidr)
+  ? fail('allowedCidr must be empty when enableFrontDoor is true')
+  : allowedCidr
+var effectiveFrontDoorPrivateLink = enableFrontDoorPrivateLink && !enableFrontDoor
+  ? fail('enableFrontDoor must be true when enableFrontDoorPrivateLink is true')
+  : enableFrontDoorPrivateLink
+var effectiveContainerAppsPublicAccess = disableContainerAppsPublicAccess
+  ? (effectiveFrontDoorPrivateLink ? 'Disabled' : fail('Front Door Private Link is required before ACA public access can be disabled'))
+  : 'Enabled'
 var createLogAnalytics = logAnalyticsWorkspaceId == ''
-var createVnet = enablePrivateEndpoint && infrastructureSubnetId == ''
 var createAcr = acrResourceId == '' && acrName == ''
 var useInlineEnvFile = !empty(envFileContents)
+var createManagedIdentity = empty(existingManagedIdentityResourceId)
+var generatedAcrName = '${padLeft(replace(appName, '-', ''), 2, 'p')}acr'
+var existingManagedIdentitySegments = split(existingManagedIdentityResourceId, '/')
+var existingManagedIdentitySubscriptionId = createManagedIdentity ? subscription().subscriptionId : existingManagedIdentitySegments[2]
+var existingManagedIdentityResourceGroupName = createManagedIdentity ? resourceGroup().name : existingManagedIdentitySegments[4]
+var existingManagedIdentityName = createManagedIdentity ? '' : last(existingManagedIdentitySegments)
 
-// ============================================================================
-// VNet + Subnet (created only if infrastructureSubnetId is not provided)
-// The subnet hosts the Private Endpoint for the ACA environment — no ACA
-// delegation needed (that's only for VNet-integrated internal environments).
-// ============================================================================
-resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = if (createVnet) {
-  name: '${appName}-vnet'
-  location: location
-  tags: tags
-  properties: {
-    addressSpace: {
-      addressPrefixes: [
-        vnetAddressPrefix
-      ]
-    }
-    subnets: [
-      {
-        name: '${appName}-pe-subnet'
-        properties: {
-          addressPrefix: subnetAddressPrefix
-          privateEndpointNetworkPolicies: 'Disabled'
-        }
-      }
-    ]
+module acaNatNetwork './modules/aca_nat_network.bicep' = {
+  name: '${appName}-aca-nat-network'
+  params: {
+    namePrefix: appName
+    location: location
+    tags: tags
+    vnetAddressPrefix: vnetAddressPrefix
+    infrastructureSubnetAddressPrefix: infrastructureSubnetAddressPrefix
+    egressPublicIpTags: egressPublicIpTags
+    protectEgressPublicIp: protectEgressPublicIp
   }
 }
-
-var effectiveSubnetId = createVnet ? vnet.properties.subnets[0].id : infrastructureSubnetId
 
 // ============================================================================
 // Azure Container Registry (created only if neither acrResourceId nor acrName is provided)
 // ============================================================================
 resource newAcr 'Microsoft.ContainerRegistry/registries@2023-08-01-preview' = if (createAcr) {
-  name: '${replace(appName, '-', '')}acr'
+  name: generatedAcrName
   location: location
   tags: tags
   sku: {
@@ -218,8 +229,8 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if
   }
 }
 
-var effectiveLogAnalyticsCustomerIdValue = createLogAnalytics ? logAnalytics.properties.customerId : logAnalyticsCustomerId
-var effectiveLogAnalyticsKeyValue = createLogAnalytics ? logAnalytics.listKeys().primarySharedKey : logAnalyticsSharedKey
+var effectiveLogAnalyticsCustomerIdValue = createLogAnalytics ? logAnalytics!.properties.customerId : logAnalyticsCustomerId
+var effectiveLogAnalyticsKeyValue = createLogAnalytics ? logAnalytics!.listKeys().primarySharedKey : logAnalyticsSharedKey
 
 // ============================================================================
 // Application Insights (created when OTel is enabled — destination for traces/logs)
@@ -241,11 +252,24 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (enableOtel
 // revision starts. This avoids the chicken-and-egg problem with system-assigned
 // MI where the revision tries to pull images / access KV before RBAC propagates.
 // ============================================================================
-resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (createManagedIdentity) {
   name: '${appName}-identity'
   location: location
   tags: tags
 }
+
+resource referencedManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = if (!createManagedIdentity) {
+  name: existingManagedIdentityName
+  scope: resourceGroup(existingManagedIdentitySubscriptionId, existingManagedIdentityResourceGroupName)
+}
+
+var effectiveManagedIdentityId = createManagedIdentity ? managedIdentity!.id : referencedManagedIdentity!.id
+var effectiveManagedIdentityClientId = createManagedIdentity
+  ? managedIdentity!.properties.clientId
+  : referencedManagedIdentity!.properties.clientId
+var effectiveManagedIdentityPrincipalId = createManagedIdentity
+  ? managedIdentity!.properties.principalId
+  : referencedManagedIdentity!.properties.principalId
 
 // ============================================================================
 // Key Vault (existing — avoids soft-delete/purge-protection redeployment issues)
@@ -266,12 +290,9 @@ var keyVaultName = last(split(keyVaultResourceId, '/'))
 // ============================================================================
 
 // ============================================================================
-// Azure Container Apps Environment (workload profiles, public network disabled)
-// Uses Private Endpoint pattern instead of VNet-integrated internal mode:
-// - Environment is NOT VNet-integrated (no internal ILB)
-// - Public network access is disabled
-// - A Private Endpoint provides corp-reachable connectivity via Private Link
-// - Private DNS zone resolves the FQDN to the private endpoint IP
+// Azure Container Apps Environment (workload profiles)
+// Public ACA-managed HTTPS ingress with optional app-level IP restrictions and
+// VNet-integrated fixed NAT egress.
 //
 // OTel: When enableOtel=true, configure the managed OTel agent
 // as a post-deploy CLI step (2024-03-01 schema does not support it natively).
@@ -285,16 +306,46 @@ resource acaEnvironment 'Microsoft.App/managedEnvironments@2024-10-02-preview' =
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
         customerId: effectiveLogAnalyticsCustomerIdValue
+        dynamicJsonColumns: false
         sharedKey: effectiveLogAnalyticsKeyValue
       }
     }
-    publicNetworkAccess: enablePrivateEndpoint ? 'Disabled' : 'Enabled'
+    peerAuthentication: {
+      mtls: {
+        enabled: false
+      }
+    }
+    peerTrafficConfiguration: {
+      encryption: {
+        enabled: false
+      }
+    }
+    publicNetworkAccess: effectiveContainerAppsPublicAccess
     workloadProfiles: [
       {
         name: 'Consumption'
         workloadProfileType: 'Consumption'
       }
     ]
+    vnetConfiguration: {
+      infrastructureSubnetId: acaNatNetwork!.outputs.infrastructureSubnetId
+      internal: false
+    }
+  }
+}
+
+var acaOriginHostName = '${appName}.${acaEnvironment.properties.defaultDomain}'
+
+module acaFrontDoor './modules/aca_front_door.bicep' = if (enableFrontDoor) {
+  name: '${appName}-aca-front-door'
+  params: {
+    namePrefix: appName
+    originHostName: acaOriginHostName
+    tags: tags
+    enablePrivateLink: effectiveFrontDoorPrivateLink
+    originResourceId: acaEnvironment.id
+    originLocation: location
+    privateLinkRequestMessage: frontDoorPrivateLinkRequestMessage
   }
 }
 
@@ -306,69 +357,6 @@ resource acaEnvironment 'Microsoft.App/managedEnvironments@2024-10-02-preview' =
 // The Bicep API (2024-03-01) does not support openTelemetryConfiguration natively.
 
 // ============================================================================
-// Private Endpoint for ACA Environment (corp-reachable via Private Link)
-// The PE must be in a VNet that corp VPN/ExpressRoute can reach.
-// ============================================================================
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-11-01' = if (enablePrivateEndpoint) {
-  name: '${appName}-pe'
-  location: location
-  tags: tags
-  properties: {
-    subnet: {
-      id: effectiveSubnetId
-    }
-    privateLinkServiceConnections: [
-      {
-        name: '${appName}-pe-connection'
-        properties: {
-          privateLinkServiceId: acaEnvironment.id
-          groupIds: [
-            'managedEnvironments'
-          ]
-        }
-      }
-    ]
-  }
-}
-
-// Private DNS Zone for ACA Private Endpoint resolution
-resource privateDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' = if (enablePrivateEndpoint) {
-  name: 'privatelink.${location}.azurecontainerapps.io'
-  location: 'global'
-  tags: tags
-}
-
-// Link DNS zone to the VNet so clients in the VNet can resolve
-resource dnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (enablePrivateEndpoint) {
-  name: '${appName}-dns-link'
-  parent: privateDnsZone
-  location: 'global'
-  tags: tags
-  properties: {
-    virtualNetwork: {
-      id: createVnet ? vnet.id : join(take(split(infrastructureSubnetId, '/'), 9), '/')
-    }
-    registrationEnabled: false
-  }
-}
-
-// DNS record group for the private endpoint
-resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-11-01' = if (enablePrivateEndpoint) {
-  name: 'default'
-  parent: privateEndpoint
-  properties: {
-    privateDnsZoneConfigs: [
-      {
-        name: 'aca-dns-config'
-        properties: {
-          privateDnsZoneId: privateDnsZone.id
-        }
-      }
-    ]
-  }
-}
-
-// ============================================================================
 // Container App — PyRIT GUI
 // ============================================================================
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
@@ -378,7 +366,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${managedIdentity.id}': {}
+      '${effectiveManagedIdentityId}': {}
     }
   }
   // RBAC roles (AcrPull, KV Secrets User) must be granted manually before
@@ -390,18 +378,17 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       // Single revision mode — only one revision serves traffic (appropriate for GUI)
       activeRevisionsMode: 'Single'
 
-      // Ingress — external at the app level (access is controlled by
-      // Private Endpoint + disabled public network access, not ingress type)
+      // ACA-managed public HTTPS ingress, optionally restricted by source CIDR.
       ingress: {
         external: true
         targetPort: 8000
         transport: 'http'
         allowInsecure: false
-        ipSecurityRestrictions: allowedCidr != '' ? [
+        ipSecurityRestrictions: effectiveAllowedCidr != '' ? [
           {
             name: 'allowed-cidr'
             description: allowedCidrDescription
-            ipAddressRange: allowedCidr
+            ipAddressRange: effectiveAllowedCidr
             action: 'Allow'
           }
         ] : []
@@ -411,7 +398,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: effectiveAcrServer
-          identity: managedIdentity.id
+          identity: effectiveManagedIdentityId
         }
       ]
 
@@ -425,7 +412,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           : {
               name: 'env-file'
               keyVaultUrl: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${envSecretName}'
-              identity: managedIdentity.id
+              identity: effectiveManagedIdentityId
             }
       ]
     }
@@ -457,7 +444,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'PYRIT_INITIALIZER'
               value: pyritInitializer
             }
-            // .env file contents from Key Vault — PyRIT parses this at startup
+            // .env contents from the inline or Key Vault-backed ACA secret
             {
               name: 'PYRIT_ENV_CONTENTS'
               secretRef: 'env-file'
@@ -489,14 +476,16 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             // DefaultAzureCredential needs the UAMI client ID to pick the correct identity
             {
               name: 'AZURE_CLIENT_ID'
-              value: managedIdentity.properties.clientId
+              value: effectiveManagedIdentityClientId
             }
-            // CORS origin for the SPA. The ACA-generated FQDN is deterministic
-            // (<appName>.<envDefaultDomain>), so we compute it from upstream
-            // resources rather than self-referencing containerApp.
+            // The ACA URL is usable only while environment public access remains enabled.
             {
               name: 'PYRIT_CORS_ORIGINS'
-              value: 'https://${appName}.${acaEnvironment.properties.defaultDomain}'
+              value: enableFrontDoor
+                ? (effectiveContainerAppsPublicAccess == 'Disabled'
+                  ? 'https://${acaFrontDoor!.outputs.endpointHostName}'
+                  : 'https://${acaOriginHostName},https://${acaFrontDoor!.outputs.endpointHostName}')
+                : 'https://${acaOriginHostName}'
             }
           ]
         }
@@ -524,23 +513,48 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 // Outputs
 // ============================================================================
 
-@description('The FQDN of the deployed Container App')
+@description('The generated ACA FQDN; inaccessible when ACA public network access is disabled')
 output appFqdn string = containerApp.properties.configuration.ingress.fqdn
+
+@description('The Azure Front Door managed HTTPS hostname')
+output frontDoorFqdn string = enableFrontDoor ? acaFrontDoor!.outputs.endpointHostName : ''
+
+@description('The Azure Front Door public URL')
+output frontDoorUrl string = enableFrontDoor ? 'https://${acaFrontDoor!.outputs.endpointHostName}' : ''
+
+@description('The deterministic ACA Private Link approval request message; empty when Private Link is disabled')
+output frontDoorPrivateLinkRequestMessage string = effectiveFrontDoorPrivateLink
+  ? acaFrontDoor!.outputs.privateLinkRequestMessage
+  : ''
+
+@description('ACA environment public network access state')
+output containerAppsPublicNetworkAccess string = effectiveContainerAppsPublicAccess
+
+@description('The public application FQDN selected for this deployment')
+output publicFqdn string = enableFrontDoor ? acaFrontDoor!.outputs.endpointHostName : containerApp.properties.configuration.ingress.fqdn
 
 @description('The default domain of the ACA environment')
 output environmentDefaultDomain string = acaEnvironment.properties.defaultDomain
 
-@description('Private Endpoint resource ID (empty when PE is disabled)')
-output privateEndpointId string = enablePrivateEndpoint ? privateEndpoint.id : ''
+@description('Static outbound IPv4 address')
+output egressPublicIpAddress string = acaNatNetwork!.outputs.egressPublicIpAddress
+
+@description('NAT Gateway resource ID')
+output natGatewayId string = acaNatNetwork!.outputs.natGatewayId
+
+@description('ACA infrastructure subnet resource ID')
+output acaInfrastructureSubnetId string = acaNatNetwork!.outputs.infrastructureSubnetId
 
 @description('The principal ID of the user-assigned managed identity — grant this Cognitive Services OpenAI User on your AOAI instances and db_datareader/db_datawriter on Azure SQL')
-output managedIdentityPrincipalId string = managedIdentity.properties.principalId
+output managedIdentityPrincipalId string = effectiveManagedIdentityPrincipalId
 
 @description('The resource ID of the user-assigned managed identity')
-output managedIdentityResourceId string = managedIdentity.id
+output managedIdentityResourceId string = effectiveManagedIdentityId
 
 @description('IMPORTANT: Create an Azure AD contained user in the target database for this managed identity. See README post-deployment steps.')
-output sqlAadSetupRequired string = 'Run CREATE USER [${appName}-identity] FROM EXTERNAL PROVIDER on database ${sqlDatabaseName}'
+output sqlAadSetupRequired string = createManagedIdentity
+  ? 'Run CREATE USER [${appName}-identity] FROM EXTERNAL PROVIDER on database ${sqlDatabaseName}'
+  : 'Verify the existing managed identity has the required contained user and database roles on ${sqlDatabaseName}'
 
 @description('Key Vault name (existing)')
 output keyVaultName string = keyVaultName
@@ -548,8 +562,8 @@ output keyVaultName string = keyVaultName
 @description('ACR login server')
 output acrLoginServer string = effectiveAcrServer
 
-@description('VNet name (if created by this template)')
-output vnetName string = createVnet ? vnet.name : 'N/A (existing VNet used)'
+@description('Virtual network name')
+output vnetName string = acaNatNetwork!.outputs.vnetName
 
 @description('Application Insights connection string (if OTel enabled)')
-output appInsightsConnectionString string = enableOtel ? appInsights.properties.ConnectionString : 'N/A (OTel disabled)'
+output appInsightsConnectionString string = enableOtel ? appInsights!.properties.ConnectionString : 'N/A (OTel disabled)'

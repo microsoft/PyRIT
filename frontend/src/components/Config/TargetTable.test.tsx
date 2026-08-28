@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import TargetTable from './TargetTable'
@@ -79,13 +79,15 @@ describe('TargetTable', () => {
     expect(screen.getAllByText('TextTarget').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('should display Type, Model, Endpoint, Inputs, Outputs, capability columns and Parameters columns', () => {
+  it('should display Registry Name, Type, Model, Endpoint, Inputs, Outputs, capability columns and Parameters columns', () => {
     render(
       <TestWrapper>
         <TargetTable {...defaultProps} />
       </TestWrapper>
     )
 
+    expect(screen.getByText('Registry Name')).toBeInTheDocument()
+    expect(screen.getByText('openai_chat_gpt4')).toBeInTheDocument()
     expect(screen.getByText('Type')).toBeInTheDocument()
     expect(screen.getByText('Model')).toBeInTheDocument()
     expect(screen.getByText('Endpoint')).toBeInTheDocument()
@@ -131,7 +133,9 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    // Active indicator shows type and model above the table
+    const activeTargetTable = screen.getByRole('table', { name: 'Active target' })
+    expect(within(activeTargetTable).getByText('openai_chat_gpt4')).toBeInTheDocument()
+
     const badges = screen.getAllByText('Active')
     expect(badges.length).toBeGreaterThanOrEqual(2) // one above table + one in row
   })
@@ -385,6 +389,8 @@ describe('TargetTable', () => {
     fireEvent.click(expandButton)
 
     // Inner targets should now be visible
+    expect(screen.getByText('inner_a')).toBeInTheDocument()
+    expect(screen.getByText('inner_b')).toBeInTheDocument()
     expect(screen.getByText('https://a.openai.azure.com')).toBeInTheDocument()
     expect(screen.getByText('https://b.openai.azure.com')).toBeInTheDocument()
   })

@@ -980,6 +980,11 @@ def _multi_piece_response(*specs: tuple[str, str, str]) -> Message:
 class TestBuildAdversarialFeedbackText:
     """Coverage for the per-turn feedback text the manager renders into the adversarial prompt."""
 
+    def test_error_data_type_without_error_code_reports_none(self):
+        message = _response_message("", data_type="error")
+        result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)
+        assert result == "Request to target failed: none"
+
     def test_blocked_returns_rewrite_notice(self):
         message = _response_message("", error="blocked")
         result = _build_adversarial_feedback_text(last_response=message, score=None, use_score_as_feedback=False)

@@ -18,6 +18,7 @@ from pyrit.models.catalog import (
     RegisteredInitializer,
     RegisteredScenario,
     RunScenarioRequest,
+    ScenarioRunListItem,
     ScenarioRunSummary,
     TargetInstance,
 )
@@ -493,7 +494,7 @@ async def test_list_scenario_runs_async(client, mock_httpx_client):
     mock_httpx_client.get.return_value = _make_response(json_data={"items": [_run_summary_payload()]})
     result = await client.list_scenario_runs_async(limit=20)
     assert len(result) == 1
-    assert isinstance(result[0], ScenarioRunSummary)
+    assert isinstance(result[0], ScenarioRunListItem)
     mock_httpx_client.get.assert_awaited_once_with("/api/scenarios/runs", params={"limit": 20})
 
 

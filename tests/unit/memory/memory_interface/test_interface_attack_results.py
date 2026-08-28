@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultsKeysetCursor, MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
 from pyrit.memory.memory_interface import _AttackResultQuery
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
@@ -85,15 +85,15 @@ def _make_attack_result(
     return AttackResult(**kwargs)
 
 
-def _after(page: "Sequence[AttackResult]") -> AttackResultsKeysetCursor:
+def _after(page: "Sequence[AttackResult]") -> AttackResultKeysetCursor:
     """Build the keyset anchor for the next page from the last row of ``page``."""
-    return AttackResultsKeysetCursor.from_attack_result(page[-1])
+    return AttackResultKeysetCursor.from_attack_result(page[-1])
 
 
 def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list[AttackResult]:
     """Page through get_attack_results with the keyset cursor until exhausted."""
     drained: list[AttackResult] = []
-    after: AttackResultsKeysetCursor | None = None
+    after: AttackResultKeysetCursor | None = None
     while True:
         page = list(memory.get_attack_results(limit=page_size, after=after, **filters))
         drained.extend(page)
@@ -122,12 +122,12 @@ def test_attack_result_query_snapshots_mutable_inputs():
 def test_attack_result_query_requires_keyword_arguments():
     """The internal query does not expose field ordering as a positional API."""
     with pytest.raises(TypeError):
-        _AttackResultQuery(["id"])  # type: ignore[misc]
+        _AttackResultQuery(["id"])  # ty: ignore[too-many-positional-arguments]
 
 
 def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: MemoryInterface):
     """The compatibility API maps every parameter onto the internal query."""
-    cursor = AttackResultsKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    cursor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     identifier_filter = IdentifierFilter(
         identifier_type=IdentifierType.ATTACK,
         property_path="$.hash",
@@ -1898,7 +1898,7 @@ def test_get_attack_results_paginated_empty_metadata_orders_newest_first(sqlite_
 
 def test_get_attack_results_pagination_with_ids_raises(sqlite_instance: MemoryInterface):
     """limit/keyset pagination cannot be combined with id-batched lookups."""
-    anchor = AttackResultsKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    anchor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     with pytest.raises(ValueError, match="pagination cannot be combined"):
         sqlite_instance.get_attack_results(attack_result_ids=[str(uuid.uuid4())], limit=10)
     with pytest.raises(ValueError, match="pagination cannot be combined"):
@@ -2055,7 +2055,7 @@ def test_attack_result_keyset_order_matches_sql_order(sqlite_instance: MemoryInt
     python_order = sorted(
         sqlite_instance.get_attack_results(),
         key=lambda ar: (
-            AttackResultsKeysetCursor.from_attack_result(ar).timestamp,
+            AttackResultKeysetCursor.from_attack_result(ar).timestamp,
             ar.attack_result_id,
         ),
         reverse=True,

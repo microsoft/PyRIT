@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
+    from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
     from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
     from pyrit.score.float_scale.self_ask_likert_scorer import (
         LikertScaleEvalFiles,
@@ -202,6 +203,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "render_shieldgemma_prompt": "pyrit.score.true_false.shieldgemma_scorer",
     "render_true_false_system_prompt": "pyrit.score.true_false.self_ask_true_false_scorer",
     "ResponseHandler": "pyrit.score.response_handler",
+    "RobloxPiiCategory": "pyrit.score.float_scale.roblox_pii_scorer",
+    "RobloxPiiScorer": "pyrit.score.float_scale.roblox_pii_scorer",
     "Scorer": "pyrit.score.scorer",
     "Scorable": "pyrit.score.scorable",
     "ScorerEvalDatasetFiles": "pyrit.score.scorer_evaluation.scorer_evaluator",

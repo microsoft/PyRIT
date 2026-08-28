@@ -29,6 +29,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TAPAttackScoringConfig,
     _TAPAttackConfiguration,
     _TreeOfAttacksNode,
+    _TreeOfAttacksNodeExecutor,
 )
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,
@@ -48,6 +49,40 @@ from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
 
 logger = logging.getLogger(__name__)
+
+
+async def test_node_executor_cancels_and_awaits_siblings_after_failure() -> None:
+    sibling_started = asyncio.Event()
+    sibling_finished = asyncio.Event()
+
+    async def fail_after_sibling_starts(*, objective: str) -> None:
+        await sibling_started.wait()
+        raise RuntimeError("node failed")
+
+    async def block_until_cancelled(*, objective: str) -> None:
+        sibling_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            sibling_finished.set()
+
+    failed_node = MagicMock()
+    failed_node.send_prompt_async = AsyncMock(side_effect=fail_after_sibling_starts)
+    sibling_node = MagicMock()
+    sibling_node.send_prompt_async = AsyncMock(side_effect=block_until_cancelled)
+    executor = _TreeOfAttacksNodeExecutor(
+        batch_size=2,
+        logger=logger,
+    )
+
+    with pytest.raises(RuntimeError, match="node failed"):
+        async for _ in executor.execute_nodes_async(
+            nodes=[failed_node, sibling_node],
+            objective="objective",
+        ):
+            pass
+
+    assert sibling_finished.is_set()
 
 
 # Mirrors the shipped ``adversarial_chat.yaml``: every key required, no extras allowed. Used to
@@ -1087,6 +1122,7 @@ class TestBlockedScoringDefaults:
                 adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
+            record_objective_conversation=lambda *, conversation_id: None,
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1154,6 +1190,7 @@ class TestBlockedScoringDefaults:
                 adversarial_chat=builder.adversarial_chat,
                 objective_target=builder.objective_target,
             ),
+            record_objective_conversation=lambda *, conversation_id: None,
             desired_response_prefix="Sure, here is",
             prompt_normalizer=normalizer,
         )
@@ -1563,6 +1600,7 @@ class TestTreeOfAttacksNode:
             "attack_id": {"id": "test_attack"},
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
+            "record_objective_conversation": lambda *, conversation_id: None,
             "memory_labels": {"test": "label"},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
@@ -2995,6 +3033,7 @@ class TestModalityRouterIntegration:
             "attack_id": {"id": "test_attack"},
             "attack_strategy_name": "TreeOfAttacksWithPruningAttack",
             "modality_router": modality_router,
+            "record_objective_conversation": lambda *, conversation_id: None,
             "memory_labels": {},
             "parent_id": None,
             "prompt_normalizer": prompt_normalizer,
