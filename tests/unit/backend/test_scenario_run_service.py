@@ -706,6 +706,14 @@ class TestScenarioRunServiceListRuns:
         service.list_runs(limit=10)
         mock_memory.get_scenario_result_headers.assert_called_once_with(limit=10)
 
+    def test_list_runs_reports_unknown_total_without_plan(self, mock_memory) -> None:
+        """Test that legacy runs do not report a false zero planned total."""
+        mock_memory.get_scenario_result_headers.return_value = [_make_db_scenario_result()]
+
+        result = ScenarioRunService().list_runs()
+
+        assert result.items[0].total_attacks is None
+
 
 class TestScenarioRunServiceCancelRun:
     """Tests for ScenarioRunService.cancel_run_async."""

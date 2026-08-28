@@ -297,7 +297,7 @@ class ScenarioRunService:
             ScenarioRunState.CANCELLED,
         )
         plan = self._load_run_plan(scenario_result=scenario_result)
-        total_attacks = sum(len(group.seed_group_ids) for group in plan.atomic_groups) if plan is not None else 0
+        total_attacks = sum(len(group.seed_group_ids) for group in plan.atomic_groups) if plan is not None else None
         techniques_used = (
             list(dict.fromkeys(group.display_group for group in plan.atomic_groups)) if plan is not None else []
         )

@@ -535,9 +535,12 @@ def print_scenario_runs_list(*, runs: list[ScenarioRunListItem]) -> None:
     print("=" * 80)
     for idx, run in enumerate(runs, start=1):
         created = run.created_at.isoformat() if run.created_at else "?"
+        planned_attacks = (
+            f"{run.total_attacks} planned attacks" if run.total_attacks is not None else "planned attacks unknown"
+        )
         print(
             f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {run.scenario_result_id}) — "
-            f"{run.total_attacks} planned attacks — {created}"
+            f"{planned_attacks} — {created}"
         )
     print("=" * 80)
     print(f"\nTotal runs: {len(runs)}")

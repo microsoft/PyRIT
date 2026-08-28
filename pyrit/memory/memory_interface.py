@@ -3705,9 +3705,12 @@ class MemoryInterface(abc.ABC):
         """
         if limit < 1 or limit > 100:
             raise ValueError("Scenario run history limit must be between 1 and 100.")
-        entries = self._query_scenario_result_entries(
-            scenario_result_ids=None,
-            conditions=[],
+        entries = self._query_entries(
+            ScenarioResultEntry,
+            order_by=[
+                ScenarioResultEntry.timestamp.desc(),
+                ScenarioResultEntry.id.desc(),
+            ],
             limit=limit,
         )
         return [entry.get_scenario_result() for entry in entries]

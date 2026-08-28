@@ -333,6 +333,6 @@ class ScenarioRunListItem(BaseModel):
     error: str | None = Field(None, description="Persisted run-level error message")
     error_type: str | None = Field(None, description="Persisted run-level exception class")
     techniques_used: list[str] = Field(default_factory=list, description="Planned technique display groups")
-    total_attacks: int = Field(0, ge=0, description="Number of planned execution units")
+    total_attacks: int | None = Field(None, ge=0, description="Number of planned execution units when known")
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     completed_at: datetime | None = Field(None, description="When the scenario finished")
