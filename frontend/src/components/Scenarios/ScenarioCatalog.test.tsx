@@ -153,19 +153,18 @@ describe('ScenarioCatalog', () => {
     expect(screen.getByText(/packages objective datasets, technique sets or selected techniques/i))
       .toBeInTheDocument()
     const headers = within(table).getAllByRole('columnheader')
-    expect(headers).toHaveLength(5)
+    expect(headers).toHaveLength(4)
     expect(headers.map((header) => header.textContent)).toEqual([
       'Scenario / purpose',
-      'Configure',
       'Default datasets',
       'Default techniques',
       'Default run size',
     ])
     expect(headers.every((cell) => cell.classList.contains('scenario-catalog-cell-padding'))).toBe(true)
     const cells = within(screen.getByTestId('scenario-card-foundry.red_team_agent')).getAllByRole('cell')
-    expect(cells).toHaveLength(5)
+    expect(cells).toHaveLength(4)
     expect(cells.every((cell) => cell.classList.contains('scenario-catalog-cell-padding'))).toBe(true)
-    expect(within(cells[1]).getByRole('button', { name: 'Configure run' })).toBeInTheDocument()
+    expect(within(cells[0]).getByRole('link', { name: 'foundry.red_team_agent' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /show details|hide details/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: /details/i })).not.toBeInTheDocument()
   })
@@ -339,22 +338,6 @@ describe('ScenarioCatalog', () => {
     expect(card).toHaveAttribute('href', '/scenarios/foundry%2Fred_team_agent')
   })
 
-  it('navigates from the second-cell Configure button', async () => {
-    const user = userEvent.setup()
-    mockListCatalog.mockResolvedValueOnce({
-      items: [makeScenario({ scenario_name: 'foundry/red_team_agent' })],
-      pagination: { limit: 200, has_more: false },
-    })
-
-    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
-
-    const row = await screen.findByTestId('scenario-card-foundry/red_team_agent')
-    const cells = within(row).getAllByRole('cell')
-    await user.click(within(cells[1]).getByRole('button', { name: 'Configure run' }))
-
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/scenarios/foundry%2Fred_team_agent')
-  })
-
   it('shows the total default objectives followed by the dataset names', async () => {
     mockListCatalog.mockResolvedValueOnce({
       items: [
@@ -455,7 +438,6 @@ describe('ScenarioCatalog', () => {
     const row = await screen.findByTestId('scenario-card-scenario.unsized')
     expect(within(row).getByText('Population counts unavailable')).toBeInTheDocument()
     expect(within(row).getByText('harmbench')).toBeInTheDocument()
-    expect(within(row).getByRole('button', { name: 'Configure run' })).toBeInTheDocument()
   })
 
   it('keeps the authoritative default comparison values in the launch row', async () => {
@@ -534,8 +516,6 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const row = await screen.findByTestId('scenario-card-airt.jailbreak')
-    const cells = within(row).getAllByRole('cell')
-    expect(within(cells[1]).getByRole('button', { name: 'Configure run' })).toBeInTheDocument()
     expect(within(row).getByText('4 objectives')).toBeInTheDocument()
     expect(within(row).getByText('harmbench')).toBeInTheDocument()
     expect(within(row).getByText('2 techniques')).toBeInTheDocument()

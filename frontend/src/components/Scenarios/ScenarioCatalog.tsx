@@ -19,9 +19,8 @@ import {
 import {
   ArrowSyncRegular,
   SearchRegular,
-  SettingsRegular,
 } from '@fluentui/react-icons'
-import { Link, useNavigate } from 'react-router'
+import { Link } from 'react-router'
 
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -121,7 +120,6 @@ interface ScenarioCatalogRowProps {
 
 function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
   const styles = useScenarioCatalogStyles()
-  const navigate = useNavigate()
   const defaultConcreteTechniques = uniqueNames(scenario.default_techniques)
   const estimateState = mapScenarioRunEstimate(scenario.default_run_size, 'default')
   const scenarioPath = `/scenarios/${encodeURIComponent(scenario.scenario_name)}`
@@ -143,22 +141,6 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
           </Link>
           <Text size={200} className={styles.purposePreview}>{scenario.description}</Text>
         </div>
-      </TableCell>
-      <TableCell
-        className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
-      >
-        <Text className={styles.mobileLabel} size={200} weight="semibold">
-          Configure
-        </Text>
-        <Button
-          className={styles.configureButton}
-          appearance="primary"
-          icon={<SettingsRegular />}
-          type="button"
-          onClick={() => navigate(scenarioPath)}
-        >
-          Configure run
-        </Button>
       </TableCell>
       <TableCell
         className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
@@ -330,15 +312,6 @@ export default function ScenarioCatalog() {
                   )}
                 >
                   Scenario / purpose
-                </TableHeaderCell>
-                <TableHeaderCell
-                  className={mergeClasses(
-                    styles.configureColumn,
-                    styles.tableHeaderCell,
-                    'scenario-catalog-cell-padding',
-                  )}
-                >
-                  Configure
                 </TableHeaderCell>
                 <TableHeaderCell
                   className={mergeClasses(
