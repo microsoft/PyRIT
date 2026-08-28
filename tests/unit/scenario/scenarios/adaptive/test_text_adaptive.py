@@ -129,6 +129,29 @@ class TestTextAdaptiveBasics:
     def test_required_datasets_non_empty(self):
         assert len(TextAdaptive.required_datasets()) > 0
 
+    async def test_targetless_run_size_exposes_attack_range(self, mock_objective_scorer):
+        """A targetless estimate exposes baseline-to-candidate bounds."""
+        selected_groups = {
+            "harmbench": [
+                _make_seed_group(value="objective-1"),
+                _make_seed_group(value="objective-2"),
+            ]
+        }
+        scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(args={"include_baseline": True})
+
+        with patch.object(
+            scenario,
+            "_resolve_dataset_groups_for_estimate_async",
+            new_callable=AsyncMock,
+            return_value=(selected_groups, []),
+        ):
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
+
+        assert estimate.estimated_attack_count is None
+        assert estimate.minimum_attack_count == 2
+        assert estimate.maximum_attack_count == 4
+
     def test_get_technique_class_is_cached(self):
         cls_a = TextAdaptive.get_technique_class()
         cls_b = TextAdaptive.get_technique_class()

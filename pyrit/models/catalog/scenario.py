@@ -99,6 +99,8 @@ class ScenarioRunSizeEstimate(BaseModel):
     """
 
     estimated_attack_count: int | None = Field(default=None, ge=0)
+    minimum_attack_count: int | None = Field(default=None, ge=0)
+    maximum_attack_count: int | None = Field(default=None, ge=0)
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
     note: str | None = None
@@ -114,6 +116,13 @@ class ScenarioRunSizeEstimate(BaseModel):
         Raises:
             ValueError: If an available estimate misstates its total.
         """
+        if (
+            self.minimum_attack_count is not None
+            and self.maximum_attack_count is not None
+            and self.minimum_attack_count > self.maximum_attack_count
+        ):
+            raise ValueError("Minimum attack count cannot exceed maximum attack count")
+
         if self.estimated_attack_count is not None:
             component_total = sum(component.count for component in self.components)
             if component_total != self.estimated_attack_count:

@@ -31,7 +31,7 @@ import type {
   ListRegisteredScenariosResponse,
   RegisteredScenario,
   RunScenarioRequest,
-  ScenarioDefaultRunSizeEstimate,
+  ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSummary,
   ScenarioRunProgress,
@@ -377,7 +377,7 @@ export const scenariosApi = {
     scenarioName: string,
     request: ScenarioRunSizeEstimateRequest,
     signal?: AbortSignal,
-  ): Promise<ScenarioDefaultRunSizeEstimate> => {
+  ): Promise<ScenarioRunSizeEstimateResponse> => {
     const response = await apiClient.post(
       `/scenarios/catalog/${encodeURIComponent(scenarioName)}/estimate`,
       request,

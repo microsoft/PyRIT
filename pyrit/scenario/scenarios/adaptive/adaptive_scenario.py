@@ -231,6 +231,8 @@ class AdaptiveScenario(Scenario):
                 ),
             ]
             return ScenarioRunSizeEstimate(
+                minimum_attack_count=sum(component.count for component in baseline_components),
+                maximum_attack_count=sum(component.count for component in components),
                 components=components,
                 datasets=datasets,
                 note=(

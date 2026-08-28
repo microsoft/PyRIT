@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { scenariosApi, targetsApi } from '@/services/api'
 import type {
   RegisteredScenario,
-  ScenarioDefaultRunSizeEstimate,
+  ScenarioRunSizeEstimateResponse,
   TargetInstance,
 } from '@/types'
 
@@ -57,13 +57,10 @@ function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredSc
     include_baseline_by_default: true,
     supported_parameters: [],
     default_run_size: {
-      version: 1,
-      status: 'unavailable',
-      total_attack_count: null,
+      estimated_attack_count: null,
       components: [],
       datasets: [],
       note: 'Default sizing is unavailable.',
-      retries_included: false,
     },
     ...overrides,
     description,
@@ -81,28 +78,23 @@ function makeTarget(name: string): TargetInstance {
   }
 }
 
-function makeEstimate(
-  total: number | null,
-  status: ScenarioDefaultRunSizeEstimate['status'] = total === null ? 'conditional' : 'exact',
-): ScenarioDefaultRunSizeEstimate {
+function makeEstimate(total: number | null): ScenarioRunSizeEstimateResponse {
   return {
-    version: 1,
-    status,
-    total_attack_count: total,
+    estimated_attack_count: total,
+    minimum_attack_count: total === null ? 8 : null,
+    maximum_attack_count: total === null ? 12 : null,
     components: total === null
-      ? []
+      ? [{ label: 'Possible attacks', count: 12, is_baseline: false, note: null }]
       : [
           {
             label: 'Configured attacks',
             count: total,
-            factors: [],
             is_baseline: false,
             note: null,
           },
         ],
     datasets: [],
     note: null,
-    retries_included: false,
   }
 }
 
@@ -233,15 +225,27 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByTestId('scenario-target-select')).toBeInTheDocument()
   })
 
-  it('shows a no-targets state directing to Configuration when none are registered', async () => {
+  it('estimates without a target and directs to Configuration before launch', async () => {
+    jest.useFakeTimers()
     const onNavigate = jest.fn()
     mockListTargets.mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
+    mockEstimateRun.mockResolvedValueOnce(makeEstimate(8))
 
     renderDetail('/scenarios/foundry.red_team_agent', { onNavigate })
+    await flushRenderedPromises()
+    await advanceTimers(300)
 
-    const user = userEvent.setup()
-    expect(await screen.findByTestId('no-targets-state')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Configure target' }))
+    expect(screen.getByTestId('scenario-target-select')).toHaveValue('')
+    expect(mockEstimateRun).toHaveBeenCalledWith(
+      'foundry.red_team_agent',
+      {
+        techniques: ['default_technique'],
+        include_baseline: true,
+      },
+      expect.any(AbortSignal),
+    )
+    expect(screen.getByText('8 attacks')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Configure target to launch' }))
     expect(onNavigate).toHaveBeenCalledWith('config')
   })
 
@@ -297,8 +301,8 @@ describe('ScenarioDetail', () => {
   it('ignores an out-of-order estimate response even when the request promise does not abort', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    let resolveFirst: (estimate: ScenarioDefaultRunSizeEstimate) => void = () => {}
-    let resolveSecond: (estimate: ScenarioDefaultRunSizeEstimate) => void = () => {}
+    let resolveFirst: (estimate: ScenarioRunSizeEstimateResponse) => void = () => {}
+    let resolveSecond: (estimate: ScenarioRunSizeEstimateResponse) => void = () => {}
     mockEstimateRun
       .mockReturnValueOnce(new Promise((resolve) => {
         resolveFirst = resolve
@@ -316,12 +320,12 @@ describe('ScenarioDetail', () => {
     resolveSecond(makeEstimate(12))
     await flushRenderedPromises()
     const preview = screen.getByRole('complementary', { name: 'Run preview' })
-    expect(within(preview).getByText('12 planned attacks')).toBeInTheDocument()
+    expect(within(preview).getByText('12 attacks')).toBeInTheDocument()
 
     resolveFirst(makeEstimate(8))
     await flushRenderedPromises()
-    expect(within(preview).getByText('12 planned attacks')).toBeInTheDocument()
-    expect(within(preview).queryByText('8 planned attacks')).not.toBeInTheDocument()
+    expect(within(preview).getByText('12 attacks')).toBeInTheDocument()
+    expect(within(preview).queryByText('8 attacks')).not.toBeInTheDocument()
   })
 
   it('keeps the last good estimate and entered state after a transient preview failure', async () => {
@@ -338,7 +342,7 @@ describe('ScenarioDetail', () => {
     await flushRenderedPromises()
     await advanceTimers(300)
     await flushRenderedPromises()
-    expect(screen.getByText('8 planned attacks')).toBeInTheDocument()
+    expect(screen.getByText('8 attacks')).toBeInTheDocument()
 
     await user.selectOptions(screen.getByTestId('scenario-target-select'), 'target-b')
     await advanceTimers(300)
@@ -347,7 +351,7 @@ describe('ScenarioDetail', () => {
     const preview = screen.getByRole('complementary', { name: 'Run preview' })
     expect(within(preview).getByText('target-b')).toBeInTheDocument()
     expect(within(preview).getByText('Previous estimate')).toBeInTheDocument()
-    expect(within(preview).getByText('8 planned attacks')).toBeInTheDocument()
+    expect(within(preview).getByText('8 attacks')).toBeInTheDocument()
     expect(within(preview).getByText('Preview service unavailable')).toBeInTheDocument()
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
     expect(screen.getByTestId('launch-scenario-btn')).not.toBeDisabled()
@@ -379,8 +383,7 @@ describe('ScenarioDetail', () => {
 
     const preview = screen.getByRole('complementary', { name: 'Run preview' })
     expect(within(preview).getByText('Conditional estimate')).toBeInTheDocument()
-    expect(within(preview).getByText('Total depends on configuration')).toBeInTheDocument()
-    expect(within(preview).queryByText(/planned attacks/)).not.toBeInTheDocument()
+    expect(within(preview).getByText('8-12 attacks')).toBeInTheDocument()
   })
 
   it('renders MyST literals through the shared safe Markdown renderer', async () => {
@@ -737,19 +740,11 @@ describe('ScenarioDetail', () => {
       }),
     )
     mockEstimateRun.mockResolvedValue({
-      version: 1,
-      status: 'exact',
-      total_attack_count: 8,
+      estimated_attack_count: 8,
       components: [
         {
           label: 'Prompt sending',
           count: 8,
-          factors: [
-            { label: 'selected seed groups', count: 4 },
-            { label: 'concrete techniques', count: 1 },
-            { label: 'jailbreak templates', count: 2 },
-            { label: 'attempts', count: 1 },
-          ],
           is_baseline: false,
           note: null,
         },
@@ -772,7 +767,6 @@ describe('ScenarioDetail', () => {
         },
       ],
       note: 'The backend total is authoritative.',
-      retries_included: false,
     })
 
     renderDetail('/scenarios/airt.jailbreak')
@@ -817,7 +811,7 @@ describe('ScenarioDetail', () => {
     expect(within(preview).getByText('prompt_sending')).toBeInTheDocument()
     expect(within(preview).getAllByText('harmbench')).toHaveLength(2)
     expect(within(preview).getByText('Not included')).toBeInTheDocument()
-    expect(within(preview).getByText('8 planned attacks')).toBeInTheDocument()
+    expect(within(preview).getByText('8 attacks')).toBeInTheDocument()
     expect(within(preview).getByText('Jailbreak templates: 2 (configuration)')).toBeInTheDocument()
     expect(within(preview).getByText('2')).toBeInTheDocument()
 

@@ -1,10 +1,9 @@
 import type {
-  ScenarioDefaultRunSizeEstimate,
   ScenarioRunEstimate,
   ScenarioRunEstimateDataset,
   ScenarioRunEstimateDatasetCap,
-  ScenarioRunEstimateFactor,
   ScenarioRunEstimateResult,
+  ScenarioRunSizeEstimateResponse,
 } from '@/types'
 
 function nextStableId(prefix: string, label: string, occurrences: Map<string, number>): string {
@@ -13,21 +12,9 @@ function nextStableId(prefix: string, label: string, occurrences: Map<string, nu
   return `${prefix}:${label}:${occurrence}`
 }
 
-function mapFactors(
-  componentId: string,
-  factors: ScenarioDefaultRunSizeEstimate['components'][number]['factors'],
-): ScenarioRunEstimateFactor[] {
-  const occurrences = new Map<string, number>()
-  return factors.map((factor) => ({
-    id: nextStableId(`${componentId}:factor`, factor.label, occurrences),
-    label: factor.label,
-    count: factor.count,
-  }))
-}
-
 function mapDatasetCaps(
   datasetId: string,
-  caps: ScenarioDefaultRunSizeEstimate['datasets'][number]['configured_caps'],
+  caps: ScenarioRunSizeEstimateResponse['datasets'][number]['configured_caps'],
 ): ScenarioRunEstimateDatasetCap[] {
   const occurrences = new Map<string, number>()
   return caps.map((cap) => ({
@@ -40,7 +27,7 @@ function mapDatasetCaps(
 }
 
 function mapDatasets(
-  datasets: ScenarioDefaultRunSizeEstimate['datasets'],
+  datasets: ScenarioRunSizeEstimateResponse['datasets'],
 ): ScenarioRunEstimateDataset[] {
   const occurrences = new Map<string, number>()
   return datasets.map((dataset) => {
@@ -58,10 +45,15 @@ function mapDatasets(
 }
 
 export function mapScenarioRunEstimate(
-  response: ScenarioDefaultRunSizeEstimate,
+  response: ScenarioRunSizeEstimateResponse,
   scope: ScenarioRunEstimate['scope'],
 ): ScenarioRunEstimateResult {
-  if (response.status === 'unavailable') {
+  if (
+    response.estimated_attack_count === null
+    && response.minimum_attack_count == null
+    && response.maximum_attack_count == null
+    && response.components.length === 0
+  ) {
     return {
       status: 'unavailable',
       scope,
@@ -74,43 +66,25 @@ export function mapScenarioRunEstimate(
 
   const componentOccurrences = new Map<string, number>()
   const estimate: ScenarioRunEstimate = {
-    version: response.version,
     scope,
-    total: response.total_attack_count,
+    total: response.estimated_attack_count,
     minimum: response.minimum_attack_count ?? null,
     maximum: response.maximum_attack_count ?? null,
-    condition: response.condition ?? null,
     components: response.components.map((component) => {
       const id = nextStableId('component', component.label, componentOccurrences)
       return {
         id,
         label: component.label,
         count: component.count,
-        factors: mapFactors(id, component.factors),
         isBaseline: component.is_baseline,
-        condition: component.condition ?? null,
         note: component.note,
       }
     }),
     datasets: mapDatasets(response.datasets),
-    adaptiveDetails: response.adaptive_details
-      ? {
-          objectiveCount: response.adaptive_details.objective_count,
-          selectedCandidateTechniqueCount: response.adaptive_details.selected_candidate_technique_count
-            ?? response.adaptive_details.candidate_technique_count,
-          candidateTechniqueCount: response.adaptive_details.candidate_technique_count,
-          maxAttemptsPerObjective: response.adaptive_details.max_attempts_per_objective,
-          techniquesPerObjectiveUpperBound: response.adaptive_details.techniques_per_objective_upper_bound,
-          techniqueAttemptCountUpperBound: response.adaptive_details.technique_attempt_count_upper_bound,
-          stopOnFirstSuccess: response.adaptive_details.stop_on_first_success,
-          compatibilityMayReduceAttempts: response.adaptive_details.compatibility_may_reduce_attempts,
-        }
-      : null,
     note: response.note,
-    retriesIncluded: response.retries_included,
   }
 
-  return response.status === 'exact'
-    ? { status: 'available', estimate }
-    : { status: 'conditional', estimate }
+  return response.estimated_attack_count === null
+    ? { status: 'conditional', estimate }
+    : { status: 'available', estimate }
 }

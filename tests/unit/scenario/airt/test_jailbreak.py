@@ -245,6 +245,8 @@ class TestJailbreakInitialization:
 
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
         assert estimate.estimated_attack_count is None
+        assert estimate.minimum_attack_count == 2
+        assert estimate.maximum_attack_count == 4
         assert [component.label for component in estimate.components] == [
             "Inline jailbreak delivery",
             "Native system-prompt jailbreak delivery",

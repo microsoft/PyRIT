@@ -10,6 +10,7 @@ import { useScenarioRunEstimateStyles } from './ScenarioRunEstimate.styles'
 
 interface ScenarioRunEstimateSummaryProps {
   state: ScenarioRunEstimateState
+  compact?: boolean
 }
 
 interface ScenarioRunEstimateDetailsProps {
@@ -76,73 +77,24 @@ function countLabel(value: number, singular: string, plural: string): string {
 
 function formatPlannedAttackSummary(estimate: ScenarioRunEstimate): string {
   if (estimate.total !== null) {
-    return countLabel(estimate.total, 'planned attack', 'planned attacks')
+    return countLabel(estimate.total, 'attack', 'attacks')
   }
   if (estimate.minimum != null && estimate.maximum != null) {
     return estimate.minimum === estimate.maximum
-      ? countLabel(estimate.minimum, 'planned attack', 'planned attacks')
-      : `${formatEstimateValue(estimate.minimum)}–${formatEstimateValue(estimate.maximum)} planned attacks`
+      ? countLabel(estimate.minimum, 'attack', 'attacks')
+      : `${formatEstimateValue(estimate.minimum)}-${formatEstimateValue(estimate.maximum)} attacks`
   }
   if (estimate.maximum != null) {
-    return `Up to ${countLabel(estimate.maximum, 'planned attack', 'planned attacks')}`
+    return `Up to ${countLabel(estimate.maximum, 'attack', 'attacks')}`
   }
   if (estimate.minimum != null) {
-    return `At least ${countLabel(estimate.minimum, 'planned attack', 'planned attacks')}`
+    return `At least ${countLabel(estimate.minimum, 'attack', 'attacks')}`
   }
-  return 'Total depends on configuration'
-}
-
-function formatProgressUnitSummary(estimate: ScenarioRunEstimate): string {
-  if (estimate.total !== null) {
-    return countLabel(estimate.total, 'progress unit', 'progress units')
-  }
-  if (estimate.minimum != null && estimate.maximum != null) {
-    return estimate.minimum === estimate.maximum
-      ? countLabel(estimate.minimum, 'progress unit', 'progress units')
-      : `${formatEstimateValue(estimate.minimum)}–${formatEstimateValue(estimate.maximum)} progress units`
-  }
-  if (estimate.maximum != null) {
-    return `Up to ${countLabel(estimate.maximum, 'progress unit', 'progress units')}`
-  }
-  if (estimate.minimum != null) {
-    return `At least ${countLabel(estimate.minimum, 'progress unit', 'progress units')}`
-  }
-  return 'Progress units are confirmed at launch.'
-}
-
-function baselineCount(estimate: ScenarioRunEstimate): number {
-  return estimate.components
-    .filter((component) => component.isBaseline)
-    .reduce((sum, component) => sum + component.count, 0)
-}
-
-function formatEstimateSummary(estimate: ScenarioRunEstimate): string {
-  if (!estimate.adaptiveDetails) {
-    return formatPlannedAttackSummary(estimate)
-  }
-  const attackAttemptUpperBound = estimate.adaptiveDetails.techniqueAttemptCountUpperBound
-    + baselineCount(estimate)
-  const attemptSummary = `up to ${countLabel(
-    attackAttemptUpperBound,
-    'attack attempt',
-    'attack attempts',
-  )}`
-  const hasPlannedAttackBound = estimate.total !== null
-    || estimate.minimum != null
-    || estimate.maximum != null
-  return hasPlannedAttackBound
-    ? `${attemptSummary} · ${formatProgressUnitSummary(estimate)}`
-    : `${countLabel(estimate.adaptiveDetails.objectiveCount, 'objective', 'objectives')} · ${attemptSummary}`
+  return 'Attack count varies'
 }
 
 function formatComponentFormula(component: ScenarioRunEstimateComponent): string {
-  if (component.factors.length === 0) {
-    return `${component.label}: ${formatEstimateValue(component.count)}`
-  }
-  const factors = component.factors
-    .map((factor) => `${formatEstimateValue(factor.count)} ${factor.label}`)
-    .join(' × ')
-  return `${component.label}: ${factors} = ${formatEstimateValue(component.count)}`
+  return `${component.label}: ${formatEstimateValue(component.count)}`
 }
 
 function formatBackendFormula(estimate: ScenarioRunEstimate): string {
@@ -155,21 +107,22 @@ function formatBackendFormula(estimate: ScenarioRunEstimate): string {
   return `${components}; ${total}`
 }
 
-export function ScenarioRunEstimateSummary({ state }: ScenarioRunEstimateSummaryProps) {
+export function ScenarioRunEstimateSummary({ state, compact = false }: ScenarioRunEstimateSummaryProps) {
   const styles = useScenarioRunEstimateStyles()
   const estimate = stateEstimate(state)
 
   return (
     <div className={styles.summary} aria-live="polite">
       <div className={styles.summaryHeader}>
-        <Badge appearance="tint" color={statusColor(state)}>{statusLabel(state)}</Badge>
+        {!compact && <Badge appearance="tint" color={statusColor(state)}>{statusLabel(state)}</Badge>}
         {estimate && (
           <Text className={styles.total} weight="semibold">
-            {formatEstimateSummary(estimate)}
+            {formatPlannedAttackSummary(estimate)}
           </Text>
         )}
+        {compact && !estimate && <Text className={styles.total}>{statusLabel(state)}</Text>}
       </div>
-      <Text size={200} className={styles.muted}>{scopeLabel(state)}</Text>
+      {!compact && <Text size={200} className={styles.muted}>{scopeLabel(state)}</Text>}
     </div>
   )
 }
@@ -206,17 +159,6 @@ function EstimateComponents({
                   <Text weight="semibold">{formatEstimateValue(component.count)}</Text>
                 </div>
               </div>
-              {component.factors.length > 0 && (
-                <ul className={styles.factorList} aria-label={`${component.label} factors`}>
-                  {component.factors.map((factor) => (
-                    <li key={factor.id}>
-                      <Text size={200}>
-                        × {formatEstimateValue(factor.count)} {factor.label}
-                      </Text>
-                    </li>
-                  ))}
-                </ul>
-              )}
               {component.note && (
                 <Text size={200} className={styles.muted}>{component.note}</Text>
               )}
@@ -343,10 +285,6 @@ export function ScenarioRunEstimateDetails({
         </Text>
         <Text size={200} className={styles.muted}>
           {estimate.note ?? 'No additional note supplied by the backend.'}
-        </Text>
-        <Text size={200} className={styles.muted}>
-          Retries are {estimate.retriesIncluded ? 'included' : 'not included'}.
-          {' '}Estimate schema v{estimate.version}.
         </Text>
       </section>
     </div>

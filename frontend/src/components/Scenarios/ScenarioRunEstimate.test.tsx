@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
-import type { ScenarioDefaultRunSizeEstimate, ScenarioRunEstimateState } from '@/types'
+import type { ScenarioRunEstimateState, ScenarioRunSizeEstimateResponse } from '@/types'
 
 import {
   ScenarioRunEstimateDetails,
@@ -15,31 +15,20 @@ function TestWrapper({ children }: { children: ReactNode }) {
   return <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 }
 
-const EXACT_ESTIMATE: ScenarioDefaultRunSizeEstimate = {
-  version: 1,
-  status: 'exact',
-  total_attack_count: 8,
+const EXACT_ESTIMATE: ScenarioRunSizeEstimateResponse = {
+  estimated_attack_count: 8,
   components: [
     {
       label: 'Prompt sending',
-      count: 8,
-      factors: [
-        { label: 'selected seed groups', count: 4 },
-        { label: 'jailbreak templates', count: 2 },
-        { label: 'techniques', count: 1 },
-        { label: 'attempts', count: 1 },
-      ],
+      count: 6,
       is_baseline: false,
       note: 'One planned attack per selected objective and template.',
     },
     {
       label: 'Baseline attack',
-      // Deliberately differs from the authoritative total when added to the
-      // first component so this test detects accidental client-side summing.
       count: 2,
-      factors: [],
       is_baseline: true,
-      note: 'Fixture component used to guard the authoritative total.',
+      note: null,
     },
   ],
   datasets: [
@@ -60,11 +49,10 @@ const EXACT_ESTIMATE: ScenarioDefaultRunSizeEstimate = {
     },
   ],
   note: 'The backend total is authoritative.',
-  retries_included: false,
 }
 
 describe('ScenarioRunEstimate', () => {
-  it('renders the authoritative total, ordered factors, dataset counts, caps, and notes', () => {
+  it('renders the authoritative total, components, dataset counts, caps, and notes', () => {
     const state = mapScenarioRunEstimate(EXACT_ESTIMATE, 'request')
 
     render(
@@ -73,21 +61,17 @@ describe('ScenarioRunEstimate', () => {
       </TestWrapper>,
     )
 
-    expect(screen.getByText('8 planned attacks')).toBeInTheDocument()
-    expect(screen.queryByText('10 planned attacks')).not.toBeInTheDocument()
+    expect(screen.getByText('8 attacks')).toBeInTheDocument()
     expect(screen.getByText('Prompt sending')).toBeInTheDocument()
     expect(screen.getByText('Baseline attack')).toBeInTheDocument()
     expect(screen.getByText('Baseline')).toBeInTheDocument()
-    expect(screen.getByText('× 4 selected seed groups')).toBeInTheDocument()
-    expect(screen.getByText('× 2 jailbreak templates')).toBeInTheDocument()
     expect(screen.getByText('harmbench')).toBeInTheDocument()
     expect(screen.getByText('Jailbreak templates: 2 (configuration)')).toBeInTheDocument()
     expect(screen.getByText('Four compatible objective groups selected.')).toBeInTheDocument()
     expect(screen.getByText(
-      'Prompt sending: 4 selected seed groups × 2 jailbreak templates × 1 techniques × 1 attempts = 8 + Baseline attack: 2; backend total = 8',
+      'Prompt sending: 6 + Baseline attack: 2; backend total = 8',
     )).toBeInTheDocument()
     expect(screen.getByText('The backend total is authoritative.')).toBeInTheDocument()
-    expect(screen.getByText('Retries are not included. Estimate schema v1.')).toBeInTheDocument()
   })
 
   it('supports loading, conditional null totals, unavailable, and stale states', () => {
@@ -101,9 +85,10 @@ describe('ScenarioRunEstimate', () => {
 
     const conditional = mapScenarioRunEstimate({
       ...EXACT_ESTIMATE,
-      status: 'conditional',
-      total_attack_count: null,
-      components: [],
+      estimated_attack_count: null,
+      minimum_attack_count: 12,
+      maximum_attack_count: 20,
+      components: [{ label: 'Possible attacks', count: 20, is_baseline: false, note: null }],
       datasets: [],
       note: null,
     }, 'default')
@@ -113,16 +98,17 @@ describe('ScenarioRunEstimate', () => {
       </TestWrapper>,
     )
     expect(screen.getByText('Conditional estimate')).toBeInTheDocument()
-    expect(screen.getByText('Total depends on configuration')).toBeInTheDocument()
+    expect(screen.getByText('12-20 attacks')).toBeInTheDocument()
     expect(screen.getByText('Default configuration')).toBeInTheDocument()
     expect(screen.getByText(
-      'No additive components supplied; backend total is conditional',
+      'Possible attacks: 20; backend total is conditional',
     )).toBeInTheDocument()
 
     const unavailable = mapScenarioRunEstimate({
       ...EXACT_ESTIMATE,
-      status: 'unavailable',
-      total_attack_count: null,
+      estimated_attack_count: null,
+      minimum_attack_count: null,
+      maximum_attack_count: null,
       components: [],
       datasets: [],
       note: 'Target capability is not available.',
@@ -153,7 +139,7 @@ describe('ScenarioRunEstimate', () => {
       </TestWrapper>,
     )
     expect(screen.getByText('Previous estimate')).toBeInTheDocument()
-    expect(screen.getByText('8 planned attacks')).toBeInTheDocument()
+    expect(screen.getByText('8 attacks')).toBeInTheDocument()
     expect(screen.getByText('Showing the last successful estimate.')).toBeInTheDocument()
     expect(screen.getByText('Preview service timed out.')).toBeInTheDocument()
   })

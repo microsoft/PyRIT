@@ -538,13 +538,10 @@ describe("api service", () => {
     it("posts the exact estimate request and forwards cancellation", async () => {
       const mockResponse = {
         data: {
-          version: 1,
-          status: "exact",
-          total_attack_count: 8,
+          estimated_attack_count: 8,
           components: [],
           datasets: [],
           note: null,
-          retries_included: false,
         },
       };
       (apiClient.post as jest.Mock).mockResolvedValueOnce(mockResponse);
@@ -570,7 +567,7 @@ describe("api service", () => {
         request,
         { signal: controller.signal }
       );
-      expect(result.total_attack_count).toBe(8);
+      expect(result.estimated_attack_count).toBe(8);
     });
 
     it("posts the exact RunScenarioRequest payload to start a run", async () => {

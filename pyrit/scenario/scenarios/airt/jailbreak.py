@@ -394,6 +394,8 @@ class Jailbreak(Scenario):
             capability_note = ""
         return ScenarioRunSizeEstimate(
             estimated_attack_count=estimated_attack_count,
+            minimum_attack_count=target_agnostic_count if estimated_attack_count is None else None,
+            maximum_attack_count=planned_count if estimated_attack_count is None else None,
             components=components,
             datasets=datasets,
             note=f"{formula}{baseline_explanation}{capability_note}",

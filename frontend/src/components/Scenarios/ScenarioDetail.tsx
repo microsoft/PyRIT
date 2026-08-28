@@ -152,7 +152,7 @@ function formatParameterPreview(value: ParameterFormValue | undefined): string {
   return value?.trim() || 'Not set'
 }
 
-interface BuildRunRequestInput {
+interface BuildEstimateRequestInput {
   scenario: RegisteredScenario
   targetName: string
   techniques: string[]
@@ -160,11 +160,24 @@ interface BuildRunRequestInput {
   scenarioParamValues: Record<string, ParameterFormValue>
   datasetOverride: string
   maxDatasetSize: string
+  includeBaseline: boolean
+}
+
+interface BuildRunRequestInput extends BuildEstimateRequestInput {
   maxConcurrency: number
   maxRetries: number
-  includeBaseline: boolean
   labels: Record<string, string>
 }
+
+type BuildEstimateRequestResult =
+  | {
+      ok: true
+      request: ScenarioRunSizeEstimateRequest
+    }
+  | {
+      ok: false
+      error: string
+    }
 
 type BuildRunRequestResult =
   | {
@@ -193,22 +206,15 @@ type EstimateRequestState =
       error: string
     }
 
-function buildRunRequest({
-  scenario,
+function buildEstimateRequest({
   targetName,
   techniques,
   dynamicParameters,
   scenarioParamValues,
   datasetOverride,
   maxDatasetSize,
-  maxConcurrency,
-  maxRetries,
   includeBaseline,
-  labels,
-}: BuildRunRequestInput): BuildRunRequestResult {
-  if (!targetName) {
-    return { ok: false, error: 'Select a target.' }
-  }
+}: BuildEstimateRequestInput): BuildEstimateRequestResult {
   if (techniques.length === 0) {
     return { ok: false, error: 'Select at least one technique.' }
   }
@@ -231,36 +237,13 @@ function buildRunRequest({
     }
     maxDatasetSizeValue = parsed
   }
-  if (
-    !Number.isInteger(maxConcurrency)
-    || maxConcurrency < MIN_MAX_CONCURRENCY
-    || maxConcurrency > MAX_MAX_CONCURRENCY
-  ) {
-    return {
-      ok: false,
-      error: `Max concurrency must be an integer from ${MIN_MAX_CONCURRENCY} to ${MAX_MAX_CONCURRENCY}.`,
-    }
-  }
-  if (
-    !Number.isInteger(maxRetries)
-    || maxRetries < MIN_MAX_RETRIES
-    || maxRetries > MAX_MAX_RETRIES
-  ) {
-    return {
-      ok: false,
-      error: `Max retries must be an integer from ${MIN_MAX_RETRIES} to ${MAX_MAX_RETRIES}.`,
-    }
-  }
-
   const datasetNames = parseDatasetNames(datasetOverride)
-  const request: RunScenarioRequest = {
-    scenario_name: scenario.scenario_name,
-    target_name: targetName,
+  const request: ScenarioRunSizeEstimateRequest = {
     techniques,
-    max_concurrency: maxConcurrency,
-    max_retries: maxRetries,
     include_baseline: includeBaseline,
-    labels,
+  }
+  if (targetName) {
+    request.target_name = targetName
   }
   if (datasetNames.length > 0) {
     request.dataset_names = datasetNames
@@ -274,25 +257,55 @@ function buildRunRequest({
   return { ok: true, request }
 }
 
-function buildEstimateRequest(request: RunScenarioRequest): ScenarioRunSizeEstimateRequest {
-  const estimateRequest: ScenarioRunSizeEstimateRequest = {
-    target_name: request.target_name,
-    techniques: request.techniques,
-    include_baseline: request.include_baseline,
+function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
+  if (!input.targetName) {
+    return { ok: false, error: 'Select a target.' }
   }
-  if (request.dataset_names !== undefined) {
-    estimateRequest.dataset_names = request.dataset_names
+  const estimateResult = buildEstimateRequest(input)
+  if (!estimateResult.ok) {
+    return estimateResult
   }
-  if (request.max_dataset_size !== undefined) {
-    estimateRequest.max_dataset_size = request.max_dataset_size
+  if (
+    !Number.isInteger(input.maxConcurrency)
+    || input.maxConcurrency < MIN_MAX_CONCURRENCY
+    || input.maxConcurrency > MAX_MAX_CONCURRENCY
+  ) {
+    return {
+      ok: false,
+      error: `Max concurrency must be an integer from ${MIN_MAX_CONCURRENCY} to ${MAX_MAX_CONCURRENCY}.`,
+    }
   }
-  if (request.dataset_filters !== undefined) {
-    estimateRequest.dataset_filters = request.dataset_filters
+  if (
+    !Number.isInteger(input.maxRetries)
+    || input.maxRetries < MIN_MAX_RETRIES
+    || input.maxRetries > MAX_MAX_RETRIES
+  ) {
+    return {
+      ok: false,
+      error: `Max retries must be an integer from ${MIN_MAX_RETRIES} to ${MAX_MAX_RETRIES}.`,
+    }
   }
-  if (request.scenario_params !== undefined) {
-    estimateRequest.scenario_params = request.scenario_params
+
+  const estimateRequest = estimateResult.request
+  const request: RunScenarioRequest = {
+    scenario_name: input.scenario.scenario_name,
+    target_name: input.targetName,
+    techniques: estimateRequest.techniques,
+    max_concurrency: input.maxConcurrency,
+    max_retries: input.maxRetries,
+    include_baseline: estimateRequest.include_baseline,
+    labels: input.labels,
   }
-  return estimateRequest
+  if (estimateRequest.dataset_names !== undefined) {
+    request.dataset_names = estimateRequest.dataset_names
+  }
+  if (estimateRequest.max_dataset_size !== undefined) {
+    request.max_dataset_size = estimateRequest.max_dataset_size
+  }
+  if (estimateRequest.scenario_params !== undefined) {
+    request.scenario_params = estimateRequest.scenario_params
+  }
+  return { ok: true, request }
 }
 
 interface ScenarioDetailProps {
@@ -438,30 +451,6 @@ function ScenarioDetailContent({
     return null
   }
 
-  if (targets.length === 0) {
-    return (
-      <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
-        <div className={styles.content}>
-          <Link to="/scenarios" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scenarios
-          </Link>
-          <div className={styles.centeredState} data-testid="no-targets-state">
-            <Text size={400}>No targets configured</Text>
-            <Text size={200}>Configure a target before launching a scenario.</Text>
-            <Button
-              className={styles.touchTarget}
-              appearance="primary"
-              icon={<SettingsRegular />}
-              onClick={() => onNavigate('config')}
-            >
-              Configure target
-            </Button>
-          </div>
-        </div>
-      </section>
-    )
-  }
-
   return (
     <ScenarioLaunchForm
       key={scenario.scenario_name}
@@ -469,6 +458,7 @@ function ScenarioDetailContent({
       targets={targets}
       activeTarget={activeTarget}
       labels={labels}
+      onNavigate={onNavigate}
     />
   )
 }
@@ -478,9 +468,10 @@ interface ScenarioLaunchFormProps {
   targets: TargetInstance[]
   activeTarget: TargetInstance | null
   labels: Record<string, string>
+  onNavigate: (view: ViewName) => void
 }
 
-function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: ScenarioLaunchFormProps) {
+function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigate }: ScenarioLaunchFormProps) {
   const styles = useScenarioDetailStyles()
   const navigate = useNavigate()
   const formId = `scenario-launch-${encodeURIComponent(scenario.scenario_name).replace(/%/g, '-')}`
@@ -502,7 +493,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
       target.target_registry_name === activeTarget.target_registry_name)) {
       return activeTarget.target_registry_name
     }
-    return targets[0].target_registry_name
+    return targets[0]?.target_registry_name ?? ''
   })
   const [techniqueSelection, setTechniqueSelection] = useState<TechniqueSelection>(() => defaultSelection)
   const [baselineChecked, setBaselineChecked] = useState(
@@ -527,6 +518,29 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
   const techniques = useMemo(
     () => selectedTechniqueNames(techniqueSelection),
     [techniqueSelection],
+  )
+  const estimateResult = useMemo(
+    () => buildEstimateRequest({
+      scenario,
+      targetName,
+      techniques,
+      dynamicParameters,
+      scenarioParamValues,
+      datasetOverride,
+      maxDatasetSize,
+      includeBaseline: isBaselineForbidden ? false : baselineChecked,
+    }),
+    [
+      baselineChecked,
+      datasetOverride,
+      dynamicParameters,
+      isBaselineForbidden,
+      maxDatasetSize,
+      scenario,
+      scenarioParamValues,
+      targetName,
+      techniques,
+    ],
   )
   const requestResult = useMemo(
     () => buildRunRequest({
@@ -558,8 +572,8 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
     ],
   )
   const estimateRequest = useMemo(
-    () => requestResult.ok ? buildEstimateRequest(requestResult.request) : null,
-    [requestResult],
+    () => estimateResult.ok ? estimateResult.request : null,
+    [estimateResult],
   )
   const estimateRequestKey = useMemo(
     () => estimateRequest === null
@@ -619,12 +633,12 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
   }, [estimateRequest, estimateRequestKey, scenario.scenario_name])
 
   let estimateState: ScenarioRunEstimateState
-  if (!requestResult.ok) {
+  if (!estimateResult.ok) {
     estimateState = {
       status: 'unavailable',
       scope: 'request',
       label: 'Complete the required configuration to request an estimate.',
-      note: requestResult.error,
+      note: estimateResult.error,
     }
   } else if (
     estimateRequestState?.requestKey === estimateRequestKey
@@ -788,6 +802,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
                   data-testid="scenario-target-select"
                   aria-label="Target"
                 >
+                  {targets.length === 0 && <option value="">No targets configured</option>}
                   {targets.map((target) => (
                     <option key={target.target_registry_name} value={target.target_registry_name}>
                       {target.target_registry_name}
@@ -795,6 +810,17 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels }: Scenari
                   ))}
                 </Select>
               </Field>
+              {targets.length === 0 && (
+                <Button
+                  className={styles.touchTarget}
+                  appearance="secondary"
+                  icon={<SettingsRegular />}
+                  type="button"
+                  onClick={() => onNavigate('config')}
+                >
+                  Configure target to launch
+                </Button>
+              )}
             </section>
 
             <section className={styles.section} aria-labelledby="techniques-section-title">

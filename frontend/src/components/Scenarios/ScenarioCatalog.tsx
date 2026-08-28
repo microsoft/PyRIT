@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Button,
   Input,
+  Link as FluentLink,
   mergeClasses,
   MessageBar,
   MessageBarBody,
@@ -76,41 +77,41 @@ function formatObjectiveCount(value: number): string {
   return `${formatCount(value)} objective${value === 1 ? '' : 's'}`
 }
 
-function DefaultDatasetSizeSummary({
+function DefaultDatasetSummary({
   datasets,
-  hasDeclaredDatasets,
+  declaredDatasets,
 }: {
   datasets: ScenarioDatasetSummary[]
-  hasDeclaredDatasets: boolean
+  declaredDatasets: string[]
 }) {
   const styles = useScenarioCatalogStyles()
 
-  if (datasets.length === 0) {
-    return (
-      <Text weight="semibold">
-        {hasDeclaredDatasets ? 'Population counts unavailable' : 'No default dataset'}
-      </Text>
-    )
+  if (datasets.length === 0 && declaredDatasets.length === 0) {
+    return <Text weight="semibold">No default datasets</Text>
   }
 
-  if (datasets.length === 1) {
-    const dataset = datasets[0]
+  if (datasets.length === 0) {
     return (
       <div className={styles.compactStack}>
-        <Text weight="semibold">{formatObjectiveCount(dataset.selected_seed_group_count)}</Text>
-        <Text size={200} className={styles.secondaryText}>
-          {dataset.name} · {formatCount(dataset.logical_seed_group_count)} available
-        </Text>
+        <Text weight="semibold">Population counts unavailable</Text>
+        <Text size={200} className={styles.secondaryText}>{declaredDatasets.join(' · ')}</Text>
       </div>
     )
   }
 
+  const objectiveCount = datasets.reduce(
+    (total, dataset) => total + dataset.selected_seed_group_count,
+    0,
+  )
+  const datasetNames = declaredDatasets.length > 0
+    ? declaredDatasets
+    : datasets.map((dataset) => dataset.name)
+
   return (
-    <Text size={200} weight="semibold">
-      {datasets
-        .map((dataset) => `${formatObjectiveCount(dataset.selected_seed_group_count)} · ${dataset.name}`)
-        .join(' · ')}
-    </Text>
+    <div className={styles.compactStack}>
+      <Text weight="semibold">{formatObjectiveCount(objectiveCount)}</Text>
+      <Text size={200} className={styles.secondaryText}>{datasetNames.join(' · ')}</Text>
+    </div>
   )
 }
 
@@ -163,11 +164,11 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
         className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
       >
         <Text className={styles.mobileLabel} size={200} weight="semibold">
-          Default dataset size
+          Default datasets
         </Text>
-        <DefaultDatasetSizeSummary
+        <DefaultDatasetSummary
           datasets={scenario.default_dataset_summaries}
-          hasDeclaredDatasets={scenario.default_datasets.length > 0}
+          declaredDatasets={scenario.default_datasets}
         />
       </TableCell>
       <TableCell
@@ -188,7 +189,7 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
         <Text className={styles.mobileLabel} size={200} weight="semibold">
           Default run size
         </Text>
-        <ScenarioRunEstimateSummary state={estimateState} />
+        <ScenarioRunEstimateSummary state={estimateState} compact />
       </TableCell>
     </TableRow>
   )
@@ -249,7 +250,7 @@ export default function ScenarioCatalog() {
       <div className={styles.header}>
         <div className={styles.headerText}>
           <Text id="scenario-catalog-title" as="h1" size={600} weight="semibold">
-            Scenarios
+            Scanner
           </Text>
           <Text size={300} className={styles.subtitle}>
             Browse registered scenarios and launch a run against a configured target.
@@ -258,6 +259,13 @@ export default function ScenarioCatalog() {
             A scenario packages objective datasets, technique sets or selected techniques, baseline policy,
             and scenario-specific axes into a run plan.
           </Text>
+          <FluentLink
+            href="https://microsoft.github.io/PyRIT/scanner/0_scanner/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Read the scanner documentation
+          </FluentLink>
         </div>
         <div className={styles.headerActions}>
           <Input
@@ -339,7 +347,7 @@ export default function ScenarioCatalog() {
                     'scenario-catalog-cell-padding',
                   )}
                 >
-                  Default dataset size
+                  Default datasets
                 </TableHeaderCell>
                 <TableHeaderCell
                   className={mergeClasses(

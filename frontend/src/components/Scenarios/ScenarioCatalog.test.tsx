@@ -60,17 +60,12 @@ function makeScenario(overrides: Partial<RegisteredScenario> & { scenario_name: 
     include_baseline_by_default: true,
     supported_parameters: [],
     default_run_size: {
-      version: 1,
-      status: 'unavailable',
-      total_attack_count: null,
+      estimated_attack_count: null,
       minimum_attack_count: null,
       maximum_attack_count: null,
-      condition: null,
       components: [],
       datasets: [],
-      adaptive_details: null,
       note: 'Default sizing is not available.',
-      retries_included: false,
     },
     ...overrides,
     description,
@@ -104,6 +99,11 @@ describe('ScenarioCatalog', () => {
 
     expect(await screen.findByText('foundry.red_team_agent')).toBeInTheDocument()
     expect(screen.getByText('encoding.base64')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Scanner' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Read the scanner documentation' })).toHaveAttribute(
+      'href',
+      'https://microsoft.github.io/PyRIT/scanner/0_scanner/',
+    )
     expect(mockListCatalog).toHaveBeenCalledTimes(1)
   })
 
@@ -157,7 +157,7 @@ describe('ScenarioCatalog', () => {
     expect(headers.map((header) => header.textContent)).toEqual([
       'Scenario / purpose',
       'Configure',
-      'Default dataset size',
+      'Default datasets',
       'Default techniques',
       'Default run size',
     ])
@@ -355,7 +355,7 @@ describe('ScenarioCatalog', () => {
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/scenarios/foundry%2Fred_team_agent')
   })
 
-  it('shows multiple default populations separately instead of summing them', async () => {
+  it('shows the total default objectives followed by the dataset names', async () => {
     mockListCatalog.mockResolvedValueOnce({
       items: [
         makeScenario({
@@ -392,55 +392,35 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const row = await screen.findByTestId('scenario-card-scenario.compound')
-    expect(within(row).getByText(
-      '4 objectives · population-a · 2 objectives · population-b',
-    )).toBeInTheDocument()
-    expect(within(row).queryByText('6 objectives')).not.toBeInTheDocument()
+    expect(within(row).getByText('6 objectives')).toBeInTheDocument()
+    expect(within(row).getByText('population-a · population-b')).toBeInTheDocument()
   })
 
-  it('shows adaptive progress objectives together with the underlying attempt bound', async () => {
+  it('shows an adaptive estimate as a plain attack range', async () => {
     mockListCatalog.mockResolvedValueOnce({
       items: [
         makeScenario({
           scenario_name: 'adaptive.text_adaptive',
           default_run_size: {
-            version: 1,
-            status: 'conditional',
-            total_attack_count: null,
+            estimated_attack_count: null,
             minimum_attack_count: 21,
             maximum_attack_count: 42,
-            condition: 'target_capabilities',
             components: [
               {
                 label: 'Baseline',
                 count: 21,
-                factors: [{ label: 'objectives', count: 21 }],
                 is_baseline: true,
-                condition: null,
                 note: null,
               },
               {
                 label: 'Adaptive objectives',
                 count: 21,
-                factors: [{ label: 'compatible objectives', count: 21 }],
                 is_baseline: false,
-                condition: null,
                 note: null,
               },
             ],
             datasets: [],
-            adaptive_details: {
-              objective_count: 21,
-              selected_candidate_technique_count: 2,
-              candidate_technique_count: 2,
-              max_attempts_per_objective: 3,
-              techniques_per_objective_upper_bound: 2,
-              technique_attempt_count_upper_bound: 42,
-              stop_on_first_success: true,
-              compatibility_may_reduce_attempts: true,
-            },
             note: null,
-            retries_included: false,
           },
         }),
       ],
@@ -450,8 +430,8 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const row = await screen.findByTestId('scenario-card-adaptive.text_adaptive')
-    expect(within(row).getByText('up to 63 attack attempts · 21–42 progress units')).toBeInTheDocument()
-    expect(within(row).queryByText(/objective envelope/i)).not.toBeInTheDocument()
+    expect(within(row).getByText('21-42 attacks')).toBeInTheDocument()
+    expect(within(row).queryByText(/progress units|attack attempts/i)).not.toBeInTheDocument()
   })
 
   it('keeps declared datasets visible when backend population summaries are unavailable', async () => {
@@ -474,6 +454,7 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
     const row = await screen.findByTestId('scenario-card-scenario.unsized')
     expect(within(row).getByText('Population counts unavailable')).toBeInTheDocument()
+    expect(within(row).getByText('harmbench')).toBeInTheDocument()
     expect(within(row).getByRole('button', { name: 'Configure run' })).toBeInTheDocument()
   })
 
@@ -515,20 +496,13 @@ describe('ScenarioCatalog', () => {
             },
           ],
           default_run_size: {
-            version: 1,
-            status: 'conditional',
-            total_attack_count: null,
+            estimated_attack_count: null,
             minimum_attack_count: 12,
             maximum_attack_count: 20,
-            condition: 'target_capabilities',
             components: [
               {
                 label: 'Default attacks',
-                count: 8,
-                factors: [
-                  { label: 'selected seed groups', count: 4 },
-                  { label: 'default techniques', count: 2 },
-                ],
+                count: 20,
                 is_baseline: false,
                 note: null,
               },
@@ -550,9 +524,7 @@ describe('ScenarioCatalog', () => {
                 selection_note: 'One incompatible group is excluded.',
               },
             ],
-            adaptive_details: null,
             note: 'Retries and internal turns are excluded.',
-            retries_included: false,
           },
         }),
       ],
@@ -565,9 +537,9 @@ describe('ScenarioCatalog', () => {
     const cells = within(row).getAllByRole('cell')
     expect(within(cells[1]).getByRole('button', { name: 'Configure run' })).toBeInTheDocument()
     expect(within(row).getByText('4 objectives')).toBeInTheDocument()
-    expect(within(row).getByText('harmbench · 400 available')).toBeInTheDocument()
+    expect(within(row).getByText('harmbench')).toBeInTheDocument()
     expect(within(row).getByText('2 techniques')).toBeInTheDocument()
-    expect(within(row).getByText('12–20 planned attacks')).toBeInTheDocument()
+    expect(within(row).getByText('12-20 attacks')).toBeInTheDocument()
     expect(within(row).queryByText('default')).not.toBeInTheDocument()
     expect(within(row).queryByText(/aggregate presets|compatible concrete/i)).not.toBeInTheDocument()
     expect(within(row).queryByText(REMOVED_NORMAL_ESTIMATE_LABELS)).not.toBeInTheDocument()
