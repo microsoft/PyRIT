@@ -86,6 +86,57 @@ async def test_send_prompt_async(target):
     await target.cleanup_target_async()
 
 
+async def test_cancellation_during_session_config_discards_connection(target):
+    connection = AsyncMock()
+    target._connect_async = AsyncMock(return_value=connection)
+    config_started = asyncio.Event()
+
+    async def wait_in_config_async(*, conversation_id: str, conversation: list[Message]) -> None:
+        config_started.set()
+        await asyncio.Event().wait()
+
+    target.send_config_async = AsyncMock(side_effect=wait_in_config_async)
+    message = Message.from_prompt(prompt="Hello", role="user")
+    message.get_piece().conversation_id = "cancelled-config"
+
+    send_task = asyncio.create_task(target.send_prompt_async(message=message))
+    await config_started.wait()
+    send_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await send_task
+
+    connection.close.assert_awaited_once_with()
+    assert "cancelled-config" not in target._existing_conversation
+
+
+async def test_response_create_failure_cancels_receive_task(target):
+    connection = AsyncMock()
+    target._existing_conversation["response-failure"] = connection
+    receive_started = asyncio.Event()
+    receive_cancelled = asyncio.Event()
+
+    async def receive_events_async(*, conversation_id: str) -> RealtimeTargetResult:
+        receive_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            receive_cancelled.set()
+        raise AssertionError("unreachable")
+
+    async def fail_response_create_async(*, conversation_id: str) -> None:
+        await receive_started.wait()
+        raise RuntimeError("response create failed")
+
+    target.receive_events_async = receive_events_async
+    target.send_response_create_async = AsyncMock(side_effect=fail_response_create_async)
+
+    with pytest.raises(RuntimeError, match="response create failed"):
+        await target.send_text_async(text="Hello", conversation_id="response-failure")
+
+    assert receive_started.is_set()
+    assert receive_cancelled.is_set()
+
+
 async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
     """When a turn result carries interrupted=True, both response pieces' metadata must reflect it."""
     target._connect_async = AsyncMock(return_value=AsyncMock())
