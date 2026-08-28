@@ -90,6 +90,14 @@ class ScenarioDatasetSummary(BaseModel):
     selection_note: str | None = None
 
 
+class ScenarioTechniqueSummary(BaseModel):
+    """One concrete attack technique available to a scenario."""
+
+    name: str = Field(..., min_length=1)
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
 class ScenarioRunSizeEstimate(BaseModel):
     """
     Structured estimate of default planned scenario execution units.
@@ -169,6 +177,10 @@ class RegisteredScenario(BaseModel):
         description="Concrete ordered technique expansion for every aggregate selector",
     )
     all_techniques: list[str] = Field(..., description="All available concrete technique names")
+    technique_summaries: list[ScenarioTechniqueSummary] = Field(
+        default_factory=list,
+        description="Descriptions and tags for the available concrete techniques",
+    )
     default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
     default_dataset_summaries: list[ScenarioDatasetSummary] = Field(
         default_factory=list,

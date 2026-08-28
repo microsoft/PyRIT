@@ -43,12 +43,12 @@ const VIEW_PATHS: Record<ViewName, string> = {
   history: '/history',
   config: '/config',
   initializers: '/initializers',
-  scenarios: '/scenarios',
+  scenarios: '/scanner',
 }
 
 /**
  * Resolves the active view from a URL path, defaulting to home for unknown
- * paths. Scenario routes are prefix-matched (`/scenarios/...` and
+ * paths. Scanner routes are prefix-matched (`/scanner/...` and
  * `/scenario-history/...`) since they carry a path parameter rather than a
  * single canonical `VIEW_PATHS` entry.
  */
@@ -474,9 +474,9 @@ function App() {
                 }
               />
               <Route path="/initializers" element={<Initializers />} />
-              <Route path="/scenarios" element={<ScenarioCatalog />} />
+              <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
-                path="/scenarios/:scenarioName"
+                path="/scanner/:scenarioName"
                 element={
                   <ScenarioDetail
                     activeTarget={activeTarget}

@@ -41,6 +41,8 @@ export const useScenarioDetailStyles = makeStyles({
   description: {
     maxWidth: '75ch',
     color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase400,
+    lineHeight: tokens.lineHeightBase500,
   },
   layout: {
     display: 'grid',
@@ -81,24 +83,40 @@ export const useScenarioDetailStyles = makeStyles({
       },
     },
   },
-  checkboxGroup: {
+  techniqueList: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
-  },
-  techniqueGroups: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
+    gap: tokens.spacingVerticalS,
   },
   selectionControl: {
     ...mobileTouchTargetHeight,
   },
-  resolvedMembers: {
+  techniqueOption: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(12rem, 35%) minmax(0, 1fr)',
+    gap: tokens.spacingHorizontalM,
+    alignItems: 'start',
+    padding: tokens.spacingVerticalS,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    [NARROW_VIEWPORT_QUERY]: {
+      gridTemplateColumns: 'minmax(0, 1fr)',
+      gap: tokens.spacingVerticalXS,
+    },
+  },
+  techniqueDetails: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalXS,
-    paddingLeft: tokens.spacingHorizontalM,
+    minWidth: 0,
+  },
+  techniqueTags: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalXS,
+  },
+  techniqueTag: {
+    ...mobileTouchTarget,
   },
   hint: {
     color: tokens.colorNeutralForeground3,

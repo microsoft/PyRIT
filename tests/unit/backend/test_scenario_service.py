@@ -30,6 +30,7 @@ from pyrit.models import (
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
+    ScenarioTechniqueSummary,
 )
 from pyrit.models.catalog.scenario import RegisteredScenario
 from pyrit.registry import ScenarioMetadata
@@ -80,6 +81,18 @@ def _make_scenario_metadata(
         ("all", ("role_play", "many_shot")),
         ("default", ("role_play",)),
     ),
+    technique_summaries: tuple[ScenarioTechniqueSummary, ...] = (
+        ScenarioTechniqueSummary(
+            name="role_play",
+            description="Frames the objective as role play.",
+            tags=["default", "single_turn"],
+        ),
+        ScenarioTechniqueSummary(
+            name="many_shot",
+            description="Provides many examples before the objective.",
+            tags=["multi_turn"],
+        ),
+    ),
     default_datasets: tuple[str, ...] = ("test_dataset",),
     baseline_policy: str = "enabled",
     include_baseline_by_default: bool = True,
@@ -97,6 +110,7 @@ def _make_scenario_metadata(
         all_techniques=all_techniques,
         aggregate_techniques=aggregate_techniques,
         aggregate_technique_expansions=aggregate_technique_expansions,
+        technique_summaries=technique_summaries,
         default_datasets=default_datasets,
         baseline_policy=baseline_policy,
         include_baseline_by_default=include_baseline_by_default,
@@ -144,6 +158,8 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].aggregate_techniques == ["all", "default"]
             assert result.items[0].aggregate_technique_expansions["default"] == ["role_play"]
             assert result.items[0].all_techniques == ["role_play", "many_shot"]
+            assert result.items[0].technique_summaries[0].description == "Frames the objective as role play."
+            assert result.items[0].technique_summaries[0].tags == ["default", "single_turn"]
             assert result.items[0].default_datasets == ["test_dataset"]
             assert result.items[0].baseline_policy == "enabled"
             assert result.items[0].include_baseline_by_default is True

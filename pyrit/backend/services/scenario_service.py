@@ -60,6 +60,7 @@ def _metadata_to_registered_scenario(
             aggregate: list(expansion) for aggregate, expansion in metadata.aggregate_technique_expansions
         },
         all_techniques=list(metadata.all_techniques),
+        technique_summaries=list(metadata.technique_summaries),
         default_datasets=list(metadata.default_datasets),
         default_dataset_summaries=estimate.datasets,
         supported_parameters=list(metadata.supported_parameters),

@@ -508,6 +508,7 @@ describe("api service", () => {
           default_technique: "prompt_injection",
           aggregate_techniques: [],
           all_techniques: ["prompt_injection"],
+          technique_summaries: [],
           default_datasets: [],
           baseline_policy: "enabled",
           include_baseline_by_default: true,

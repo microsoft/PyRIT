@@ -213,13 +213,7 @@ export const useScenarioCatalogStyles = makeStyles({
     },
   },
   purposePreview: {
-    display: '-webkit-box',
-    maxWidth: '56ch',
-    maxHeight: '2.75rem',
-    overflow: 'hidden',
     color: tokens.colorNeutralForeground2,
-    WebkitBoxOrient: 'vertical',
-    WebkitLineClamp: 2,
   },
   compactStack: {
     display: 'flex',

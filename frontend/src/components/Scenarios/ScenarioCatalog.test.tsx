@@ -49,6 +49,13 @@ function makeScenario(overrides: Partial<RegisteredScenario> & { scenario_name: 
     aggregate_techniques: [],
     aggregate_technique_expansions: {},
     all_techniques: ['default_technique'],
+    technique_summaries: [
+      {
+        name: 'default_technique',
+        description: 'Runs the default attack.',
+        tags: ['default'],
+      },
+    ],
     default_datasets: [],
     dataset_size_limit: {
       default_scope: 'none',
@@ -335,7 +342,7 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const card = await screen.findByRole('link', { name: /foundry\/red_team_agent/i })
-    expect(card).toHaveAttribute('href', '/scenarios/foundry%2Fred_team_agent')
+    expect(card).toHaveAttribute('href', '/scanner/foundry%2Fred_team_agent')
   })
 
   it('shows the total default objectives followed by the dataset names', async () => {

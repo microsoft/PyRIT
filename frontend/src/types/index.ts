@@ -445,12 +445,19 @@ export interface RegisteredScenario {
   aggregate_techniques: string[]
   aggregate_technique_expansions: Record<string, string[]>
   all_techniques: string[]
+  technique_summaries: ScenarioTechniqueSummary[]
   default_datasets: string[]
   default_dataset_summaries: ScenarioDatasetSummary[]
   baseline_policy: 'enabled' | 'disabled' | 'forbidden'
   include_baseline_by_default: boolean
   supported_parameters: Parameter[]
   default_run_size: ScenarioRunSizeEstimateResponse
+}
+
+export interface ScenarioTechniqueSummary {
+  name: string
+  description: string | null
+  tags: string[]
 }
 
 export interface ListRegisteredScenariosResponse {

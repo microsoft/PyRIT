@@ -12,12 +12,11 @@ import {
   Input,
   MessageBar,
   MessageBarBody,
-  Radio,
-  RadioGroup,
   Select,
   Spinner,
   SpinButton,
   Text,
+  ToggleButton,
 } from '@fluentui/react-components'
 import { ArrowLeftRegular, ArrowSyncRegular, SettingsRegular } from '@fluentui/react-icons'
 import { Link, useNavigate, useParams } from 'react-router'
@@ -39,6 +38,7 @@ import type {
   ScenarioRunEstimateResult,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunEstimateState,
+  ScenarioTechniqueSummary,
   TargetInstance,
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
@@ -48,6 +48,7 @@ import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
+import { techniqueSetName } from './scenarioTechniqueSets'
 
 /** Items requested per target page while paging through the full list. */
 const TARGET_PAGE_SIZE = 200
@@ -89,53 +90,41 @@ function resolveSpinButtonValue(data: { value?: number | null; displayValue?: st
 
 type LoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 
-type TechniqueSelection =
-  | {
-      mode: 'preset'
-      preset: string
-    }
-  | {
-      mode: 'custom'
-      techniques: string[]
-    }
-
 interface TechniqueOptions {
-  presets: string[]
-  concrete: string[]
-  defaultSelection: TechniqueSelection
+  techniques: ScenarioTechniqueSummary[]
+  defaultTechniques: string[]
 }
 
-/** Options rendered for technique selection: exclusive presets first, then concrete techniques. */
 function uniqueTechniqueOptions(scenario: RegisteredScenario): TechniqueOptions {
   const aggregateNames = new Set(scenario.aggregate_techniques)
-  const defaultIsPreset = aggregateNames.has(scenario.default_technique)
-  const seenPresets = new Set<string>()
-  const presets: string[] = []
-  for (const name of scenario.aggregate_techniques) {
-    if (!seenPresets.has(name)) {
-      seenPresets.add(name)
-      presets.push(name)
+  const summariesByName = new Map(
+    scenario.technique_summaries.map((summary) => [summary.name, summary]),
+  )
+  const techniques: ScenarioTechniqueSummary[] = []
+  const seen = new Set<string>()
+  for (const name of scenario.all_techniques) {
+    if (!aggregateNames.has(name) && !seen.has(name)) {
+      techniques.push(summariesByName.get(name) ?? { name, description: null, tags: [] })
+      seen.add(name)
     }
   }
-  const seenConcrete = new Set<string>()
-  const concrete: string[] = []
-  const concreteCandidates = defaultIsPreset
-    ? scenario.all_techniques
-    : [scenario.default_technique, ...scenario.all_techniques]
-  for (const name of concreteCandidates) {
-    if (!aggregateNames.has(name) && !seenConcrete.has(name)) {
-      seenConcrete.add(name)
-      concrete.push(name)
-    }
+  const concreteNames = new Set(techniques.map((technique) => technique.name))
+  const defaultTechniques = scenario.default_techniques.filter((name) => concreteNames.has(name))
+  if (defaultTechniques.length === 0 && concreteNames.has(scenario.default_technique)) {
+    defaultTechniques.push(scenario.default_technique)
   }
-  const defaultSelection: TechniqueSelection = defaultIsPreset
-    ? { mode: 'preset', preset: scenario.default_technique }
-    : { mode: 'custom', techniques: [scenario.default_technique] }
-  return { presets, concrete, defaultSelection }
+  return { techniques, defaultTechniques }
 }
 
-function selectedTechniqueNames(selection: TechniqueSelection): string[] {
-  return selection.mode === 'preset' ? [selection.preset] : selection.techniques
+interface SelectableTechnique extends ScenarioTechniqueSummary {
+  isBaseline: boolean
+  disabled: boolean
+}
+
+const BASELINE_TECHNIQUE: ScenarioTechniqueSummary = {
+  name: 'baseline',
+  description: 'Sends each objective directly to the target for comparison.',
+  tags: ['baseline', 'single_turn'],
 }
 
 function parseDatasetNames(datasetOverride: string): string[] {
@@ -408,7 +397,7 @@ function ScenarioDetailContent({
     return (
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.content}>
-          <Link to="/scenarios" className={styles.backLink}>
+          <Link to="/scanner" className={styles.backLink}>
             <ArrowLeftRegular /> Back to scenarios
           </Link>
           <div className={styles.centeredState} data-testid="scenario-not-found">
@@ -424,7 +413,7 @@ function ScenarioDetailContent({
     return (
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.content}>
-          <Link to="/scenarios" className={styles.backLink}>
+          <Link to="/scanner" className={styles.backLink}>
             <ArrowLeftRegular /> Back to scenarios
           </Link>
           <div className={styles.centeredState} data-testid="scenario-error">
@@ -476,7 +465,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
   const navigate = useNavigate()
   const formId = `scenario-launch-${encodeURIComponent(scenario.scenario_name).replace(/%/g, '-')}`
 
-  const { presets, concrete, defaultSelection } = useMemo(
+  const { techniques: techniqueOptions, defaultTechniques } = useMemo(
     () => uniqueTechniqueOptions(scenario),
     [scenario],
   )
@@ -495,7 +484,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     }
     return targets[0]?.target_registry_name ?? ''
   })
-  const [techniqueSelection, setTechniqueSelection] = useState<TechniqueSelection>(() => defaultSelection)
+  const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() => defaultTechniques)
   const [baselineChecked, setBaselineChecked] = useState(
     () => !isBaselineForbidden && scenario.include_baseline_by_default,
   )
@@ -515,10 +504,22 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
   const isSubmittingRef = useRef(false)
   const estimateSequenceRef = useRef(0)
 
-  const techniques = useMemo(
-    () => selectedTechniqueNames(techniqueSelection),
-    [techniqueSelection],
+  const selectableTechniques = useMemo<SelectableTechnique[]>(
+    () => [
+      {
+        ...BASELINE_TECHNIQUE,
+        isBaseline: true,
+        disabled: isBaselineForbidden,
+      },
+      ...techniqueOptions.map((technique) => ({
+        ...technique,
+        isBaseline: false,
+        disabled: false,
+      })),
+    ],
+    [isBaselineForbidden, techniqueOptions],
   )
+  const techniques = selectedTechniques
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -672,29 +673,45 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     estimateState = { status: 'loading', scope: 'request' }
   }
 
-  const handlePresetChange = (preset: string): void => {
-    setTechniqueSelection({ mode: 'preset', preset })
+  const handleTechniqueChange = (technique: SelectableTechnique, checked: boolean): void => {
+    if (technique.isBaseline) {
+      setBaselineChecked(checked)
+    } else {
+      setSelectedTechniques((current) => {
+        if (checked) {
+          return current.includes(technique.name)
+            ? current
+            : [...current, technique.name]
+        }
+        return current.filter((name) => name !== technique.name)
+      })
+    }
     setValidationError(null)
   }
 
-  const handleConcreteChange = (name: string, checked: boolean): void => {
-    setTechniqueSelection((current) => {
-      if (checked) {
-        if (current.mode === 'preset') {
-          return { mode: 'custom', techniques: [name] }
-        }
-        return current.techniques.includes(name)
-          ? current
-          : { mode: 'custom', techniques: [...current.techniques, name] }
+  const isTechniqueSelected = (technique: SelectableTechnique): boolean => (
+    technique.isBaseline ? baselineChecked : selectedTechniques.includes(technique.name)
+  )
+
+  const handleTagChange = (tag: string): void => {
+    const members = selectableTechniques.filter(
+      (technique) => !technique.disabled && technique.tags.includes(tag),
+    )
+    const shouldSelect = members.some((technique) => !isTechniqueSelected(technique))
+    const memberNames = new Set(
+      members.filter((technique) => !technique.isBaseline).map((technique) => technique.name),
+    )
+    setSelectedTechniques((current) => {
+      const selected = new Set(current)
+      for (const name of memberNames) {
+        if (shouldSelect) selected.add(name)
+        else selected.delete(name)
       }
-      if (current.mode === 'preset') {
-        return current
-      }
-      return {
-        mode: 'custom',
-        techniques: current.techniques.filter((technique) => technique !== name),
-      }
+      return techniqueOptions.map((technique) => technique.name).filter((name) => selected.has(name))
     })
+    if (members.some((technique) => technique.isBaseline)) {
+      setBaselineChecked(shouldSelect)
+    }
     setValidationError(null)
   }
 
@@ -735,18 +752,9 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     void handleSubmit()
   }
 
-  const techniqueSelectionInvalid =
-    techniqueSelection.mode === 'custom' && techniqueSelection.techniques.length === 0
+  const techniqueSelectionInvalid = selectedTechniques.length === 0
   const previewDatasets = parseDatasetNames(datasetOverride)
   const effectiveDatasets = previewDatasets.length > 0 ? previewDatasets : scenario.default_datasets
-  const presetMembers = techniqueSelection.mode === 'preset'
-    ? (
-        scenario.aggregate_technique_expansions[techniqueSelection.preset]
-        ?? (techniqueSelection.preset === scenario.default_technique
-          ? scenario.default_techniques
-          : [])
-      )
-    : []
 
   return (
     <section
@@ -755,7 +763,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
       aria-labelledby="scenario-detail-title"
     >
       <div className={styles.content}>
-        <Link to="/scenarios" className={styles.backLink}>
+        <Link to="/scanner" className={styles.backLink}>
           <ArrowLeftRegular /> Back to scenarios
         </Link>
 
@@ -828,102 +836,61 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
                 Techniques
               </Text>
               <Text size={200} className={styles.hint}>
-                Selecting a preset replaces any custom list. Selecting the first individual technique
-                switches to a custom list and clears the preset.
+                Select individual techniques, or use a tag to select or clear all techniques with that tag.
               </Text>
-              <div className={styles.techniqueGroups}>
-                {presets.length > 0 ? (
-                  <Field label="Aggregate preset">
-                    <RadioGroup
-                      value={techniqueSelection.mode === 'preset' ? techniqueSelection.preset : ''}
-                      onChange={(_, data) => handlePresetChange(data.value)}
-                      aria-label="Aggregate preset"
-                    >
-                      {presets.map((name) => (
-                        <Radio
-                          className={styles.selectionControl}
-                          key={name}
-                          label={name === scenario.default_technique ? `${name} (default)` : name}
-                          value={name}
-                          disabled={submitting}
-                          data-testid={`technique-${name}`}
-                        />
-                      ))}
-                    </RadioGroup>
-                  </Field>
-                ) : (
-                  <Text size={200} className={styles.hint}>
-                    No aggregate presets are registered for this scenario.
-                  </Text>
-                )}
-                {techniqueSelection.mode === 'preset' && (
-                  <div className={styles.resolvedMembers} aria-live="polite">
-                    <Text size={200} weight="semibold">Backend-resolved preset members</Text>
-                    {presetMembers.length > 0 ? (
-                      <div className={styles.previewBadges}>
-                        {presetMembers.map((name) => (
-                          <Badge key={name} appearance="outline">{name}</Badge>
-                        ))}
-                      </div>
-                    ) : (
-                      <Text size={200} className={styles.hint}>
-                        No concrete members were supplied for this preset.
-                      </Text>
-                    )}
-                  </div>
-                )}
-                <Field
-                  label="Individual techniques"
-                  validationState={techniqueSelectionInvalid ? 'error' : 'none'}
-                  validationMessage={techniqueSelectionInvalid
-                    ? 'Select at least one technique.'
-                    : undefined}
-                >
-                  {concrete.length > 0 ? (
-                    <div className={styles.checkboxGroup} role="group" aria-label="Individual techniques">
-                      {concrete.map((name) => (
-                        <Checkbox
-                          className={styles.selectionControl}
-                          key={name}
-                          label={name}
-                          checked={
-                            techniqueSelection.mode === 'custom'
-                            && techniqueSelection.techniques.includes(name)
-                          }
-                          disabled={submitting}
-                          onChange={(_, data) => handleConcreteChange(name, data.checked === true)}
-                          data-testid={`technique-${name}`}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <Text size={200} className={styles.hint}>
-                      No concrete techniques are registered for custom selection.
-                    </Text>
-                  )}
-                </Field>
-              </div>
-            </section>
-
-            <section className={styles.section} aria-labelledby="baseline-section-title">
-              <Text id="baseline-section-title" as="h2" size={400} weight="semibold">
-                Baseline
-              </Text>
-              <Field>
-                <Checkbox
-                  className={styles.selectionControl}
-                  checked={baselineChecked}
-                  disabled={submitting || isBaselineForbidden}
-                  label={isBaselineForbidden ? 'Not available for this scenario' : 'Include baseline attack'}
-                  onChange={(_, data) => setBaselineChecked(data.checked === true)}
-                  data-testid="baseline-checkbox"
-                />
-              </Field>
-              {isBaselineForbidden && (
-                <Text size={200} className={styles.hint}>
-                  This scenario forbids a baseline comparison run.
+              {techniqueSelectionInvalid && (
+                <Text className={styles.errorText} role="alert">
+                  Select at least one attack technique.
                 </Text>
               )}
+              <div className={styles.techniqueList} role="group" aria-label="Techniques">
+                {selectableTechniques.map((technique) => (
+                  <div className={styles.techniqueOption} key={technique.name}>
+                    <Checkbox
+                      className={styles.selectionControl}
+                      label={technique.name === 'baseline' ? 'Baseline' : technique.name}
+                      checked={isTechniqueSelected(technique)}
+                      disabled={submitting || technique.disabled}
+                      onChange={(_, data) => handleTechniqueChange(technique, data.checked === true)}
+                      data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
+                    />
+                    <div className={styles.techniqueDetails}>
+                      {technique.description && (
+                        <Text size={200} className={styles.hint}>{technique.description}</Text>
+                      )}
+                      {technique.tags.length > 0 && (
+                        <div className={styles.techniqueTags} aria-label={`${technique.name} tags`}>
+                          {technique.tags.map((tag) => {
+                            const tagMembers = selectableTechniques.filter(
+                              (candidate) => !candidate.disabled && candidate.tags.includes(tag),
+                            )
+                            const tagSelected = tagMembers.length > 0 && tagMembers.every(isTechniqueSelected)
+                            return (
+                              <ToggleButton
+                                className={styles.techniqueTag}
+                                key={tag}
+                                size="small"
+                                appearance="outline"
+                                checked={tagSelected}
+                                disabled={submitting || tagMembers.length === 0}
+                                onClick={() => handleTagChange(tag)}
+                                aria-label={`${tagSelected ? 'Clear' : 'Select'} ${techniqueSetName(tag)} techniques`}
+                              >
+                                {techniqueSetName(tag)}
+                              </ToggleButton>
+                            )
+                          })}
+                        </div>
+                      )}
+                      {technique.disabled && (
+                        <Text size={200} className={styles.hint}>
+                          This scenario does not support a baseline comparison.
+                        </Text>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
 
             {dynamicParameters.length > 0 && (
@@ -1018,23 +985,15 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
               <div className={styles.previewGroup}>
                 <dt>Techniques</dt>
                 <dd>
-                  {techniqueSelection.mode === 'preset' ? (
-                    <div className={styles.previewStack}>
-                      <Text weight="semibold">Preset: {techniqueSelection.preset}</Text>
-                      {presetMembers.length > 0 && (
-                        <Text size={200} className={styles.hint}>
-                          Resolves to {presetMembers.join(', ')}
-                        </Text>
-                      )}
-                    </div>
-                  ) : techniqueSelection.techniques.length > 0 ? (
+                  {selectedTechniques.length > 0 ? (
                     <div className={styles.previewBadges}>
-                      {techniqueSelection.techniques.map((name) => (
+                      {baselineChecked && <Badge appearance="outline">baseline</Badge>}
+                      {selectedTechniques.map((name) => (
                         <Badge key={name} appearance="outline">{name}</Badge>
                       ))}
                     </div>
                   ) : (
-                    <Text className={styles.errorText}>No custom techniques selected</Text>
+                    <Text className={styles.errorText}>No attack techniques selected</Text>
                   )}
                 </dd>
               </div>
@@ -1067,16 +1026,6 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
                   ) : (
                     'No scenario-specific parameters'
                   )}
-                </dd>
-              </div>
-              <div className={styles.previewGroup}>
-                <dt>Baseline</dt>
-                <dd>
-                  {isBaselineForbidden
-                    ? 'Excluded by scenario policy'
-                    : baselineChecked
-                      ? 'Included'
-                      : 'Not included'}
                 </dd>
               </div>
             </dl>

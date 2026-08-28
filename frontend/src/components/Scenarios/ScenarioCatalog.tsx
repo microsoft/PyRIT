@@ -122,7 +122,7 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
   const styles = useScenarioCatalogStyles()
   const defaultConcreteTechniques = uniqueNames(scenario.default_techniques)
   const estimateState = mapScenarioRunEstimate(scenario.default_run_size, 'default')
-  const scenarioPath = `/scenarios/${encodeURIComponent(scenario.scenario_name)}`
+  const scenarioPath = `/scanner/${encodeURIComponent(scenario.scenario_name)}`
 
   return (
     <TableRow

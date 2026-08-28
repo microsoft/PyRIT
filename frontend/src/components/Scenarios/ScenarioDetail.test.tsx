@@ -38,10 +38,16 @@ jest.mock('react-router', () => ({
 
 function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredScenario {
   const description = overrides.description ?? 'Red teams a target.'
-  const defaultTechnique = overrides.default_technique ?? 'default_technique'
-  const aggregateTechniques = overrides.aggregate_techniques ?? ['default_technique']
+  const defaultTechnique = overrides.default_technique ?? 'default'
+  const aggregateTechniques = overrides.aggregate_techniques ?? ['all', 'default']
   const defaultTechniques = overrides.default_techniques
-    ?? (aggregateTechniques.includes(defaultTechnique) ? ['crescendo'] : [defaultTechnique])
+    ?? (aggregateTechniques.includes(defaultTechnique) ? ['default_technique'] : [defaultTechnique])
+  const allTechniques = overrides.all_techniques ?? ['default_technique', 'crescendo']
+  const techniqueSummaries = overrides.technique_summaries ?? allTechniques.map((name) => ({
+    name,
+    description: `${name} description.`,
+    tags: name === 'default_technique' ? ['default', 'single_turn'] : ['multi_turn'],
+  }))
   return {
     scenario_name: 'foundry.red_team_agent',
     scenario_type: 'RedTeamAgentScenario',
@@ -50,7 +56,8 @@ function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredSc
       ?? Object.fromEntries(
         aggregateTechniques.map((name) => [name, name === defaultTechnique ? defaultTechniques : []]),
       ),
-    all_techniques: ['default_technique', 'crescendo'],
+    all_techniques: allTechniques,
+    technique_summaries: techniqueSummaries,
     default_datasets: ['harmbench'],
     default_dataset_summaries: [],
     baseline_policy: 'enabled',
@@ -131,7 +138,7 @@ function renderDetail(
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route
-            path="/scenarios/:scenarioName"
+            path="/:catalog/:scenarioName"
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             element={<ScenarioDetail {...(merged as any)} />}
           />
@@ -164,23 +171,23 @@ describe('ScenarioDetail', () => {
   it('shows a loading state while fetching', () => {
     mockGetScenario.mockReturnValue(new Promise(() => {}))
     mockListTargets.mockReturnValue(new Promise(() => {}))
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     expect(screen.getByText('Loading scenario...')).toBeInTheDocument()
   })
 
   it('decodes the scenario name from the URL exactly once', async () => {
-    renderDetail('/scenarios/foundry.red_team_agent');
+    renderDetail('/scanner/foundry.red_team_agent');
     await screen.findByTestId('scenario-target-select')
     expect(mockGetScenario).toHaveBeenCalledWith('foundry.red_team_agent')
   })
 
   it('decodes a slash-bearing encoded scenario name back to the original', async () => {
-    renderDetail('/scenarios/foundry%2Fred_team_agent')
+    renderDetail('/scanner/foundry%2Fred_team_agent')
     await waitFor(() => expect(mockGetScenario).toHaveBeenCalledWith('foundry/red_team_agent'))
   })
 
   it('preserves a literal percent sequence in a scenario registry name', async () => {
-    renderDetail('/scenarios/discount%2550')
+    renderDetail('/scanner/discount%2550')
     await waitFor(() => expect(mockGetScenario).toHaveBeenCalledWith('discount%50'))
   })
 
@@ -190,7 +197,7 @@ describe('ScenarioDetail', () => {
       isAxiosError: true,
       response: { status: 404, data: { detail: 'not found' } },
     })
-    renderDetail('/scenarios/%zz')
+    renderDetail('/scanner/%zz')
     expect(await screen.findByTestId('scenario-not-found')).toBeInTheDocument()
     expect(mockGetScenario).toHaveBeenCalledWith('%zz')
     consoleWarn.mockRestore()
@@ -202,10 +209,10 @@ describe('ScenarioDetail', () => {
       response: { status: 404, data: { detail: 'not found' } },
     })
 
-    renderDetail('/scenarios/missing.scenario')
+    renderDetail('/scanner/missing.scenario')
 
     expect(await screen.findByTestId('scenario-not-found')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /back to scenarios/i })).toHaveAttribute('href', '/scenarios')
+    expect(screen.getByRole('link', { name: /back to scenarios/i })).toHaveAttribute('href', '/scanner')
     expect(screen.queryByTestId('scenario-error')).not.toBeInTheDocument()
   })
 
@@ -215,7 +222,7 @@ describe('ScenarioDetail', () => {
       .mockRejectedValueOnce({ isAxiosError: true, response: { status: 500, data: { detail: 'boom' } } })
       .mockResolvedValueOnce(makeScenario())
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
 
     expect(await screen.findByTestId('scenario-error')).toBeInTheDocument()
     expect(screen.getByText('boom')).toBeInTheDocument()
@@ -231,7 +238,7 @@ describe('ScenarioDetail', () => {
     mockListTargets.mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
     mockEstimateRun.mockResolvedValueOnce(makeEstimate(8))
 
-    renderDetail('/scenarios/foundry.red_team_agent', { onNavigate })
+    renderDetail('/scanner/foundry.red_team_agent', { onNavigate })
     await flushRenderedPromises()
     await advanceTimers(300)
 
@@ -250,19 +257,19 @@ describe('ScenarioDetail', () => {
   })
 
   it('defaults the target selector to the active target when it is among the fetched targets', async () => {
-    renderDetail('/scenarios/foundry.red_team_agent', { activeTarget: makeTarget('target-b') })
+    renderDetail('/scanner/foundry.red_team_agent', { activeTarget: makeTarget('target-b') })
 
     expect(await screen.findByTestId('scenario-target-select')).toHaveValue('target-b')
   })
 
   it('defaults the target selector to the first fetched target when there is no matching active target', async () => {
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
 
     expect(await screen.findByTestId('scenario-target-select')).toHaveValue('target-a')
   })
 
   it('exposes the configuration form and run preview as ordered landmarks', async () => {
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
 
     expect(await screen.findByRole('form', { name: 'Scenario run configuration' })).toBeInTheDocument()
     expect(screen.getByRole('complementary', { name: 'Run preview' })).toBeInTheDocument()
@@ -271,7 +278,7 @@ describe('ScenarioDetail', () => {
   it('debounces preview requests and aborts the superseded request', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await flushRenderedPromises()
 
     expect(screen.getByTestId('scenario-target-select')).toBeInTheDocument()
@@ -311,7 +318,7 @@ describe('ScenarioDetail', () => {
         resolveSecond = resolve
       }))
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await flushRenderedPromises()
     await advanceTimers(300)
     await user.selectOptions(screen.getByTestId('scenario-target-select'), 'target-b')
@@ -338,7 +345,7 @@ describe('ScenarioDetail', () => {
         response: { status: 503, data: { detail: 'Preview service unavailable' } },
       })
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await flushRenderedPromises()
     await advanceTimers(300)
     await flushRenderedPromises()
@@ -360,11 +367,10 @@ describe('ScenarioDetail', () => {
   it('does not request a preview while the custom technique selection is empty', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await flushRenderedPromises()
 
-    await user.click(screen.getByTestId('technique-crescendo'))
-    await user.click(screen.getByTestId('technique-crescendo'))
+    await user.click(screen.getByTestId('technique-default_technique'))
     await advanceTimers(300)
 
     expect(mockEstimateRun).not.toHaveBeenCalled()
@@ -376,7 +382,7 @@ describe('ScenarioDetail', () => {
   it('renders a backend conditional estimate without inventing a total', async () => {
     jest.useFakeTimers()
     mockEstimateRun.mockResolvedValue(makeEstimate(null))
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await flushRenderedPromises()
     await advanceTimers(300)
     await flushRenderedPromises()
@@ -393,7 +399,7 @@ describe('ScenarioDetail', () => {
         description_markdown: `Set \`\`num_jailbreaks\`\`.\n\n${RAW_IMAGE_HTML}unsafe`,
       }),
     )
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
 
     const description = await screen.findByTestId('scenario-detail-description')
     expect(within(description).getByText('num_jailbreaks').tagName).toBe('CODE')
@@ -403,15 +409,17 @@ describe('ScenarioDetail', () => {
     ).toBeInTheDocument()
   })
 
-  it('initializes the technique selection from default_technique', async () => {
-    renderDetail('/scenarios/foundry.red_team_agent')
+  it('initializes the individual techniques from the resolved defaults', async () => {
+    renderDetail('/scanner/foundry.red_team_agent')
 
     await screen.findByTestId('scenario-target-select')
     expect(screen.getByTestId('technique-default_technique')).toBeChecked()
     expect(screen.getByTestId('technique-crescendo')).not.toBeChecked()
+    expect(screen.queryByText('Aggregate preset')).not.toBeInTheDocument()
+    expect(screen.queryByText('Backend-resolved preset members')).not.toBeInTheDocument()
   })
 
-  it('shows catalog-provided aggregate members before the configured estimate resolves', async () => {
+  it('shows technique descriptions and tags', async () => {
     mockGetScenario.mockResolvedValue(
       makeScenario({
         default_technique: 'default',
@@ -421,20 +429,31 @@ describe('ScenarioDetail', () => {
           default: ['prompt_sending', 'jailbreak_system_prompt'],
         },
         all_techniques: ['prompt_sending', 'jailbreak_system_prompt'],
+        technique_summaries: [
+          {
+            name: 'prompt_sending',
+            description: 'Sends the objective directly.',
+            tags: ['default', 'single_turn'],
+          },
+          {
+            name: 'jailbreak_system_prompt',
+            description: 'Places the jailbreak in the system prompt.',
+            tags: ['default', 'single_turn'],
+          },
+        ],
       }),
     )
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    const preview = screen.getByRole('complementary', { name: 'Run preview' })
-    expect(within(preview).getByText(
-      'Resolves to prompt_sending, jailbreak_system_prompt',
-    )).toBeInTheDocument()
-    expect(within(preview).getByText('Loading backend run estimate...')).toBeInTheDocument()
+    expect(screen.getByText('Sends the objective directly.')).toBeInTheDocument()
+    expect(screen.getByText('Places the jailbreak in the system prompt.')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Clear Recommended techniques' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Clear Single-turn techniques' })).toHaveLength(3)
   })
 
-  it('switches from the default preset to a multi-technique custom selection', async () => {
+  it('renders only concrete techniques and de-duplicates their names', async () => {
     mockGetScenario.mockResolvedValue(
       makeScenario({
         aggregate_techniques: ['default_technique', 'all_garak'],
@@ -443,15 +462,13 @@ describe('ScenarioDetail', () => {
     )
     const user = userEvent.setup()
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    // 'all_garak' is both an aggregate and (accidentally) listed under all_techniques —
-    // it must render exactly once (deduped), under the aggregate group.
-    expect(screen.getAllByTestId('technique-all_garak')).toHaveLength(1)
+    expect(screen.queryByTestId('technique-all_garak')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('technique-crescendo')).toHaveLength(1)
 
     await user.click(screen.getByTestId('technique-crescendo'))
-    expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
     expect(screen.getByTestId('technique-crescendo')).toBeChecked()
 
     await user.click(screen.getByTestId('technique-prompt_sending'))
@@ -463,25 +480,30 @@ describe('ScenarioDetail', () => {
     expect(new Set(request.techniques).size).toBe(request.techniques.length)
   })
 
-  it('selecting a preset replaces the custom concrete list', async () => {
+  it('selects and clears all members of a tag', async () => {
     mockGetScenario.mockResolvedValue(
       makeScenario({
-        aggregate_techniques: ['default_technique', 'all_garak'],
-        all_techniques: ['default_technique', 'crescendo'],
+        default_techniques: ['default_technique'],
+        all_techniques: ['default_technique', 'crescendo', 'many_shot'],
+        technique_summaries: [
+          { name: 'default_technique', description: 'Direct attack.', tags: ['single_turn'] },
+          { name: 'crescendo', description: 'Escalating attack.', tags: ['multi_turn'] },
+          { name: 'many_shot', description: 'Many-shot attack.', tags: ['multi_turn'] },
+        ],
       }),
     )
     const user = userEvent.setup()
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByTestId('technique-crescendo'))
-    await user.click(screen.getByTestId('technique-all_garak'))
-    expect(screen.getByTestId('technique-all_garak')).toBeChecked()
-    expect(screen.getByTestId('technique-crescendo')).not.toBeChecked()
+    await user.click(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0])
+    expect(screen.getByTestId('technique-crescendo')).toBeChecked()
+    expect(screen.getByTestId('technique-many_shot')).toBeChecked()
 
-    await user.click(screen.getByTestId('launch-scenario-btn'))
-    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
-    expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['all_garak'])
+    await user.click(screen.getAllByRole('button', { name: 'Clear Multi-turn techniques' })[0])
+    expect(screen.getByTestId('technique-crescendo')).not.toBeChecked()
+    expect(screen.getByTestId('technique-many_shot')).not.toBeChecked()
+    expect(screen.getByTestId('technique-default_technique')).toBeChecked()
   })
 
   it('initializes a concrete default as custom and allows adding another concrete technique', async () => {
@@ -493,7 +515,7 @@ describe('ScenarioDetail', () => {
       }),
     )
     const user = userEvent.setup()
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     expect(screen.getByTestId('technique-prompt_sending')).toBeChecked()
@@ -508,13 +530,12 @@ describe('ScenarioDetail', () => {
 
   it('keeps an explicit invalid custom state when the last concrete technique is removed', async () => {
     const user = userEvent.setup()
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByTestId('technique-crescendo'))
-    await user.click(screen.getByTestId('technique-crescendo'))
+    await user.click(screen.getByTestId('technique-default_technique'))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Select at least one technique.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Select at least one attack technique.')
     expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
     expect(screen.getByTestId('launch-scenario-btn')).toBeDisabled()
     expect(mockStartRun).not.toHaveBeenCalled()
@@ -522,11 +543,12 @@ describe('ScenarioDetail', () => {
 
   it('defaults the baseline checkbox from include_baseline_by_default when enabled, and allows editing', async () => {
     const user = userEvent.setup()
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     const checkbox = screen.getByTestId('baseline-checkbox')
     expect(checkbox).toBeChecked()
+    expect(screen.queryByRole('heading', { name: 'Baseline' })).not.toBeInTheDocument()
 
     await user.click(checkbox)
     await user.click(screen.getByTestId('launch-scenario-btn'))
@@ -535,11 +557,25 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(false)
   })
 
+  it('includes the baseline when a shared tag selects or clears its members', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getAllByRole('button', { name: 'Clear Single-turn techniques' })[0])
+    expect(screen.getByTestId('baseline-checkbox')).not.toBeChecked()
+    expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
+
+    await user.click(screen.getAllByRole('button', { name: 'Select Single-turn techniques' })[0])
+    expect(screen.getByTestId('baseline-checkbox')).toBeChecked()
+    expect(screen.getByTestId('technique-default_technique')).toBeChecked()
+  })
+
   it('defaults the baseline checkbox to unchecked when the policy is disabled with include_baseline_by_default false', async () => {
     mockGetScenario.mockResolvedValue(
       makeScenario({ baseline_policy: 'disabled', include_baseline_by_default: false }),
     )
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     expect(screen.getByTestId('baseline-checkbox')).not.toBeChecked()
@@ -549,7 +585,7 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValue(makeScenario({ baseline_policy: 'forbidden' }))
     const user = userEvent.setup()
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     const checkbox = screen.getByTestId('baseline-checkbox')
@@ -574,7 +610,7 @@ describe('ScenarioDetail', () => {
       }),
     )
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     expect(screen.queryByTestId('scenario-param-objective_target')).not.toBeInTheDocument()
@@ -594,7 +630,7 @@ describe('ScenarioDetail', () => {
     )
     const user = userEvent.setup()
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     // A number-typed HTML input rejects non-numeric characters outright, so a
@@ -609,7 +645,7 @@ describe('ScenarioDetail', () => {
 
   it('omits the dataset override and max dataset size when left blank, sending default concurrency/retries', async () => {
     const user = userEvent.setup()
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByRole('button', { name: 'Advanced options' }))
@@ -625,7 +661,7 @@ describe('ScenarioDetail', () => {
 
   it('includes dataset override and max dataset size when provided', async () => {
     const user = userEvent.setup()
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByRole('button', { name: 'Advanced options' }))
@@ -653,7 +689,7 @@ describe('ScenarioDetail', () => {
 
   it('rejects a non-positive-integer max dataset size', async () => {
     const user = userEvent.setup()
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByRole('button', { name: 'Advanced options' }))
@@ -668,7 +704,7 @@ describe('ScenarioDetail', () => {
 
   it('validates advanced concurrency and retry bounds before launching', async () => {
     const user = userEvent.setup()
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByRole('button', { name: 'Advanced options' }))
@@ -686,7 +722,7 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockStartRun.mockResolvedValueOnce({ scenario_result_id: 'sr-1' })
 
-    renderDetail('/scenarios/foundry.red_team_agent', { labels: { operator: 'roakey', operation: 'op1' } })
+    renderDetail('/scanner/foundry.red_team_agent', { labels: { operator: 'roakey', operation: 'op1' } })
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
@@ -769,10 +805,10 @@ describe('ScenarioDetail', () => {
       note: 'The backend total is authoritative.',
     })
 
-    renderDetail('/scenarios/airt.jailbreak')
+    renderDetail('/scanner/airt.jailbreak')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByTestId('technique-prompt_sending'))
+    await user.click(screen.getByTestId('technique-jailbreak_system_prompt'))
     await user.clear(screen.getByTestId('scenario-param-num_jailbreaks'))
     await user.type(screen.getByTestId('scenario-param-num_jailbreaks'), '2')
     await user.clear(screen.getByTestId('scenario-param-num_jailbreak_attempts'))
@@ -810,7 +846,7 @@ describe('ScenarioDetail', () => {
     const preview = screen.getByRole('complementary', { name: 'Run preview' })
     expect(within(preview).getByText('prompt_sending')).toBeInTheDocument()
     expect(within(preview).getAllByText('harmbench')).toHaveLength(2)
-    expect(within(preview).getByText('Not included')).toBeInTheDocument()
+    expect(within(preview).queryByText('baseline')).not.toBeInTheDocument()
     expect(within(preview).getByText('8 attacks')).toBeInTheDocument()
     expect(within(preview).getByText('Jailbreak templates: 2 (configuration)')).toBeInTheDocument()
     expect(within(preview).getByText('2')).toBeInTheDocument()
@@ -830,7 +866,7 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockStartRun.mockResolvedValueOnce({ scenario_result_id: 'sr/1' })
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
@@ -850,7 +886,7 @@ describe('ScenarioDetail', () => {
       response: { status: 400, data: { detail: 'Invalid target' } },
     })
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
@@ -868,7 +904,7 @@ describe('ScenarioDetail', () => {
       }),
     )
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     const button = screen.getByTestId('launch-scenario-btn')
@@ -905,10 +941,11 @@ describe('ScenarioDetail', () => {
       response: { status: 400, data: { detail: 'boom' } },
     })
 
-    renderDetail('/scenarios/foundry.red_team_agent')
+    renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
     await user.selectOptions(screen.getByTestId('scenario-target-select'), 'target-b')
+    await user.click(screen.getByTestId('technique-default_technique'))
     await user.click(screen.getByTestId('technique-crescendo'))
     await user.clear(screen.getByTestId('scenario-param-attempts'))
     await user.type(screen.getByTestId('scenario-param-attempts'), '3')

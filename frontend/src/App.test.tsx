@@ -426,8 +426,8 @@ describe("App", () => {
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
   });
 
-  it("renders the scenario catalog when deep-linked to /scenarios", () => {
-    renderApp("/scenarios");
+  it("renders the scenario catalog when deep-linked to /scanner", () => {
+    renderApp("/scanner");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
@@ -436,8 +436,8 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
-  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scenarios/:name", () => {
-    renderApp("/scenarios/foundry.red_team_agent");
+  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", () => {
+    renderApp("/scanner/foundry.red_team_agent");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
@@ -469,14 +469,14 @@ describe("App", () => {
   });
 
   it("passes the active target and labels to the scenario detail view", () => {
-    renderApp("/scenarios/foundry.red_team_agent");
+    renderApp("/scanner/foundry.red_team_agent");
 
     expect(screen.getByTestId("scenario-detail-has-target")).toHaveTextContent("no");
     expect(screen.getByTestId("scenario-detail-labels-json")).toHaveTextContent("operator");
   });
 
   it("navigates from scenario detail to config when it requests it", () => {
-    renderApp("/scenarios/foundry.red_team_agent");
+    renderApp("/scanner/foundry.red_team_agent");
 
     fireEvent.click(screen.getByTestId("scenario-detail-go-config"));
 
