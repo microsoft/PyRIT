@@ -29,16 +29,9 @@
 # %% [markdown]
 # ## PromptInject
 #
-# Ports the three active lightweight probes from Garak's
-# [`promptinject.py`](https://github.com/NVIDIA/garak/blob/8ed1543b985a5722adb659584182faf6f7907d4e/garak/probes/promptinject.py).
-# Each prompt embeds one override command in a benign OpenAI Playground task. `--techniques` selects
-# how the override is written. `--goal-texts` supplies the exact strings that the target should emit
-# and defaults to Garak's three active goal strings.
-#
-# The fixed `promptinject_contexts` and `promptinject_techniques` datasets contain only source
-# templates. PyRIT combines contexts, selected techniques, and goal texts before standard
-# `DatasetConfiguration` sampling. The default `--max-dataset-size` is 64 total attempts. Scenario
-# resume restores the sampled objective set.
+# PromptInject tests whether a target follows injected instructions hidden in benign tasks.
+# `--techniques` selects the injection wording, and `--goal-texts` selects the requested output.
+# The default run uses all five techniques, the three Garak goal texts, and up to 64 attempts.
 #
 # **CLI examples:**
 #
@@ -50,12 +43,8 @@
 #   --max-dataset-size 16
 # ```
 #
-# **Available techniques:** `ignore_print`, `ignore_say`, `ignore_print_upper`, `nevermind`, and
+# **Techniques:** `ignore_print`, `ignore_say`, `ignore_print_upper`, `nevermind`, and
 # `screaming_stop`.
-#
-# PyRIT keeps Garak's unique prompt texts. It does not duplicate them for Garak's four generator
-# configuration IDs because targets do not have a common safe contract for per-attempt generation
-# setting changes. Configure generation settings on the selected target.
 
 # %%
 from pathlib import Path
