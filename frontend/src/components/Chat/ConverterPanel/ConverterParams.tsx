@@ -1,4 +1,4 @@
-import { Button, Input, mergeClasses, Select, Switch, Text, Tooltip } from '@fluentui/react-components'
+import { Button, Field, Input, mergeClasses, Select, Switch, Text, Tooltip } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular, InfoRegular } from '@fluentui/react-icons'
 import type { ConverterCatalogEntry, Parameter } from '../../../types'
 import { useConverterPanelStyles } from './ConverterPanel.styles'
@@ -65,6 +65,23 @@ function ConverterParameterViewer({ param, value, isMissing, onChange }: ParamIn
   )
 }
 
+function ParameterNameLabel({ param }: { param: Parameter }) {
+  const styles = useConverterPanelStyles()
+
+  return (
+    <span className={styles.paramLabel}>
+      {param.name}
+      {param.description && (
+        <Tooltip content={param.description} relationship="description">
+          <span className={styles.paramInfo} onClick={(e) => e.preventDefault()}>
+            <InfoRegular fontSize={12} />
+          </span>
+        </Tooltip>
+      )}
+    </span>
+  )
+}
+
 export interface ConverterParamsProps {
   converter: ConverterCatalogEntry
   paramValues: Record<string, string>
@@ -94,23 +111,28 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
       </Button>
       {paramsExpanded && (converter.parameters ?? []).map((param) => {
         const isMissing = showValidation && param.required && !paramValues[param.name]?.trim()
+        const isChecked = (paramValues[param.name] ?? param.default ?? 'false').toLowerCase() === 'true'
+        const typeHint = param.type_name !== 'bool' && !param.choices ? param.type_name : undefined
+
         return (
-          <div key={param.name} className={styles.paramBlock}>
-            <span className={styles.paramLabel}>
-              <Text size={200} weight="semibold">{param.name}{param.required ? ' *' : ''}</Text>
-              {param.description && (
-                <Tooltip content={param.description} relationship="description">
-                  <span className={styles.paramInfo}><InfoRegular fontSize={12} /></span>
-                </Tooltip>
-              )}
-            </span>
+          <Field
+            key={param.name}
+            className={styles.paramBlock}
+            label={<ParameterNameLabel param={param} />}
+            required={param.required}
+            validationMessage={isMissing ? 'Required' : undefined}
+            validationState={isMissing ? 'error' : undefined}
+            hint={typeHint}
+          >
             {param.type_name === 'bool' ? (
-              <Switch
-                checked={(paramValues[param.name] ?? param.default ?? 'false').toLowerCase() === 'true'}
-                onChange={(_, data) => onParamChange(param.name, data.checked ? 'true' : 'false')}
-                label={(paramValues[param.name] ?? param.default ?? 'false').toLowerCase() === 'true' ? 'True' : 'False'}
-                data-testid={`param-${param.name}`}
-              />
+              <div className={styles.filePickerRow}>
+                <Switch
+                  checked={isChecked}
+                  onChange={(_, data) => onParamChange(param.name, data.checked ? 'true' : 'false')}
+                  data-testid={`param-${param.name}`}
+                />
+                <Text size={200} aria-hidden="true">{isChecked ? 'True' : 'False'}</Text>
+              </div>
             ) : param.choices ? (
               <ConverterParameterChoiceViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={onParamChange} />
             ) : /path|file/i.test(param.name) || /path|file/i.test(param.description ?? '') ? (
@@ -118,13 +140,7 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
             ) : (
               <ConverterParameterViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={onParamChange} />
             )}
-            {isMissing && (
-              <Text size={100} className={styles.paramErrorText}>Required</Text>
-            )}
-            {param.type_name !== 'bool' && !param.choices && (
-              <Text size={100} className={styles.hintText}>{param.type_name}</Text>
-            )}
-          </div>
+          </Field>
         )
       })}
     </div>
