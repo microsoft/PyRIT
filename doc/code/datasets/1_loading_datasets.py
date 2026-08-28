@@ -68,8 +68,8 @@
 # (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
 # `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
-# `garak_tm_system_prompts`), PromptInject context templates
-# (`promptinject_contexts`), an audio jailbreak set
+# `garak_tm_system_prompts`), PromptInject context and technique templates
+# (`prompt_inject_contexts`, `prompt_inject_techniques`), an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%

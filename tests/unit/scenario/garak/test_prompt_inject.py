@@ -71,14 +71,14 @@ class TestPromptInjectInitialization:
         assert scenario.name == "PromptInject"
         assert scenario.VERSION == 2
 
-    def test_required_datasets_are_internal_template_sources(self) -> None:
-        assert PromptInject.required_datasets() == ["promptinject_contexts"]
+    def test_required_datasets_are_template_sources(self) -> None:
+        assert PromptInject.required_datasets() == ["prompt_inject_contexts", "prompt_inject_techniques"]
 
     def test_default_dataset_config_caps_context_goal_groups(self) -> None:
         config = PromptInject()._default_dataset_config
 
         assert isinstance(config, PromptInjectDatasetConfiguration)
-        assert config.dataset_names == ["promptinject_contexts"]
+        assert config.dataset_names == ["prompt_inject_contexts", "prompt_inject_techniques"]
         assert config.max_dataset_size == 12
 
     def test_default_technique_expands_to_all_five_forms(self) -> None:
@@ -141,7 +141,7 @@ class TestPromptInjectAtomicAttacks:
             scenario,
             target=mock_objective_target,
             dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=["promptinject_contexts"],
+                dataset_names=["prompt_inject_contexts"],
                 max_dataset_size=None,
             ),
         )
@@ -159,7 +159,7 @@ class TestPromptInjectAtomicAttacks:
             techniques=[PromptInjectTechnique.IgnorePrint, PromptInjectTechnique.IgnoreSay],
             goal_texts=["goal one", "goal two"],
             dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=["promptinject_contexts"],
+                dataset_names=["prompt_inject_contexts"],
                 max_dataset_size=10,
             ),
         )
@@ -225,7 +225,7 @@ class TestPromptInjectAtomicAttacks:
     async def test_unsupported_dataset_selection_raises(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
         config = PromptInjectDatasetConfiguration(
-            dataset_names=["promptinject_techniques"],
+            dataset_names=["prompt_inject_techniques"],
             max_dataset_size=1,
         )
 

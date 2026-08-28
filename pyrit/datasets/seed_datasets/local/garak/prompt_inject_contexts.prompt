@@ -1,4 +1,4 @@
-dataset_name: promptinject_contexts
+dataset_name: prompt_inject_contexts
 harm_categories:
 - prompt_injection
 source: https://github.com/NVIDIA/garak/blob/8ed1543b985a5722adb659584182faf6f7907d4e/garak/probes/promptinject.py
