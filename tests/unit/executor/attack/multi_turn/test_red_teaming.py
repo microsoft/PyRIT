@@ -19,7 +19,10 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
+from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import DEFAULT_ADVERSARIAL_FIRST_MESSAGE
+from pyrit.memory import CentralMemory
+from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -33,7 +36,10 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import Scorer, TrueFalseScorer
+from tests.unit.mocks import MockPromptTarget
 
 
 def _adversarial_reply_message(next_message: str = "Adversarial next message") -> Message:
@@ -298,6 +304,7 @@ class TestRedTeamingAttackInitialization:
         assert attack._request_converters == converter_config.request_converters
         assert attack._response_converters == converter_config.response_converters
         assert attack._prompt_normalizer == mock_prompt_normalizer
+        assert attack._conversation_manager._prompt_normalizer is mock_prompt_normalizer
         assert attack._max_turns == 20
 
     def test_init_without_objective_scorer_raises_error(
@@ -644,6 +651,32 @@ class TestSetupPhase:
         assert basic_context.session is not None
         assert isinstance(basic_context.session, ConversationSession)
 
+    async def test_setup_forwards_prepended_conversation_config(
+        self,
+        mock_objective_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: MultiTurnAttackContext,
+    ):
+        """Setup must use the configured prepended-conversation formatter."""
+        prepended_conversation_config = PrependedConversationConfig()
+        attack = RedTeamingAttack(
+            objective_target=mock_objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+            prepended_conversation_config=prepended_conversation_config,
+        )
+
+        with patch.object(
+            attack._conversation_manager,
+            "initialize_context_async",
+            new_callable=AsyncMock,
+            return_value=ConversationState(turn_count=0),
+        ) as mock_initialize:
+            await attack._setup_async(context=basic_context)
+
+        assert mock_initialize.call_args.kwargs["prepended_conversation_config"] is prepended_conversation_config
+
     async def test_setup_updates_turn_count_from_prepended_conversation(
         self,
         mock_objective_target: MagicMock,
@@ -917,6 +950,64 @@ class TestPromptGeneration:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+class TestObjectiveTargetSending:
+    """Tests for sending prompts to the objective target."""
+
+    async def test_second_turn_uses_configured_message_normalizer_without_rotation(
+        self,
+        mock_objective_scorer: MagicMock,
+        mock_adversarial_chat: MagicMock,
+        basic_context: MultiTurnAttackContext,
+    ) -> None:
+        """A stateless target must reuse formatting without attack-specific rotation."""
+        objective_target = MockPromptTarget()
+        objective_target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
+        message_normalizer = MagicMock(spec=MessageStringNormalizer)
+        message_normalizer.normalize_string_async = AsyncMock(return_value="custom formatted request")
+        attack = RedTeamingAttack(
+            objective_target=objective_target,
+            attack_adversarial_config=AttackAdversarialConfig(target=mock_adversarial_chat),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+            prepended_conversation_config=PrependedConversationConfig(message_normalizer=message_normalizer),
+        )
+        basic_context.session = ConversationSession()
+        old_conversation_id = basic_context.session.conversation_id
+        memory = CentralMemory.get_memory_instance()
+        system_piece = MessagePiece(
+            original_value="You are a helpful assistant.",
+            role="system",
+            conversation_id=old_conversation_id,
+            sequence=0,
+        )
+        memory.add_message_pieces_to_memory(
+            message_pieces=[
+                system_piece,
+                MessagePiece(
+                    original_value="First request",
+                    role="user",
+                    conversation_id=old_conversation_id,
+                    sequence=1,
+                ),
+            ]
+        )
+        basic_context.prepended_history_send_context = ConversationManager.create_prepended_history_send_context(
+            target=objective_target,
+            conversation_id=old_conversation_id,
+            prepended_messages=[system_piece.to_message()],
+        )
+        basic_context.executed_turns = 1
+
+        await attack._send_prompt_to_objective_target_async(
+            context=basic_context,
+            message=Message.from_prompt(prompt="Second request", role="user"),
+        )
+
+        assert basic_context.session.conversation_id == old_conversation_id
+        assert objective_target.prompt_sent == ["custom formatted request"]
+        message_normalizer.normalize_string_async.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestResponseScoring:
     """Tests for response scoring logic."""
 
@@ -968,9 +1059,12 @@ class TestResponseScoring:
 
         response_piece = MagicMock(spec=MessagePiece)
         response_piece.is_blocked.return_value = True
+        response_piece.id = uuid.uuid4()
 
         basic_context.last_response = MagicMock(spec=Message)
         basic_context.last_response.get_piece.return_value = response_piece
+        # A scorable names piece ids, so the mock has to expose its pieces.
+        basic_context.last_response.message_pieces = [response_piece]
 
         # Configure the mock scorer to return empty list for blocked response
         mock_objective_scorer.score_async = AsyncMock(return_value=[])

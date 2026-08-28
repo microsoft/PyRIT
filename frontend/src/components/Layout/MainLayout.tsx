@@ -27,12 +27,14 @@ export default function MainLayout({
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
   const [version, setVersion] = useState<string>('Loading...')
+  const [commit, setCommit] = useState<string | null>(null)
   const [databaseInfo, setDatabaseInfo] = useState<string | null>(null)
 
   useEffect(() => {
     versionApi.getVersion()
       .then(data => {
-        setVersion(data.display || data.version)
+        setVersion(data.version)
+        setCommit(data.version.includes('.dev') ? data.commit ?? null : null)
         setDatabaseInfo(data.database_info ?? null)
       })
       .catch(() => setVersion('Unknown'))
@@ -41,7 +43,16 @@ export default function MainLayout({
   return (
     <div className={styles.root}>
       <div className={styles.topBar}>
-        <Tooltip content={<>{`PyRIT ${version}`}{databaseInfo && <><br />{databaseInfo}</>}</>} relationship="label">
+        <Tooltip
+          content={
+            <>
+              {`PyRIT ${version}`}
+              {commit && <><br />{`Commit: ${commit}`}</>}
+              {databaseInfo && <><br />{databaseInfo}</>}
+            </>
+          }
+          relationship="label"
+        >
           <img
             src="/roakey.png"
             alt="Co-PyRIT Logo"

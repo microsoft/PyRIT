@@ -430,7 +430,6 @@ def test_identifier_excludes_none_generation_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_generate_passes_new_params():
     """Verify top_k, do_sample, repetition_penalty are forwarded to model.generate()."""
@@ -459,7 +458,6 @@ async def test_generate_passes_new_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_generate_omits_none_params():
     """When optional params are None, they should not be passed to model.generate()."""
@@ -560,7 +558,6 @@ def test_default_params_no_warning():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_full_conversation_sent_to_chat_template():
     """Verify system and user messages from the full conversation are sent to the chat template."""
@@ -596,7 +593,6 @@ async def test_full_conversation_sent_to_chat_template():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_effective_generation_config_in_metadata():
     """Verify effective generation config is stored in response prompt_metadata."""

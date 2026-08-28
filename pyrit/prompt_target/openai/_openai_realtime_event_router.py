@@ -89,6 +89,17 @@ class _OpenAIRealtimeEventRouter:
         return event_kind in cls._LIFECYCLE_KINDS
 
     @staticmethod
+    def get_response_id(*, event: Any) -> str | None:
+        """Return the response ID carried directly or by a response payload."""
+        response_id = getattr(event, "response_id", None)
+        if isinstance(response_id, str):
+            return response_id
+
+        response = getattr(event, "response", None)
+        nested_response_id = getattr(response, "id", None)
+        return nested_response_id if isinstance(nested_response_id, str) else None
+
+    @staticmethod
     def collect_response_delta(
         *,
         event: Any,

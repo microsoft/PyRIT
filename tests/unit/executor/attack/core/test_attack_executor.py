@@ -360,6 +360,78 @@ class TestExecuteAttackAsync:
         expected_order = ["start_A", "end_A", "start_B", "end_B", "start_C", "end_C"]
         assert execution_order == expected_order
 
+    async def test_outer_cancellation_cleans_execution_tasks_and_executor_is_reusable(self) -> None:
+        attack = create_mock_attack()
+        executor = AttackExecutor(max_concurrency=2)
+        all_slots_started = asyncio.Event()
+        release = asyncio.Event()
+        started: list[str] = []
+        cancelled: list[str] = []
+        finalized: list[str] = []
+        completed_writes: list[str] = []
+
+        async def block_execution_async(*, context: SingleTurnAttackContext) -> AttackResult:
+            objective = context.params.objective
+            started.append(objective)
+            if len(started) == 2:
+                all_slots_started.set()
+            try:
+                await release.wait()
+                completed_writes.append(objective)
+                return create_attack_result(objective)
+            except asyncio.CancelledError:
+                cancelled.append(objective)
+                raise
+            finally:
+                finalized.append(objective)
+
+        attack.execute_with_context_async.side_effect = block_execution_async
+        tasks_before_execution = asyncio.all_tasks()
+        execution_task = asyncio.create_task(
+            executor.execute_attack_async(
+                attack=attack,
+                objectives=["A", "B", "C"],
+            )
+        )
+        await asyncio.wait_for(all_slots_started.wait(), timeout=5.0)
+        execution_tasks = asyncio.all_tasks() - tasks_before_execution - {execution_task}
+
+        assert len(execution_tasks) == 3
+        assert started == ["A", "B"]
+        assert attack.execute_with_context_async.await_count == 2
+
+        execution_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await execution_task
+
+        assert cancelled == ["A", "B"]
+        assert finalized == ["A", "B"]
+        assert completed_writes == []
+        assert all(task.done() and task.cancelled() for task in execution_tasks)
+        assert executor._get_semaphore()._value == 2  # type: ignore[attr-defined]
+
+        release.set()
+        loop_turn_completed = asyncio.Event()
+        asyncio.get_running_loop().call_soon(loop_turn_completed.set)
+        await loop_turn_completed.wait()
+
+        assert started == ["A", "B"]
+        assert completed_writes == []
+
+        attack.execute_with_context_async.reset_mock()
+        attack.execute_with_context_async.side_effect = lambda *, context: create_attack_result(
+            context.params.objective
+        )
+        result = await executor.execute_attack_async(
+            attack=attack,
+            objectives=["D", "E", "F"],
+        )
+
+        assert [item.objective for item in result.completed_results] == ["D", "E", "F"]
+        assert result.incomplete_objectives == []
+        assert result.input_indices == [0, 1, 2]
+        assert attack.execute_with_context_async.await_count == 3
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestExecuteAttackFromSeedGroupsAsync:

@@ -5,7 +5,9 @@
 
 import pytest
 
+from pyrit.models import Message
 from pyrit.models.seeds import (
+    AttackSeedGroup,
     AttackTechniqueSeedGroup,
     SeedObjective,
     SeedPrompt,
@@ -258,6 +260,58 @@ class TestAttackTechniqueSeedGroupFromSystemPrompt:
         restored = AttackTechniqueSeedGroup.model_validate_json(group.model_dump_json())
 
         assert restored.prompt_placement == "prepend"
+
+
+class TestAttackTechniqueSeedGroupFromMessages:
+    """Tests for the from_messages classmethod."""
+
+    def test_builds_general_technique_seeds_from_messages(self):
+        """Test that from_messages preserves roles and marks prompts as a technique."""
+        messages = [
+            Message.from_system_prompt(system_prompt="Use this notation table."),
+            Message.from_prompt(prompt="encoded practice", role="user"),
+            Message.from_prompt(prompt="encoded answer", role="assistant"),
+        ]
+
+        group = AttackTechniqueSeedGroup.from_messages(messages=messages, starting_sequence=4)
+
+        assert [seed.value for seed in group.prompts] == [
+            "Use this notation table.",
+            "encoded practice",
+            "encoded answer",
+        ]
+        assert [seed.role for seed in group.prompts] == ["system", "user", "assistant"]
+        assert [seed.sequence for seed in group.prompts] == [4, 5, 6]
+        assert all(seed.is_general_technique for seed in group.prompts)
+        assert group.prompt_placement == "prepend"
+
+    def test_respects_insertion_index(self):
+        """Test that insertion_index is forwarded to the group."""
+        group = AttackTechniqueSeedGroup.from_messages(
+            messages=[Message.from_prompt(prompt="encoded practice", role="user")],
+            insertion_index=0,
+        )
+
+        assert group.insertion_index == 0
+
+    def test_merged_message_technique_extracts_teaching_context_before_objective(self):
+        """Test that message-built techniques prepend context while leaving the objective as final turn."""
+        technique = AttackTechniqueSeedGroup.from_messages(
+            messages=[
+                Message.from_system_prompt(system_prompt="Use this notation table."),
+                Message.from_prompt(prompt="encoded practice", role="user"),
+                Message.from_prompt(prompt="encoded answer", role="assistant"),
+            ]
+        )
+        seed_group = AttackSeedGroup(seeds=[SeedObjective(value="Final objective")]).with_technique(technique=technique)
+
+        assert seed_group.prepended_conversation is not None
+        assert [message.get_value() for message in seed_group.prepended_conversation] == [
+            "Use this notation table.",
+            "encoded practice",
+            "encoded answer",
+        ]
+        assert seed_group.next_message is None
 
 
 class TestAttackTechniqueSeedGroupRepr:

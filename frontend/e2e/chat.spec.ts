@@ -956,4 +956,112 @@ test.describe("Conversation export", () => {
     expect(content).toContain("Export me please");
     expect(content).toContain("Mock response for: Export me please");
   });
+
+  test("downloads the displayed conversation as a self-contained HTML transcript", async ({ page }) => {
+    const { filename, content } = await triggerExport(page, "export-html-item");
+
+    expect(filename).toMatch(/^copyrit-conversation-e2e-conv-001-.*\.html$/);
+    expect(content).toContain("<h1>CoPyRIT conversation export</h1>");
+    expect(content).toContain("Export me please");
+    expect(content).toContain("Mock response for: Export me please");
+    // Print rules travel with the file so it can be saved as PDF as-is.
+    expect(content).toContain("@media print");
+  });
+});
+
+test.describe("Conversation export with media", () => {
+  const setupImageMock = buildModalityMock(
+    [
+      {
+        id: "img-export-1",
+        original_value_data_type: "text",
+        converted_value_data_type: "image_path",
+        original_value: "generated image",
+        converted_value: WIDE_IMAGE_DATA_URI,
+        converted_value_mime_type: "image/svg+xml",
+        scores: [],
+        response_error: "none",
+      },
+    ],
+    "e2e-export-media-conv",
+  );
+
+  test("embeds the image in the HTML export so the file stands alone", async ({ page }) => {
+    await setupImageMock(page);
+    await page.goto("/");
+    await activateMockTarget(page);
+
+    await page.getByRole("textbox").fill("Generate an image");
+    await page.getByRole("button", { name: /send/i }).click();
+    await expect(page.locator('img:not([alt="Co-PyRIT Logo"])')).toBeVisible({ timeout: 10000 });
+
+    const exportButton = page.getByTestId("export-conversation-btn");
+    await expect(exportButton).toBeEnabled();
+    const downloadPromise = page.waitForEvent("download");
+    await exportButton.click();
+    await page.getByTestId("export-html-item").click();
+
+    const download = await downloadPromise;
+    const filePath = await download.path();
+    expect(filePath).not.toBeNull();
+    const content = readFileSync(filePath, "utf-8");
+
+    expect(download.suggestedFilename()).toMatch(/\.html$/);
+    expect(content).toContain("<img src=\"data:image/svg+xml");
+  });
+
+  test("embeds media it has to fetch back from the media endpoint", async ({ page }) => {
+    // A 1x1 PNG, served by a stubbed /api/media route so the export exercises
+    // the fetch → blob → base64 path rather than an already-inline data URI.
+    const pngBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGIAAgAABQABDQotsgAAAABJRU5ErkJggg==";
+    const mediaPath = "/api/media?path=/dbdata/prompt-memory-entries/images/e2e.png";
+
+    await buildModalityMock(
+      [
+        {
+          id: "img-fetch-1",
+          original_value_data_type: "text",
+          converted_value_data_type: "image_path",
+          original_value: "generated image",
+          converted_value: mediaPath,
+          converted_value_url: mediaPath,
+          converted_value_mime_type: "image/png",
+          scores: [],
+          response_error: "none",
+        },
+      ],
+      "e2e-export-fetch-conv",
+    )(page);
+    await page.route("**/api/media**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "image/png" },
+        body: Buffer.from(pngBase64, "base64"),
+      });
+    });
+
+    await page.goto("/");
+    await activateMockTarget(page);
+
+    await page.getByRole("textbox").fill("Generate an image");
+    await page.getByRole("button", { name: /send/i }).click();
+    await expect(page.locator('img:not([alt="Co-PyRIT Logo"])')).toBeVisible({ timeout: 10000 });
+
+    const exportButton = page.getByTestId("export-conversation-btn");
+    await expect(exportButton).toBeEnabled();
+    const downloadPromise = page.waitForEvent("download");
+    await exportButton.click();
+    await page.getByTestId("export-html-item").click();
+
+    const download = await downloadPromise;
+    const filePath = await download.path();
+    expect(filePath).not.toBeNull();
+    const content = readFileSync(filePath, "utf-8");
+
+    expect(content).toContain(`data:image/png;base64,${pngBase64}`);
+    expect(content).toContain("Attachments: 1 of 1 embedded");
+    // The path the bytes came from must not travel with the file.
+    expect(content).not.toContain("/api/media");
+  });
 });

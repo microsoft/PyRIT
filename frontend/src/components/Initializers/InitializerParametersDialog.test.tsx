@@ -84,6 +84,18 @@ describe('InitializerParametersDialog', () => {
     expect(screen.getByTestId('param-label')).toHaveAttribute('type', 'text')
   })
 
+  it('should give each multiselect checkbox its own accessible name', () => {
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog {...baseProps} initializer={allKindsInitializer} />
+      </TestWrapper>,
+    )
+
+    expect(screen.getByRole('group', { name: 'tags' })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'a' })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'b' })).toBeInTheDocument()
+  })
+
   it('shows a no-parameters message and submits null for a parameterless initializer', async () => {
     const user = userEvent.setup()
     const onSubmit = jest.fn().mockResolvedValue(undefined)

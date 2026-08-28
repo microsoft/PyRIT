@@ -9,15 +9,53 @@ Prompt Targets are endpoints for where to send prompts. For example, a target co
 Prompt targets are found [here](https://github.com/microsoft/PyRIT/tree/main/pyrit/prompt_target/) in code.
 
 
-## Send_Prompt_Async
+## `send_prompt_async`
 
-The main entry method follow the following signature:
+The main entry method has the following signature:
 
+```python
+async def send_prompt_async(
+    self,
+    *,
+    message: Message,
+    send_context: TargetSendContext | None = None,
+) -> list[Message]:
 ```
-async def send_prompt_async(self, *, message: Message) -> Message:
-```
 
-A `Message` object is a normalized object with all the information a target will need to send a prompt, including a way to get a history for that prompt (in the cases that also needs to be sent). This is discussed in more depth [here](../memory/3_memory_data_types.md).
+A `Message` object contains the current request and the identifiers needed to load its conversation
+history. This is discussed in more depth [here](../memory/3_memory_data_types.md).
+
+`send_context` is an internal protocol that lets caller-owned execution state select persisted history
+and observe when target-specific execution begins. Attacks with prepended history own the concrete
+`PrependedHistorySendContext`; targets do not construct it, clone it, or decide whether its seed should
+be replayed. Before target-specific execution, `PromptTarget` loads memory history, asks the protocol for the
+caller-approved target view, and then runs the target's capability-normalization pipeline. Request
+converters have already run by this point, so role-specific converter choices remain intact even when
+the target must receive one flattened request. The context is ephemeral and does not replace the
+structured messages stored in memory.
+
+Prepended request converters apply only to `user` messages by default. Every other role, including
+`system`, `developer`, `tool`, and `assistant` / `simulated_assistant`, requires explicit opt-in.
+
+For a stateful target without editable history, the initial bootstrap is flattened once. Later sends
+retain replayable memory history in the normalized view so a target such as `WebsocketTarget` can
+restore a replaced provider session, while the existing provider session still receives only the
+current request. A stateful TAP clone bootstraps its new provider session with the complete replayable
+duplicated branch, even when the attack started without an explicit prepended seed. Stateless targets
+continue to receive only the explicit prepended seed plus each current request, never prior live branch
+turns. A stateful TAP target without editable history can flatten only text converter output when
+branching; non-text converter output requires an editable-history target, a stateless target, or
+`branching_factor=1` so copied media is never replayed under a different role.
+
+`PromptTarget` records one target invocation immediately before calling
+`_send_prompt_to_target_async`. This framework-owned boundary is not a target capability or a
+subclass-managed flag. A stateful target consumes one-time bootstrap history only after that call
+returns successfully; normalization failures, target errors, and cancellation retain it for retry.
+Target-side rate limiting remains independent and continues to use `limit_requests_per_minute`.
+
+`send_prompt_async` is the final public orchestration method. Custom target subclasses implement
+`_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
+overriding `send_prompt_async`.
 
 ## Chat-style targets vs general targets
 
