@@ -71,6 +71,11 @@ class TestConfigurationLoader:
         with pytest.raises(TypeError, match=r"env_akv_strict must be a bool"):
             ConfigurationLoader(env_akv_strict=invalid_value)  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
+    def test_rejects_non_boolean_allow_custom_initializers(self, invalid_value: object) -> None:
+        with pytest.raises(TypeError, match=r"allow_custom_initializers must be a bool"):
+            ConfigurationLoader(allow_custom_initializers=invalid_value)  # type: ignore[arg-type]
+
     def test_valid_memory_db_types_snake_case(self):
         """Test all valid memory database types in snake_case."""
         for db_type in ["in_memory", "sqlite", "azure_sql"]:

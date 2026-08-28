@@ -268,8 +268,8 @@ var keyVaultName = last(split(keyVaultResourceId, '/'))
 // ============================================================================
 // RBAC role assignments are NOT managed by this template.
 // Grant the following roles to the UAMI manually before first deployment:
-//   - Key Vault Secrets User  on the Key Vault
-//   - AcrPull                 on the ACR
+//   - Key Vault Secrets Officer  on the Key Vault
+//   - AcrPull                    on the ACR
 // See Post-Deployment in infra/README.md for commands.
 // ============================================================================
 

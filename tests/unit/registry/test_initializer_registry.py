@@ -172,6 +172,19 @@ def test_unregister_and_cleanup_removes_entry_and_file(lazy_registry):
         assert not (tmp_dir / "cleanup_test.py").exists()
 
 
+def test_unregister_and_cleanup_keeps_entry_when_storage_delete_fails(lazy_registry: InitializerRegistry) -> None:
+    """Test that failed storage cleanup leaves the runtime registration retryable."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.delete_script.side_effect = OSError("storage unavailable")
+    lazy_registry._custom_storage = storage
+    lazy_registry._classes["custom"] = _ParamInitializer
+
+    with pytest.raises(OSError, match="storage unavailable"):
+        lazy_registry.unregister_and_cleanup("custom")
+
+    assert lazy_registry.get_class("custom") is _ParamInitializer
+
+
 def test_register_from_content_uses_configured_storage(lazy_registry: InitializerRegistry, tmp_path: Path) -> None:
     """Test runtime registration persists source in the configured directory."""
     lazy_registry.configure_custom_scripts_source(str(tmp_path))

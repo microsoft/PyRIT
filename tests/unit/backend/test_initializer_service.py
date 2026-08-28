@@ -891,6 +891,19 @@ class TestInitializerServiceCustomRegistration:
 class TestCustomInitializerRoutes:
     """Tests for runtime custom initializer routes."""
 
+    def test_post_returns_403_when_custom_initializers_disabled(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/initializers",
+            json={"name": "custom", "script_content": _SAMPLE_SCRIPT},
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_delete_returns_403_when_custom_initializers_disabled(self, client: TestClient) -> None:
+        response = client.delete("/api/initializers/custom")
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
     @pytest.mark.parametrize(
         ("method", "path", "json_body"),
         [

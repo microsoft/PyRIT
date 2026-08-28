@@ -57,35 +57,38 @@ if [ "$PYRIT_MODE" = "jupyter" ]; then
     exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
 elif [ "$PYRIT_MODE" = "gui" ]; then
     echo "Starting PyRIT GUI on port 8000..."
-    # The thin backend only takes --host/--port/--config-file/--log-level.
-    # Translate deployment settings into a runtime config file so the FastAPI
-    # lifespan (ConfigurationLoader) picks them up on startup.
-    RUNTIME_CONFIG=/tmp/pyrit_runtime.yaml
-    {
-        if [ -n "$AZURE_SQL_SERVER" ]; then
-            echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)" >&2
-            echo "memory_db_type: AzureSQL"
-        else
-            echo "Using SQLite database (AZURE_SQL_SERVER not set)" >&2
-            echo "memory_db_type: SQLite"
-        fi
-        if [ -n "$PYRIT_INITIALIZER" ]; then
-            echo "Using initializer: $PYRIT_INITIALIZER" >&2
-            echo "initializers:"
-            # Split comma-separated initializer names into a YAML list.
-            IFS=',' read -ra INIT_NAMES <<<"$PYRIT_INITIALIZER"
-            for name in "${INIT_NAMES[@]}"; do
-                echo "  - $(echo "$name" | xargs)"
-            done
-        fi
-        if [ -n "$PYRIT_ENV_AKV_REF" ]; then
-            echo "Using Azure Key Vault environment reference" >&2
-            echo "env_akv_ref:"
-            echo "  - $PYRIT_ENV_AKV_REF"
-        fi
-    } >"$RUNTIME_CONFIG"
-
-    CONFIG_FILE="${PYRIT_CONFIG_FILE:-$RUNTIME_CONFIG}"
+    if [ -n "${PYRIT_CONFIG_FILE:-}" ]; then
+        CONFIG_FILE="$PYRIT_CONFIG_FILE"
+        echo "Using external PyRIT configuration: $CONFIG_FILE"
+    else
+        # Translate deployment settings into a runtime config file so the FastAPI
+        # lifespan (ConfigurationLoader) picks them up on startup.
+        RUNTIME_CONFIG=/tmp/pyrit_runtime.yaml
+        {
+            if [ -n "$AZURE_SQL_SERVER" ]; then
+                echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)" >&2
+                echo "memory_db_type: AzureSQL"
+            else
+                echo "Using SQLite database (AZURE_SQL_SERVER not set)" >&2
+                echo "memory_db_type: SQLite"
+            fi
+            if [ -n "$PYRIT_INITIALIZER" ]; then
+                echo "Using initializer: $PYRIT_INITIALIZER" >&2
+                echo "initializers:"
+                # Split comma-separated initializer names into a YAML list.
+                IFS=',' read -ra INIT_NAMES <<<"$PYRIT_INITIALIZER"
+                for name in "${INIT_NAMES[@]}"; do
+                    echo "  - $(echo "$name" | xargs)"
+                done
+            fi
+            if [ -n "$PYRIT_ENV_AKV_REF" ]; then
+                echo "Using Azure Key Vault environment reference" >&2
+                echo "env_akv_ref:"
+                echo "  - $PYRIT_ENV_AKV_REF"
+            fi
+        } >"$RUNTIME_CONFIG"
+        CONFIG_FILE="$RUNTIME_CONFIG"
+    fi
 
     # Pick the launcher module. PR #1753 moved the launcher from
     # ``pyrit.cli.pyrit_backend`` to ``pyrit.backend.pyrit_backend``. The PyPI

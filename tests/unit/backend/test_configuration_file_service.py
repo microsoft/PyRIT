@@ -53,6 +53,18 @@ async def test_configuration_file_service_rejects_semantically_invalid_content_b
     assert config_path.read_text(encoding="utf-8") == "operator: before\n"
 
 
+async def test_configuration_file_service_rejects_quoted_custom_initializer_flag(tmp_path: Path) -> None:
+    """Test that a string cannot enable custom initializers through truthiness."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("allow_custom_initializers: false\n", encoding="utf-8")
+    service = ConfigurationFileService(config_file_value=str(config_path))
+
+    with pytest.raises(ValueError, match="allow_custom_initializers must be a bool"):
+        await service.update_async('allow_custom_initializers: "false"\n')
+
+    assert config_path.read_text(encoding="utf-8") == "allow_custom_initializers: false\n"
+
+
 async def test_blob_helpers_use_sas_authentication() -> None:
     """Test downloading and uploading directly with a SAS-authenticated blob URI."""
     blob_uri = "https://account.blob.core.windows.net/config/config.yaml?sig=secret"

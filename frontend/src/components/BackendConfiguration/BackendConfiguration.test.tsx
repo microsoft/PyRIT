@@ -67,6 +67,7 @@ describe('BackendConfiguration', () => {
   it('should load and display configuration content', async () => {
     renderPage()
 
+    expect(screen.getByRole('heading', { level: 1, name: 'Configuration' })).toBeInTheDocument()
     expect(await screen.findByLabelText('Configuration YAML')).toHaveValue('operator: alice\n')
     expect(screen.getByRole('navigation', { name: 'Configuration files' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /\.pyrit_conf/i })).toHaveAttribute('aria-current', 'page')
@@ -111,7 +112,7 @@ describe('BackendConfiguration', () => {
     })
     renderPage()
 
-    await user.click(screen.getByRole('tab', { name: 'Environment Files' }))
+    await user.click(screen.getByRole('tab', { name: 'Environment & Secrets' }))
     const editor = await screen.findByLabelText('Environment file contents')
     expect(screen.getByText('C:/Users/test/.pyrit/.env', { selector: 'label' })).toBeInTheDocument()
     expect(screen.getByTitle('C:/Users/test/.pyrit/.env')).toBeInTheDocument()
@@ -153,7 +154,7 @@ describe('BackendConfiguration', () => {
     })
     renderPage()
 
-    await user.click(screen.getByRole('tab', { name: 'Environment Files' }))
+    await user.click(screen.getByRole('tab', { name: 'Environment & Secrets' }))
     expect(await screen.findByRole('button', { name: /AKV: bootstrap/i })).toBeInTheDocument()
     expect(screen.getByTitle(secretUrl)).toBeInTheDocument()
     const editor = await screen.findByLabelText('Environment file contents')

@@ -453,10 +453,11 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         if name not in self._classes:
             available = ", ".join(self.get_class_names())
             raise KeyError(f"'{name}' not found in registry. Available: {available}")
-        del self._classes[name]
-        self._metadata_cache = None
 
         self._get_custom_storage().delete_script(name)
+
+        del self._classes[name]
+        self._metadata_cache = None
 
     def _load_custom_initializer_class(
         self,

@@ -9,7 +9,8 @@
 # Required variable groups:
 #   - copyrit-gui-common  (azureServiceConnection, acrName, acrLoginServer, imageName)
 #   - copyrit-gui-test    (resourceGroup, appName, entraTenantId, entraClientId,
-#                           allowedGroupObjectIds, sqlServerFqdn, sqlDatabaseName,
+#                           allowedGroupObjectIds, adminGroupObjectId, pyritConfigFileUri,
+#                           sqlServerFqdn, sqlDatabaseName,
 #                           keyVaultResourceId, acrResourceId, enablePrivateEndpoint, enableOtel)
 #   - copyrit-gui-prod    (same keys as test, with production values)
 
@@ -159,8 +160,10 @@ stages:
                         --parameters entraTenantId=$(entraTenantId) \
                         --parameters entraClientId=$(entraClientId) \
                         --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
+                        --parameters adminGroupObjectId=$(adminGroupObjectId) \
                         --parameters sqlServerFqdn=$(sqlServerFqdn) \
                         --parameters sqlDatabaseName=$(sqlDatabaseName) \
+                        --parameters pyritConfigFileUri=$(pyritConfigFileUri) \
                         --parameters keyVaultResourceId=$(keyVaultResourceId) \
                         --parameters acrResourceId=$(acrResourceId) \
                         --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \
@@ -242,8 +245,10 @@ stages:
                         --parameters entraTenantId=$(entraTenantId) \
                         --parameters entraClientId=$(entraClientId) \
                         --parameters allowedGroupObjectIds="$(allowedGroupObjectIds)" \
+                        --parameters adminGroupObjectId=$(adminGroupObjectId) \
                         --parameters sqlServerFqdn=$(sqlServerFqdn) \
                         --parameters sqlDatabaseName=$(sqlDatabaseName) \
+                        --parameters pyritConfigFileUri=$(pyritConfigFileUri) \
                         --parameters keyVaultResourceId=$(keyVaultResourceId) \
                         --parameters acrResourceId=$(acrResourceId) \
                         --parameters enablePrivateEndpoint=$(enablePrivateEndpoint) \

@@ -108,12 +108,12 @@ export default function BackendConfiguration() {
   return (
     <main className={styles.root}>
       <div className={styles.header}>
-        <Text as="h1" size={600} weight="semibold">Backend Configuration</Text>
+        <Text as="h1" size={600} weight="semibold">Configuration</Text>
       </div>
 
       <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
-        <Tab value="configuration">Configuration</Tab>
-        <Tab value="environment">Environment Files</Tab>
+        <Tab value="configuration">PyRIT Configuration</Tab>
+        <Tab value="environment">Environment &amp; Secrets</Tab>
         <Tab value="custom-initializers">Custom Initializers</Tab>
       </TabList>
 
@@ -129,7 +129,7 @@ export default function BackendConfiguration() {
         <EnvironmentFiles />
       ) : loading ? (
         <div className={styles.loadingState}>
-          <Spinner label="Loading backend configuration..." />
+          <Spinner label="Loading PyRIT configuration..." />
         </div>
       ) : (
         <EditorWorkspace

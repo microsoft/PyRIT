@@ -376,9 +376,11 @@ az deployment group create \
    az role assignment create --assignee-object-id $MI_ID \
      --assignee-principal-type ServicePrincipal --role "AcrPull" --scope <acrResourceId>
 
-   # Note: Key Vault Secrets User is NOT required — the Container App reads
-   # its .env contents from an inline secret (envFileContents), not via a
-   # Key Vault reference.
+   # Required when envFileContents is empty. Secrets Officer permits both
+   # runtime reads and GUI updates that create a new secret version.
+   az role assignment create --assignee-object-id $MI_ID \
+     --assignee-principal-type ServicePrincipal --role "Key Vault Secrets Officer" \
+     --scope <keyVaultResourceId>
 
    # Grant based on which services you use (scope as narrowly as possible)
    az role assignment create --assignee-object-id $MI_ID \
@@ -551,9 +553,9 @@ Platform, Groq, Google Gemini) require API keys in the `.env`.
   used during deployment only, not exposed to the application.
 - **Workload profiles**: Consumption tier. Defaults to 1 replica (no auto-scale).
 - **Key Vault**: Must be an existing vault. Used for `.env` content backup/audit
-  only — the runtime secret comes from an inline ACA secret. RBAC for AcrPull is
-  still granted manually (see Post-Deployment §2); Key Vault Secrets User is no
-  longer required.
+  when `envFileContents` is provided. Otherwise, the runtime reads the configured
+  secret and the GUI can create updated versions, which requires `Key Vault Secrets
+  Officer`. RBAC roles are granted manually (see Post-Deployment §2).
 - **OpenTelemetry**: When `enableOtel=true`, configure the agent post-deploy:
   ```bash
   AI_CONN=$(az deployment group show -g <rg> -n main \

@@ -152,11 +152,22 @@ class ConfigurationLoader(YamlLoadable):
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
         validate_env_akv_strict(env_akv_strict=self.env_akv_strict)
+        self._validate_allow_custom_initializers()
         self._normalize_memory_db_type()
         self._normalize_initializers()
         self._validate_env_akv_ref()
         self._validate_custom_initializers_source()
         self._normalize_server()
+
+    def _validate_allow_custom_initializers(self) -> None:
+        """
+        Validate that the custom initializer kill switch is a boolean.
+
+        Raises:
+            TypeError: If allow_custom_initializers is not a boolean.
+        """
+        if not isinstance(self.allow_custom_initializers, bool):
+            raise TypeError("allow_custom_initializers must be a bool.")
 
     def _validate_custom_initializers_source(self) -> None:
         """

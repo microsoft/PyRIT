@@ -2,14 +2,7 @@ import { useState } from 'react'
 
 import {
   Button,
-  Dialog,
-  DialogActions,
-  DialogBody,
-  DialogContent,
-  DialogSurface,
-  DialogTitle,
   Field,
-  Input,
   Text,
 } from '@fluentui/react-components'
 import { AddRegular, DeleteRegular } from '@fluentui/react-icons'
@@ -19,6 +12,7 @@ import EditorWorkspace from '@/components/EditorWorkspace'
 import { PythonCodeEditor } from '@/components/BackendConfiguration/PythonCode'
 import type { CustomInitializer } from '@/types'
 
+import AddCustomInitializerDialog from './AddCustomInitializerDialog'
 import { useCustomInitializersStyles } from './CustomInitializers.styles'
 
 interface CustomInitializersProps {
@@ -38,20 +32,9 @@ export default function CustomInitializers({
 }: CustomInitializersProps) {
   const styles = useCustomInitializersStyles()
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [scriptContent, setScriptContent] = useState('')
   const [selectedName, setSelectedName] = useState<string | null>(items[0]?.initializer_name ?? null)
   const selectedInitializer = items.find((item) => item.initializer_name === selectedName) ?? items[0] ?? null
   const [initializerToDelete, setInitializerToDelete] = useState<CustomInitializer | null>(null)
-
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
-    event.preventDefault()
-    if (await onRegister(name.trim(), scriptContent)) {
-      setDialogOpen(false)
-      setName('')
-      setScriptContent('')
-    }
-  }
 
   const selectInitializer = (initializer: CustomInitializer): void => {
     setSelectedName(initializer.initializer_name)
@@ -112,40 +95,12 @@ export default function CustomInitializers({
         )}
       </EditorWorkspace>
 
-      <Dialog open={dialogOpen} onOpenChange={(_, data) => setDialogOpen(data.open)}>
-        <DialogSurface className={styles.sourceDialog}>
-          <form onSubmit={handleSubmit}>
-            <DialogBody>
-              <DialogTitle>Add custom initializer</DialogTitle>
-              <DialogContent className={styles.dialogBody}>
-                <Field label="Initializer name" required>
-                  <Input
-                    value={name}
-                    onChange={(_, data) => setName(data.value)}
-                    disabled={registering}
-                    autoComplete="off"
-                  />
-                </Field>
-                <Field label="Python source" required>
-                  <PythonCodeEditor source={scriptContent} onChange={setScriptContent} disabled={registering} />
-                </Field>
-              </DialogContent>
-              <DialogActions>
-                <Button appearance="secondary" disabled={registering} onClick={() => setDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  appearance="primary"
-                  disabled={registering || name.trim() === '' || scriptContent.trim() === ''}
-                >
-                  {registering ? 'Adding...' : 'Add'}
-                </Button>
-              </DialogActions>
-            </DialogBody>
-          </form>
-        </DialogSurface>
-      </Dialog>
+      <AddCustomInitializerDialog
+        open={dialogOpen}
+        registering={registering}
+        onOpenChange={setDialogOpen}
+        onRegister={onRegister}
+      />
 
       <ConfirmDialog
         open={initializerToDelete !== null}
