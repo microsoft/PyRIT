@@ -297,7 +297,10 @@ class AttackService:
 
         # Get messages for this conversation
         pyrit_messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
-        backend_messages = await pyrit_messages_to_dto_async(list(pyrit_messages))
+        backend_messages = await pyrit_messages_to_dto_async(
+            list(pyrit_messages),
+            objective_score_id=ar.last_score.id if ar.last_score else None,
+        )
 
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
@@ -346,10 +349,14 @@ class AttackService:
         else:
             conversation_id = str(uuid.uuid4())
 
-        # Create AttackResult
+        # Create AttackResult. An absent request.name persists as an empty
+        # objective rather than a sentinel placeholder string -- both
+        # AttackResult.objective and the database column are non-nullable,
+        # but an empty string is a valid value the frontend already treats
+        # as "no explicit objective".
         attack_result = AttackResult(
             conversation_id=conversation_id,
-            objective=request.name or "Manual attack via GUI",
+            objective=request.name or "",
             atomic_attack_identifier=AtomicAttackIdentifier.build(
                 attack_identifier=AttackIdentifier(
                     class_name=request.name or "ManualAttack",

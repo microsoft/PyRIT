@@ -74,18 +74,27 @@ Click the panel toggle in the ribbon to open the conversations sidebar. This pan
 
 #### Exporting a Conversation
 
-Click the **Export** button in the ribbon to download the conversation that is currently displayed. Two formats are offered from the button's menu:
+Click the **Export** button in the ribbon to download the conversation that is currently displayed. Three formats are offered from the button's menu:
 
 - **Markdown (`.md`):** A human-readable transcript with each message labeled by role. Best for reading, sharing, or pasting into reports.
 - **JSON (`.json`):** A structured record of the conversation for tooling and further processing.
+- **HTML (`.html`):** A single self-contained page with the images, audio, and video inside the file itself. Best for sharing a conversation as evidence, and for printing — open it and use your browser's **Print → Save as PDF**.
 
-The export runs entirely in your browser and captures exactly what is shown in the chat, including the system prompt shown in the banner — no data is sent to the server. Export stays available for read-only historical conversations, and is disabled while a conversation is empty, still loading, or sending. The button is disabled until there is at least one user or model message to export.
+Every format includes the whole conversation as shown in the chat, including the system prompt shown in the banner. Scores are the exception: they are kept in the JSON export but are not written into the Markdown or HTML transcript.
+
+Markdown records the names of attachments but never the media itself. JSON keeps media that is already inline, drops the source link for everything else, and so cannot be relied on to carry pictures either. HTML is the format to pick when the media matters. It puts each attachment it can read into the page, and lists the rest by name with the reason it was left out — media that sits on another host, which is where a deployment backed by cloud storage keeps it, cannot be read by the page and is listed as kept in remote storage; an attachment that is too large on its own is skipped; and one that no longer fits in the page is marked as having no room left. The page keeps filling after that, so an attachment later in the conversation that still fits can make it in. Files that are not images, audio, or video are never embedded. The count of what was and was not included is printed at the top of the exported page, so an incomplete export is never mistaken for a complete one. Attachment source links are deliberately left out of every export.
+
+Exporting runs in your browser and sends nothing to the server. HTML is the one exception: it reads locally stored media back from the server so it can embed it.
+
+Export stays available for read-only historical conversations, and is disabled while a conversation is empty, still loading, or sending. The button is disabled until there is at least one user or model message to export.
 
 > **Note:** Exported files can contain adversarial prompts, model responses, and other sensitive material. Store and share them responsibly.
 
 #### Labels
 
 The labels bar in the ribbon displays the current attack's labels (e.g., `operator`, `operation`). Labels are key-value pairs that help organize and filter attacks. You can add, edit, and remove labels inline. The `operator` and `operation` labels are required and cannot be removed.
+
+Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. The operation you pick is applied to attacks you start from then on; it does not change attacks that already exist.
 
 #### Behavioral Guards
 

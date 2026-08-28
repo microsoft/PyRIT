@@ -15,7 +15,7 @@ Automates the full deployment of an isolated CoPyRIT GUI instance:
   7. Managed identity + RBAC role assignments (AcrPull, Storage Blob Data Contributor)
   7b. AOAI RBAC (optional — Cognitive Services OpenAI User on specified resources)
   8. Bicep deployment (Container App, networking, logging)
-  9. Post-deploy: SPA redirect URI
+  9. Post-deploy: SPA redirect URI + public-client device-code flow
 
 Usage:
     python infra/deploy_instance.py \\
@@ -853,15 +853,18 @@ def post_deploy(
     fqdn: str,
 ) -> None:
     """
-    Run post-deployment steps: SPA redirect URI.
+    Run post-deployment steps for browser and CLI authentication.
 
     Args:
         app_object_id (str): The Entra app registration object ID (for Graph API).
         fqdn (str): The deployed app FQDN.
     """
-    # Set SPA redirect URI via Graph REST API (more portable than --spa-redirect-uris flag)
+    # Keep browser PKCE and device-code clients on the same public app registration.
     logger.info("Setting SPA redirect URI: https://%s", fqdn)
-    spa_body = {"spa": {"redirectUris": [f"https://{fqdn}"]}}
+    spa_body = {
+        "spa": {"redirectUris": [f"https://{fqdn}"]},
+        "isFallbackPublicClient": True,
+    }
     run_az(
         args=[
             "rest",

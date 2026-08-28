@@ -3,8 +3,11 @@
 
 import pytest
 
-from pyrit.message_normalizer._helpers import build_squashed_user_message
-from pyrit.models import Message, MessagePiece
+from pyrit.message_normalizer._helpers import (
+    build_squashed_user_message,
+    get_unflattenable_converter_output_types,
+)
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 
 
 def _message(*, role: str, content: str, metadata: dict | None = None) -> Message:
@@ -12,6 +15,59 @@ def _message(*, role: str, content: str, metadata: dict | None = None) -> Messag
         message_pieces=[
             MessagePiece(role=role, original_value=content, prompt_metadata=metadata or {}),
         ]
+    )
+
+
+def test_get_unflattenable_converter_output_types_ignores_unchanged_native_media():
+    native_audio = MessagePiece(
+        role="user",
+        original_value="native.wav",
+        original_value_data_type="audio_path",
+    )
+    converted_image = MessagePiece(
+        role="user",
+        original_value="prompt",
+        converted_value="converted.png",
+        converted_value_data_type="image_path",
+    )
+
+    output_types = get_unflattenable_converter_output_types(
+        converted_messages=[Message(message_pieces=[native_audio, converted_image])]
+    )
+
+    assert output_types == {"image_path"}
+
+
+def test_get_unflattenable_converter_output_types_uses_current_pass_lineage():
+    prior_identifier = ComponentIdentifier(class_name="PriorConverter", class_module="tests")
+    source_piece = MessagePiece(
+        role="user",
+        original_value="prompt",
+        converted_value="existing.png",
+        converted_value_data_type="image_path",
+        converter_identifiers=[prior_identifier],
+    )
+    converted_piece = source_piece.model_copy(deep=True)
+    source_messages = [Message(message_pieces=[source_piece])]
+    converted_messages = [Message(message_pieces=[converted_piece])]
+
+    assert not get_unflattenable_converter_output_types(
+        source_messages=source_messages,
+        converted_messages=converted_messages,
+    )
+
+    converted_piece.converter_identifiers.append(
+        ComponentIdentifier(class_name="CurrentConverter", class_module="tests")
+    )
+    assert get_unflattenable_converter_output_types(
+        source_messages=source_messages,
+        converted_messages=converted_messages,
+    ) == {"image_path"}
+
+    converted_piece.not_in_memory = True
+    assert not get_unflattenable_converter_output_types(
+        source_messages=source_messages,
+        converted_messages=converted_messages,
     )
 
 

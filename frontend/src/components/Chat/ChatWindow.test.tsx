@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatWindow from "./ChatWindow";
@@ -49,6 +49,7 @@ jest.mock("../../services/api", () => ({
 jest.mock("../../utils/messageMapper", () => ({
   buildMessagePieces: jest.fn(),
   backendMessagesToFrontend: jest.fn(),
+  fileToBase64: jest.fn(),
 }));
 
 const mockedAttacksApi = attacksApi as jest.Mocked<typeof attacksApi>;
@@ -3167,6 +3168,62 @@ describe("ChatWindow Integration", () => {
     });
   });
 
+  it("should not copy a score-only media piece into the input box", async () => {
+    const mockMessages: Message[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: "Blocked media response",
+        displayPieces: [
+          {
+            type: "media",
+            pieceId: "piece-blocked",
+            pieceIndex: 0,
+            scores: [
+              {
+                id: "score-blocked",
+                message_piece_id: "piece-blocked",
+                scorer_type: "ImageScorer",
+                score_type: "true_false",
+                score_value: "True",
+                pieceIndex: 0,
+                pieceType: "image_path",
+                sourceLabel: "Piece 1 · image_path",
+                timestamp: "2026-02-15T00:00:00Z",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);
+
+    render(
+      <TestWrapper>
+        <ChatWindow
+          {...defaultProps}
+          attackResultId="ar-copy-score-only"
+          conversationId="conv-copy-score-only"
+          activeConversationId="conv-copy-score-only"
+        />
+      </TestWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("loading-state")).not.toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId("copy-to-input-btn-1"));
+
+    await waitFor(() => {
+      const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      expect(textarea.value).toBe("Blocked media response");
+    });
+    expect(screen.queryByTestId("remove-attachment-0")).not.toBeInTheDocument();
+  });
+
   // ---------------------------------------------------------------------------
   // Converter panel integration
   // ---------------------------------------------------------------------------
@@ -3575,6 +3632,83 @@ describe("ChatWindow Integration", () => {
       expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.json$/);
       // WYSIWYG: export serializes in-state messages and makes no extra API call.
       expect(mockedAttacksApi.getMessages.mock.calls.length).toBe(callsBefore);
+    });
+
+    it("exports the displayed conversation as a self-contained HTML transcript", async () => {
+      const user = userEvent.setup();
+      await renderWithLoadedConversation();
+      const callsBefore = mockedAttacksApi.getMessages.mock.calls.length;
+      const { getDownloadAnchor } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByRole("menuitem", { name: /export as html/i }));
+
+      await waitFor(() => expect(URL.createObjectURL as jest.Mock).toHaveBeenCalled());
+      const blob = (URL.createObjectURL as jest.Mock).mock.calls[0][0] as Blob;
+      expect(blob.type).toBe("text/html;charset=utf-8");
+      expect(getDownloadAnchor().download).toMatch(/^copyrit-conversation-conv-1-.*\.html$/);
+      // WYSIWYG: export serializes in-state messages and makes no extra API call.
+      expect(mockedAttacksApi.getMessages.mock.calls.length).toBe(callsBefore);
+    });
+
+    it("shows progress and ignores a second request while an export is in flight", async () => {
+      const user = userEvent.setup();
+      const messagesWithMedia: Message[] = [
+        ...mockMessages,
+        {
+          role: "assistant",
+          content: "",
+          timestamp: new Date().toISOString(),
+          attachments: [
+            {
+              type: "image",
+              name: "r.png",
+              url: "blob:http://localhost/pending",
+              mimeType: "image/png",
+              file: new File(["x"], "r.png", { type: "image/png" }),
+            },
+          ],
+        },
+      ];
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+      mockedMapper.backendMessagesToFrontend.mockReturnValue(messagesWithMedia);
+      // Hold the media read open so the export stays in flight across clicks.
+      let releaseMedia: (value: string) => void = () => {};
+      mockedMapper.fileToBase64.mockImplementation(
+        () => new Promise<string>((resolve) => { releaseMedia = resolve; })
+      );
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            attackResultId="ar-1"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+          />
+        </TestWrapper>
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /export conversation/i })).toBeEnabled()
+      );
+      const { clickSpy } = spyOnDownloadAnchor();
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByTestId("export-html-item"));
+      const exportButton = screen.getByRole("button", { name: /export conversation/i });
+      await waitFor(() => expect(within(exportButton).getByRole("progressbar")).toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: /export conversation/i }));
+      await user.click(screen.getByTestId("export-html-item"));
+
+      // The menu shows the export is already running, and the guard stops a
+      // second one from starting even if the click lands anyway.
+      expect(screen.getByTestId("export-html-item")).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByTestId("export-markdown-item")).toHaveAttribute("aria-disabled", "true");
+      expect(mockedMapper.fileToBase64).toHaveBeenCalledTimes(1);
+
+      releaseMedia("eA==");
+      await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(within(exportButton).queryByRole("progressbar")).not.toBeInTheDocument());
     });
 
     it("exports the displayed conversation id when it differs from the attack's main conversation", async () => {
