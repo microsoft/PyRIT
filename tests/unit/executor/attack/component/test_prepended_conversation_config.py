@@ -14,6 +14,11 @@ def test_default_init_apply_converters_to_user_role():
     assert config.apply_converters_to_roles == ["user"]
 
 
+def test_simulated_assistant_converter_role_normalizes_to_assistant():
+    config = PrependedConversationConfig(apply_converters_to_roles=["simulated_assistant"])
+    assert config.apply_converters_to_roles == ["assistant"]
+
+
 def test_public_type_hints_resolve_at_runtime():
     assert get_type_hints(PrependedConversationConfig)["apply_converters_to_roles"] == list[ChatMessageRole]
 

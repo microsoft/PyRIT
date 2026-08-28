@@ -18,7 +18,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pyrit.models import ScenarioDefaultRunSizeEstimate, class_name_to_snake_case
+from pyrit.models import ScenarioRunSizeEstimate, class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -201,7 +201,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         scenario_params: dict[str, Any] | None = None,
         target_is_configured: bool = False,
         **estimate_kwargs: Any,
-    ) -> ScenarioDefaultRunSizeEstimate:
+    ) -> ScenarioRunSizeEstimate:
         """
         Build, parameterize, and estimate a scenario without initializing a run.
 
@@ -213,7 +213,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 configuration, baseline choice, and an optional objective target.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: Structured configured-run estimate.
+            ScenarioRunSizeEstimate: Structured configured-run estimate.
         """
         scenario = await asyncio.to_thread(self.create_instance, name)
         scenario.set_scenario_registry_name(scenario_registry_name=name)

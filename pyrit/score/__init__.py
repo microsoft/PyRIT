@@ -37,11 +37,15 @@ from pyrit.score.float_scale.self_ask_scale_scorer import (
     SelfAskScaleScorer,
     render_scale_system_prompt,
 )
+from pyrit.score.float_scale.system_prompt_extraction_scorer import SystemPromptExtractionScorer
+from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.message_scorer import MessageScorer, MessageScoringOptions
 from pyrit.score.response_handler import (
     CallableResponseHandler,
     JsonSchemaResponseHandler,
     ResponseHandler,
 )
+from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior
 from pyrit.score.scorer_evaluation.scorer_metrics import (
@@ -77,6 +81,10 @@ from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionSco
 from pyrit.score.true_false.regex.meth_keyword_scorer import MethKeywordScorer
 from pyrit.score.true_false.regex.nerve_agent_keyword_scorer import NerveAgentKeywordScorer
 from pyrit.score.true_false.regex.open_redirect_output_scorer import OpenRedirectOutputScorer
+from pyrit.score.true_false.regex.package_hallucination_scorer import (
+    PackageEcosystem,
+    PackageHallucinationScorer,
+)
 from pyrit.score.true_false.regex.path_traversal_output_scorer import PathTraversalOutputScorer
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer
 from pyrit.score.true_false.regex.shell_command_output_scorer import ShellCommandOutputScorer
@@ -172,6 +180,7 @@ __all__ = [
     "AzureContentFilterScorer",
     "BatchScorer",
     "CallableResponseHandler",
+    "ContentScorable",
     "ContentClassifier",
     "ContentClassifierCategory",
     "ContentClassifierPaths",
@@ -204,6 +213,10 @@ __all__ = [
     "LlamaGuardPolicy",
     "LlamaGuardScorer",
     "MarkdownInjectionScorer",
+    "MessageScorableResolver",
+    "MessageScorable",
+    "MessageScorer",
+    "MessageScoringOptions",
     "MethKeywordScorer",
     "MetricsType",
     "NerveAgentKeywordScorer",
@@ -213,6 +226,8 @@ __all__ = [
     "ObjectiveScorerEvaluator",
     "ObjectiveScorerMetrics",
     "OpenRedirectOutputScorer",
+    "PackageEcosystem",
+    "PackageHallucinationScorer",
     "parse_llamaguard_response",
     "parse_shieldgemma_response",
     "PathTraversalOutputScorer",
@@ -231,6 +246,7 @@ __all__ = [
     "render_true_false_system_prompt",
     "ResponseHandler",
     "Scorer",
+    "Scorable",
     "ScorerEvalDatasetFiles",
     "ScorerEvaluator",
     "ScorerMetrics",
@@ -261,6 +277,7 @@ __all__ = [
     "SSTIOutputScorer",
     "StaticPromptInjectionScorer",
     "SubStringScorer",
+    "SystemPromptExtractionScorer",
     "TrueFalseCompositeScorer",
     "TrueFalseInverterScorer",
     "TrueFalseQuestion",

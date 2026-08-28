@@ -16,11 +16,12 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pyrit.cli._results import AttacksTablePayload
+    from pyrit.cli._results import AttacksTablePayload, ConversationsPayload, TranscriptMessage
     from pyrit.models import ScenarioResult
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
+        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
@@ -187,7 +188,7 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
         print("\nNo targets found in registry.")
         print(
             "\nTargets are registered by initializers. Include an initializer that "
-            "registers targets, for example:\n  --initializers target\n"
+            "registers targets in your config file"
         )
         return
 
@@ -424,6 +425,14 @@ _OUTCOME_COLORS = {
     "undetermined": None,
 }
 
+# Per-role transcript colors, mirroring PrettyConversationPrinter's palette so the
+# thin-client transcript reads like the framework's own conversation output.
+_ROLE_COLORS = {
+    "user": "blue",
+    "assistant": "yellow",
+    "system": "magenta",
+}
+
 
 def print_attacks_table(*, payload: AttacksTablePayload) -> None:
     """
@@ -456,12 +465,62 @@ def print_attacks_table(*, payload: AttacksTablePayload) -> None:
         print(f"\nTotal attacks: {payload.total}")
 
 
+def print_conversations(*, payload: ConversationsPayload) -> None:
+    """
+    Print the per-attack main-conversation transcripts for a scenario run.
+
+    Args:
+        payload (ConversationsPayload): The transcripts to render plus the
+            pre-limit total.
+    """
+    if not payload.conversations:
+        print(f"\nNo conversations found for scenario {payload.scenario_result_id}.")
+        return
+
+    _header(f"Conversations — scenario {payload.scenario_result_id}")
+    for index, convo in enumerate(payload.conversations, start=1):
+        _cprint(
+            f"  {index}. [{convo.outcome.upper()}] {convo.atomic_attack_name}",
+            color=_OUTCOME_COLORS.get(convo.outcome),
+            bold=True,
+        )
+        print(f"       id:        {convo.attack_result_id}")
+        print(f"       objective: {convo.objective}")
+        _print_transcript(messages=convo.messages)
+
+    shown = len(payload.conversations)
+    if shown < payload.total:
+        print(f"\nShowing {shown} of {payload.total} attacks (use --limit or --attack-result-ids to change).")
+    else:
+        print(f"\nTotal attacks: {payload.total}")
+
+
+def _print_transcript(*, messages: list[TranscriptMessage]) -> None:
+    """Print one attack's ordered messages with their optional scores."""
+    if not messages:
+        print("       (no messages)")
+        return
+    for message in messages:
+        _cprint(
+            f"       [{message.role.upper()}] (turn {message.turn})",
+            color=_ROLE_COLORS.get(message.role.lower()),
+            bold=True,
+        )
+        print(_wrap(text=message.text, indent="         "))
+        if message.score is not None:
+            value = message.score.value if message.score.value is not None else "—"
+            label = f"SCORE [{message.score.scorer}]" if message.score.scorer else "SCORE"
+            _cprint(f"         {label}: {value}", color="magenta", bold=True)
+            if message.score.rationale:
+                print(_wrap(text=f"rationale: {message.score.rationale}", indent="           "))
+
+
 # ---------------------------------------------------------------------------
 # Scenario run history
 # ---------------------------------------------------------------------------
 
 
-def print_scenario_runs_list(*, runs: list[ScenarioRunSummary]) -> None:
+def print_scenario_runs_list(*, runs: list[ScenarioRunListItem]) -> None:
     """
     Print a list of scenario run summaries.
 
@@ -478,7 +537,7 @@ def print_scenario_runs_list(*, runs: list[ScenarioRunSummary]) -> None:
         created = run.created_at.isoformat() if run.created_at else "?"
         print(
             f"  {idx}) [{run.status.value}] {run.scenario_name} (id: {run.scenario_result_id}) — "
-            f"{run.total_attacks} attacks, {run.objective_achieved_rate}% success — {created}"
+            f"{run.total_attacks} planned attacks — {created}"
         )
     print("=" * 80)
     print(f"\nTotal runs: {len(runs)}")

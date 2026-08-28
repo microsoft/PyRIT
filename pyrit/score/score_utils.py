@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 
-from pyrit.common.utils import combine_dict
 from pyrit.models import Score
 
 # Key used by FloatScaleThresholdScorer to store the original float value
@@ -18,14 +17,23 @@ def combine_metadata_and_categories(scores: list[Score]) -> tuple[dict[str, str 
         scores: List of Score objects.
 
     Returns:
-        Tuple of (metadata dict, sorted category list with empty strings filtered).
+        Tuple of (unambiguous metadata dict, sorted category list with empty strings filtered).
     """
     metadata: dict[str, str | int | float] = {}
+    conflicting_metadata_keys: set[str] = set()
     category_set: set[str] = set()
 
     for s in scores:
-        metadata = combine_dict(metadata, getattr(s, "score_metadata", None))
-        score_categories = getattr(s, "score_category", None) or []
+        if s.score_metadata:
+            for key, value in s.score_metadata.items():
+                if key in conflicting_metadata_keys:
+                    continue
+                if key in metadata and metadata[key] != value:
+                    metadata.pop(key)
+                    conflicting_metadata_keys.add(key)
+                    continue
+                metadata[key] = value
+        score_categories = s.score_category or []
         category_set.update([c for c in score_categories if c])
 
     category = sorted(category_set)

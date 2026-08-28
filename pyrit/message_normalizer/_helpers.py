@@ -2,18 +2,43 @@
 # Licensed under the MIT license.
 
 """
-Internal helpers shared by squash-style message normalizers.
+Internal helpers for squash-style message normalizers.
 
-Squash normalizers (e.g. ``HistorySquashNormalizer``,
-``GenericSystemSquashNormalizer``) collapse several input messages into one
-fresh user-role ``Message`` built via ``Message.from_prompt``. Because that
-factory creates a brand-new piece with empty ``prompt_metadata``, callers must
-explicitly carry request-level metadata (such as the JSON schema key) forward
-so downstream normalizers in the pipeline still see it. ``build_squashed_user_message``
-centralizes that propagation rule.
+Some squash normalizers, such as ``GenericSystemSquashNormalizer``, collapse
+several input messages into one fresh user-role ``Message`` built via
+``Message.from_prompt``. Because that factory creates a brand-new piece with
+empty ``prompt_metadata``, callers must explicitly carry request-level metadata
+forward so downstream normalizers still see it.
+``build_squashed_user_message`` centralizes that propagation rule.
 """
 
-from pyrit.models import Message
+from pyrit.models import Message, MessagePiece
+
+
+def format_message_piece_for_context(*, piece: MessagePiece) -> str:
+    """
+    Format one message piece for inclusion in textual conversation history.
+
+    Non-text pieces use their context description when available and otherwise
+    use a modality placeholder, so local asset paths are not exposed as prompt
+    text.
+
+    Args:
+        piece (MessagePiece): The piece to represent as context.
+
+    Returns:
+        str: The textual representation of the piece.
+    """
+    data_type = piece.converted_value_data_type or piece.original_value_data_type
+    if data_type != "text":
+        description = piece.prompt_metadata.get("context_description")
+        if description:
+            return f"[{data_type.capitalize()} - {description}]"
+        return f"[{data_type.capitalize()}]"
+
+    if piece.original_value != piece.converted_value:
+        return f"{piece.converted_value} (original: {piece.original_value})"
+    return piece.converted_value
 
 
 def build_squashed_user_message(*, new_message_content: str, source_messages: list[Message]) -> Message:

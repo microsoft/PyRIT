@@ -61,6 +61,10 @@ class ScenarioResultView(str, Enum):
     OVERVIEW = "overview"
     #: One row per individual attack result.
     ATTACKS = "attacks"
+    #: Individual messages for each attack result conversation.
+    CONVERSATIONS = "conversations"
+    #: All of the above.
+    FULL = "full"
 
 
 def parse_scenario_result_view(raw: str) -> ScenarioResultView:
@@ -285,12 +289,14 @@ def parse_memory_labels(json_string: str) -> dict[str, str]:
     if not isinstance(labels, dict):
         raise ValueError("Memory labels must be a JSON object (dictionary)")
 
-    # Validate all keys and values are strings
+    # Validate all keys and values are strings and build a precisely typed result
+    validated_labels: dict[str, str] = {}
     for key, value in labels.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise ValueError(f"All label keys and values must be strings. Got: {key}={value}")
+        validated_labels[key] = value
 
-    return labels
+    return validated_labels
 
 
 def parse_dataset_filter(arg: str) -> tuple[str, str]:
@@ -420,15 +426,15 @@ ARG_HELP = {
 }
 
 
-def add_results_arguments(*, parser: argparse.ArgumentParser, include_id_flag: bool = False) -> None:
+def add_results_arguments(*, parser: argparse.ArgumentParser) -> None:
     """
     Add the shared ``scenario-results`` selection flags to *parser*.
 
     Registers ``--view``, ``--attack-result-ids``, and ``--limit`` in a
-    ``scenario results`` group so that ``pyrit_scan`` and ``pyrit_shell`` expose
-    an identical results interface. The scenario-result id differs by surface —
-    a ``--scenario-results`` value in scan versus a positional in the shell — so
-    it is only added here when *include_id_flag* is set (the scan case).
+    ``scenario results`` group so that ``pyrit_scan`` (its ``scenario-results``
+    sub-parser) and ``pyrit_shell`` (``build_scenario_results_parser``) expose an
+    identical results interface. Both surfaces take the scenario-result id as a
+    positional, added by the caller.
 
     ``--view`` defaults to ``None`` (not ``OVERVIEW``) so callers can tell an
     explicit ``--view`` apart from an omitted one; resolve it with
@@ -436,23 +442,15 @@ def add_results_arguments(*, parser: argparse.ArgumentParser, include_id_flag: b
 
     Args:
         parser (argparse.ArgumentParser): The parser to extend.
-        include_id_flag (bool): When True, also register ``--scenario-results``
-            (scan's mode flag). Defaults to False.
     """
     group = parser.add_argument_group("scenario results")
-    if include_id_flag:
-        group.add_argument(
-            "--scenario-results",
-            dest="scenario_results",
-            metavar="SCENARIO_RESULT_ID",
-            help="Print results for a completed scenario run and exit",
-        )
     group.add_argument(
         "--view",
         type=parse_scenario_result_view,
         default=None,
         metavar="{" + ",".join(view.value for view in ScenarioResultView) + "}",
-        help="Result granularity: 'overview' (aggregate, default) or 'attacks' (per-attack table)",
+        help="Result granularity: 'overview' (aggregate, default), 'attacks' (per-attack table), "
+        "'conversations' (per-attack message transcripts), or 'full' (attacks + conversations)",
     )
     group.add_argument(
         "--attack-result-ids",
@@ -464,7 +462,8 @@ def add_results_arguments(*, parser: argparse.ArgumentParser, include_id_flag: b
         "--limit",
         type=positive_int,
         metavar="N",
-        help="Show at most N attack rows (ignored for --view overview)",
+        help="Show at most N attacks (ignored for --view overview; defaults to 5 for "
+        "--view conversations/full when no --attack-result-ids is given)",
     )
 
 

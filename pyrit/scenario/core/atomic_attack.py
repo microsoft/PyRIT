@@ -19,7 +19,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common.utils import to_sha256
-from pyrit.executor.attack import AttackExecutor
+from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -31,7 +31,6 @@ from pyrit.models import (
 )
 
 if TYPE_CHECKING:
-    from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique import AttackTechnique
     from pyrit.score import TrueFalseScorer
@@ -353,7 +352,7 @@ class AtomicAttack:
                     for seed_group in self._seed_groups
                 ]
 
-            results = await executor.execute_attack_from_seed_groups_async(
+            untyped_results = await executor.execute_attack_from_seed_groups_async(
                 attack=technique.attack,
                 seed_groups=execution_seed_groups,
                 adversarial_chat=self._adversarial_chat,
@@ -362,6 +361,16 @@ class AtomicAttack:
                 return_partial_on_failure=return_partial_on_failure,
                 attributions=attributions,
                 **self._attack_execute_params,
+            )
+            completed_results: list[AttackResult] = []
+            for result in untyped_results.completed_results:
+                if not isinstance(result, AttackResult):
+                    raise ValueError(f"Attack returned unsupported result type: {type(result).__name__}")
+                completed_results.append(result)
+            results = AttackExecutorResult[AttackResult](
+                completed_results=completed_results,
+                incomplete_objectives=untyped_results.incomplete_objectives,
+                input_indices=untyped_results.input_indices,
             )
 
             # Enrich atomic_attack_identifier with seed identifiers

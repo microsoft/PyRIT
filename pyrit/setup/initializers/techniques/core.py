@@ -20,7 +20,7 @@ from pyrit.common.path import (
     EXECUTOR_SEED_PROMPT_PATH,
     EXECUTOR_SIMULATED_TARGET_PATH,
 )
-from pyrit.converter import FlipConverter, TaskFramingConverter
+from pyrit.converter import CodeAttackConverter, FlipConverter, TaskFramingConverter
 from pyrit.executor.attack import (
     AttackConverterConfig,
     ManyShotJailbreakAttack,
@@ -159,7 +159,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=PromptSendingAttack,
             description="Reverses the objective text so it slips past filters, then asks the target to flip it back.",
             technique_tags=["single_turn", "light"],
-            supports_request_converter_composition=True,
+            supports_additional_request_converters=True,
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
                     request_converters=ConverterConfiguration.from_converters(
@@ -171,5 +171,18 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             seed_technique=AttackTechniqueSeedGroup.from_system_prompt(
                 SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "flip_attack.yaml").value
             ),
+        ),
+        AttackTechniqueFactory(
+            name="code_attack",
+            attack_class=PromptSendingAttack,
+            description="Encodes the objective as data in a code template and asks the target to complete the code.",
+            technique_tags=["single_turn", "light"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(
+                        converters=[CodeAttackConverter(template=CodeAttackConverter.Template.PYTHON_STACK_VERBOSE)]
+                    )
+                ),
+            },
         ),
     ]

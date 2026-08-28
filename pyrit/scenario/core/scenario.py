@@ -39,7 +39,6 @@ from pyrit.models import (
     AttackSeedGroup,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSummary,
-    ScenarioDefaultRunSizeEstimate,
     ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
@@ -47,8 +46,7 @@ from pyrit.models import (
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimateStatus,
-    ScenarioRunSizeFactor,
+    ScenarioRunSizeEstimate,
     ScenarioRunState,
     config_hash,
 )
@@ -160,7 +158,7 @@ class Scenario(ABC):
         Returns:
             Sequence[Path]: Paths to true/false question prompts, or an empty sequence to use the default scorer.
         """
-        return []
+        return ()
 
     def __init__(
         self,
@@ -517,20 +515,28 @@ class Scenario(ABC):
                 nor available as a global default.
 
         Raises:
+            TypeError: If a configured default or resolved target is not a ``PromptTarget``.
             ValueError: If a target name is supplied that is not registered in ``TargetRegistry``.
         """
         if value is None:
             found, default = get_global_default_values().get_default_value(
                 class_type=type(self), parameter_name="objective_target"
             )
-            return default if found else None
+            if not found or default is None:
+                return None
+            if not isinstance(default, PromptTarget):
+                raise TypeError(f"Default objective_target must be a PromptTarget, got {type(default).__name__}")
+            return default
 
-        return resolve_reference_value(
+        resolved = resolve_reference_value(
             component_type=ComponentType.TARGET,
             value=value,
             owner=type(self).__name__,
             name="objective_target",
         )
+        if not isinstance(resolved, PromptTarget):
+            raise TypeError(f"Resolved objective_target must be a PromptTarget, got {type(resolved).__name__}")
+        return resolved
 
     def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
         """
@@ -551,7 +557,7 @@ class Scenario(ABC):
         return self._technique_class.resolve(scenario_techniques, default=self._default_technique)
 
     @final
-    async def get_default_run_size_estimate_async(self) -> ScenarioDefaultRunSizeEstimate:
+    async def get_default_run_size_estimate_async(self) -> ScenarioRunSizeEstimate:
         """
         Estimate the scenario's default planned execution units without starting a run.
 
@@ -559,15 +565,13 @@ class Scenario(ABC):
         configured estimate path used by request-specific previews.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: Structured default-run estimate.
+            ScenarioRunSizeEstimate: Structured default-run estimate.
         """
         self.set_params_from_args(args={})
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
     @final
-    async def get_run_size_estimate_async(
-        self, *, target_is_configured: bool = False
-    ) -> ScenarioDefaultRunSizeEstimate:
+    async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
         """
         Estimate the currently configured run without creating or persisting it.
 
@@ -576,7 +580,7 @@ class Scenario(ABC):
         expansion, dataset selection, and baseline policy as ``initialize_async``.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: Structured configured-run estimate.
+            ScenarioRunSizeEstimate: Structured configured-run estimate.
 
         Raises:
             ValueError: If target certainty is asserted without a resolved target.
@@ -587,7 +591,7 @@ class Scenario(ABC):
         self._estimate_target_is_configured = self._objective_target is not None
         return await self._estimate_run_size_async()
 
-    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
         """
         Estimate a standard technique-by-seed-group scenario.
 
@@ -595,7 +599,7 @@ class Scenario(ABC):
         synthesizes technique-specific populations, or selects techniques adaptively.
 
         Returns:
-            ScenarioDefaultRunSizeEstimate: Exact default sweep and baseline count.
+            ScenarioRunSizeEstimate: Exact default sweep and baseline count.
         """
         selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
         seed_group_count = sum(len(groups) for groups in selected_groups.values())
@@ -608,28 +612,21 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=seed_group_count,
-                    factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count)],
                     is_baseline=True,
                     note="One unmodified prompt-sending unit per selected seed group.",
                 )
             )
 
-        status = (
-            ScenarioRunSizeEstimateStatus.Conditional
-            if self.RUN_SIZE_USES_FACTORY_COMPATIBILITY and self._estimate_has_binding_size_cap
-            else ScenarioRunSizeEstimateStatus.Exact
-        )
-        total_attack_count = (
+        estimated_attack_count = (
             None
-            if status is ScenarioRunSizeEstimateStatus.Conditional
+            if self.RUN_SIZE_USES_FACTORY_COMPATIBILITY and self._estimate_has_binding_size_cap
             else sum(component.count for component in components)
         )
         note = "Counts planned outer execution units; retries and internal attack turns are excluded."
-        if status is ScenarioRunSizeEstimateStatus.Conditional:
+        if estimated_attack_count is None:
             note += " A binding randomized dataset cap may select a different compatibility mix at launch."
-        return ScenarioDefaultRunSizeEstimate(
-            status=status,
-            total_attack_count=total_attack_count,
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=estimated_attack_count,
             components=components,
             datasets=datasets,
             note=note,
@@ -653,10 +650,6 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label="Default technique sweep",
                     count=seed_group_count * technique_count,
-                    factors=[
-                        ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count),
-                        ScenarioRunSizeFactor(label="default concrete techniques", count=technique_count),
-                    ],
                 )
             ]
 
@@ -682,10 +675,6 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label=technique.value,
                     count=compatible_count,
-                    factors=[
-                        ScenarioRunSizeFactor(label="selected concrete techniques", count=1),
-                        ScenarioRunSizeFactor(label="compatible logical seed groups", count=compatible_count),
-                    ],
                 )
             )
         return components

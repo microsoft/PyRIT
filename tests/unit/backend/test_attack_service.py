@@ -29,7 +29,7 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
-from pyrit.memory import AttackResultsKeysetCursor
+from pyrit.memory import AttackResultKeysetCursor
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -160,7 +160,7 @@ def _cursor_for(result: AttackResult, *, fingerprint: str | None = None) -> str:
     """
     effective_fingerprint = fingerprint if fingerprint is not None else AttackService._attack_filter_fingerprint()
     return AttackService._encode_attack_cursor(
-        cursor=AttackResultsKeysetCursor.from_attack_result(result),
+        cursor=AttackResultKeysetCursor.from_attack_result(result),
         fingerprint=effective_fingerprint,
     )
 
@@ -713,6 +713,8 @@ class TestCreateAttack:
             assert result.conversation_id is not None
             assert result.created_at is not None
             mock_memory.add_attack_results_to_memory.assert_called_once()
+            stored_attack = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
+            assert stored_attack.metadata["target_registry_name"] == "target-1"
 
     async def test_create_attack_stores_prepended_conversation(self, attack_service, mock_memory) -> None:
         """Test that create_attack stores prepended conversation messages."""

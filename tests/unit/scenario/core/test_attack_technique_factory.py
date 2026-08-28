@@ -3,11 +3,12 @@
 
 """Tests for the AttackTechniqueFactory class."""
 
+import typing
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.converter import Base64Converter, ROT13Converter
+from pyrit.converter import Base64Converter, QRCodeConverter, ROT13Converter, TranslationConverter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
@@ -178,6 +179,34 @@ class TestFactoryInit:
                 attack_kwargs={"nonexistent_param": 42},
             )
 
+    @pytest.mark.parametrize("baked_converter", [None, Base64Converter()])
+    def test_can_append_request_converter_to_text_chain(self, baked_converter):
+        attack_kwargs = {}
+        if baked_converter:
+            attack_kwargs["attack_converter_config"] = AttackConverterConfig(
+                request_converters=ConverterConfiguration.from_converters(converters=[baked_converter])
+            )
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            attack_kwargs=attack_kwargs,
+        )
+
+        assert factory.can_append_request_converter(converter_type=TranslationConverter)
+
+    def test_cannot_append_text_converter_to_image_chain(self):
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(converters=[QRCodeConverter()])
+                )
+            },
+        )
+
+        assert not factory.can_append_request_converter(converter_type=TranslationConverter)
+
     def test_request_converter_composition_requires_supported_constructor(self):
         class _NoConverterAttack:
             def __init__(self, *, objective_target, attack_scoring_config=None):
@@ -187,7 +216,7 @@ class TestFactoryInit:
             AttackTechniqueFactory(
                 name="test",
                 attack_class=_NoConverterAttack,
-                supports_request_converter_composition=True,
+                supports_additional_request_converters=True,
             )
 
     def test_request_converter_composition_is_explicit_opt_in(self):
@@ -195,11 +224,11 @@ class TestFactoryInit:
         composable_factory = AttackTechniqueFactory(
             name="composable",
             attack_class=_StubAttack,
-            supports_request_converter_composition=True,
+            supports_additional_request_converters=True,
         )
 
-        assert not default_factory.supports_request_converter_composition
-        assert composable_factory.supports_request_converter_composition
+        assert not default_factory.supports_additional_request_converters
+        assert composable_factory.supports_additional_request_converters
 
 
 class TestFactoryCreate:
@@ -969,3 +998,39 @@ class TestUnwrapOptional:
         """A non-type annotation (e.g., string forward ref) returns None."""
         result = AttackTechniqueFactory._unwrap_optional("SomeForwardRef")
         assert result is None
+
+    def test_unwrap_typing_optional_with_none(self):
+        """typing.Optional[X] (legacy typing.Union syntax) should unwrap to X."""
+        # Intentionally uses the legacy typing.Optional/Union construct (rather than `X | None`)
+        # to exercise _unwrap_optional's typing.Union-origin branch specifically.
+        result = AttackTechniqueFactory._unwrap_optional(typing.Optional[AttackScoringConfig])  # noqa: UP045
+        assert result is AttackScoringConfig
+
+    def test_unwrap_typing_union_multi_returns_none(self):
+        """typing.Union of more than one non-None type returns None (ambiguous)."""
+        # Intentionally uses typing.Union (rather than `X | Y`) to exercise _unwrap_optional's
+        # typing.Union-origin branch specifically.
+        result = AttackTechniqueFactory._unwrap_optional(typing.Union[int, str, None])  # noqa: UP007
+        assert result is None
+
+
+class TestGetScoringConfigType:
+    """Tests for AttackTechniqueFactory._get_scoring_config_type."""
+
+    def test_returns_none_when_annotation_is_not_attack_scoring_config_subclass(self):
+        """A resolved, narrowed annotation that isn't an AttackScoringConfig subclass yields None."""
+
+        class _WrongAnnotationAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: int | None = None):
+                pass
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_WrongAnnotationAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_WrongAnnotationAttack,
+            scorer_override_policy=ScorerOverridePolicy.SKIP,
+        )
+
+        assert factory._get_scoring_config_type() is None

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         RegisteredInitializer,
         RegisteredScenario,
         RunScenarioRequest,
+        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
@@ -95,7 +96,7 @@ class PyRITApiClient:
             if resp.status_code != 200:
                 return False
             payload = resp.json()
-            return payload.get("status") == "healthy" and payload.get("service") == "pyrit-backend"
+            return bool(payload.get("status") == "healthy" and payload.get("service") == "pyrit-backend")
         except httpx.ConnectError:
             return False
         except Exception:
@@ -310,17 +311,48 @@ class PyRITApiClient:
         self._raise_for_status(resp)
         return ScenarioRunSummary.model_validate(resp.json())
 
-    async def list_scenario_runs_async(self, *, limit: int = 100) -> list[ScenarioRunSummary]:
+    async def list_scenario_runs_async(self, *, limit: int = 100) -> list[ScenarioRunListItem]:
         """
         List tracked scenario runs.
 
         Returns:
-            list[ScenarioRunSummary]: All tracked scenario runs.
+            list[ScenarioRunListItem]: All tracked scenario runs.
         """
-        from pyrit.models.catalog import ScenarioRunSummary
+        from pyrit.models.catalog import ScenarioRunListItem
 
         payload = await self._get_json_async(path="/api/scenarios/runs", params={"limit": limit})
-        return [ScenarioRunSummary.model_validate(item) for item in payload.get("items", [])]
+        return [ScenarioRunListItem.model_validate(item) for item in payload.get("items", [])]
+
+    # ------------------------------------------------------------------
+    # Attacks / conversations
+    # ------------------------------------------------------------------
+
+    async def get_conversation_messages_async(
+        self,
+        *,
+        attack_result_id: str,
+        conversation_id: str,
+    ) -> dict[str, Any]:
+        """
+        Get all messages for one conversation belonging to an attack result.
+
+        Returns the raw ``ConversationMessagesResponse`` payload (rather than a
+        typed backend view model) so the thin client stays decoupled from
+        ``pyrit.backend.models``; ``pyrit.cli._results`` maps it into its own
+        view payload.
+
+        Args:
+            attack_result_id (str): The attack result whose conversation to read.
+            conversation_id (str): The conversation whose messages to return.
+
+        Returns:
+            dict[str, Any]: The ``ConversationMessagesResponse`` payload
+                (``conversation_id`` plus an ordered ``messages`` list).
+        """
+        return await self._get_json_async(
+            path=f"/api/attacks/{attack_result_id}/messages",
+            params={"conversation_id": conversation_id},
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -405,9 +437,9 @@ class PyRITApiClient:
         if isinstance(text, bytes):
             text = text.decode(errors="replace")
         if isinstance(text, str):
-            text = text.strip()
-            if text:
-                return text
+            stripped_text: str = text.strip()
+            if stripped_text:
+                return stripped_text
         return None
 
     @staticmethod

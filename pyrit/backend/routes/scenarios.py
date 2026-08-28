@@ -26,7 +26,7 @@ from pyrit.models import ScenarioResult
 from pyrit.models.catalog.scenario import (
     RegisteredScenario,
     RunScenarioRequest,
-    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
     ScenarioRunSummary,
 )
@@ -92,7 +92,7 @@ async def get_scenario(scenario_name: str) -> RegisteredScenario:  # pyrit-async
 
 @router.post(
     "/catalog/{scenario_name}/estimate",
-    response_model=ScenarioDefaultRunSizeEstimate,
+    response_model=ScenarioRunSizeEstimate,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid estimate configuration"},
         404: {"model": ProblemDetail, "description": "Scenario not found"},
@@ -102,7 +102,7 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
     *,
     scenario_name: str,
     request: ScenarioRunSizeEstimateRequest,
-) -> ScenarioDefaultRunSizeEstimate:
+) -> ScenarioRunSizeEstimate:
     """
     Estimate a configured scenario without creating or persisting a run.
 
@@ -111,7 +111,7 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
         request: Techniques, datasets, baseline choice, and scenario parameters to preview.
 
     Returns:
-        ScenarioDefaultRunSizeEstimate: Structured request-specific planned-unit estimate.
+        ScenarioRunSizeEstimate: Structured request-specific planned-unit estimate.
     """
     service = get_scenario_service()
     try:
@@ -165,7 +165,9 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
     "/runs",
     response_model=ScenarioRunListResponse,
 )
-async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListResponse:  # pyrit-async-suffix-exempt
+async def list_scenario_runs(
+    limit: int = Query(100, ge=1, le=100),
+) -> ScenarioRunListResponse:  # pyrit-async-suffix-exempt
     """
     List tracked scenario runs (most recent first).
 
@@ -176,7 +178,7 @@ async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListRe
         ScenarioRunListResponse: Runs, most recent first.
     """
     service = get_scenario_run_service()
-    return service.list_runs(limit=limit)
+    return await run_in_threadpool(service.list_runs, limit=limit)
 
 
 @router.get(

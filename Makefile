@@ -23,11 +23,11 @@ ty:
 # 3. Build the Jupyter Book site (HTML only — fast, no LaTeX needed)
 # 4. Generate RSS feed
 docs-build:
-	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
-	uv run python build_scripts/gen_api_md.py
+	uv run python -m build_scripts.pydoc2json pyrit --submodules -o doc/_api/pyrit_all.json
+	uv run python -m build_scripts.gen_api_md
 	# --strict validates URLs and cross-refs; skips are configured in doc/myst.yml under error_rules
 	cd doc && uv run jupyter-book build --all --html --strict
-	uv run ./build_scripts/generate_rss.py
+	uv run python -m build_scripts.generate_rss
 
 # Build the full documentation site including the PDF export.
 # Mirrors the ReadTheDocs build (.readthedocs.yaml) so CI catches PDF-only issues
@@ -35,16 +35,16 @@ docs-build:
 # Requires xelatex / latexmk on PATH (texlive-xetex + texlive-fonts-recommended +
 # texlive-plain-generic + latexmk on Ubuntu).
 docs-build-all:
-	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
-	uv run python build_scripts/gen_api_md.py
+	uv run python -m build_scripts.pydoc2json pyrit --submodules -o doc/_api/pyrit_all.json
+	uv run python -m build_scripts.gen_api_md
 	# --strict validates URLs and cross-refs; skips are configured in doc/myst.yml under error_rules
 	cd doc && uv run jupyter-book build --all --html --pdf --strict
-	uv run ./build_scripts/generate_rss.py
+	uv run python -m build_scripts.generate_rss
 
 # Regenerate only the API reference pages (without building the full site)
 docs-api:
-	uv run python build_scripts/pydoc2json.py pyrit --submodules -o doc/_api/pyrit_all.json
-	uv run python build_scripts/gen_api_md.py
+	uv run python -m build_scripts.pydoc2json pyrit --submodules -o doc/_api/pyrit_all.json
+	uv run python -m build_scripts.gen_api_md
 
 # Because of import time, "auto" seemed to actually go slower than just using 4 processes
 unit-test:

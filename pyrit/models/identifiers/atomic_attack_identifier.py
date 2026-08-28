@@ -22,7 +22,7 @@ from pyrit.models.identifiers.attack_identifier import AttackIdentifier
 from pyrit.models.identifiers.attack_technique_identifier import AttackTechniqueIdentifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.identifiers.evaluation_markers import Evaluate
-from pyrit.models.identifiers.seed_identifier import SeedIdentifier, logical_seed_group_fingerprint
+from pyrit.models.identifiers.seed_identifier import SeedIdentifier, compute_seed_group_hash
 
 if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedGroup
@@ -113,4 +113,4 @@ class AtomicAttackIdentifier(ComponentIdentifier):
     @property
     def logical_seed_group_id(self) -> str:
         """The logical seed-group ID represented by the ordered seed identifiers."""
-        return logical_seed_group_fingerprint(self.seed_identifiers)
+        return compute_seed_group_hash(self.seed_identifiers)

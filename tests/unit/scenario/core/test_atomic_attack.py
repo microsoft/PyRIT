@@ -314,6 +314,20 @@ class TestAtomicAttackExecution:
             assert "seed_groups" in call_kwargs
             assert call_kwargs["seed_groups"] == sample_seed_groups
 
+    async def test_run_async_raises_when_executor_returns_non_attack_result(self, mock_attack, sample_seed_groups):
+        """Test that a non-AttackResult item from the executor raises ValueError."""
+        atomic_attack = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="Test Attack Run",
+        )
+
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = wrap_results(["not-an-attack-result"])
+
+            with pytest.raises(ValueError, match="unsupported result type"):
+                await atomic_attack.run_async()
+
     async def test_run_async_passes_attack_execute_params(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that attack execute parameters are passed to the executor."""
         atomic_attack = AtomicAttack(

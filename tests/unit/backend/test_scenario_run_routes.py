@@ -23,7 +23,7 @@ from pyrit.models import (
     ScenarioRunProgress,
     ScenarioRunState,
 )
-from pyrit.models.catalog.scenario import ScenarioRunSummary
+from pyrit.models.catalog.scenario import ScenarioRunListItem, ScenarioRunSummary
 from unit.mocks import make_scenario_result
 
 
@@ -166,21 +166,33 @@ class TestListScenarioRunsRoute:
 
     def test_list_runs_returns_200(self, client: TestClient) -> None:
         """Test that list runs returns 200 with empty list."""
+        route_thread: list[int] = []
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.return_value = ScenarioRunListResponse(items=[])
+            mock_service.list_runs.side_effect = lambda **_: (
+                route_thread.append(get_ident()) or ScenarioRunListResponse(items=[])
+            )
             mock_get.return_value = mock_service
 
+            request_thread = get_ident()
             response = client.get("/api/scenarios/runs")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["items"] == []
+        assert route_thread[0] != request_thread
+
+    def test_list_runs_rejects_unbounded_limit(self, client: TestClient) -> None:
+        response = client.get("/api/scenarios/runs?limit=101")
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_list_runs_returns_multiple_runs(self, client: TestClient) -> None:
         """Test that list runs returns all tracked runs."""
         runs = [
-            _mock_run_response(run_id="run-1"),
-            _mock_run_response(run_id="run-2", run_status=ScenarioRunState.IN_PROGRESS),
+            ScenarioRunListItem.model_validate(_mock_run_response(run_id="run-1").model_dump()),
+            ScenarioRunListItem.model_validate(
+                _mock_run_response(run_id="run-2", run_status=ScenarioRunState.IN_PROGRESS).model_dump()
+            ),
         ]
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:

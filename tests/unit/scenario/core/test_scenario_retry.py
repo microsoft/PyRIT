@@ -257,7 +257,7 @@ def mock_atomic_attacks():
 @pytest.fixture
 def mock_objective_target():
     """Create a mock objective target for testing."""
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = ComponentIdentifier(
         class_name="MockTarget",
         class_module=TEST_MODULE,
