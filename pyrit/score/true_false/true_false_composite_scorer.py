@@ -21,8 +21,8 @@ from pyrit.models import (
 )
 from pyrit.score.message_scorer import (
     LegacyMessageScorerCompatibility,
-    score_blocked_content_enabled,
     score_nested_message_compatibility_async,
+    should_score_blocked_content,
 )
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -116,14 +116,14 @@ class TrueFalseCompositeScorer(LegacyMessageScorerCompatibility, TrueFalseScorer
             conditions.update(scorer.required_conditions())
         return frozenset(conditions)
 
-    def _get_nested_score_blocked_content(self) -> bool:
+    def _should_score_nested_blocked_content(self) -> bool:
         """
         Score partial blocked content only when every child permits it.
 
         Returns:
             bool: Whether every child permits partial blocked content.
         """
-        return all(score_blocked_content_enabled(scorer=scorer) for scorer in self._scorers)
+        return all(should_score_blocked_content(scorer=scorer) for scorer in self._scorers)
 
     async def _score_scorable_async(
         self,

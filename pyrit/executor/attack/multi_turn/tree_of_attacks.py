@@ -1555,7 +1555,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             A blocked response that still carries ``prompt_metadata["partial_content"]`` is
             scored on that content. A block with nothing behind it is scored ``0.0`` via the
             unified ``FloatScaleScorer`` default, which prevents premature pruning without any
-            attack-level error mapping. Set ``score_blocked_content=False`` on the objective
+            attack-level error mapping. Set ``should_score_blocked_content=False`` on the objective
             scorer to treat every block that way.
         """
         self._configuration = _TAPAttackConfiguration(

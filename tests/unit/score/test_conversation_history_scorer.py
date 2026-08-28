@@ -535,8 +535,8 @@ def test_conversation_scorer_validates_true_false_scores():
         conv_scorer.validate_return_scores([invalid_score])
 
 
-async def test_conversation_scorer_uses_partial_content_when_score_blocked_content_enabled(patch_central_database):
-    """When score_blocked_content is True, blocked pieces in conversation history use partial_content."""
+async def test_conversation_scorer_uses_partial_content_when_blocked_content_scoring_enabled(patch_central_database):
+    """When should_score_blocked_content is True, blocked conversation pieces use partial content."""
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
 
@@ -585,7 +585,7 @@ async def test_conversation_scorer_uses_partial_content_when_score_blocked_conte
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    scorer.score_blocked_content = True
+    scorer.should_score_blocked_content = True
     scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
     assert len(scores) == 1
@@ -601,8 +601,8 @@ async def test_conversation_scorer_uses_partial_content_when_score_blocked_conte
     assert called_piece.converted_value == expected_conversation
 
 
-async def test_conversation_scorer_uses_error_json_when_score_blocked_content_disabled(patch_central_database):
-    """When score_blocked_content is False, blocked pieces use converted_value (error JSON)."""
+async def test_conversation_scorer_uses_error_json_when_blocked_content_scoring_disabled(patch_central_database):
+    """When should_score_blocked_content is False, blocked pieces use the error JSON."""
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
 
@@ -651,7 +651,7 @@ async def test_conversation_scorer_uses_error_json_when_score_blocked_content_di
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    scorer.score_blocked_content = False
+    scorer.should_score_blocked_content = False
     scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
     assert len(scores) == 1

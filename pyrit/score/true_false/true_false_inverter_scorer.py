@@ -17,8 +17,8 @@ from pyrit.models import (
 )
 from pyrit.score.message_scorer import (
     LegacyMessageScorerCompatibility,
-    score_blocked_content_enabled,
     score_nested_message_compatibility_async,
+    should_score_blocked_content,
 )
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -84,14 +84,14 @@ class TrueFalseInverterScorer(LegacyMessageScorerCompatibility, TrueFalseScorer)
         """
         return self._scorer.required_conditions()
 
-    def _get_nested_score_blocked_content(self) -> bool:
+    def _should_score_nested_blocked_content(self) -> bool:
         """
         Delegate partial-blocked-content handling to the wrapped scorer.
 
         Returns:
             bool: Whether the wrapped scorer permits partial blocked content.
         """
-        return score_blocked_content_enabled(scorer=self._scorer)
+        return should_score_blocked_content(scorer=self._scorer)
 
     async def _score_scorable_async(
         self,

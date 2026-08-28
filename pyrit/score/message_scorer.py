@@ -95,7 +95,7 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     )
 
 
-def message_has_readable_content(*, message: Message, score_blocked_content: bool) -> bool:
+def message_has_readable_content(*, message: Message, should_score_blocked_content: bool) -> bool:
     """
     Decide whether a message carries anything a scorer can read.
 
@@ -106,18 +106,18 @@ def message_has_readable_content(*, message: Message, score_blocked_content: boo
 
     Args:
         message (Message): The message to judge.
-        score_blocked_content (bool): Whether content emitted before a block counts as readable.
+        should_score_blocked_content (bool): Whether content emitted before a block counts as readable.
 
     Returns:
         bool: True when at least one piece is worth scoring.
     """
     return any(
-        _piece_has_readable_content(piece=piece, score_blocked_content=score_blocked_content)
+        _piece_has_readable_content(piece=piece, should_score_blocked_content=should_score_blocked_content)
         for piece in message.message_pieces
     )
 
 
-def _piece_has_readable_content(*, piece: MessagePiece, score_blocked_content: bool) -> bool:
+def _piece_has_readable_content(*, piece: MessagePiece, should_score_blocked_content: bool) -> bool:
     """
     Decide whether a single piece carries anything a scorer can read.
 
@@ -130,10 +130,10 @@ def _piece_has_readable_content(*, piece: MessagePiece, score_blocked_content: b
     if piece.structured_refusal is not None:
         return True
     # Content the target emitted before the block is real output, when the caller opted in.
-    return score_blocked_content and piece.is_blocked() and bool(piece.prompt_metadata.get("partial_content"))
+    return should_score_blocked_content and piece.is_blocked() and bool(piece.prompt_metadata.get("partial_content"))
 
 
-def score_blocked_content_enabled(*, scorer: Scorer) -> bool:
+def should_score_blocked_content(*, scorer: Scorer) -> bool:
     """
     Return the effective partial-blocked-content policy for a scorer tree.
 
@@ -146,7 +146,7 @@ def score_blocked_content_enabled(*, scorer: Scorer) -> bool:
     Returns:
         bool: Whether partial content from blocked responses can be scored.
     """
-    return bool(getattr(scorer, "score_blocked_content", False))
+    return bool(getattr(scorer, "should_score_blocked_content", False))
 
 
 class MessageScorer(Scorer):
@@ -168,7 +168,7 @@ class MessageScorer(Scorer):
 
     #: When True, a blocked response that still carries content the target emitted before the
     #: block is scored on that content. Turn off to treat any block as unreadable.
-    score_blocked_content: bool = True
+    should_score_blocked_content: bool = True
 
     def __init__(
         self,
@@ -576,7 +576,7 @@ class MessageScorer(Scorer):
             return []
         if skip_on_error_result and not message_has_readable_content(
             message=response,
-            score_blocked_content=score_blocked_content_enabled(scorer=scorer),
+            should_score_blocked_content=should_score_blocked_content(scorer=scorer),
         ):
             return []
         return await scorer.score_async(
@@ -713,7 +713,7 @@ class MessageScorer(Scorer):
 
         if options.skip_on_error_result and not message_has_readable_content(
             message=message,
-            score_blocked_content=self.score_blocked_content,
+            should_score_blocked_content=self.should_score_blocked_content,
         ):
             return []
 
@@ -888,7 +888,7 @@ class MessageScorer(Scorer):
             for piece in message.message_pieces
             if _piece_has_readable_content(
                 piece=piece,
-                score_blocked_content=self.score_blocked_content,
+                should_score_blocked_content=self.should_score_blocked_content,
             )
         ]
         if not readable_pieces:
@@ -897,7 +897,7 @@ class MessageScorer(Scorer):
 
         scoring_message = Message(message_pieces=readable_pieces)
         scoring_message = self._apply_structured_refusal_substitution(scoring_message)
-        if self.score_blocked_content:
+        if self.should_score_blocked_content:
             scoring_message = self._apply_blocked_content_substitution(scoring_message)
         return scoring_message
 
@@ -1207,21 +1207,21 @@ class LegacyMessageScorerCompatibility(ABC):
     ``isinstance`` check here recognizes them too.
     """
 
-    _score_blocked_content_override: bool | None = None
+    _should_score_blocked_content_override: bool | None = None
 
     @property
-    def score_blocked_content(self) -> bool:
+    def should_score_blocked_content(self) -> bool:
         """The explicit override or policy delegated by the wrapped scorer tree."""
-        if self._score_blocked_content_override is not None:
-            return self._score_blocked_content_override
-        return self._get_nested_score_blocked_content()
+        if self._should_score_blocked_content_override is not None:
+            return self._should_score_blocked_content_override
+        return self._should_score_nested_blocked_content()
 
-    @score_blocked_content.setter
-    def score_blocked_content(self, value: bool) -> None:
+    @should_score_blocked_content.setter
+    def should_score_blocked_content(self, value: bool) -> None:
         """Override the delegated blocked-content policy for compatibility calls."""
-        self._score_blocked_content_override = value
+        self._should_score_blocked_content_override = value
 
-    def _get_nested_score_blocked_content(self) -> bool:
+    def _should_score_nested_blocked_content(self) -> bool:
         """Return the blocked-content policy delegated by this wrapper's children."""
         return False
 
@@ -1394,7 +1394,7 @@ class _LegacyMessageScorerAdapter(MessageScorer):
             validator=getattr(scorer, "_validator", None) or ScorerPromptValidator(),
             chat_target=scorer.get_chat_target(),
         )
-        self.score_blocked_content = score_blocked_content_enabled(scorer=scorer)
+        self.should_score_blocked_content = should_score_blocked_content(scorer=scorer)
         # The wrapped scorer used to carry this policy itself, so keep honoring its choice.
         self.raise_if_scorer_blocks = bool(getattr(scorer, "raise_if_scorer_blocks", True))
 

@@ -2248,7 +2248,7 @@ class TestScorerResponseBlocked:
         assert "blocked by content filtering" in scores[0].score_rationale
 
 
-# ── Helpers for score_blocked_content tests ──────────────────────────────────
+# ── Helpers for should_score_blocked_content tests ───────────────────────────
 
 
 class _AcceptAllValidator(ScorerPromptValidator):
@@ -2435,7 +2435,7 @@ class TestCreateTextPieceFromStructuredRefusal:
         assert MessageScorer._create_text_piece_from_structured_refusal(_make_blocked_piece()) is None
 
 
-# ── score_async with score_blocked_content tests ─────────────────────────────
+# ── score_async with should_score_blocked_content tests ──────────────────────
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -2443,7 +2443,7 @@ class TestScoreAsyncWithBlockedContent:
     async def test_disabled_skips_blocked_piece_text_only_scorer(self):
         """With the flag off, a text-only scorer filters out blocked error-type pieces."""
         scorer = _BlockedContentScorer()
-        scorer.score_blocked_content = False
+        scorer.should_score_blocked_content = False
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(msg)))
@@ -2468,7 +2468,7 @@ class TestScoreAsyncWithBlockedContent:
     async def test_refusal_scorer_does_not_receive_unreadable_blocked_piece(self):
         """A raw error piece does not reach a leaf scorer when blocked content is disabled."""
         scorer = _MockRefusalScorer()
-        scorer.score_blocked_content = False
+        scorer.should_score_blocked_content = False
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(msg)))
@@ -2505,10 +2505,10 @@ class TestScoreAsyncWithBlockedContent:
         scorer = _BlockedContentScorer()
         msg = Message(message_pieces=[_make_normal_piece()])
 
-        scorer.score_blocked_content = False
+        scorer.should_score_blocked_content = False
         scores_off = await scorer.score_async(scorable=MessageScorable.from_message(store_message(msg)))
         scorer.scored_pieces.clear()
-        scorer.score_blocked_content = True
+        scorer.should_score_blocked_content = True
         scores_on = await scorer.score_async(scorable=MessageScorable.from_message(store_message(msg)))
 
         assert scores_off[0].score_value == scores_on[0].score_value
@@ -2534,7 +2534,7 @@ class TestScoreAsyncWithBlockedContent:
 class TestSkipOnErrorWithBlockedContent:
     async def test_skip_on_error_true_with_flag_disabled_skips_blocked(self):
         scorer = _BlockedContentScorer()
-        scorer.score_blocked_content = False
+        scorer.should_score_blocked_content = False
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         scores = await scorer.score_async(
@@ -2660,7 +2660,7 @@ class TestScoreResponseAsyncBlockedContent:
 
     async def test_score_response_async_disabled_does_not_substitute(self):
         obj_scorer = _BlockedContentScorer()
-        obj_scorer.score_blocked_content = False
+        obj_scorer.should_score_blocked_content = False
         msg = Message(message_pieces=[_make_blocked_piece(partial_content="harmful text")])
 
         result = await MessageScorer.score_response_async(

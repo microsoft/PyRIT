@@ -77,7 +77,7 @@ class ConversationScorer(MessageScorer, ABC):
         The synthetic conversation Message is always built as ``text`` regardless of the
         triggering piece's data type or error state. Errors from individual turns are
         preserved within the rendered text (either as the partial content, or as the rendered
-        error JSON when ``score_blocked_content`` is turned off). This ensures the wrapped
+        error JSON when ``should_score_blocked_content`` is turned off). This ensures the wrapped
         scorer's text-only validator accepts the synthetic message and scores the full
         conversation, even when the triggering turn was blocked or errored; the wrapped
         scorer's fallback only fires when the rendered conversation is genuinely unscoreable.
@@ -126,9 +126,9 @@ class ConversationScorer(MessageScorer, ABC):
                 if piece.api_role in ["user", "assistant", "tool"]:
                     role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
                     # For blocked pieces with partial content, use the partial content
-                    # instead of the error JSON when score_blocked_content is enabled
+                    # instead of the error JSON when should_score_blocked_content is enabled
                     if (
-                        self.score_blocked_content
+                        self.should_score_blocked_content
                         and piece.is_blocked()
                         and piece.prompt_metadata.get("partial_content")
                     ):

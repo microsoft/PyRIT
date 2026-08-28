@@ -167,7 +167,7 @@ def _lend_legacy_message_api(cls: type) -> None:
         )
     }
     lent["_score_prepared_message_compatibility_async"] = _legacy_score_prepared_message_async
-    lent["score_blocked_content"] = True
+    lent["should_score_blocked_content"] = True
     # The pre-2.0 family base defaulted the validator, so a subclass that passes none still
     # needs one. An instance assignment in the subclass shadows this class-level default.
     lent["_validator"] = ScorerPromptValidator()
