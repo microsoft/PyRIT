@@ -476,7 +476,7 @@ test.describe("Mobile touch targets", () => {
       page.getByTestId("toggle-objective-header-btn")
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "Configuration", exact: true }).click();
+    await page.getByRole("button", { name: "Targets", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
     await page.getByRole("button", { name: "Set Active" }).first().click();
     await page.goBack();

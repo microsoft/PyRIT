@@ -41,8 +41,8 @@ describe('Configuration', () => {
     })
     mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({
       items: [
-        { id: '0', name: '.env', path: 'C:/Users/test/.pyrit/.env', content: '', exists: true },
-        { id: '1', name: '.env.local', path: 'C:/Users/test/.pyrit/.env.local', content: '', exists: false },
+        { id: '0', name: '.env', path: 'C:/Users/test/.pyrit/.env', content: '', exists: true, version: 'v1' },
+        { id: '1', name: '.env.local', path: 'C:/Users/test/.pyrit/.env.local', content: '', exists: false, version: 'v1' },
       ],
     })
     mockedConfigurationApi.getEnvironmentFile.mockResolvedValue({
@@ -51,6 +51,7 @@ describe('Configuration', () => {
       path: 'C:/Users/test/.pyrit/.env',
       content: 'API_KEY=value\n',
       exists: true,
+      version: 'v1',
     })
     mockedInitializersApi.listCustom.mockResolvedValue({
       source: 'C:/Users/test/.pyrit/custom_initializers',
@@ -109,6 +110,7 @@ describe('Configuration', () => {
       path: 'C:/Users/test/.pyrit/.env',
       content: 'API_KEY=updated\n',
       exists: true,
+      version: 'v2',
     })
     renderPage()
 
@@ -127,6 +129,7 @@ describe('Configuration', () => {
 
     expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenCalledWith('0', {
       content: 'API_KEY=updated\n',
+      version: 'v1',
     })
   })
 
@@ -135,7 +138,7 @@ describe('Configuration', () => {
     const secretUrl = 'https://vault.vault.azure.net/secrets/bootstrap'
     mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({
       items: [
-        { id: 'akv:0', name: 'AKV: bootstrap', path: secretUrl, content: '', exists: true },
+        { id: 'akv:0', name: 'AKV: bootstrap', path: secretUrl, content: '', exists: true, version: 'v1' },
       ],
     })
     mockedConfigurationApi.getEnvironmentFile.mockResolvedValue({
@@ -144,6 +147,7 @@ describe('Configuration', () => {
       path: secretUrl,
       content: 'API_KEY=before\n',
       exists: true,
+      version: 'v1',
     })
     mockedConfigurationApi.updateEnvironmentFile.mockResolvedValue({
       id: 'akv:0',
@@ -151,6 +155,7 @@ describe('Configuration', () => {
       path: secretUrl,
       content: 'API_KEY=after\n',
       exists: true,
+      version: 'v2',
     })
     renderPage()
 
@@ -165,6 +170,7 @@ describe('Configuration', () => {
 
     expect(mockedConfigurationApi.updateEnvironmentFile).toHaveBeenCalledWith('akv:0', {
       content: 'API_KEY=after\n',
+      version: 'v1',
     })
   })
 
