@@ -1921,18 +1921,29 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
 
         return record
 
-    def _release_best_conversation(self, context: TAPAttackContext) -> None:
+    def _release_best_conversation(self, context: TAPAttackContext, *, previous_best: str | None = None) -> None:
         """
-        Stop reporting the winning branch as pruned.
+        Stop reporting the current best branch as pruned.
 
         Every conversation is recorded while the run is in flight, before there is
-        any way to know which branch will win. The one that does becomes
-        ``result.conversation_id``, so leaving it in ``related_conversations`` would
-        report it twice.
+        any way to know which branch will lead. Whichever one does becomes
+        ``result.conversation_id``, so leaving it in ``related_conversations``
+        would report it twice: the backend adds the main conversation's message
+        count to the pruned ones, and the report printers list it in both places.
+
+        Called whenever the lead is recomputed, which is the last step of every
+        iteration, so the invariant holds at every instant rather than only once a
+        result exists. A run that raises never builds a result and would otherwise
+        report its own conversation twice. A branch that led and then lost it is an
+        abandoned branch again, so it goes back.
 
         Args:
             context (TAPAttackContext): The attack context.
+            previous_best (str | None): The branch that was leading before, if the
+                lead just changed.
         """
+        if previous_best and previous_best != context.best_conversation_id:
+            self._make_objective_conversation_recorder(context=context)(previous_best)
         if not context.best_conversation_id:
             return
         context.related_conversations.discard(
@@ -2193,6 +2204,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         # but we ensure it is sorted to avoid making any assumptions
         # about the order of nodes in context.nodes.
         completed_nodes = self._get_completed_nodes_sorted_by_score(context.nodes)
+        previous_best = context.best_conversation_id
 
         if completed_nodes:
             best_node = completed_nodes[0]
@@ -2209,6 +2221,8 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                     context.best_objective_score = node.objective_score
                     context.best_adversarial_conversation_id = node.adversarial_chat_conversation_id
                     break
+
+        self._release_best_conversation(context, previous_best=previous_best)
 
     def _create_attack_node(
         self,
@@ -2436,10 +2450,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         from the top node, calculates tree statistics, and populates all TAP-specific
         metadata fields.
 
-        Drops the winning branch from ``context.related_conversations`` before
-        copying it onto the result, since which branch wins is only known once the
-        run is over. Both endings come through here, so that happens exactly once.
-
         Args:
             context (TAPAttackContext): The attack context containing the final state
                 after execution, including best conversation ID, score, and tree visualization.
@@ -2451,8 +2461,6 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 about the attack execution, including conversation ID, objective, outcome,
                 outcome reason, executed turns, last response, last score, and additional metadata.
         """
-        self._release_best_conversation(context)
-
         last_response = self._get_result_response(
             conversation_id=context.best_conversation_id,
             score=context.best_objective_score,

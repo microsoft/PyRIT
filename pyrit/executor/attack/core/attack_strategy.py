@@ -173,22 +173,24 @@ def _resolve_live_conversation_id(*, context: AttackContext[Any]) -> str | None:
     """
     Return the objective-target conversation the run is currently using.
 
-    A context that declares ``conversation_id`` answers for itself, including when
-    the answer is that it has none: ``TAPAttackContext`` reports the best branch
-    and has nothing to report before the first one is chosen. Only a context
-    without the attribute falls through to its conversation session, which is
-    where multi-turn contexts keep it.
+    Single-turn contexts expose it directly and multi-turn contexts keep it on
+    their conversation session. ``TAPAttackContext`` overrides
+    ``conversation_id`` to report the best branch, so the first lookup covers it.
+
+    This is the lookup #2322 gave the error-result builder, moved here so that
+    builder and the teardown reset resolve a run's conversation the same way
+    rather than walking the context twice.
 
     Args:
         context (AttackContext[Any]): The context for the attack.
 
     Returns:
-        str | None: The conversation id, or ``None`` when the context has none.
+        str | None: The conversation id, or ``None`` when the context exposes
+            neither layout.
     """
-    if hasattr(context, "conversation_id"):
-        candidate = getattr(context, "conversation_id", None)
-    else:
-        candidate = getattr(getattr(context, "session", None), "conversation_id", None)
+    candidate = getattr(context, "conversation_id", None) or getattr(
+        getattr(context, "session", None), "conversation_id", None
+    )
     return candidate if isinstance(candidate, str) and candidate else None
 
 
@@ -762,9 +764,13 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         converter targets have their own lifetimes and are not released here.
 
         This runs in the ``finally`` of the execution lifecycle, so it covers
-        runs that succeed, runs that raise and runs that are cancelled, and a
-        target that raises here is logged rather than allowed to replace
-        whatever error the attack was already reporting.
+        runs that succeed, runs that raise and runs that are cancelled. An
+        ``Exception`` from a target is logged rather than allowed to replace
+        whatever error the attack was already reporting. Cancellation is not
+        caught: if the run is cancelled while this is releasing, it propagates
+        and the conversations after it are left to ``cleanup_target_async``,
+        because swallowing a ``CancelledError`` to finish a cleanup loop is
+        worse than not finishing it.
 
         Subclasses that need their own teardown should override this and call
         ``await super()._teardown_async(context=context)``.

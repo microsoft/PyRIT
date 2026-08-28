@@ -69,7 +69,7 @@ on the objective target for every conversation the run used. That includes conve
 
 The base implementation does nothing, so a target that keeps no state between calls does not need to override it. `RealtimeTarget` and `WebsocketTarget` override it to close the websocket each caches per conversation. If you write a target that holds something similar, override it and release that state there. Do not raise for a conversation id you do not recognize, since the attack calls this while it is tearing down and treats it as best effort.
 
-The reset runs from the attack's teardown, which is in the `finally` of the execution lifecycle, so it covers runs that succeed, runs that raise and runs that are cancelled.
+The reset runs from the attack's teardown, which is in the `finally` of the execution lifecycle, so it covers runs that succeed, runs that raise and runs that are cancelled. An error from your implementation is logged and swallowed, but a `CancelledError` is not: cancelling a run while it is releasing stops the release, and whatever is left is `cleanup_target_async`'s job.
 
 Two things are deliberately out of scope. **Only the objective target is reset.** An attack can also drive an adversarial chat target, a scorer target and converter targets; those have their own lifetimes and are not released here, which is why the adversarial conversations an attack records are skipped. And **closing the target as a whole** is a different lifetime from releasing one conversation, so it stays where it is rather than moving into this hook.
 

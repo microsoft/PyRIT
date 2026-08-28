@@ -1620,6 +1620,19 @@ class TestTreeOfAttacksNode:
         assert child_node.parent_id == parent_node.node_id
         assert child_node.completed is False
 
+    def test_node_duplicate_keeps_reporting_its_conversations(self, node_components):
+        """A child sends on its own conversation, so it needs the same recorder as its parent."""
+        reported: list[str] = []
+        components = {**node_components, "report_objective_conversation": reported.append}
+        parent_node = _TreeOfAttacksNode(**components)
+
+        with patch.object(parent_node._memory, "duplicate_conversation", return_value="new_conv_id"):
+            child_node = parent_node.duplicate()
+
+        child_node._report_objective_conversation(child_node.objective_target_conversation_id)
+
+        assert reported == ["new_conv_id"]
+
     def _node_with_schema(self, node_components, schema):
         """Build a real node whose adversarial system prompt advertises ``schema``.
 
@@ -3321,16 +3334,16 @@ class TestTAPConversationReset:
         assert context.session.conversation_id not in ids
 
     def test_a_conversation_is_recorded_as_soon_as_it_is_sent_on(self, basic_attack):
-        context = self._context_with_nodes()
+        context = self._context_with_nodes("node-a")
         record = basic_attack._make_objective_conversation_recorder(context=context)
 
         record("turn-1")
         record("turn-2")
 
         # Recorded while the run is still going, so a run that raises or is
-        # cancelled can still name them. related_conversations is a set, so the
-        # order the lookup returns them in is not meaningful.
-        assert set(basic_attack._get_objective_conversation_ids(context=context)) == {"turn-1", "turn-2"}
+        # cancelled can still name them.
+        ids = set(basic_attack._get_objective_conversation_ids(context=context))
+        assert {"turn-1", "turn-2"} <= ids
 
     def test_recording_the_same_conversation_twice_records_it_once(self, basic_attack):
         context = self._context_with_nodes()
@@ -3500,6 +3513,20 @@ class TestTAPConversationsAreAllReachable:
 
         assert set(attack._get_objective_conversation_ids(context=context)) == result.get_active_conversation_ids()
 
+    async def test_a_branched_node_reports_its_own_conversations(self, attack_builder):
+        """A child gets its own conversation from duplicate(), and must report on it too."""
+        attack, served = self._run_and_collect(
+            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=1, branching=2
+        )
+        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
+
+        result = await self._execute(attack, context)
+
+        # width=1 keeps one node per level, so every conversation beyond the first
+        # belongs to a branch, and nothing else records those for us.
+        assert len(set(served)) > 1, "branching has to have produced more than one conversation"
+        assert set(served) <= result.get_active_conversation_ids()
+
     async def test_the_winning_conversation_is_not_also_reported_as_pruned(self, attack_builder):
         attack, served = self._run_and_collect(
             attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=2, branching=2
@@ -3513,6 +3540,32 @@ class TestTAPConversationsAreAllReachable:
         # any way to know which branch wins. The winner has to come back out.
         assert result.conversation_id not in result.get_pruned_conversation_ids()
         assert result.conversation_id in result.get_active_conversation_ids()
+
+    async def test_a_run_that_raises_does_not_report_its_own_conversation_as_pruned(self, attack_builder):
+        """The backend adds the main conversation's messages to the pruned ones, so it cannot be in both."""
+        attack, served = self._run_and_collect(
+            attack_builder=attack_builder, supports_multi_turn=True, depth=3, width=2, branching=1
+        )
+        context = TAPAttackContext(params=AttackParameters(objective="Test objective"))
+
+        iterations = {"count": 0}
+        prepare = type(attack)._prepare_nodes_for_iteration_async
+
+        async def fail_on_the_second_iteration(self, context):
+            iterations["count"] += 1
+            if iterations["count"] >= 2:
+                raise ValueError("blew up mid-run")
+            await prepare(self, context=context)
+
+        with patch.object(type(attack), "_prepare_nodes_for_iteration_async", new=fail_on_the_second_iteration):
+            with pytest.raises(ValueError):
+                await self._execute(attack, context)
+
+        # No result is built on this path, so the invariant has to already hold on
+        # the context the error result is assembled from.
+        assert context.best_conversation_id, "a branch has to have taken the lead"
+        pruned = {ref.conversation_id for ref in context.related_conversations}
+        assert context.best_conversation_id not in pruned
 
     async def test_a_run_that_raises_still_names_everything_it_served(self, attack_builder):
         """The path that matters most, because a run that blew up is the one holding connections."""
