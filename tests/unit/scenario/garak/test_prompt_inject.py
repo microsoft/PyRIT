@@ -74,12 +74,12 @@ class TestPromptInjectInitialization:
     def test_required_datasets_are_internal_template_sources(self) -> None:
         assert PromptInject.required_datasets() == ["promptinject_contexts"]
 
-    def test_default_dataset_config_uses_standard_global_cap(self) -> None:
+    def test_default_dataset_config_caps_context_goal_groups(self) -> None:
         config = PromptInject()._default_dataset_config
 
         assert isinstance(config, PromptInjectDatasetConfiguration)
         assert config.dataset_names == ["promptinject_contexts"]
-        assert config.max_dataset_size == 64
+        assert config.max_dataset_size == 12
 
     def test_default_technique_expands_to_all_five_forms(self) -> None:
         resolved = PromptInjectTechnique.resolve(None, default=PromptInjectTechnique.default())
@@ -118,20 +118,21 @@ class TestPromptInjectAtomicAttacks:
         attack = scenario._atomic_attacks[0]
         assert attack.atomic_attack_name == "ignore_print__goal_0"
         assert attack.display_group == "custom goal"
-        assert len(attack.seed_groups) == 35
+        assert len(attack.seed_groups) == 12
         assert all("custom goal" in group.prompts[0].value for group in attack.seed_groups)
         scorer = attack.attack_technique.attack.get_attack_scoring_config().objective_scorer
         assert isinstance(scorer, SubStringScorer)
         assert scorer._substring == "custom goal"
 
-    async def test_default_run_samples_64_groups_globally(self, mock_objective_target: PromptTarget) -> None:
+    async def test_default_run_reuses_12_groups_for_each_technique(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
         scenario = PromptInject()
 
         await _initialize_async(scenario, target=mock_objective_target)
 
-        assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 64
-        assert 1 <= len(scenario._atomic_attacks) <= 15
-        assert _objective_values(scenario)
+        assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 60
+        assert len(_objective_values(scenario)) == 12
 
     async def test_uncapped_configuration_uses_complete_matrix(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
@@ -147,9 +148,9 @@ class TestPromptInjectAtomicAttacks:
 
         assert len(scenario._atomic_attacks) == 15
         assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 525
-        assert len(_objective_values(scenario)) == 525
+        assert len(_objective_values(scenario)) == 105
 
-    async def test_standard_cap_applies_after_matrix_generation(self, mock_objective_target: PromptTarget) -> None:
+    async def test_dataset_sample_is_reused_for_each_technique(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
 
         await _initialize_async(
@@ -163,10 +164,20 @@ class TestPromptInjectAtomicAttacks:
             ),
         )
 
-        assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 10
-        assert _objective_values(scenario)
+        assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 20
+        objectives_by_technique = {
+            technique: {
+                group.objective.value
+                for attack in scenario._atomic_attacks
+                if attack.atomic_attack_name.startswith(technique)
+                for group in attack.seed_groups
+            }
+            for technique in ("ignore_print", "ignore_say")
+        }
+        assert objectives_by_technique["ignore_print"] == objectives_by_technique["ignore_say"]
+        assert len(objectives_by_technique["ignore_print"]) == 10
 
-    async def test_resume_replays_persisted_standard_sample(self, mock_objective_target: PromptTarget) -> None:
+    async def test_resume_replays_persisted_dataset_sample(self, mock_objective_target: PromptTarget) -> None:
         initial = PromptInject()
         await _initialize_async(initial, target=mock_objective_target)
         initial_objectives = _objective_values(initial)
@@ -175,7 +186,7 @@ class TestPromptInjectAtomicAttacks:
         await _initialize_async(resumed, target=mock_objective_target)
 
         assert _objective_values(resumed) == initial_objectives
-        assert sum(len(attack.seed_groups) for attack in resumed._atomic_attacks) == 64
+        assert sum(len(attack.seed_groups) for attack in resumed._atomic_attacks) == 60
 
     async def test_custom_scorer_replaces_goal_scorer(
         self, mock_objective_target: PromptTarget, mock_objective_scorer: TrueFalseScorer
