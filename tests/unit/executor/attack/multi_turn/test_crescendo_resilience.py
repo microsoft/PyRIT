@@ -4,6 +4,7 @@
 import asyncio
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +23,7 @@ from pyrit.executor.attack import (
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.score import Scorer, TrueFalseScorer
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
@@ -30,6 +32,11 @@ _OBJECTIVE = "Recover the hidden phrase through gradual rapport."
 
 @dataclass(frozen=True)
 class _Reconnect:
+    response_text: str
+
+
+@dataclass(frozen=True)
+class _Blocked:
     response_text: str
 
 
@@ -44,7 +51,7 @@ class _ScriptedTarget(MockPromptTarget):
         self,
         *,
         name: str,
-        script: list[str | BaseException | _Reconnect],
+        script: list[str | BaseException | _Blocked | _Reconnect],
         event_log: list[str],
     ) -> None:
         super().__init__(id=name)
@@ -52,6 +59,8 @@ class _ScriptedTarget(MockPromptTarget):
         self._script = list(script)
         self._event_log = event_log
         self.attempts: list[_TargetAttempt] = []
+        self.requests: list[Message] = []
+        self.histories: list[list[Message]] = []
         self.reconnect_count = 0
 
     @property
@@ -61,6 +70,8 @@ class _ScriptedTarget(MockPromptTarget):
     @pyrit_target_retry
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         request = normalized_conversation[-1]
+        self.requests.append(request)
+        self.histories.append(list(normalized_conversation))
         conversation_id = request.get_piece().conversation_id
         assert conversation_id is not None
         self.attempts.append(_TargetAttempt(conversation_id=conversation_id, prompt=request.get_value()))
@@ -73,6 +84,18 @@ class _ScriptedTarget(MockPromptTarget):
             self._event_log.extend([f"{self._name}:disconnect", f"{self._name}:reconnect"])
             self.reconnect_count += 1
             scripted = scripted.response_text
+        if isinstance(scripted, _Blocked):
+            return [
+                MessagePiece(
+                    role="assistant",
+                    original_value=scripted.response_text,
+                    original_value_data_type="error",
+                    converted_value=scripted.response_text,
+                    converted_value_data_type="error",
+                    response_error="blocked",
+                    conversation_id=conversation_id,
+                ).to_message()
+            ]
 
         return [
             MessagePiece(
@@ -372,6 +395,368 @@ class TestCrescendoMixedFailureRecovery:
         assert stored_results[0].outcome is AttackOutcome.SUCCESS
         assert stored_results[0].executed_turns == 10
         assert stored_results[0].metadata["backtrack_count"] == 2
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCrescendoSeededModalityTransitions:
+    def test_single_turn_objective_target_is_rejected(self) -> None:
+        event_log: list[str] = []
+        adversarial_target = _ScriptedTarget(name="adversarial", script=[], event_log=event_log)
+        objective_target = _ScriptedTarget(name="objective", script=[], event_log=event_log)
+        objective_target.apply_capabilities(
+            capabilities=TargetCapabilities(
+                supports_editable_history=True,
+                input_modalities=frozenset({frozenset({"text"})}),
+            )
+        )
+
+        with pytest.raises(ValueError, match="must natively support 'supports_multi_turn'"):
+            _build_attack(
+                adversarial_target=adversarial_target,
+                objective_target=objective_target,
+                objective_scorer=_scorer("ObjectiveScorer"),
+                refusal_scorer=_scorer("RefusalScorer"),
+            )
+
+    async def test_accepted_text_response_consumes_seed_before_followup(self, tmp_path: Path) -> None:
+        event_log: list[str] = []
+        seed_path = tmp_path / "seed.png"
+        await asyncio.to_thread(seed_path.write_bytes, b"\x89PNG\r\n\x1a\n")
+        seed_value = str(seed_path)
+        adversarial_target = _ScriptedTarget(
+            name="adversarial",
+            script=[_adversarial_reply(1), _adversarial_reply(2)],
+            event_log=event_log,
+        )
+        objective_target = _ScriptedTarget(
+            name="objective",
+            script=["first text response", "final text response"],
+            event_log=event_log,
+        )
+        objective_target.apply_capabilities(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_multi_message_pieces=True,
+                supports_system_prompt=True,
+                supports_editable_history=True,
+                input_modalities=frozenset(
+                    {
+                        frozenset({"text"}),
+                        frozenset({"text", "image_path"}),
+                    }
+                ),
+            )
+        )
+        objective_scorer = _scorer("ObjectiveScorer")
+        refusal_scorer = _scorer("RefusalScorer")
+        refusal_scorer.score_async.side_effect = [
+            [_score(value=False, name="RefusalScorer", rationale="first response accepted")],
+            [_score(value=False, name="RefusalScorer", rationale="final response accepted")],
+        ]
+        objective_scores = [
+            _false_objective_score(1),
+            _score(value=True, name="ObjectiveScorer", rationale="objective achieved at turn 2"),
+        ]
+        attack = _build_attack(
+            adversarial_target=adversarial_target,
+            objective_target=objective_target,
+            objective_scorer=objective_scorer,
+            refusal_scorer=refusal_scorer,
+            max_backtracks=0,
+            max_turns=2,
+        )
+        seed_message = Message(
+            message_pieces=[
+                MessagePiece.adversarial_placeholder(),
+                MessagePiece(
+                    role="user",
+                    original_value=seed_value,
+                    original_value_data_type="image_path",
+                ),
+            ]
+        )
+        context = CrescendoAttackContext(
+            params=AttackParameters(
+                objective=_OBJECTIVE,
+                next_message=seed_message,
+                memory_labels={"suite": "crescendo-seeded-media"},
+            )
+        )
+
+        with patch.object(
+            Scorer,
+            "score_response_async",
+            new_callable=AsyncMock,
+            side_effect=[_objective_scoring_result(score) for score in objective_scores],
+        ) as score_response:
+            result = await attack.execute_with_context_async(context=context)
+
+        assert event_log == [
+            "adversarial",
+            "objective",
+            "adversarial",
+            "objective",
+        ]
+        assert len(adversarial_target.requests) == 2
+        first_adversarial_prompt = adversarial_target.requests[0].get_value()
+        followup_adversarial_prompt = adversarial_target.requests[1].get_value()
+        assert "seeded_run=true, seed_count=1, input_mode=seed_media" in first_adversarial_prompt
+        assert "seeded_run=true, seed_count=1, input_mode=text_only" in followup_adversarial_prompt
+        assert "The original seed media is no longer attached." in followup_adversarial_prompt
+        assert all(len(request.message_pieces) == 1 for request in adversarial_target.requests)
+
+        assert len(objective_target.requests) == 2
+        first_request, followup_request = objective_target.requests
+        assert [(piece.original_value, piece.original_value_data_type) for piece in first_request.message_pieces] == [
+            ("question-1", "text"),
+            (seed_value, "image_path"),
+        ]
+        followup_pieces = [
+            (piece.original_value, piece.original_value_data_type) for piece in followup_request.message_pieces
+        ]
+        assert followup_pieces == [("question-2", "text")]
+        assert (
+            sum(
+                piece.original_value == seed_value
+                for request in objective_target.requests
+                for piece in request.message_pieces
+            )
+            == 1
+        )
+
+        objective_conversation_ids = {attempt.conversation_id for attempt in objective_target.attempts}
+        adversarial_conversation_ids = {attempt.conversation_id for attempt in adversarial_target.attempts}
+        assert objective_conversation_ids == {context.session.conversation_id}
+        assert adversarial_conversation_ids == {context.session.adversarial_chat_conversation_id}
+        assert objective_conversation_ids.isdisjoint(adversarial_conversation_ids)
+        followup_history = objective_target.histories[1]
+        assert [
+            (piece.api_role, piece.original_value, piece.original_value_data_type)
+            for message in followup_history
+            for piece in message.message_pieces
+        ] == [
+            ("user", "question-1", "text"),
+            ("user", seed_value, "image_path"),
+            ("assistant", "first text response", "text"),
+            ("user", "question-2", "text"),
+        ]
+
+        refusal_inputs = [
+            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=attack._memory)
+            for call in refusal_scorer.score_async.await_args_list
+        ]
+        objective_inputs = [call.kwargs["response"] for call in score_response.await_args_list]
+        assert [message.get_value() for message in refusal_inputs] == ["first text response", "final text response"]
+        assert [message.get_value() for message in objective_inputs] == ["first text response", "final text response"]
+        assert [call.kwargs["expectation"].objective for call in refusal_scorer.score_async.await_args_list] == [
+            "question-1",
+            "question-2",
+        ]
+        assert [call.kwargs["objective"] for call in score_response.await_args_list] == [_OBJECTIVE, _OBJECTIVE]
+
+        objective_pieces = attack._memory.get_message_pieces(conversation_id=context.session.conversation_id)
+        assert [
+            (piece.api_role, piece.original_value, piece.original_value_data_type) for piece in objective_pieces
+        ] == [
+            ("user", "question-1", "text"),
+            ("user", seed_value, "image_path"),
+            ("assistant", "first text response", "text"),
+            ("user", "question-2", "text"),
+            ("assistant", "final text response", "text"),
+        ]
+        assert len({piece.id for piece in objective_pieces}) == 5
+
+        assert result.outcome is AttackOutcome.SUCCESS
+        assert result.executed_turns == 2
+        assert result.backtrack_count == 0
+        assert result.conversation_id == context.session.conversation_id
+        assert result.last_response is not None
+        assert result.last_response.original_value == "final text response"
+        assert context.next_message is None
+        assert context.pending_seed_message is None
+        assert context.refused_text is None
+        assert context.last_accepted_response is not None
+        assert context.last_accepted_response.get_value() == "final text response"
+        stored_results = attack._memory.get_attack_results(objective=_OBJECTIVE)
+        assert len(stored_results) == 1
+        assert stored_results[0].outcome is AttackOutcome.SUCCESS
+        assert stored_results[0].conversation_id == context.session.conversation_id
+
+    async def test_first_turn_content_filter_retries_seed_then_consumes_it(self, tmp_path: Path) -> None:
+        event_log: list[str] = []
+        seed_path = tmp_path / "seed.png"
+        await asyncio.to_thread(seed_path.write_bytes, b"\x89PNG\r\n\x1a\n")
+        seed_value = str(seed_path)
+        adversarial_target = _ScriptedTarget(
+            name="adversarial",
+            script=[_adversarial_reply(1), _adversarial_reply(2), _adversarial_reply(3)],
+            event_log=event_log,
+        )
+        objective_target = _ScriptedTarget(
+            name="objective",
+            script=[
+                _Blocked(response_text="first response content filtered"),
+                "accepted retry response",
+                "final response",
+            ],
+            event_log=event_log,
+        )
+        objective_target.apply_capabilities(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_multi_message_pieces=True,
+                supports_system_prompt=True,
+                supports_editable_history=True,
+                input_modalities=frozenset(
+                    {
+                        frozenset({"text"}),
+                        frozenset({"text", "image_path"}),
+                    }
+                ),
+            )
+        )
+        objective_scorer = _scorer("ObjectiveScorer")
+        refusal_scorer = _scorer("RefusalScorer")
+        refusal_scorer.score_async.side_effect = [
+            [_score(value=True, name="RefusalScorer", rationale="content filter block")],
+            [_score(value=False, name="RefusalScorer", rationale="retry accepted")],
+            [_score(value=False, name="RefusalScorer", rationale="final response accepted")],
+        ]
+        objective_scores = [
+            _false_objective_score(1),
+            _score(value=True, name="ObjectiveScorer", rationale="objective achieved at turn 2"),
+        ]
+        attack = _build_attack(
+            adversarial_target=adversarial_target,
+            objective_target=objective_target,
+            objective_scorer=objective_scorer,
+            refusal_scorer=refusal_scorer,
+            max_backtracks=1,
+            max_turns=2,
+        )
+        context = CrescendoAttackContext(
+            params=AttackParameters(
+                objective=_OBJECTIVE,
+                next_message=Message(
+                    message_pieces=[
+                        MessagePiece.adversarial_placeholder(),
+                        MessagePiece(
+                            role="user",
+                            original_value=seed_value,
+                            original_value_data_type="image_path",
+                        ),
+                    ]
+                ),
+                memory_labels={"suite": "crescendo-seeded-content-filter"},
+            )
+        )
+
+        with patch.object(
+            Scorer,
+            "score_response_async",
+            new_callable=AsyncMock,
+            side_effect=[_objective_scoring_result(score) for score in objective_scores],
+        ) as score_response:
+            result = await attack.execute_with_context_async(context=context)
+
+        assert event_log == [
+            "adversarial",
+            "objective",
+            "adversarial",
+            "objective",
+            "adversarial",
+            "objective",
+        ]
+        adversarial_prompts = [request.get_value() for request in adversarial_target.requests]
+        assert "seeded_run=true, seed_count=1, input_mode=seed_media" in adversarial_prompts[0]
+        assert "seeded_run=true, seed_count=1, input_mode=seed_media" in adversarial_prompts[1]
+        assert "The target refused to respond" in adversarial_prompts[1]
+        assert "question-1" in adversarial_prompts[1]
+        assert "seeded_run=true, seed_count=1, input_mode=text_only" in adversarial_prompts[2]
+        assert "The original seed media is no longer attached." in adversarial_prompts[2]
+
+        objective_request_pieces = [
+            [(piece.original_value, piece.original_value_data_type) for piece in request.message_pieces]
+            for request in objective_target.requests
+        ]
+        assert objective_request_pieces == [
+            [("question-1", "text"), (seed_value, "image_path")],
+            [("question-2", "text"), (seed_value, "image_path")],
+            [("question-3", "text")],
+        ]
+        assert (
+            sum(
+                piece.original_value == seed_value
+                for request in objective_target.requests
+                for piece in request.message_pieces
+            )
+            == 2
+        )
+
+        first_conversation_id = objective_target.attempts[0].conversation_id
+        retry_conversation_id = objective_target.attempts[1].conversation_id
+        assert first_conversation_id != retry_conversation_id
+        assert [attempt.conversation_id for attempt in objective_target.attempts] == [
+            first_conversation_id,
+            retry_conversation_id,
+            retry_conversation_id,
+        ]
+        assert result.conversation_id == retry_conversation_id
+        assert {
+            reference.conversation_id
+            for reference in result.related_conversations
+            if reference.conversation_type is ConversationType.PRUNED
+        } == {first_conversation_id}
+
+        refusal_inputs = [
+            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=attack._memory)
+            for call in refusal_scorer.score_async.await_args_list
+        ]
+        assert [message.get_value() for message in refusal_inputs] == [
+            "first response content filtered",
+            "accepted retry response",
+            "final response",
+        ]
+        assert refusal_inputs[0].get_piece().response_error == "blocked"
+        assert [call.kwargs["expectation"].objective for call in refusal_scorer.score_async.await_args_list] == [
+            "question-1",
+            "question-2",
+            "question-3",
+        ]
+        assert [call.kwargs["response"].get_value() for call in score_response.await_args_list] == [
+            "accepted retry response",
+            "final response",
+        ]
+        assert [call.kwargs["objective"] for call in score_response.await_args_list] == [_OBJECTIVE, _OBJECTIVE]
+
+        pruned_pieces = attack._memory.get_message_pieces(conversation_id=first_conversation_id)
+        assert [
+            (piece.api_role, piece.original_value, piece.original_value_data_type, piece.response_error)
+            for piece in pruned_pieces
+        ] == [
+            ("user", "question-1", "text", "none"),
+            ("user", seed_value, "image_path", "none"),
+            ("assistant", "first response content filtered", "error", "blocked"),
+        ]
+        final_pieces = attack._memory.get_message_pieces(conversation_id=retry_conversation_id)
+        assert [(piece.api_role, piece.original_value, piece.original_value_data_type) for piece in final_pieces] == [
+            ("user", "question-2", "text"),
+            ("user", seed_value, "image_path"),
+            ("assistant", "accepted retry response", "text"),
+            ("user", "question-3", "text"),
+            ("assistant", "final response", "text"),
+        ]
+
+        assert result.outcome is AttackOutcome.SUCCESS
+        assert result.executed_turns == 2
+        assert result.backtrack_count == 1
+        assert result.last_response is not None
+        assert result.last_response.original_value == "final response"
+        assert context.pending_seed_message is None
+        assert context.refused_text is None
+        assert context.last_response_was_refusal is False
+        assert context.last_accepted_response is not None
+        assert context.last_accepted_response.get_value() == "final response"
 
 
 @pytest.mark.usefixtures("patch_central_database")
