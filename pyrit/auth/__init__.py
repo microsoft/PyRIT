@@ -19,6 +19,9 @@ from pyrit.auth.azure_auth import (
     is_azure_openai_endpoint,
 )
 from pyrit.auth.azure_storage_auth import AzureStorageAuth
+from pyrit.auth.browser_session_copilot_authenticator import (
+    BrowserSessionCopilotAuthenticator,
+)
 from pyrit.auth.copilot_authenticator import CopilotAuthenticator
 from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
 from pyrit.auth.openai_auth import resolve_openai_auth
@@ -28,6 +31,7 @@ __all__ = [
     "Authenticator",
     "AzureAuth",
     "AzureStorageAuth",
+    "BrowserSessionCopilotAuthenticator",
     "CopilotAuthenticator",
     "ManualCopilotAuthenticator",
     "resolve_openai_auth",

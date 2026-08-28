@@ -13,7 +13,11 @@ import httpx
 import websockets
 from websockets.exceptions import InvalidStatus
 
-from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
+from pyrit.auth import (
+    BrowserSessionCopilotAuthenticator,
+    CopilotAuthenticator,
+    ManualCopilotAuthenticator,
+)
 from pyrit.common import get_mime_type
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -53,13 +57,18 @@ class WebSocketCopilotTarget(PromptTarget):
     A WebSocket-based prompt target for integrating with Microsoft Copilot.
 
     This class facilitates communication with Microsoft Copilot over a WebSocket connection.
-    Authentication can be handled in two ways:
+    Authentication can be handled in three ways:
 
-    1. **Automated (default)**: Via ``CopilotAuthenticator``, which uses Playwright to automate
-       browser login and obtain the required access tokens. Requires ``COPILOT_USERNAME`` and
-       ``COPILOT_PASSWORD`` environment variables as well as Playwright installed.
+    1. **Credential automation (default)**: ``CopilotAuthenticator`` reads
+        ``COPILOT_USERNAME`` and ``COPILOT_PASSWORD``, automates the login form with
+        Playwright, and caches the captured token.
 
-    2. **Manual**: Via ``ManualCopilotAuthenticator``, which accepts a pre-obtained access token.
+    2. **Interactive browser session**: ``BrowserSessionCopilotAuthenticator`` opens
+        a persistent Edge profile for user-driven sign-in, including MFA and
+        Conditional Access. It keeps captured tokens in memory and refreshes them
+        through the retained browser session.
+
+    3. **Manual**: Via ``ManualCopilotAuthenticator``, which accepts a pre-obtained access token.
        This is useful for situations where browser automation is not possible.
 
     Once authenticated, the target supports multi-turn conversations through server-side
@@ -99,7 +108,9 @@ class WebSocketCopilotTarget(PromptTarget):
         max_requests_per_minute: int | None = None,
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
-        authenticator: CopilotAuthenticator | ManualCopilotAuthenticator | None = None,
+        authenticator: (
+            BrowserSessionCopilotAuthenticator | CopilotAuthenticator | ManualCopilotAuthenticator | None
+        ) = None,
         custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
@@ -111,9 +122,10 @@ class WebSocketCopilotTarget(PromptTarget):
             max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
             response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.
-            authenticator (CopilotAuthenticator | ManualCopilotAuthenticator | None): Authenticator
-                instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
-                If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
+            authenticator (Authenticator | None): Copilot authentication strategy. Supported
+                implementations are ``BrowserSessionCopilotAuthenticator``,
+                ``CopilotAuthenticator``, and ``ManualCopilotAuthenticator``. If None, a new
+                ``CopilotAuthenticator`` is created.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
 

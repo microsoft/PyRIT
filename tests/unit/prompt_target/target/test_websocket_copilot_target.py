@@ -2,12 +2,13 @@
 # Licensed under the MIT license.
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
 
-from pyrit.auth import CopilotAuthenticator
+from pyrit.auth import BrowserSessionCopilotAuthenticator, CopilotAuthenticator
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import WebSocketCopilotTarget
 from pyrit.prompt_target.websocket_copilot_target import CopilotMessageType
@@ -160,6 +161,15 @@ class TestWebSocketCopilotTargetInit:
         for invalid_timeout in [0, -10, -1]:
             with pytest.raises(ValueError, match="response_timeout_seconds must be a positive integer."):
                 WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=invalid_timeout)
+
+    def test_init_with_browser_session_authenticator(self, tmp_path: Path) -> None:
+        authenticator = BrowserSessionCopilotAuthenticator(
+            profile_path=tmp_path / "copilot-profile",
+        )
+
+        target = WebSocketCopilotTarget(authenticator=authenticator)
+
+        assert target._authenticator is authenticator
 
 
 @pytest.mark.usefixtures("patch_central_database")
