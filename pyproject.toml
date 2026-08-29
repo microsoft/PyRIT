@@ -193,6 +193,7 @@ all = "error"
 # Annotating those generics is real code work, so keep the rule deferred until
 # that numpy-generics debt is addressed.
 missing-type-argument = "ignore"
+unsound-assignment = "ignore"
 # unused-type-ignore-comment is environment-dependent: a `# type: ignore`
 # on an optional-dependency import (torch, playwright, etc.) is "used" when the
 # extra is not installed but "unused" once it is. CI installs `--extra all`, so
