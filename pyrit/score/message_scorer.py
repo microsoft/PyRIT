@@ -26,7 +26,6 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.models.score.scorable import SCORABLE_TYPES
-from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
@@ -39,6 +38,9 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
+
+#: Release in which the message-shaped batch API is removed, two minor releases out.
+MESSAGE_BATCH_REMOVED_IN = "1.3.0"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -353,6 +355,11 @@ class MessageScorer(Scorer):
         """
         Score multiple messages in batches using the provided objectives.
 
+        .. deprecated:: 1.1.0
+            Use ``Scorer.score_batch_async`` with ``MessageScorable`` evidence instead.
+            A ``Scorable`` names the evidence a score points at, so it needs no extra
+            memory lookup to resolve the anchor.
+
         Args:
             messages (Sequence[Message]): The messages to be scored.
             objectives (Sequence[str]): The objectives/tasks based on which the prompts should be scored.
@@ -371,6 +378,12 @@ class MessageScorer(Scorer):
             ValueError: If objectives is not None and the number of objectives doesn't match
                 the number of messages.
         """
+        print_deprecation_message(
+            old_item="MessageScorer.score_prompts_batch_async",
+            new_item="Scorer.score_batch_async with MessageScorable evidence",
+            removed_in=MESSAGE_BATCH_REMOVED_IN,
+        )
+
         if objectives is None:
             resolved_objectives = [""] * len(messages)
         elif len(objectives) != len(messages):
@@ -387,21 +400,15 @@ class MessageScorer(Scorer):
                 for message, objective in zip(messages, resolved_objectives, strict=True)
             ]
 
-        expectations = [ScoringExpectation(objective=objective) for objective in resolved_objectives]
-        message_options = MessageScoringOptions(
-            role_filter=role_filter,
-            skip_on_error_result=skip_on_error_result,
-        )
-
-        results = await batch_task_async(
-            task_func=self.score_message_async,
-            task_arguments=["message", "expectation"],
-            prompt_target=self.get_chat_target(),
+        return await self.score_batch_async(
+            scorables=[MessageScorable.from_message(message) for message in messages],
+            expectations=[ScoringExpectation(objective=objective) for objective in resolved_objectives],
             batch_size=batch_size,
-            items_to_batch=[messages, expectations],
-            message_options=message_options,
+            message_options=MessageScoringOptions(
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
+            ),
         )
-        return [score for score_list in results for score in score_list]
 
     @staticmethod
     async def score_response_async(

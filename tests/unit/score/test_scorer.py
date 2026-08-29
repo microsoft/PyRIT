@@ -442,31 +442,43 @@ def test_extract_objective_from_previous_turn(patch_central_database):
 
 async def test_scorer_score_responses_batch_async(patch_central_database):
     """
-    Test that score_responses_batch_async filters to only assistant pieces,
-    calls score_prompts_with_tasks_batch_async, and returns results.
+    Test that score_prompts_batch_async names each message as evidence and
+    delegates batching to score_batch_async.
     """
     scorer = MockScorer()
 
-    with patch.object(scorer, "score_message_async", new_callable=AsyncMock) as mock_score_message_async:
+    with patch.object(scorer, "score_async", new_callable=AsyncMock) as mock_score_async:
         fake_scores = [MagicMock(), MagicMock()]
-        mock_score_message_async.return_value = fake_scores
+        mock_score_async.return_value = fake_scores
 
         user_req = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
         assistant_resp = MessagePiece(role="assistant", original_value="Hello from assistant", sequence=2).to_message()
 
         results = await scorer.score_prompts_batch_async(messages=[user_req, assistant_resp], batch_size=10)
 
-        assert mock_score_message_async.call_count == 2
+        assert mock_score_async.call_count == 2
 
         # Get the call_args for the first call
-        _, first_call_kwargs = mock_score_message_async.call_args_list[0]
+        _, first_call_kwargs = mock_score_async.call_args_list[0]
 
-        assert first_call_kwargs["message"] == user_req
+        assert first_call_kwargs["scorable"] == MessageScorable.from_message(user_req)
         assert first_call_kwargs["expectation"] == ScoringExpectation(objective="")
         assert first_call_kwargs["message_options"] == MessageScoringOptions()
 
         assert fake_scores[0] in results
         assert len(fake_scores) == 2
+
+
+async def test_score_prompts_batch_async_emits_deprecation_warning(patch_central_database):
+    """Test the message-shaped batch API warns and points at the scorable batch API."""
+    scorer = MockScorer()
+
+    with patch.object(scorer, "score_async", new_callable=AsyncMock) as mock_score_async:
+        mock_score_async.return_value = [MagicMock()]
+        message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
+
+        with pytest.warns(DeprecationWarning, match="score_prompts_batch_async"):
+            await scorer.score_prompts_batch_async(messages=[message])
 
 
 async def test_score_prompts_batch_async_rejects_explicit_empty_objectives():
@@ -490,13 +502,13 @@ async def test_score_prompts_batch_async_defaults_objectives_when_none(patch_cen
     """Test that objectives=None defaults to empty-string objectives matching message count."""
     scorer = MockScorer()
 
-    with patch.object(scorer, "score_message_async", new_callable=AsyncMock) as mock_score_message_async:
-        mock_score_message_async.return_value = [MagicMock()]
+    with patch.object(scorer, "score_async", new_callable=AsyncMock) as mock_score_async:
+        mock_score_async.return_value = [MagicMock()]
         message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
 
         await scorer.score_prompts_batch_async(messages=[message])
 
-        _, call_kwargs = mock_score_message_async.call_args
+        _, call_kwargs = mock_score_async.call_args
         assert call_kwargs["expectation"] == ScoringExpectation(objective="")
 
 
