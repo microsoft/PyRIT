@@ -88,7 +88,9 @@ class ConverterService:
 
         Returns every constructible converter. Deciding which entries to surface
         to a user is a presentation concern owned by the caller (e.g. the
-        frontend), not this service.
+        frontend), not this service. Required params the exposed parameters
+        cannot supply are named in ``unsupported_required_params`` so callers
+        can avoid offering an entry that can only fail to construct.
 
         Returns:
             ConverterCatalogResponse containing all available converter classes.
@@ -99,6 +101,9 @@ class ConverterService:
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
                 parameters=[p for p in metadata.parameters if p.is_string_coercible],
+                unsupported_required_params=[
+                    p.name for p in metadata.parameters if p.required and not p.is_string_coercible
+                ],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
