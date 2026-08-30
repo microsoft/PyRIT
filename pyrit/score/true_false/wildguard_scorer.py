@@ -18,7 +18,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildguard_response
 
 _DEFAULT_WILDGUARD_PROMPT_PATH = SCORER_SEED_PROMPT_PATH / "wildguard" / "wildguard_prompt.yaml"
@@ -99,7 +99,7 @@ def render_wildguard_prompt(
     )
 
 
-class WildGuardScorer(TrueFalseScorer):
+class WildGuardScorer(MessageTrueFalseScorer):
     """
     Classify a prompt and response pair with the Allen Institute WildGuard classifier.
 
@@ -114,7 +114,7 @@ class WildGuardScorer(TrueFalseScorer):
     keys.
 
     The scored message is the model response. The prompt it is judged against is read from the
-    preceding turn of the scored conversation, or supplied with ``user_prompt``.
+    latest earlier user turn of the scored conversation, or supplied with ``user_prompt``.
     """
 
     SCORE_CATEGORY: ClassVar[str] = "wildguard"
@@ -142,7 +142,8 @@ class WildGuardScorer(TrueFalseScorer):
                 serialized configuration supplies. Defaults to
                 ``WildGuardLabel.HARMFUL_RESPONSE``.
             user_prompt (str | None): Fixed prompt to classify responses against, which takes
-                precedence over the preceding turn of the scored conversation. Defaults to None.
+                precedence over the latest earlier user turn of the scored conversation. Defaults
+                to None.
             prompt_template (SeedPrompt | str | None): Custom WildGuard request template.
                 Defaults to the bundled template.
             validator (ScorerPromptValidator | None): Custom validator. Defaults to text only.
@@ -209,9 +210,7 @@ class WildGuardScorer(TrueFalseScorer):
         # runs concurrently under asyncio.gather.
         conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
         prior_user_pieces = [
-            piece
-            for piece in conversation
-            if piece.sequence < message_piece.sequence and piece.api_role == "user"
+            piece for piece in conversation if piece.sequence < message_piece.sequence and piece.api_role == "user"
         ]
         if not prior_user_pieces:
             return None

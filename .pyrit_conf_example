@@ -4,7 +4,7 @@
 # or specify a custom path when loading via --config-file.
 #
 # For documentation on configuration options, see:
-# https://github.com/microsoft/PyRIT/blob/main/doc/setup/configuration.md
+# https://github.com/microsoft/PyRIT/blob/main/doc/getting_started/pyrit_conf.md
 
 # Memory Database Type
 # --------------------
@@ -25,7 +25,7 @@ memory_db_type: sqlite
 # - target: Registers available prompt targets into the TargetRegistry
 # - scorer: Registers pre-configured scorers into the ScorerRegistry
 # - technique: Registers attack techniques into the AttackTechniqueRegistry
-# - load_default_datasets: Loads datasets into memory so scenarios can run
+# - load_default_datasets: Optionally preloads all registered datasets into memory
 # - preload_scenario_metadata: Preloads scenario metadata into the registry
 #
 # Each initializer can be specified as:
@@ -33,7 +33,7 @@ memory_db_type: sqlite
 # - A dictionary with 'name' and optional 'args' for parameters
 #
 # Parameters are lists of strings. Use the CLI command
-# `pyrit_scan --list-initializers` to see available parameters.
+# `pyrit_scan list-initializers` to see available parameters.
 #
 # Example:
 # initializers:
@@ -51,7 +51,13 @@ initializers:
         - scorer
   - name: scorer
   - name: technique
-  - name: load_default_datasets
+  # Optional full preload/cache warming for offline or shared environments.
+  # This can take several minutes and may require network access,
+  # provider credentials, or accepted dataset licenses. Scenarios fetch only their
+  # requested datasets on demand without this initializer.
+  # If intentional preload exceeds backend startup time, increase
+  # server.startup_timeout below.
+  # - name: load_default_datasets
 
 # Operator and Operation Labels
 # ------------------------------
@@ -79,33 +85,23 @@ operation: op_trash_panda
 #   - /path/to/my_custom_initializer.py
 #   - ./local_initializer.py
 
-# Environment Files
-# -----------------
-# List of .env file paths to load during initialization.
-# Later files override values from earlier files.
-#
-# Behavior:
-# - Omit this field (or set to null): Load default .env and .env.local from ~/.pyrit/ if they exist
-# - Set to []: Explicitly load NO environment files
-# - Set to list of paths: Load only the specified files
-#
-# Example:
-# env_files:
-#   - /path/to/.env
-#   - /path/to/.env.local
-
-# Azure Key Vault Environment References
-# ---------------------------------------
-# List of AKV secret URLs to load during initialization.
-# Each secret's value must be the full contents of a .env file.
-# Loaded after env_files, so AKV secrets take precedence.
-# Authentication uses DefaultAzureCredential (managed identity, Azure CLI, etc.).
-#
-# Requires: pip install azure-keyvault-secrets
-#
-# Example:
+# Environment Configuration
+# -------------------------
+# Azure Key Vault is the canonical source for shared and deployed configuration.
+# See doc/getting_started/pyrit_conf.md for loading order, references, and migration guidance.
+# The list may contain at most one bootstrap secret URL.
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
+# env_akv_strict: true
+
+# Auto-discovered ~/.pyrit/.env remains supported but emits a security warning.
+# Prefer env_akv_ref for shared or deployed secrets.
+# Use ~/.pyrit/.env.local for quick local plaintext patches or when Azure is unavailable.
+# Process values remain authoritative; AKV and ordinary env_files fill gaps in load order.
+# Only a file named .env.local overrides existing values.
+# Explicit env_files remain supported regardless of name or location and may contain full kv: URLs.
+# env_files:
+#   - /path/to/.env.local
 
 # Max Concurrent Scenario Runs
 # ----------------------------
@@ -126,6 +122,18 @@ max_concurrent_scenario_runs: 3
 #
 # Default: false
 allow_custom_initializers: false
+
+# Local Backend Server
+# --------------------
+# Client settings used by pyrit_scan when connecting to or launching a backend.
+# - url: Backend URL used when --server-url is omitted.
+# - startup_timeout: Seconds to wait for --start-server before cleaning up the
+#   spawned process and returning an error.
+#
+# Both settings can be overridden with --server-url and --startup-timeout.
+server:
+  url: http://localhost:8000
+  startup_timeout: 120
 
 # Silent Mode
 # -----------

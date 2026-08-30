@@ -13,7 +13,7 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import WildGuardLabel, WildGuardScorer, render_wildguard_prompt
+from pyrit.score import MessageScorable, WildGuardLabel, WildGuardScorer, render_wildguard_prompt
 
 FULL_RESPONSE = "Harmful request: yes\nResponse refusal: no\nHarmful response: yes"
 
@@ -104,7 +104,7 @@ async def test_scores_using_the_preceding_user_turn(sqlite_instance: MemoryInter
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
-    scores = await scorer.score_async(answer)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     assert len(scores) == 1
     assert scores[0].get_value() is True
@@ -128,7 +128,7 @@ async def test_scores_using_latest_user_turn_before_tool_messages(sqlite_instanc
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
-    await scorer.score_async(answer)
+    await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     sent = _sent_request(target)
     assert "Human user:\nlook up the weather" in sent
@@ -150,7 +150,7 @@ async def test_scores_using_every_text_piece_from_latest_user_turn(sqlite_instan
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
-    await scorer.score_async(answer)
+    await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     assert "Human user:\nfirst instruction\nsecond instruction" in _sent_request(target)
 
@@ -185,7 +185,7 @@ async def test_image_only_latest_user_turn_does_not_fall_back_to_older_text(
     scorer = WildGuardScorer(chat_target=target)
 
     with pytest.raises(RuntimeError, match="needs the prompt"):
-        await scorer.score_async(answer)
+        await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     target.send_prompt_async.assert_not_called()
 
@@ -201,7 +201,7 @@ async def test_scores_using_the_converted_prompt_not_the_original(sqlite_instanc
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
-    await scorer.score_async(answer)
+    await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     sent = _sent_request(target)
     assert "Human user:\nthe converted prompt the target received" in sent
@@ -213,7 +213,7 @@ async def test_configured_user_prompt_takes_precedence(sqlite_instance: MemoryIn
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target, user_prompt="configured question")
 
-    await scorer.score_async(answer)
+    await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     sent = _sent_request(target)
     assert "Human user:\nconfigured question" in sent
@@ -235,7 +235,7 @@ async def test_empty_response_raises_before_calling_the_target(sqlite_instance: 
     scorer = WildGuardScorer(chat_target=target)
 
     with pytest.raises(RuntimeError, match="empty response"):
-        await scorer.score_async(answer)
+        await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     target.send_prompt_async.assert_not_called()
 
@@ -246,7 +246,7 @@ async def test_harmful_request_label_works_with_an_empty_response(sqlite_instanc
     target = _mock_target("Harmful request: yes\nResponse refusal: N/A\nHarmful response: N/A")
     scorer = WildGuardScorer(chat_target=target, label=WildGuardLabel.HARMFUL_REQUEST)
 
-    scores = await scorer.score_async(answer)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     assert scores[0].get_value() is True
     assert _label_value(scores[0].score_metadata, "harmful_response") == "n/a"
@@ -259,7 +259,7 @@ async def test_selected_label_drives_the_value_and_others_land_in_metadata(
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target, label=WildGuardLabel.RESPONSE_REFUSAL)
 
-    scores = await scorer.score_async(answer)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     assert scores[0].get_value() is False
     assert scores[0].score_metadata["selected_label"] == "Response refusal"
@@ -302,7 +302,7 @@ async def test_multiple_pieces_keep_every_label_and_report_the_aggregate(
     )
     scorer = WildGuardScorer(chat_target=target)
 
-    scores = await scorer.score_async(answer)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     assert target.send_prompt_async.call_count == 2
     assert scores[0].get_value() is True
@@ -329,7 +329,7 @@ async def test_scorer_sends_request_without_system_prompt_or_json_format(sqlite_
     target = _mock_target(FULL_RESPONSE)
     scorer = WildGuardScorer(chat_target=target)
 
-    await scorer.score_async(answer)
+    await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     target.set_system_prompt.assert_not_called()
 
@@ -346,7 +346,7 @@ async def test_unexpected_response_retries_and_raises(sqlite_instance: MemoryInt
     scorer = WildGuardScorer(chat_target=target)
 
     with pytest.raises(InvalidJsonException):
-        await scorer.score_async(answer)
+        await scorer.score_async(scorable=MessageScorable.from_message(answer))
 
     # RETRY_MAX_NUM_ATTEMPTS is 2 in conftest; the parser's InvalidJsonException drives the retry.
     assert target.send_prompt_async.call_count == 2
@@ -366,7 +366,7 @@ async def test_registry_construction_honors_a_serialized_label(sqlite_instance: 
 
     assert scorer._label is WildGuardLabel.HARMFUL_REQUEST
 
-    scores = await scorer.score_async(answer)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(answer))
     assert scores[0].get_value() is True
     assert scores[0].score_metadata["selected_label"] == "Harmful request"
 

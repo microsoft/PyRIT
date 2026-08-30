@@ -5,6 +5,8 @@ import logging
 from collections.abc import MutableSequence
 from typing import Any
 
+from openai.types.chat import ChatCompletion
+
 from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -25,20 +27,18 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_response_pieces_async,
-    capture_token_usage,
     detect_response_content,
-    extract_partial_content,
-    is_content_filter_response,
     save_audio_response_async,
-    validate_chat_completion_response,
 )
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import (
+    build_empty_truncated_response,
     limit_requests_per_minute,
     validate_temperature,
     validate_top_p,
 )
+from pyrit.prompt_target.openai._response_adapter import ChatCompletionsResponseAdapter
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -88,6 +88,7 @@ class OpenAIChatTarget(OpenAITarget):
             ),
         )
     )
+    _response_adapter = ChatCompletionsResponseAdapter()
 
     @forward_init_parameters
     def __init__(
@@ -244,56 +245,6 @@ class OpenAIChatTarget(OpenAITarget):
         )
         return [response]
 
-    def _check_content_filter(self, response: Any) -> bool:
-        """
-        Check if a Chat Completions API response has finish_reason=content_filter.
-
-        Args:
-            response: A ChatCompletion object from the OpenAI SDK.
-
-        Returns:
-            True if content was filtered, False otherwise.
-        """
-        return is_content_filter_response(response)
-
-    def _extract_partial_content(self, response: Any) -> str | None:
-        """
-        Extract partial content from a Chat Completions response with finish_reason=content_filter.
-
-        When Azure Content Safety triggers mid-generation, the model may have produced partial
-        text in ``response.choices[0].message.content`` before being cut off.
-
-        Args:
-            response: A ChatCompletion object from the OpenAI SDK.
-
-        Returns:
-            The partial text content, or None if no content was generated.
-        """
-        return extract_partial_content(response)
-
-    def _validate_response(self, response: Any, request: MessagePiece) -> Message | None:
-        """
-        Validate a Chat Completions API response for errors.
-
-        Checks for:
-        - Missing choices
-        - Invalid finish_reason
-        - At least one valid response type (text content, audio, or tool_calls)
-
-        Args:
-            response: The ChatCompletion response from OpenAI SDK.
-            request: The original request MessagePiece.
-
-        Returns:
-            None if valid, does not return Message for content filter (handled by _check_content_filter).
-
-        Raises:
-            PyritException: For unexpected response structures or finish reasons.
-            EmptyResponseException: When the API returns an empty response.
-        """
-        validate_chat_completion_response(response=response)
-        return None
-
     def _detect_response_content(self, message: Any) -> tuple[bool, bool, bool]:
         """
         Detect what content types are present in a ChatCompletion message.
@@ -337,7 +288,7 @@ class OpenAIChatTarget(OpenAITarget):
             prefer_transcript_for_history=prefer_transcript_for_history,
         )
 
-    async def _construct_message_from_response_async(self, response: Any, request: MessagePiece) -> Message:
+    async def _construct_message_from_response_async(self, response: ChatCompletion, request: MessagePiece) -> Message:
         """
         Construct a Message from a ChatCompletion response.
 
@@ -354,16 +305,30 @@ class OpenAIChatTarget(OpenAITarget):
             Message: Constructed message with one or more MessagePiece entries.
 
         Raises:
-            EmptyResponseException: If the response contains no content, audio, or tool calls.
+            EmptyResponseException: If a non-truncated response contains no content, audio, or tool
+                calls. A truncated (``finish_reason == "length"``) response with no content instead
+                yields a graceful empty piece so the run continues. Truncated responses are flagged
+                via ``MessagePiece.mark_as_truncated`` on the first piece.
         """
         audio_format = self._audio_response_config.audio_format if self._audio_response_config else "wav"
+        truncated = self._is_truncated_response(response)
         pieces = await build_response_pieces_async(response=response, request=request, audio_format=audio_format)
 
         if not pieces:
+            # A truncated (finish_reason == "length") response may legitimately produce no content;
+            # return a graceful empty piece so the run continues. Validation already raised for
+            # genuinely empty (non-truncated) responses.
+            if truncated:
+                empty_message = build_empty_truncated_response(request=request)
+                self._capture_response_metadata(response=response, pieces=empty_message.message_pieces)
+                empty_message.message_pieces[0].mark_as_truncated()
+                return empty_message
             raise EmptyResponseException(message="Failed to extract any response content.")
 
-        # Capture token usage from the API response and store in the first piece's metadata
-        capture_token_usage(pieces=pieces, response=response)
+        # Capture token usage and the stop reason from the API response into the first piece.
+        self._capture_response_metadata(response=response, pieces=pieces)
+        if truncated:
+            pieces[0].mark_as_truncated()
 
         return Message(message_pieces=pieces)
 

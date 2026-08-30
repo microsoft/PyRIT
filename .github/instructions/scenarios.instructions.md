@@ -237,7 +237,7 @@ async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list
 `build_matrix_atomic_attacks`:
 1. Calls `resolve_technique_factories(context=context)` to map the selected techniques to their
    registered `AttackTechniqueFactory` instances (reads the `AttackTechniqueRegistry` singleton;
-   techniques with no registered factory are dropped).
+   raises ``TechniqueResolutionError`` if any selected technique has no registered factory).
 2. Iterates every (technique × dataset) pair from `context.seed_groups_by_dataset`.
 3. Calls `factory.create()` with the objective target, conditional scorer override, and any
    per-technique converters (from `--techniques <technique>:converter.<name>`) as

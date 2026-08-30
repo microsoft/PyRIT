@@ -4,6 +4,7 @@
 import io
 import json
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -154,6 +155,22 @@ class TestRemoteDatasetLoader:
 
         assert standardized == ["HATE_SPEECH", "REPRESENTATIONAL"]
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, None),
+            ("", None),
+            ("not-a-date", None),
+            ("2026-06-15T14:54:11.981Z", datetime(2026, 6, 15, 14, 54, 11, 981000, tzinfo=timezone.utc)),
+            (
+                "2025-09-20T04:09:11.080923+00:00",
+                datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=timezone.utc),
+            ),
+        ],
+    )
+    def test_parse_datetime(self, value: str | None, expected: datetime | None) -> None:
+        assert ConcreteRemoteLoader._parse_datetime(value) == expected
+
     def test_fetch_from_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()
         with pytest.raises(ValueError, match="Invalid file_type"):
@@ -255,6 +272,43 @@ class TestFetchZipFromUrl:
         # Cache file is keyed by md5(source) under seed-prompt-entries/
         cached = list((tmp_path / "seed-prompt-entries").glob("*.zip"))
         assert len(cached) == 1
+
+    async def test_interrupted_download_does_not_poison_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
+            tmp_path,
+        )
+        zip_bytes = self._make_zip_bytes({"x.json": '[{"k": "v"}]'})
+
+        def interrupted_chunks():
+            yield zip_bytes[:20]
+            raise RuntimeError("connection dropped")
+
+        interrupted_response = self._mock_streaming_response(b"")
+        interrupted_response.iter_content.return_value = interrupted_chunks()
+        successful_response = self._mock_streaming_response(zip_bytes)
+
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.requests.get",
+            side_effect=[interrupted_response, successful_response],
+        ) as mock_get:
+            loader = ConcreteRemoteLoader()
+            with pytest.raises(RuntimeError, match="connection dropped"):
+                await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["x.json"], cache=True)
+
+            cache_dir = tmp_path / "seed-prompt-entries"
+            assert list(cache_dir.iterdir()) == []
+
+            result = await loader._fetch_zip_from_url_async(
+                source=self.SOURCE,
+                inner_files=["x.json"],
+                cache=True,
+            )
+
+        assert result == {"x.json": [{"k": "v"}]}
+        assert mock_get.call_count == 2
+        assert len(list(cache_dir.glob("*.zip"))) == 1
+        assert not list(cache_dir.glob("*.part"))
 
     async def test_cache_false_does_not_persist_zip(self, tmp_path, monkeypatch):
         monkeypatch.setattr(

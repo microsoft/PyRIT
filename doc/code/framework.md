@@ -52,6 +52,9 @@ The main components of PyRIT are seeds, scenarios, attack techniques, executors 
 
 The diagram below shows how the pieces fit together: entry points run **scenarios**, which package **datasets** with **attack techniques**; each technique drives an **attack/executor** that orchestrates **converters**, **targets**, and **scorers**; and a shared library layer (**memory**, **registry**, **models**, **output**, and more) supports all of them.
 
+:::{div}
+:class: col-page-right
+
 ```mermaid
 flowchart TB
     subgraph entry [Entry points]
@@ -105,6 +108,7 @@ flowchart TB
     class SCEN,TECH,ATK flow;
     class MEM,REG,MODEL,OUT libnode;
 ```
+:::
 
 The orchestration layers **nest from broadest to narrowest** — each owns less than the layer above it:
 
@@ -178,6 +182,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - `core` stays deliberately small so a default run doesn't print 200 techniques or take forever; the wider catalog lives in `extra` and is selected on demand. Users pick subsets by passing initializer tags (e.g. `core`, `extra`, `all`) or writing their own initializer, so different runs — including from the CLI — can register different technique sets without changing the catalog.
 - A technique tied to one scenario is fine; if it's pinned and non-reusable it can stay local to that scenario, but if another scenario could reuse it, promote it to a catalog module and tag it.
 - Tags describe a technique (behavioral tags like `single_turn`/`multi_turn`, owner tags like `airt`); they don't decide what a scenario runs. There is deliberately **no global `default` tag** — a default is scenario-relative, declared per scenario via `build_technique_class_from_factories` (the `factories` list is the pool, catalog tags become named aggregate presets, and `default_tags` / `default_names` set what runs when nothing is chosen).
+- Factories opt into additive request-converter composition with `supports_additional_request_converters=True`. This is a semantic capability, not just constructor-signature detection; the factory validates that opted-in attacks accept `attack_converter_config`.
 - **Does not own**: the conversation algorithm itself. Branching, turn management, and scoring decisions live in the executor it wraps — a technique only selects and configures existing components, and shouldn't implement new sending, scoring, or branching logic.
 
 **Framework Plans**:
@@ -229,6 +234,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - This is often an LLM, but it doesn't have to be. For Cross-Domain Prompt Injection Attacks, the target might be a storage account that a later target has a reference to. Message and conversation should be generic enough to handle this extra data.
 - Target capabilities should be used to see if a target is compatible with the capabilities that the other components want to use.
 - Targets should use message_normalizer along with TargetConfiguration to transform `Messages` into formats that target supports.
+- A target may observe an internal, caller-owned send context at the provider-invocation boundary,
+  after target-side waits and immediately before irreversible provider I/O, but the caller owns any
+  bootstrap-history identity, replay, or branching state.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
@@ -248,12 +256,14 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 **Responsibility**: Scorers give feedback to the attack on what happened with the prompt. This could be as simple as "Was this prompt blocked?" or "Was our objective achieved?"
 
 - Any decision an attack makes should be based on a scorer result
-- A scorer is not limited to a prompt, it could be anything (e.g. was this tool called or was this file written).
+- A scorer is not limited to a message, it could be anything (e.g. was this tool called or was this file written). It receives a `Scorable`, which identifies that evidence, and an optional `ScoringExpectation`.
+- `TrueFalseScorer` and `FloatScaleScorer` define result families. `MessageScorer` adds message resolution and message-only policy on top of them.
+- `Score.status` marks a verdict complete or undetermined, and the attack decides how to branch on it.
 - **Does not own**: acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job, and aggregating scores across runs is analytics'. It may call a target to evaluate, but it doesn't send the attack's objective prompt or manage the conversation.
 
 **Framework Plans**:
 
-- Scorers will be refactored to be more generic, so they can determine more general results (does a file exist? Was a tool called?)
+- Loose file evidence is copied into managed results storage. Media already stored in `PromptMemoryEntries` is not yet normalized that way, which is memory retention work.
 
 **Contributing (difficulty low)**:
 
@@ -305,13 +315,19 @@ The below talks about responsibilities of most modules in the PyRIT library
 - Models includes `identifiers` which are descriptions of the core components. And along with the registry, can often recreate those components.
 - Models includes types passed around between components, and should be prefered in REST
 - models should never depend on anything except lightweight Python (the standard library and pydantic) and pyrit.common
+- Store metadata on the narrowest model that owns it (for example, request or response data belongs on `MessagePiece`, not `Message`). Use explicit typed fields for stable, core, or independently queried data.
+- For shared metadata, define a lightweight value object in `pyrit.models` that owns its keys and provides symmetric `to_metadata()` and `from_metadata()` methods. Use `JsonResponseConfig` as the pattern for data stored in `MessagePiece.prompt_metadata`.
 
 ## [Normalizers](./targets/11_message_normalizer)
 
-**Responsibility**: Reshape prompts and conversations so components and targets can interoperate. There are two distinct modules:
+**Responsibility**: Reshape prompts and conversations so components and targets can interoperate.
 
-- **`prompt_normalizer`** applies converters and dispatches individual prompts to a `PromptTarget` (handling batching and memory persistence). It is the single component that writes each request and response to memory; targets never persist on their own. `NormalizerRequest` and `ConverterConfiguration` describe what to send and which converters to apply.
-- **`message_normalizer`** reshapes multi-message conversation payloads into the structure a given model expects — for example, handling system-message behavior (keep / squash / ignore), history squashing, and tokenizer chat templates.
+- **`prompt_normalizer`** applies converters, persists requests and responses, and dispatches prompts to a `PromptTarget`. Targets do not persist messages.
+- **`message_normalizer`** reshapes conversations into target-compatible payloads. It owns target-facing representation, not attack policy or conversation state.
+- Prepended-history identity and delivery state belong to the attack execution context. Targets and normalizers consume only the narrow send-time view needed for provider adaptation.
+- **Does not own**: the conversation of record. Memory is canonical; a normalized payload is an ephemeral target-facing view that is never written back.
+
+See [message normalizers](./targets/11_message_normalizer) for capability behavior, processing order, and prepended-history lifecycle details.
 
 ## [Output](./output/0_output)
 

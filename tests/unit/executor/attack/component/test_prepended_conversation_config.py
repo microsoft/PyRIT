@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import get_args
+from typing import get_type_hints
 from unittest.mock import MagicMock
 
 from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
@@ -9,9 +9,18 @@ from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import ChatMessageRole
 
 
-def test_default_init_apply_converters_to_all_roles():
+def test_default_init_apply_converters_to_user_role():
     config = PrependedConversationConfig()
-    assert config.apply_converters_to_roles == list(get_args(ChatMessageRole))
+    assert config.apply_converters_to_roles == ["user"]
+
+
+def test_simulated_assistant_converter_role_normalizes_to_assistant():
+    config = PrependedConversationConfig(apply_converters_to_roles=["simulated_assistant"])
+    assert config.apply_converters_to_roles == ["assistant"]
+
+
+def test_public_type_hints_resolve_at_runtime():
+    assert get_type_hints(PrependedConversationConfig)["apply_converters_to_roles"] == list[ChatMessageRole]
 
 
 def test_default_init_message_normalizer_is_none():

@@ -14,11 +14,11 @@ import websockets
 from websockets.exceptions import InvalidStatus
 
 from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
+from pyrit.common import get_mime_type
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.memory import DataTypeSerializer
 from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
@@ -526,9 +526,8 @@ class WebSocketCopilotTarget(PromptTarget):
         ) as websocket:
             for input_msg in inputs:
                 payload = self._dict_to_websocket(input_msg)
-                await websocket.send(payload)
-
                 is_user_input = input_msg.get("type") == CopilotMessageType.USER_PROMPT
+                await websocket.send(payload)
 
                 max_message_iterations = 1000
                 iteration_count = 0
@@ -601,7 +600,7 @@ class WebSocketCopilotTarget(PromptTarget):
             piece_type = piece.converted_value_data_type
 
             if piece_type == "image_path":
-                mime_type = DataTypeSerializer.get_mime_type(piece.converted_value)
+                mime_type = get_mime_type(piece.converted_value)
                 if not mime_type or not mime_type.startswith("image/"):
                     raise ValueError(
                         f"Invalid image format for image_path: {piece.converted_value}. "

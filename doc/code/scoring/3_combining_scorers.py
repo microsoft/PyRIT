@@ -14,7 +14,7 @@
 # %% [markdown]
 # Scorers are composable. Rather than building one complex scorer, combine small ones:
 # aggregate several true/false scorers, invert a result, convert a float-scale score to a
-# boolean with a threshold, or lift any scorer to evaluate a whole conversation.
+# boolean with a threshold, or lift a message scorer to evaluate a whole conversation.
 #
 # These wrappers are themselves scorers, so they plug into attacks and the batch scorer
 # exactly like the leaf scorers on the [True/False](1_true_false_scorers.ipynb) and
@@ -25,6 +25,8 @@
 # Solid arrows pass a scorer through `scorer=` or `scorers=`, while dashed arrows show
 # the scorer base implemented by the resulting wrapper. An "any" input can therefore be
 # a leaf scorer or an already composed wrapper with that base, which enables stacking.
+
+# %% [markdown] class="col-page-right"
 #
 # ```mermaid
 # flowchart LR
@@ -38,8 +40,9 @@
 #         direction TB
 #         COMP["TrueFalseCompositeScorer<br/>AND · OR · MAJORITY"]
 #         INV["TrueFalseInverterScorer<br/>negates one result"]
-#         THRESH["FloatScaleThresholdScorer<br/>score ≥ threshold"]
 #         CONV["create_conversation_scorer()<br/>scores concatenated history"]
+#         THRESH["FloatScaleThresholdScorer<br/>score ≥ threshold"]
+#         CONV ~~~ THRESH
 #     end
 #
 #     subgraph outputs["Resulting scorer kind"]
@@ -51,8 +54,8 @@
 #     TF -->|"1+ via scorers="| COMP
 #     TF -->|"1 via scorer="| INV
 #     FS -->|"1 via scorer="| THRESH
-#     TF -->|"1 via scorer="| CONV
-#     FS -->|"1 via scorer="| CONV
+#     TF -->|"1 scorer supporting text content"| CONV
+#     FS -->|"1 scorer supporting text content"| CONV
 #
 #     COMP -. is a .-> TFOUT
 #     INV -. is a .-> TFOUT
@@ -67,13 +70,21 @@
 #     class COMP,INV,THRESH,CONV wrapper;
 #     class TFOUT,FSOUT output;
 # ```
+
+# %% [markdown]
 #
 # `TrueFalseCompositeScorer` requires at least one `TrueFalseScorer` and combines their
 # single results with `AND`, `OR`, or `MAJORITY`; `TrueFalseInverterScorer` accepts one
 # `TrueFalseScorer`. `FloatScaleThresholdScorer` is the cross-kind adapter: it accepts one
-# `FloatScaleScorer` and produces a `TrueFalseScorer`. `create_conversation_scorer()`
-# accepts only those two base types and returns a dynamic wrapper that remains the same
-# scorer kind as its input.
+# `FloatScaleScorer` and produces a `TrueFalseScorer`. These generic wrappers forward the
+# same `Scorable` to their children, so each child must support that evidence kind.
+#
+# `create_conversation_scorer()` accepts a true/false or float-scale scorer that supports
+# text `ContentScorable` evidence. It returns a dynamic wrapper that remains the same scorer
+# kind as its input.
+#
+# Deprecated message-shaped calls remain on `MessageScorer`, but generic wrappers do not
+# project those APIs from their children. Score wrappers through the canonical `Scorable` API.
 #
 # For example, float-scale → conversation → threshold →
 # inversion is supported; a generic `Scorer` outside those base types is not.
@@ -144,9 +155,9 @@ print(f"[threshold] independent -> {original.get_value()}")
 # ## Scoring a whole conversation
 #
 # Some signals only emerge across turns — persuasion, gradual persona breaks, escalation.
-# `create_conversation_scorer()` wraps any `TrueFalseScorer` or `FloatScaleScorer` so it
-# scores the concatenated conversation instead of a single message. The returned scorer is
-# the same type as the one it wraps.
+# `create_conversation_scorer()` renders the conversation as text and passes that
+# `ContentScorable` to a true/false or float-scale scorer. The returned scorer keeps the same
+# result family as the scorer it wraps.
 #
 # Pass it any one message from the conversation; its `conversation_id` is used to pull the
 # full history from memory. Below we build a short conversation by hand and wrap a local
@@ -155,7 +166,7 @@ print(f"[threshold] independent -> {original.get_value()}")
 import uuid
 
 from pyrit.memory import CentralMemory
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, MessageScorable
 from pyrit.score import create_conversation_scorer
 
 memory = CentralMemory.get_memory_instance()
@@ -176,7 +187,7 @@ persona_breach_scorer = SubStringScorer(substring="I am AI", categories=["person
 conversation_scorer = create_conversation_scorer(scorer=persona_breach_scorer)
 
 # Any message from the conversation works as the trigger.
-score = (await conversation_scorer.score_async(turns[0]))[0]  # type: ignore
+score = (await conversation_scorer.score_async(scorable=MessageScorable.from_message(turns[0])))[0]  # type: ignore
 print(f"[conversation] persona breach across turns -> {score.get_value()}")
 
 # %% [markdown]

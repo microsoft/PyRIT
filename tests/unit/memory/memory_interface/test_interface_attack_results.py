@@ -3,13 +3,16 @@
 
 
 import uuid
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultsKeysetCursor, MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
+from pyrit.memory.memory_interface import _AttackResultQuery
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -82,15 +85,15 @@ def _make_attack_result(
     return AttackResult(**kwargs)
 
 
-def _after(page: "Sequence[AttackResult]") -> AttackResultsKeysetCursor:
+def _after(page: "Sequence[AttackResult]") -> AttackResultKeysetCursor:
     """Build the keyset anchor for the next page from the last row of ``page``."""
-    return AttackResultsKeysetCursor.from_attack_result(page[-1])
+    return AttackResultKeysetCursor.from_attack_result(page[-1])
 
 
 def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list[AttackResult]:
     """Page through get_attack_results with the keyset cursor until exhausted."""
     drained: list[AttackResult] = []
-    after: AttackResultsKeysetCursor | None = None
+    after: AttackResultKeysetCursor | None = None
     while True:
         page = list(memory.get_attack_results(limit=page_size, after=after, **filters))
         drained.extend(page)
@@ -98,6 +101,102 @@ def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list
             break
         after = _after(page)
     return drained
+
+
+def test_attack_result_query_snapshots_mutable_inputs():
+    """The internal query remains stable when caller-owned containers change."""
+    attack_classes = ["CrescendoAttack"]
+    labels = {"operator": ["alice"]}
+    query = _AttackResultQuery(attack_classes=attack_classes, labels=labels)
+
+    attack_classes.append("ManualAttack")
+    labels["operator"].append("bob")
+
+    assert query.attack_classes == ("CrescendoAttack",)
+    assert query.labels == {"operator": ("alice",)}
+    field_name = "limit"
+    with pytest.raises(FrozenInstanceError):
+        setattr(query, field_name, 10)
+
+
+def test_attack_result_query_requires_keyword_arguments():
+    """The internal query does not expose field ordering as a positional API."""
+    with pytest.raises(TypeError):
+        _AttackResultQuery(["id"])  # ty: ignore[too-many-positional-arguments]
+
+
+def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: MemoryInterface):
+    """The compatibility API maps every parameter onto the internal query."""
+    cursor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    identifier_filter = IdentifierFilter(
+        identifier_type=IdentifierType.ATTACK,
+        property_path="$.hash",
+        value="hash",
+    )
+
+    with patch.object(sqlite_instance, "_query_attack_results", return_value=[]) as query_mock:
+        sqlite_instance.get_attack_results(
+            attack_result_ids=["id"],
+            conversation_id="conversation",
+            objective="objective",
+            objective_sha256=["sha"],
+            outcome="success",
+            attack_classes=["Attack"],
+            atomic_attack_eval_hashes=["eval"],
+            converter_classes=["Converter"],
+            converter_classes_match="any",
+            has_converters=True,
+            labels={"operator": ["alice"]},
+            targeted_harm_categories=["violence"],
+            identifier_filters=[identifier_filter],
+            scenario_result_id=str(uuid.uuid4()),
+            min_turns=1,
+            max_turns=5,
+            limit=10,
+            after=cursor,
+        )
+
+    query = query_mock.call_args.kwargs["query"]
+    assert isinstance(query, _AttackResultQuery)
+    assert query.attack_result_ids == ("id",)
+    assert query.conversation_id == "conversation"
+    assert query.objective == "objective"
+    assert query.objective_sha256 == ("sha",)
+    assert query.outcome == "success"
+    assert query.attack_classes == ("Attack",)
+    assert query.atomic_attack_eval_hashes == ("eval",)
+    assert query.converter_classes == ("Converter",)
+    assert query.converter_classes_match == "any"
+    assert query.has_converters is True
+    assert query.labels == {"operator": ("alice",)}
+    assert query.targeted_harm_categories == ("violence",)
+    assert query.identifier_filters == (identifier_filter,)
+    assert query.scenario_result_id is not None
+    assert query.min_turns == 1
+    assert query.max_turns == 5
+    assert query.limit == 10
+    assert query.after == cursor
+
+
+def test_query_attack_results_matches_compatibility_api(sqlite_instance: MemoryInterface):
+    """The internal query executor and compatibility API return the same page."""
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            _make_attack_result("conv-1", executed_turns=2, outcome=AttackOutcome.SUCCESS, ts_offset=1),
+            _make_attack_result("conv-2", executed_turns=5, outcome=AttackOutcome.SUCCESS, ts_offset=2),
+            _make_attack_result("conv-3", executed_turns=7, outcome=AttackOutcome.FAILURE, ts_offset=3),
+        ]
+    )
+
+    query = _AttackResultQuery(outcome=AttackOutcome.SUCCESS.value, min_turns=3, limit=1)
+    direct = sqlite_instance._query_attack_results(query=query)
+    compatibility = sqlite_instance.get_attack_results(
+        outcome=AttackOutcome.SUCCESS.value,
+        min_turns=3,
+        limit=1,
+    )
+
+    assert [result.attack_result_id for result in direct] == [result.attack_result_id for result in compatibility]
 
 
 def test_add_attack_results_to_memory(sqlite_instance: MemoryInterface):
@@ -1713,16 +1812,16 @@ def test_get_attack_results_pagination_duplicate_and_tie_heavy_pages_disjoint_an
     assert len(set(paged)) == num_convs
 
 
-def test_get_attack_results_pagination_order_parity_with_python_sort(sqlite_instance: MemoryInterface):
-    """Paginated SQL ordering matches the previous Python metadata sort for distinct metadata."""
-    attack_results = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=(i * 7) % 50) for i in range(15)]
+def test_get_attack_results_pagination_order_parity_with_timestamp_sort(sqlite_instance: MemoryInterface):
+    """Paginated SQL ordering matches a Python sort on the timestamp recency column."""
+    attack_results = [_make_attack_result(f"conv-{i}", ts_offset=(i * 7) % 50) for i in range(15)]
     sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
 
     new_order = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=100)]
     all_unpaged = list(sqlite_instance.get_attack_results())
     expected = sorted(
         all_unpaged,
-        key=lambda ar: ar.metadata.get("updated_at", ar.metadata.get("created_at", "")),
+        key=lambda ar: (ar.timestamp, ar.attack_result_id),
         reverse=True,
     )
     assert new_order == [r.conversation_id for r in expected]
@@ -1799,7 +1898,7 @@ def test_get_attack_results_paginated_empty_metadata_orders_newest_first(sqlite_
 
 def test_get_attack_results_pagination_with_ids_raises(sqlite_instance: MemoryInterface):
     """limit/keyset pagination cannot be combined with id-batched lookups."""
-    anchor = AttackResultsKeysetCursor(recency="", timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    anchor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     with pytest.raises(ValueError, match="pagination cannot be combined"):
         sqlite_instance.get_attack_results(attack_result_ids=[str(uuid.uuid4())], limit=10)
     with pytest.raises(ValueError, match="pagination cannot be combined"):
@@ -1942,63 +2041,23 @@ def test_get_attack_results_keyset_paginates_recency_and_timestamp_ties(sqlite_i
     assert len(set(paged)) == 8
 
 
-def test_attack_result_recency_key_matches_sql_order(sqlite_instance: MemoryInterface):
-    """The Python recency anchor key reproduces the DB recency ordering (updated_at > created_at > '')."""
+def test_attack_result_keyset_order_matches_sql_order(sqlite_instance: MemoryInterface):
+    """The keyset anchor ordering (timestamp, id) reproduces the DB recency ordering."""
     seeded = [
-        _make_attack_result("conv-upd", ts_offset=1, updated_at_offset=50, created_at_offset=1),
-        _make_attack_result("conv-created-only", ts_offset=2, created_at_offset=40),
-        _make_attack_result("conv-none", ts_offset=3),
-        _make_attack_result("conv-upd-high", ts_offset=4, updated_at_offset=90),
+        _make_attack_result("conv-a", ts_offset=1, created_at_offset=1),
+        _make_attack_result("conv-b", ts_offset=2, created_at_offset=40),
+        _make_attack_result("conv-c", ts_offset=3),
+        _make_attack_result("conv-d", ts_offset=4),
     ]
     sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
 
     sql_order = list(sqlite_instance.get_attack_results(limit=100))
     python_order = sorted(
         sqlite_instance.get_attack_results(),
-        key=lambda ar: (AttackResultsKeysetCursor.from_attack_result(ar).recency, ar.timestamp, ar.attack_result_id),
+        key=lambda ar: (
+            AttackResultKeysetCursor.from_attack_result(ar).timestamp,
+            ar.attack_result_id,
+        ),
         reverse=True,
     )
     assert [r.conversation_id for r in sql_order] == [r.conversation_id for r in python_order]
-
-
-@pytest.mark.parametrize("bad_recency", [False, 0, 1700000000])
-def test_get_attack_results_keyset_terminates_with_non_string_recency(
-    sqlite_instance: MemoryInterface, bad_recency: object
-):
-    """Non-string recency scalars must not break keyset seek monotonicity.
-
-    ``attack_metadata`` is ``dict[str, Any]``, so a caller can persist a non-string
-    ``updated_at`` (a JSON bool or number). SQLite's ``json_extract`` returns such a value as a
-    typed scalar and orders numbers before text, so the seek predicate ``recency < anchor``
-    could never advance past the row — pagination would loop forever. The ``json_type`` string
-    guard collapses non-strings to ``""`` so the row sorts last and the keyset drains cleanly.
-    """
-    string_rows = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=i) for i in range(4)]
-    bad_row = AttackResult(
-        conversation_id="conv-bad",
-        objective="Objective conv-bad",
-        outcome=AttackOutcome.UNDETERMINED,
-        metadata={"updated_at": bad_recency},
-        timestamp=_BASE_TS,
-    )
-    sqlite_instance.add_attack_results_to_memory(attack_results=[*string_rows, bad_row])
-
-    full = list(sqlite_instance.get_attack_results(limit=100))
-    assert len(full) == 5
-
-    # Bounded manual drain: a regression re-introduces an infinite loop, so cap the page count
-    # and fail on non-termination rather than hanging the suite.
-    drained: list[str] = []
-    after: AttackResultsKeysetCursor | None = None
-    for _ in range(len(full) + 2):
-        page = list(sqlite_instance.get_attack_results(limit=1, after=after))
-        if not page:
-            break
-        drained.append(page[0].conversation_id)
-        after = _after(page)
-    else:
-        pytest.fail("keyset pagination did not terminate for non-string recency")
-
-    assert drained == [r.conversation_id for r in full]
-    assert len(set(drained)) == len(drained)
-    assert drained[-1] == "conv-bad"  # non-string recency collapses to "" and sorts last

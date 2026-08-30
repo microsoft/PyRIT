@@ -203,7 +203,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         Returns:
             InitializerMetadata describing the initializer class.
         """
-        description = RegistryMetadata.description_from_docstring(cls, fallback="No description available")
+        description = RegistryMetadata.summary_from_docstring(cls) or "No description available"
 
         try:
             instance = cls()

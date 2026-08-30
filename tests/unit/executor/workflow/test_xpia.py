@@ -12,7 +12,7 @@ from pyrit.executor.workflow.xpia import (
     XPIAStatus,
     XPIAWorkflow,
 )
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreStatus
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer
@@ -583,6 +583,7 @@ class TestXPIAResult:
         """Test status property returns SUCCESS for successful attack."""
         mock_score = MagicMock(spec=Score)
         mock_score.get_value.return_value = 0.8
+        mock_score.is_undetermined = False
 
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=mock_score)
 
@@ -592,6 +593,7 @@ class TestXPIAResult:
         """Test status property returns FAILURE for failed attack."""
         mock_score = MagicMock(spec=Score)
         mock_score.get_value.return_value = 0.0
+        mock_score.is_undetermined = False
 
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=mock_score)
 
@@ -601,6 +603,23 @@ class TestXPIAResult:
         """Test status property returns UNKNOWN when no score is provided."""
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=None)
 
+        assert result.status == XPIAStatus.UNKNOWN
+
+    def test_status_property_unknown_for_undetermined_score(self) -> None:
+        score = Score(
+            score_value=None,
+            status=ScoreStatus.UNDETERMINED,
+            score_type="float_scale",
+            score_category=["test"],
+            score_value_description="No verdict",
+            score_rationale="The scorer could not reach a verdict.",
+            score_metadata={},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=_mock_scorer_id(),
+        )
+        result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=score)
+
+        assert result.success is False
         assert result.status == XPIAStatus.UNKNOWN
 
 

@@ -313,6 +313,31 @@ def test_handles_empty_attack_results(sqlite_instance: MemoryInterface):
     assert len(results[0].attack_results) == 0
 
 
+def test_terminal_state_updates_completion_time_only_on_terminal_transition(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    old_completion = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    scenario_result = create_scenario_result(name="Timing Scenario")
+    scenario_result.completion_time = old_completion
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+
+    sqlite_instance.update_scenario_run_state(
+        scenario_result_id=str(scenario_result.id),
+        scenario_run_state=ScenarioRunState.IN_PROGRESS,
+    )
+    in_progress = sqlite_instance.get_scenario_result_header(scenario_result_id=str(scenario_result.id))
+    assert in_progress is not None
+    assert in_progress.completion_time == old_completion
+
+    sqlite_instance.update_scenario_run_state(
+        scenario_result_id=str(scenario_result.id),
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+    completed = sqlite_instance.get_scenario_result_header(scenario_result_id=str(scenario_result.id))
+    assert completed is not None
+    assert completed.completion_time > old_completion
+
+
 def test_preserves_metadata(sqlite_instance: MemoryInterface):
     """Test that scenario metadata is preserved correctly."""
 
@@ -1011,3 +1036,22 @@ def test_get_scenario_results_by_target_identifier_filter_no_match(
         ],
     )
     assert len(results) == 0
+
+
+def test_add_scenario_result_without_objective_target_raises(sqlite_instance: MemoryInterface):
+    """Persisting a targetless scenario result fails loudly instead of writing an unqueryable row."""
+    attack_result = create_attack_result("conv_1", "Objective 1")
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    scenario = make_scenario_result(
+        scenario_name="Targetless Scenario",
+        scenario_version=1,
+        objective_target_identifier=None,
+        attack_results={"Attack1": [attack_result]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+
+    with pytest.raises(ValueError, match="objective_target_identifier is required"):
+        sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+
+    assert sqlite_instance.get_scenario_results(scenario_name="Targetless Scenario") == []

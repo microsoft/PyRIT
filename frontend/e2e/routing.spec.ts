@@ -12,6 +12,26 @@ const KNOWN_ATTACKS: Record<string, { outcome: "success" | "failure" }> = {
   "atk-success": { outcome: "success" },
   "atk-failure": { outcome: "failure" },
 };
+const ROUTING_TARGET_HASH = "routing-target-full-hash";
+const ROUTING_TARGET = {
+  target_registry_name: "routing-target",
+  identifier: {
+    class_name: "OpenAIChatTarget",
+    hash: ROUTING_TARGET_HASH,
+    endpoint: null,
+    model_name: "gpt-4o",
+  },
+  capabilities: {
+    supports_multi_turn: true,
+    supports_json_schema: false,
+    supports_json_output: false,
+    supports_system_prompt: false,
+    supported_input_modalities: ["text"],
+    supported_output_modalities: ["text"],
+  },
+  target_specific_params: null,
+  inner_targets: null,
+};
 
 /** Build an attack summary for the single-attack (getAttack) endpoint. */
 function makeAttackSummary(attackResultId: string, outcome: "success" | "failure") {
@@ -19,13 +39,18 @@ function makeAttackSummary(attackResultId: string, outcome: "success" | "failure
     attack_result_id: attackResultId,
     conversation_id: `conv-${attackResultId}`,
     attack_type: "SingleTurnAttack",
-    target: { target_type: "OpenAIChatTarget", model_name: "gpt-4o" },
+    target: {
+      target_type: "OpenAIChatTarget",
+      target_registry_name: ROUTING_TARGET.target_registry_name,
+      model_name: "gpt-4o",
+      identifier_hash: ROUTING_TARGET_HASH,
+    },
     converters: [],
     outcome,
     last_message_preview: null,
     message_count: 1,
     related_conversation_ids: [],
-    labels: { operator: "alice" },
+    labels: {},
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -74,15 +99,22 @@ const ATTACK_ROWS = [
   makeAttackRow("atk-success", "success"),
   makeAttackRow("atk-failure", "failure"),
 ];
+const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 
 /** Register every API mock the routing tests rely on. */
 async function mockRoutingAPIs(page: Page) {
-  // No active target configured – the chat ribbon shows "No target selected".
   await page.route(/\/api\/targets/, async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const body = pathname.endsWith(`/${ROUTING_TARGET.target_registry_name}`)
+      ? ROUTING_TARGET
+      : {
+          items: [ROUTING_TARGET],
+          pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+        };
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ items: [] }),
+      body: JSON.stringify(body),
     });
   });
 
@@ -213,13 +245,21 @@ test.describe("URL-driven routing", () => {
     await expect(page.getByTestId("attack-row-atk-failure")).not.toBeVisible();
   });
 
-  test("deep-links into an attack and hydrates its conversation", async ({ page }) => {
+  test("deep-links into an attack and restores its target after reload", async ({ page }) => {
     await page.goto("/attacks/atk-1");
 
     // The router keeps the deep link, and the attack named by the URL – not
     // some default/empty conversation – drives the chat window.
     await expect(page).toHaveURL(/\/attacks\/atk-1$/);
     await expect(page.getByText("Loaded from atk-1")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("chat-input")).toBeEnabled();
+    await expect(page.getByTestId("no-target-banner")).not.toBeVisible();
+
+    await page.reload();
+
+    await expect(page.getByText("Loaded from atk-1")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("chat-input")).toBeEnabled();
+    await expect(page.getByTestId("no-target-banner")).not.toBeVisible();
   });
 
   test("shows the not-found screen for an unknown attack id", async ({ page }) => {
@@ -238,5 +278,33 @@ test.describe("URL-driven routing", () => {
     await page.goBack();
     await expect(page).toHaveURL(/\/history$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
+  });
+
+  test("Markdown preference survives route remount and reload", async ({ page }) => {
+    await page.goto("/chat");
+
+    const markdownToggle = page.getByRole("switch", { name: "Markdown" });
+    await expect(markdownToggle).not.toBeChecked();
+    await markdownToggle.click();
+    await expect(markdownToggle).toBeChecked();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (storageKey: string) => window.localStorage.getItem(storageKey),
+          MARKDOWN_PREFERENCE_STORAGE_KEY,
+        ),
+      )
+      .toBe("markdown");
+
+    await page.getByTitle("Attack History").click();
+    await expect(page).toHaveURL(/\/history$/);
+    await expect(page.getByTestId("attacks-table")).toBeVisible();
+
+    await page.getByTitle("Chat").click();
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page.getByRole("switch", { name: "Markdown" })).toBeChecked();
+
+    await page.reload();
+    await expect(page.getByRole("switch", { name: "Markdown" })).toBeChecked();
   });
 });

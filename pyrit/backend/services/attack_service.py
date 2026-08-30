@@ -58,7 +58,7 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
-from pyrit.memory import AttackResultsKeysetCursor, CentralMemory, data_serializer_factory
+from pyrit.memory import AttackResultKeysetCursor, CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -182,7 +182,7 @@ class AttackService:
         page_results = list(results[:limit])
         next_cursor = (
             self._encode_attack_cursor(
-                cursor=AttackResultsKeysetCursor.from_attack_result(page_results[-1]),
+                cursor=AttackResultKeysetCursor.from_attack_result(page_results[-1]),
                 fingerprint=filter_fingerprint,
             )
             if has_next_page and page_results
@@ -297,7 +297,10 @@ class AttackService:
 
         # Get messages for this conversation
         pyrit_messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
-        backend_messages = await pyrit_messages_to_dto_async(list(pyrit_messages))
+        backend_messages = await pyrit_messages_to_dto_async(
+            list(pyrit_messages),
+            objective_score_id=ar.last_score.id if ar.last_score else None,
+        )
 
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
@@ -346,10 +349,14 @@ class AttackService:
         else:
             conversation_id = str(uuid.uuid4())
 
-        # Create AttackResult
+        # Create AttackResult. An absent request.name persists as an empty
+        # objective rather than a sentinel placeholder string -- both
+        # AttackResult.objective and the database column are non-nullable,
+        # but an empty string is a valid value the frontend already treats
+        # as "no explicit objective".
         attack_result = AttackResult(
             conversation_id=conversation_id,
-            objective=request.name or "Manual attack via GUI",
+            objective=request.name or "",
             atomic_attack_identifier=AtomicAttackIdentifier.build(
                 attack_identifier=AttackIdentifier(
                     class_name=request.name or "ManualAttack",
@@ -358,9 +365,10 @@ class AttackService:
                 ),
             ),
             outcome=AttackOutcome.UNDETERMINED,
+            timestamp=now,
             metadata={
                 "created_at": now.isoformat(),
-                "updated_at": now.isoformat(),
+                "target_registry_name": request.target_registry_name,
             },
             labels=labels,
         )
@@ -414,15 +422,11 @@ class AttackService:
         }
         new_outcome = outcome_map.get(request.outcome, AttackOutcome.UNDETERMINED)
 
-        ar = results[0]
-        updated_metadata = dict(ar.metadata) if ar.metadata else {}
-        updated_metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
-
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
             update_fields={
                 "outcome": new_outcome.value,
-                "attack_metadata": updated_metadata,
+                "timestamp": datetime.now(timezone.utc),
             },
         )
 
@@ -527,14 +531,11 @@ class AttackService:
         # Add to pruned_conversation_ids so user-created branches are visible in the GUI history panel.
         existing_pruned = ar.get_pruned_conversation_ids()
 
-        updated_metadata = dict(ar.metadata or {})
-        updated_metadata["updated_at"] = now.isoformat()
-
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
             update_fields={
                 "pruned_conversation_ids": existing_pruned + [new_conversation_id],
-                "attack_metadata": updated_metadata,
+                "timestamp": now,
             },
         )
 
@@ -590,8 +591,6 @@ class AttackService:
         updated_pruned.append(ar.conversation_id)
 
         now = datetime.now(timezone.utc)
-        updated_metadata = dict(ar.metadata or {})
-        updated_metadata["updated_at"] = now.isoformat()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
@@ -599,7 +598,7 @@ class AttackService:
                 "conversation_id": target_conv_id,
                 "pruned_conversation_ids": updated_pruned if updated_pruned else None,
                 "adversarial_chat_conversation_ids": updated_adversarial if updated_adversarial else None,
-                "attack_metadata": updated_metadata,
+                "timestamp": now,
             },
         )
 
@@ -752,12 +751,12 @@ class AttackService:
         self, *, attack_result_id: str, ar: AttackResult, request: AddMessageRequest
     ) -> None:
         """
-        Update attack metadata and converter tracking after a message is added.
-        """
-        updated_metadata = dict(ar.metadata or {})
-        updated_metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+        Update attack recency and converter tracking after a message is added.
 
-        update_fields: dict[str, Any] = {"attack_metadata": updated_metadata}
+        Bumps the attack's ``timestamp`` column (the single indexed recency key) so the edited
+        conversation re-floats to the top of the History view.
+        """
+        update_fields: dict[str, Any] = {"timestamp": datetime.now(timezone.utc)}
 
         if request.converter_ids:
             converter_objs = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
@@ -920,22 +919,20 @@ class AttackService:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     @staticmethod
-    def _encode_attack_cursor(*, cursor: AttackResultsKeysetCursor, fingerprint: str) -> str:
+    def _encode_attack_cursor(*, cursor: AttackResultKeysetCursor, fingerprint: str) -> str:
         """
         Encode a keyset anchor and its filter fingerprint into an opaque pagination cursor.
 
-        The anchor's recency string and timestamp can contain ``.``/``:``/``-`` (ISO
-        timestamps), so the payload is JSON-serialized and base64url-encoded rather than
-        joined with a delimiter, keeping the cursor an unambiguous opaque token for
-        ``_decode_attack_cursor``.
+        The anchor's timestamp can contain ``.``/``:``/``-`` (ISO timestamps), so the payload
+        is JSON-serialized and base64url-encoded rather than joined with a delimiter, keeping
+        the cursor an unambiguous opaque token for ``_decode_attack_cursor``.
 
         Returns:
-            An opaque base64url cursor string encoding ``{fingerprint, recency, timestamp,
+            An opaque base64url cursor string encoding ``{fingerprint, timestamp,
             attack_result_id}``.
         """
         payload = {
             "f": fingerprint,
-            "r": cursor.recency,
             "t": cursor.timestamp.isoformat(),
             "i": cursor.attack_result_id,
         }
@@ -943,19 +940,19 @@ class AttackService:
         return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
     @staticmethod
-    def _decode_attack_cursor(*, cursor: str | None, fingerprint: str) -> AttackResultsKeysetCursor | None:
+    def _decode_attack_cursor(*, cursor: str | None, fingerprint: str) -> AttackResultKeysetCursor | None:
         """
         Decode the opaque list-attacks cursor into a keyset (seek) anchor.
 
-        The cursor encodes the previous page's last-row recency anchor together with a
+        The cursor encodes the previous page's last-row timestamp anchor together with a
         fingerprint of the filter set it was generated for (see ``_attack_filter_fingerprint``).
         A cursor is honored only when its fingerprint matches the current request's filters;
-        malformed, legacy (offset/attack-result-id), or filter-mismatched cursors fall back to
-        the first page (``None``) so a stale cursor degrades gracefully instead of raising or
-        seeking within the wrong result set.
+        malformed, legacy (offset/attack-result-id/recency-string), or filter-mismatched cursors
+        fall back to the first page (``None``) so a stale cursor degrades gracefully instead of
+        raising or seeking within the wrong result set.
 
         Returns:
-            The decoded ``AttackResultsKeysetCursor``, or ``None`` to start at the first page.
+            The decoded ``AttackResultKeysetCursor``, or ``None`` to start at the first page.
         """
         if not cursor:
             return None
@@ -966,10 +963,9 @@ class AttackService:
             return None
         if not isinstance(payload, dict) or payload.get("f") != fingerprint:
             return None
-        recency = payload.get("r")
         raw_timestamp = payload.get("t")
         attack_result_id = payload.get("i")
-        if not isinstance(recency, str) or not isinstance(raw_timestamp, str) or not isinstance(attack_result_id, str):
+        if not isinstance(raw_timestamp, str) or not isinstance(attack_result_id, str):
             return None
         try:
             timestamp = datetime.fromisoformat(raw_timestamp)
@@ -989,7 +985,7 @@ class AttackService:
             # A crafted cursor near datetime's min/max with a large UTC offset overflows the
             # representable range when shifted to UTC; treat it as malformed and restart at page one.
             return None
-        return AttackResultsKeysetCursor(recency=recency, timestamp=timestamp, attack_result_id=attack_result_id)
+        return AttackResultKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
 
     # ========================================================================
     # Private Helper Methods - Duplicate / Branch

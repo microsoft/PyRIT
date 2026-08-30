@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging  # noqa: TC003
 import time
@@ -12,6 +13,11 @@ from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
+
+try:
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
+except ImportError:  # pragma: no cover - exercised only on 3.10
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
 
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
@@ -35,28 +41,117 @@ from pyrit.models import (
     ConverterIdentifier,
     Identifiable,
     Message,
+    Score,
     ScorerIdentifier,
     SeedPrompt,
     TargetIdentifier,
+    UndeterminedScoreError,
 )
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
+    from pyrit.executor.attack.component.prepended_conversation_config import (
+        PrependedConversationConfig,
+    )
+    from pyrit.executor.attack.component.prepended_history_send_context import (
+        PrependedHistorySendContext,
+    )
     from pyrit.executor.attack.core.attack_config import (
         AttackAdversarialConfig,
         AttackScoringConfig,
     )
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+    from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.prompt_target import PromptTarget
+    from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
+
+
+def attack_outcome_from_score(score: Score) -> AttackOutcome:
+    """
+    Map an objective score onto the outcome it justifies.
+
+    This is the attack-side contract for undetermined scores, stated once so no attack
+    invents its own. An undetermined score is neither achievement nor refutation, so it
+    never reads as failure; an attack that ends on one ends undetermined.
+
+    Args:
+        score (Score): The objective score to read.
+
+    Returns:
+        AttackOutcome: ``UNDETERMINED`` when no verdict was reachable, otherwise
+            ``SUCCESS`` or ``FAILURE``.
+    """
+    try:
+        value = score.get_value()
+    except UndeterminedScoreError:
+        return AttackOutcome.UNDETERMINED
+    return AttackOutcome.SUCCESS if bool(value) else AttackOutcome.FAILURE
 
 
 class _NextMessageOverrideState(Enum):
     """State marker distinguishing an unset override from an explicit ``None``."""
 
     UNSET = "unset"
+
+
+class _ObjectiveTargetConversationLifecycle:
+    """Track and release objective-target conversations for one attack execution."""
+
+    def __init__(
+        self,
+        *,
+        objective_target: PromptTarget,
+        logger: logging.Logger | logging.LoggerAdapter[logging.Logger],
+    ) -> None:
+        self._objective_target = objective_target
+        self._logger = logger
+        self._conversation_ids: set[str] = set()
+
+    async def __aenter__(self) -> _ObjectiveTargetConversationLifecycle:
+        """
+        Start tracking target invocations.
+
+        Returns:
+            _ObjectiveTargetConversationLifecycle: This lifecycle instance.
+        """
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Release each conversation invoked during the attack."""
+        pending_cancellation: asyncio.CancelledError | None = None
+        for conversation_id in self._conversation_ids:
+            try:
+                await self._objective_target.reset_conversation_async(conversation_id=conversation_id)
+            except asyncio.CancelledError as cancellation:
+                # Attempt every reset, then honor the first cancellation after the loop.
+                pending_cancellation = pending_cancellation or cancellation
+            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+                self._logger.warning(
+                    "Failed to reset objective-target conversation %s: %s",
+                    conversation_id,
+                    error,
+                )
+        if pending_cancellation is not None:
+            raise pending_cancellation
+
+    def record_invocation(self, *, conversation_id: str) -> None:
+        """
+        Record one objective-target invocation.
+
+        Args:
+            conversation_id (str): The conversation ID used by the target.
+        """
+        self._conversation_ids.add(conversation_id)
 
 
 @dataclass
@@ -87,6 +182,20 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _next_message_override: Message | None | _NextMessageOverrideState = _NextMessageOverrideState.UNSET
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
+    _error_result_persistence_error: Exception | None = field(default=None, init=False, repr=False)
+    _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    # Per-execution prepended-history boundary and send lifecycle. Never persisted.
+    prepended_history_send_context: PrependedHistorySendContext | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     # Optional attribution from an upstream orchestrator (e.g. Scenario). When
     # set, the persistence path stamps attribution_parent_id + attribution_data
@@ -145,6 +254,21 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     def next_message(self, value: Message | None) -> None:
         """Set the next message (for attacks that generate internally)."""
         self._next_message_override = value
+
+    def _record_objective_target_invocation(self, *, conversation_id: str) -> None:
+        """
+        Record an objective-target invocation for lifecycle cleanup.
+
+        Recording is a no-op when no objective-target scope is active, so attack
+        helpers remain callable outside a full execution.
+
+        Args:
+            conversation_id (str): The conversation ID used by the target.
+        """
+        lifecycle = self._objective_target_conversation_lifecycle
+        if lifecycle is None:
+            return
+        lifecycle.record_invocation(conversation_id=conversation_id)
 
 
 class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT]):
@@ -225,7 +349,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Handle post-execution logic after the attack strategy has run.
 
-        Attaches retry events to the result and persists it to memory.
+        Attaches execution metadata to the result and logs its outcome.
 
         Args:
             event_data (StrategyEventData[AttackStrategyContextT, AttackStrategyResultT]): The event data containing
@@ -256,7 +380,15 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._logger.debug(f"Attack execution completed in {execution_time_ms}ms")
 
         self._log_attack_outcome(event_data.result)
-        self._memory.add_attack_results_to_memory(attack_results=[event_data.result])
+
+    def _persist_result(self, *, result: AttackStrategyResultT) -> None:
+        """
+        Persist a completed attack result.
+
+        Args:
+            result (AttackStrategyResultT): The completed result to persist.
+        """
+        self._memory.add_attack_results_to_memory(attack_results=[result])
 
     @staticmethod
     def _apply_attribution(
@@ -286,6 +418,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         }
         if attribution.parent_eval_hash is not None:
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
+        if attribution.seed_group_id is not None:
+            attribution_data["seed_group_id"] = attribution.seed_group_id
         result.attribution_data = attribution_data
 
     @staticmethod
@@ -355,8 +489,11 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         collector = get_retry_collector()
         retry_events = collector.events if collector else []
 
-        # Build a conversation_id — use context's if available, otherwise generate one
-        conversation_id = getattr(context, "conversation_id", None) or str(uuid.uuid4())
+        # Multi-turn contexts keep the active ID on their conversation session.
+        conversation_id = getattr(context, "conversation_id", None)
+        if not conversation_id:
+            conversation_id = getattr(getattr(context, "session", None), "conversation_id", None)
+        conversation_id = conversation_id or str(uuid.uuid4())
 
         error_result = AttackResult(
             conversation_id=conversation_id,
@@ -381,7 +518,10 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_attribution(context=context, result=error_result)
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
-        self._memory.add_attack_results_to_memory(attack_results=[error_result])
+        try:
+            self._memory.add_attack_results_to_memory(attack_results=[error_result])
+        except Exception as persistence_error:
+            context._error_result_persistence_error = persistence_error
 
         self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 
@@ -419,6 +559,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         objective_target: PromptTarget,
         context_type: type[AttackStrategyContextT],
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
+        prepended_conversation_config: PrependedConversationConfig | None = None,
         logger: logging.Logger = logger,
     ) -> None:
         """
@@ -430,23 +571,51 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
                 Defaults to AttackParameters. Use AttackParameters.excluding() to create
                 a params type that rejects certain fields.
+            prepended_conversation_config (PrependedConversationConfig | None): Policy for
+                prepended conversations. Controls converter role scope and target-facing
+                history formatting.
             logger (logging.Logger): Logger instance for logging events.
         """
+        event_handler = _DefaultAttackStrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT](logger=logger)
         super().__init__(
             context_type=context_type,
-            event_handler=_DefaultAttackStrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT](
-                logger=logger
-            ),
+            event_handler=event_handler,
             logger=logger,
         )
+        self._default_event_handler = event_handler
+        # Local import avoids the component package's import cycle through attack config.
+        from pyrit.executor.attack.component.prepended_conversation_config import (
+            PrependedConversationConfig,
+        )
+
         type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
         self._params_type = params_type
+        self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         # Guard so subclasses that set converters before calling super() aren't clobbered
         if not hasattr(self, "_request_converters"):
             self._request_converters: list[Any] = []
         if not hasattr(self, "_response_converters"):
             self._response_converters: list[Any] = []
+
+    def _get_prepended_normalizer_overrides(
+        self,
+        *,
+        prepended_history_send_context: PrependedHistorySendContext | None,
+    ) -> dict[CapabilityName, MessageListNormalizer[Message]]:
+        """
+        Resolve prepended-history overrides for one target send.
+
+        Args:
+            prepended_history_send_context: Persisted seed boundary for this execution.
+
+        Returns:
+            Overrides keyed by the capability they adapt.
+        """
+        return self._prepended_conversation_config.get_normalizer_overrides(
+            target=self._objective_target,
+            prepended_history_send_context=prepended_history_send_context,
+        )
 
     def _create_identifier(
         self,
@@ -474,6 +643,13 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         merged_params: dict[str, Any] = dict(params) if params else {}
 
         objective_target = TargetIdentifier.from_component_identifier(self.get_objective_target().get_identifier())
+
+        prepended_config = self._prepended_conversation_config
+        if prepended_config.apply_converters_to_roles != ["user"] or prepended_config.message_normalizer is not None:
+            merged_params["prepended_conversation_converter_roles"] = list(prepended_config.apply_converters_to_roles)
+            all_children["prepended_conversation_formatter"] = (
+                prepended_config.get_message_normalizer().get_identifier()
+            )
 
         # Add scorer if present
         objective_scorer: ScorerIdentifier | None = None
@@ -613,6 +789,43 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             list[Any]: The list of request ConverterConfiguration objects.
         """
         return self._request_converters
+
+    async def execute_with_context_async(self, *, context: AttackStrategyContextT) -> AttackStrategyResultT:
+        """
+        Execute an attack and persist its completed result after teardown.
+
+        Args:
+            context (AttackStrategyContextT): The attack execution context.
+
+        Returns:
+            AttackStrategyResultT: The completed and persisted attack result.
+
+        Raises:
+            ExceptionGroup: If attack execution and recording its error result both fail.
+        """
+        context._error_result_persistence_error = None
+        lifecycle = _ObjectiveTargetConversationLifecycle(
+            objective_target=self._objective_target,
+            logger=self._logger,
+        )
+        context._objective_target_conversation_lifecycle = lifecycle
+        try:
+            async with lifecycle:
+                try:
+                    result = await super().execute_with_context_async(context=context)
+                except Exception as attack_error:
+                    persistence_error = context._error_result_persistence_error
+                    if persistence_error is not None:
+                        raise ExceptionGroup(
+                            "Attack execution and error result persistence failed",
+                            [attack_error, persistence_error],
+                        ) from None
+                    raise
+        finally:
+            context._objective_target_conversation_lifecycle = None
+
+        self._default_event_handler._persist_result(result=result)
+        return result
 
     @overload
     async def execute_async(

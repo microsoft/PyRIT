@@ -40,6 +40,7 @@ def test_chat_target_requirements_shape():
         CapabilityName.EDITABLE_HISTORY,
         CapabilityName.MULTI_TURN,
     }
+    assert CHAT_TARGET_REQUIREMENTS.native_required == set()
 
 
 def test_requirements_are_frozen():

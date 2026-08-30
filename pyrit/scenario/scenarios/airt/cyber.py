@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -70,6 +70,7 @@ class Cyber(Scenario):
     #: technique pool (and the ``all`` aggregate) reflects whatever the initializer
     #: registered. ``use_cached`` only matches prior runs at the current ``VERSION``.
     VERSION: int = 3
+    RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = True
 
     @classmethod
     def get_override_composite_scorer_questions_path(cls) -> list[Path]:

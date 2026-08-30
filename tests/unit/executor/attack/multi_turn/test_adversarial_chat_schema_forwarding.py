@@ -115,6 +115,7 @@ async def test_tap_forwards_schema_to_adversarial_target(patch_central_database)
         attack_id=attack.get_identifier(),
         attack_strategy_name="TreeOfAttacksWithPruningAttack",
         modality_router=_ModalityFeedbackRouter(adversarial_chat=adversarial, objective_target=objective),
+        record_objective_conversation=lambda *, conversation_id: None,
     )
 
     await node._send_to_adversarial_chat_async(prompt_text="hello")

@@ -29,7 +29,7 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
-from pyrit.memory import AttackResultsKeysetCursor
+from pyrit.memory import AttackResultKeysetCursor
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -104,6 +104,7 @@ def make_attack_result(
         ),
         outcome=outcome,
         attack_result_id=effective_ar_id,
+        timestamp=updated,
         metadata={
             "created_at": created.isoformat(),
             "updated_at": updated.isoformat(),
@@ -159,7 +160,7 @@ def _cursor_for(result: AttackResult, *, fingerprint: str | None = None) -> str:
     """
     effective_fingerprint = fingerprint if fingerprint is not None else AttackService._attack_filter_fingerprint()
     return AttackService._encode_attack_cursor(
-        cursor=AttackResultsKeysetCursor.from_attack_result(result),
+        cursor=AttackResultKeysetCursor.from_attack_result(result),
         fingerprint=effective_fingerprint,
     )
 
@@ -659,6 +660,46 @@ class TestGetConversationMessages:
         assert result.conversation_id == "test-id"
         assert result.messages == []
 
+    async def test_get_conversation_messages_marks_attack_objective_score(self, attack_service, mock_memory) -> None:
+        """The message mapper receives the attack's canonical objective score ID."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = uuid.uuid4()
+        ar.last_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
+
+    async def test_get_conversation_messages_preserves_string_objective_score_id(
+        self, attack_service, mock_memory
+    ) -> None:
+        """The message mapper receives string score IDs without UUID conversion."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = str(uuid.uuid4())
+        ar.last_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
+
     async def test_get_conversation_messages_raises_for_unrelated_conversation(
         self, attack_service, mock_memory
     ) -> None:
@@ -712,6 +753,8 @@ class TestCreateAttack:
             assert result.conversation_id is not None
             assert result.created_at is not None
             mock_memory.add_attack_results_to_memory.assert_called_once()
+            stored_attack = mock_memory.add_attack_results_to_memory.call_args.kwargs["attack_results"][0]
+            assert stored_attack.metadata["target_registry_name"] == "target-1"
 
     async def test_create_attack_stores_prepended_conversation(self, attack_service, mock_memory) -> None:
         """Test that create_attack stores prepended conversation messages."""
@@ -951,7 +994,7 @@ class TestCreateAttack:
             assert stored_ar.labels["source"] == "api-test"
 
     async def test_create_attack_default_name(self, attack_service, mock_memory) -> None:
-        """Test that request.name=None uses default class_name and objective."""
+        """Test that request.name=None uses default class_name and an empty objective."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -966,8 +1009,29 @@ class TestCreateAttack:
 
             call_args = mock_memory.add_attack_results_to_memory.call_args
             stored_ar = call_args[1]["attack_results"][0]
-            assert stored_ar.objective == "Manual attack via GUI"
+            assert stored_ar.objective == ""
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
+            assert "objective_is_placeholder" not in stored_ar.metadata
+
+    async def test_create_attack_with_name_marks_objective_explicit(self, attack_service, mock_memory) -> None:
+        """Test that a user-supplied request.name is persisted directly as the objective."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", name="Extract the secret")
+            )
+
+            stored_ar = mock_memory.add_attack_results_to_memory.call_args[1]["attack_results"][0]
+            assert stored_ar.objective == "Extract the secret"
+            assert "objective_is_placeholder" not in stored_ar.metadata
 
 
 # ============================================================================
@@ -1043,8 +1107,8 @@ class TestUpdateAttack:
         call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "error"
 
-    async def test_update_attack_refreshes_updated_at(self, attack_service, mock_memory) -> None:
-        """Test that update_attack refreshes the updated_at metadata."""
+    async def test_update_attack_bumps_timestamp(self, attack_service, mock_memory) -> None:
+        """Test that update_attack bumps the timestamp recency column and does not write metadata."""
         old_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
         ar = make_attack_result(conversation_id="test-id", updated_at=old_time)
         mock_memory.get_attack_results.return_value = [ar]
@@ -1054,8 +1118,10 @@ class TestUpdateAttack:
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="success")
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
-        assert call_kwargs["update_fields"]["attack_metadata"]["updated_at"] != old_time.isoformat()
+        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
+        assert isinstance(update_fields["timestamp"], datetime)
+        assert update_fields["timestamp"] > old_time
+        assert "attack_metadata" not in update_fields
 
 
 # ============================================================================
@@ -1339,8 +1405,8 @@ class TestAddMessage:
             with pytest.raises(ValueError, match="messages not found after update"):
                 await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
-    async def test_add_message_persists_updated_at_timestamp(self, attack_service, mock_memory) -> None:
-        """Should persist updated_at in attack_metadata via update_attack_result."""
+    async def test_add_message_bumps_timestamp(self, attack_service, mock_memory) -> None:
+        """Should bump the timestamp recency column via update_attack_result (no metadata write)."""
         ar = make_attack_result(conversation_id="test-id")
         ar.metadata = {"created_at": "2026-01-01T00:00:00+00:00"}
         mock_memory.get_attack_results.return_value = [ar]
@@ -1359,9 +1425,9 @@ class TestAddMessage:
         mock_memory.update_attack_result_by_id.assert_called_once()
         call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
         assert call_kwargs["attack_result_id"] == "test-id"
-        persisted_metadata = call_kwargs["update_fields"]["attack_metadata"]
-        assert "updated_at" in persisted_metadata
-        assert persisted_metadata["created_at"] == "2026-01-01T00:00:00+00:00"
+        update_fields = call_kwargs["update_fields"]
+        assert isinstance(update_fields["timestamp"], datetime)
+        assert "attack_metadata" not in update_fields
 
     async def test_converter_ids_propagate_even_when_preconverted(self, attack_service, mock_memory) -> None:
         """Test that converter identifiers propagate to attack_identifier even when pieces are preconverted."""
@@ -1474,13 +1540,12 @@ class TestPagination:
         decoded = decode(valid)
         assert decoded is not None
         assert decoded.attack_result_id == anchor.attack_result_id
-        assert decoded.recency == anchor.metadata.get("updated_at")
+        assert decoded.timestamp == anchor.timestamp
 
         # A crafted cursor carrying a naive (tz-less) timestamp is rejected: service-minted anchors
         # are always timezone-aware, and a naive anchor would bind inconsistently in the seek.
         naive_payload = {
             "f": fingerprint,
-            "r": anchor.metadata.get("updated_at"),
             "t": "2026-01-01T00:00:00",
             "i": str(uuid.uuid4()),
         }
@@ -1491,7 +1556,6 @@ class TestPagination:
         # tie-break matches the UTC-normalized timestamp column (service cursors are already UTC).
         offset_payload = {
             "f": fingerprint,
-            "r": anchor.metadata.get("updated_at"),
             "t": "2026-01-01T00:00:00+05:00",
             "i": str(uuid.uuid4()),
         }
@@ -1505,7 +1569,6 @@ class TestPagination:
         # representable range when normalized to UTC decodes to None instead of raising.
         overflow_payload = {
             "f": fingerprint,
-            "r": anchor.metadata.get("updated_at"),
             "t": "0001-01-01T00:00:00+23:59",
             "i": str(uuid.uuid4()),
         }
@@ -2099,7 +2162,7 @@ class TestCreateRelatedConversation:
         call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
         assert call_kwargs["attack_result_id"] == "attack-1"
         assert result.conversation_id in call_kwargs["update_fields"]["pruned_conversation_ids"]
-        assert "updated_at" in call_kwargs["update_fields"]["attack_metadata"]
+        assert isinstance(call_kwargs["update_fields"]["timestamp"], datetime)
 
     async def test_rejects_source_conversation_from_different_attack(self, attack_service, mock_memory):
         """Should raise ValueError when source_conversation_id doesn't belong to the attack."""

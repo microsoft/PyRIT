@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from pyrit.memory import CentralMemory
-from pyrit.models import MessagePiece, Score
+from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.scorer import Scorer
 
@@ -146,13 +146,15 @@ class VideoHelper:
 
         # Format objective using template if both are provided
         if objective is None or self.image_objective_template is None:
-            scoring_objectives = None
+            scoring_objectives = [""] * len(image_requests)
         else:
             formatted_objective = self.image_objective_template.format(objective=objective)
             scoring_objectives = [formatted_objective] * len(image_requests)
 
-        frame_scores = await self.image_scorer.score_prompts_batch_async(
-            messages=image_requests, objectives=scoring_objectives, batch_size=len(frames)
+        frame_scores = await self.image_scorer.score_batch_async(
+            scorables=[MessageScorable.from_message(request) for request in image_requests],
+            expectations=[ScoringExpectation(objective=scoring_objective) for scoring_objective in scoring_objectives],
+            batch_size=len(frames),
         )
 
         if not frame_scores:
@@ -261,14 +263,16 @@ class VideoHelper:
             # Score the audio using the audio_scorer
             # Format objective using template if both are provided
             if objective is None or self.audio_objective_template is None:
-                scoring_objectives = None
+                scoring_objectives = [""]
             else:
                 formatted_objective = self.audio_objective_template.format(objective=objective)
                 scoring_objectives = [formatted_objective]
 
-            audio_scores = await audio_scorer.score_prompts_batch_async(
-                messages=[audio_message],
-                objectives=scoring_objectives,
+            audio_scores = await audio_scorer.score_batch_async(
+                scorables=[MessageScorable.from_message(audio_message)],
+                expectations=[
+                    ScoringExpectation(objective=scoring_objective) for scoring_objective in scoring_objectives
+                ],
                 batch_size=1,
             )
 

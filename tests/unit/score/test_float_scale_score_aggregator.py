@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, Score
+import pytest
+
+from pyrit.models import ComponentIdentifier, Score, ScoreStatus
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScoreAggregator,
     FloatScaleScorerAllCategories,
@@ -16,19 +18,41 @@ _TEST_SCORER_ID = ComponentIdentifier(
 )
 
 
-def _mk_score(val: float, *, category: list[str] | None = None, prr_id: str = "1", rationale: str = "") -> Score:
+def _mk_score(
+    val: float | None,
+    *,
+    category: list[str] | None = None,
+    metadata: dict[str, str | int | float] | None = None,
+    prr_id: str = "1",
+    rationale: str = "",
+) -> Score:
     """Helper to create a float scale score."""
     return Score(
-        score_value=str(val),
+        score_value=str(val) if val is not None else None,
+        status=ScoreStatus.UNDETERMINED if val is None else ScoreStatus.COMPLETE,
         score_value_description=f"Score of {val}",
         score_type="float_scale",
         score_category=category,
         score_rationale=rationale,
-        score_metadata=None,
+        score_metadata=metadata,
         message_piece_id=prr_id,
         scorer_class_identifier=_TEST_SCORER_ID,
         objective=None,
     )
+
+
+def test_float_scale_aggregator_accepts_a_generator():
+    scores = (_mk_score(value, category=["test"]) for value in (0.3, 0.7))
+    results = FloatScaleScoreAggregator.MAX(scores)
+    assert len(results) == 1
+    assert results[0].value == 0.7
+
+
+def test_float_scale_by_category_aggregator_accepts_a_generator():
+    scores = (_mk_score(value, category=["test"]) for value in (0.3, 0.7))
+    results = FloatScaleScorerByCategory.MAX(scores)
+    assert len(results) == 1
+    assert results[0].value == 0.7
 
 
 # Tests for FloatScaleScoreAggregator (simple aggregation)
@@ -104,6 +128,35 @@ def test_float_scale_aggregator_mixed_empty_and_valid():
     assert len(results) == 1
     assert results[0].value == 0.5
     assert results[0].category == ["Violence"]
+
+
+@pytest.mark.parametrize(
+    "aggregator",
+    [FloatScaleScoreAggregator.MAX, FloatScaleScorerAllCategories.MAX],
+)
+def test_undetermined_aggregate_preserves_categories_and_metadata(aggregator):
+    scores = [
+        _mk_score(
+            0.5,
+            category=["Hate"],
+            metadata={"shared": "same", "complete_only": 1},
+        ),
+        _mk_score(
+            None,
+            category=["Violence"],
+            metadata={"shared": "same", "undetermined_only": 2},
+        ),
+    ]
+
+    result = aggregator(scores)[0]
+
+    assert result.value is None
+    assert result.category == ["Hate", "Violence"]
+    assert result.metadata == {
+        "shared": "same",
+        "complete_only": 1,
+        "undetermined_only": 2,
+    }
 
 
 # Tests for FloatScaleScorerByCategory (category-aware aggregation)
@@ -230,6 +283,22 @@ def test_by_category_description_includes_category_name():
 
     assert len(results) == 1
     assert "Hate" in results[0].description
+
+
+def test_by_category_undetermined_aggregate_preserves_group_context():
+    scores = [
+        _mk_score(0.5, category=["Hate"], metadata={"shared": "same"}),
+        _mk_score(None, category=["Hate"], metadata={"undetermined": 1}),
+        _mk_score(0.7, category=["Violence"], metadata={"complete": 1}),
+    ]
+
+    results = FloatScaleScorerByCategory.MAX(scores)
+
+    hate_result = next(result for result in results if result.category == ["Hate"])
+    violence_result = next(result for result in results if result.category == ["Violence"])
+    assert hate_result.value is None
+    assert hate_result.metadata == {"shared": "same", "undetermined": 1}
+    assert violence_result.value == 0.7
 
 
 # Tests for FloatScaleScorerAllCategories (combine all categories)
@@ -365,3 +434,48 @@ def test_average_raise_on_empty_with_no_scores():
 
     with pytest.raises(ValueError, match="No scores available for aggregation"):
         FloatScaleScoreAggregator.AVERAGE_RAISE_ON_EMPTY([])
+
+
+def test_aggregators_accept_generators():
+    """
+    Aggregators are typed to take an Iterable, so a generator must aggregate the same
+    as the equivalent list. Validating by iterating before materializing exhausted the
+    generator and silently produced the empty-input result (0.0).
+    """
+    values = [0.3, 0.9, 0.5]
+
+    aggregators = [
+        FloatScaleScoreAggregator.MAX,
+        FloatScaleScoreAggregator.MIN,
+        FloatScaleScoreAggregator.AVERAGE,
+        FloatScaleScorerByCategory.MAX,
+        FloatScaleScorerAllCategories.MAX,
+    ]
+    for aggregator in aggregators:
+        from_list = aggregator([_mk_score(v, category=["harm"]) for v in values])
+        from_generator = aggregator(_mk_score(v, category=["harm"]) for v in values)
+        assert [r.value for r in from_generator] == [r.value for r in from_list]
+
+
+def test_raise_on_empty_aggregator_accepts_generators():
+    """A generator with scores must not trip the empty-input guard."""
+    values = [0.3, 0.9, 0.5]
+    results = FloatScaleScoreAggregator.MAX_RAISE_ON_EMPTY(_mk_score(v) for v in values)
+    assert results[0].value == 0.9
+
+
+def test_generator_of_wrong_type_still_raises():
+    """Materializing first must not weaken type validation."""
+    bad = Score(
+        score_value="true",
+        score_value_description="",
+        score_type="true_false",
+        score_category=["test"],
+        score_rationale="",
+        score_metadata=None,
+        message_piece_id="1",
+        scorer_class_identifier=_TEST_SCORER_ID,
+        objective=None,
+    )
+    with pytest.raises(ValueError, match="must be of type 'float_scale'"):
+        FloatScaleScoreAggregator.MAX(s for s in [bad])

@@ -13,8 +13,9 @@ shared across every target that speaks that format.
 import base64
 import json
 import logging
-from collections.abc import Mapping
 from typing import Any
+
+from openai.types.chat import ChatCompletion
 
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -27,7 +28,10 @@ from pyrit.models import (
     MessagePiece,
     TokenUsage,
     construct_response_from_request,
+    read_usage_int,
+    read_usage_value,
 )
+from pyrit.prompt_target.common.utils import set_response_metadata, set_token_usage_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +39,21 @@ logger = logging.getLogger(__name__)
 # included because it is handled separately (see ``is_content_filter_response``) before
 # validation; a target should check for content filtering first.
 DEFAULT_VALID_FINISH_REASONS: frozenset[str] = frozenset({"stop", "length", "content_filter", "tool_calls"})
+
+
+def get_finish_reason(*, response: ChatCompletion) -> str | None:
+    """
+    Extract the first choice's ``finish_reason`` from a Chat Completions response.
+
+    Args:
+        response (ChatCompletion): The Chat Completions response object.
+
+    Returns:
+        str | None: The first choice's ``finish_reason``, or None when there are no choices.
+    """
+    if not response.choices:
+        return None
+    return response.choices[0].finish_reason
 
 
 def detect_response_content(message: Any) -> tuple[bool, bool, bool]:
@@ -268,58 +287,45 @@ def capture_token_usage(*, pieces: list[MessagePiece], response: Any) -> None:
     Copy token-usage numbers from ``response.usage`` into the first piece's metadata.
 
     Parses the Chat Completions ``usage`` payload (see ``token_usage_from_chat_completion``) and
-    writes the resulting counts onto the first piece. Only fields the provider actually reports are
-    written; missing counts are omitted rather than stored as a misleading zero. No-op when the
-    response has no usage data or there are no pieces.
+    writes the resulting counts onto the first piece via ``set_token_usage_metadata``, which also
+    clears any stale caller-supplied counts. Only fields the provider actually reports are written;
+    missing counts are omitted rather than stored as a misleading zero.
 
     Args:
         pieces (list[MessagePiece]): The constructed response pieces.
         response (Any): The Chat Completions response object.
     """
     usage = getattr(response, "usage", None)
-    if not usage or not pieces:
+    set_token_usage_metadata(pieces=pieces, usage=token_usage_from_chat_completion(usage) if usage else None)
+
+
+def capture_usage_and_finish_reason(*, pieces: list[MessagePiece], response: Any) -> None:
+    """
+    Copy the provider's response metadata into the response pieces' metadata.
+
+    Captures token usage (see ``capture_token_usage``) together with the first choice's
+    ``finish_reason``, which records why generation stopped — ``stop``, ``length`` (token limit),
+    ``content_filter`` or ``tool_calls``. Both come from the same response object, so capturing them
+    together keeps every call site consistent: success, truncation, and content filter all record
+    the same set of keys. Applies to every ``usage``-plus-``choices`` response shape: Chat
+    Completions, Completions, and the LiteLLM responses modeled on them.
+
+    Args:
+        pieces (list[MessagePiece]): The constructed response pieces.
+        response (Any): The response object. Objects that carry no ``usage`` or no ``choices`` —
+            such as the synthetic response used when the SDK raises on a content filter — are
+            tolerated and simply yield no metadata.
+    """
+    if not pieces:
         return
 
-    token_usage = token_usage_from_chat_completion(usage)
-    pieces[0].prompt_metadata.update(token_usage.to_metadata())
+    capture_token_usage(pieces=pieces, response=response)
 
-
-def _read(source: Any, name: str) -> Any:
-    """
-    Read ``name`` from ``source``, which may be a mapping or an attribute object.
-
-    Args:
-        source (Any): The usage object (may be None).
-        name (str): The field name to read.
-
-    Returns:
-        Any: The field value, or None when absent.
-    """
-    if isinstance(source, Mapping):
-        return source.get(name)
-    return getattr(source, name, None)
-
-
-def _usage_field(source: Any, *names: str) -> int | None:
-    """
-    Return the first int-valued field among ``names`` on ``source``, else None.
-
-    ``source`` may be either a mapping (for example, a ``model_dump``'d usage payload) or an
-    attribute object (the OpenAI/LiteLLM SDK ``Usage`` type), so both access styles are supported.
-    Booleans are rejected even though ``bool`` is a subclass of ``int``.
-
-    Args:
-        source (Any): The usage object or nested details object (may be None).
-        names (str): Candidate field names, tried in order.
-
-    Returns:
-        int | None: The first integer value found, or None.
-    """
-    for name in names:
-        value = _read(source, name)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    return None
+    # Synthetic content-filter responses have no ``choices`` attribute at all, so probe for it
+    # rather than relying on ``get_finish_reason``'s empty-list guard.
+    choices = getattr(response, "choices", None)
+    finish_reason = get_finish_reason(response=response) if choices else None
+    set_response_metadata(pieces=pieces, finish_reason=finish_reason)
 
 
 def token_usage_from_chat_completion(usage: Any) -> TokenUsage:
@@ -335,7 +341,8 @@ def token_usage_from_chat_completion(usage: Any) -> TokenUsage:
 
     This parser is specific to the Chat Completions wire format. The Responses API reports usage
     under different names (``input_tokens`` / ``output_tokens``); a target that speaks that format
-    should parse it in its own module rather than overloading this function.
+    should parse it in its own module rather than overloading this function, reusing the shared
+    ``read_usage_value`` / ``read_usage_int`` reads.
 
     Args:
         usage (Any): The Chat Completions usage object (attribute object or mapping).
@@ -343,26 +350,34 @@ def token_usage_from_chat_completion(usage: Any) -> TokenUsage:
     Returns:
         TokenUsage: The parsed token usage.
     """
-    input_tokens = _usage_field(usage, "prompt_tokens")
-    output_tokens = _usage_field(usage, "completion_tokens")
-    total_tokens = _usage_field(usage, "total_tokens")
+    input_tokens = read_usage_int(source=usage, name="prompt_tokens")
+    output_tokens = read_usage_int(source=usage, name="completion_tokens")
+    total_tokens = read_usage_int(source=usage, name="total_tokens")
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
 
-    prompt_details = _read(usage, "prompt_tokens_details")
-    completion_details = _read(usage, "completion_tokens_details")
+    prompt_details = read_usage_value(source=usage, name="prompt_tokens_details")
+    completion_details = read_usage_value(source=usage, name="completion_tokens_details")
 
-    cached_tokens = _usage_field(prompt_details, "cached_tokens")
+    cached_tokens = read_usage_int(source=prompt_details, name="cached_tokens")
     if cached_tokens is None:
-        cached_tokens = _usage_field(usage, "cache_read_input_tokens")
-    reasoning_tokens = _usage_field(completion_details, "reasoning_tokens")
+        cached_tokens = read_usage_int(source=usage, name="cache_read_input_tokens")
+    reasoning_tokens = read_usage_int(source=completion_details, name="reasoning_tokens")
 
     extra: dict[str, int] = {}
-    _add_extra(extra, "input_audio_tokens", _usage_field(prompt_details, "audio_tokens"))
-    _add_extra(extra, "cache_write_tokens", _usage_field(usage, "cache_creation_input_tokens"))
-    _add_extra(extra, "output_audio_tokens", _usage_field(completion_details, "audio_tokens"))
-    _add_extra(extra, "accepted_prediction_tokens", _usage_field(completion_details, "accepted_prediction_tokens"))
-    _add_extra(extra, "rejected_prediction_tokens", _usage_field(completion_details, "rejected_prediction_tokens"))
+    _add_extra(extra, "input_audio_tokens", read_usage_int(source=prompt_details, name="audio_tokens"))
+    _add_extra(extra, "cache_write_tokens", read_usage_int(source=usage, name="cache_creation_input_tokens"))
+    _add_extra(extra, "output_audio_tokens", read_usage_int(source=completion_details, name="audio_tokens"))
+    _add_extra(
+        extra,
+        "accepted_prediction_tokens",
+        read_usage_int(source=completion_details, name="accepted_prediction_tokens"),
+    )
+    _add_extra(
+        extra,
+        "rejected_prediction_tokens",
+        read_usage_int(source=completion_details, name="rejected_prediction_tokens"),
+    )
 
     return TokenUsage(
         input_tokens=input_tokens,
@@ -398,7 +413,7 @@ def is_content_filter_response(response: Any) -> bool:
         bool: True if ``finish_reason == "content_filter"``, False otherwise.
     """
     try:
-        return bool(response.choices) and response.choices[0].finish_reason == "content_filter"
+        return bool(response.choices) and bool(response.choices[0].finish_reason == "content_filter")
     except (AttributeError, IndexError):
         return False
 
@@ -414,9 +429,9 @@ def extract_partial_content(response: Any) -> str | None:
         str | None: The partial text, or None if none was generated.
     """
     try:
-        choice = response.choices[0]
-        if choice.message and choice.message.content:
-            return choice.message.content
+        content = response.choices[0].message.content
+        if isinstance(content, str) and content:
+            return content
     except (AttributeError, IndexError):
         pass
     return None
@@ -433,8 +448,8 @@ def build_content_filter_message(
 
     Rather than raising, blocked responses are surfaced as an error Message so attacks can
     continue. When ``partial_content`` is available it is attached to each piece as
-    ``prompt_metadata["partial_content"]`` so scorers with ``score_blocked_content=True`` can
-    still evaluate what the model produced.
+    ``prompt_metadata["partial_content"]`` so scorers can still evaluate what the model
+    produced before the block.
 
     Args:
         response (Any): The Chat Completions response object (or an object exposing

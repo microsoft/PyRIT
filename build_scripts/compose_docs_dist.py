@@ -22,7 +22,7 @@ linted, type-checked, and unit-tested. Adding a new redirect target or
 tweaking the 404 markup is a code change, not a shell-quoting puzzle.
 
 Usage:
-    python build_scripts/compose_docs_dist.py \\
+    python -m build_scripts.compose_docs_dist \\
         --artifacts-dir artifacts \\
         --dist-dir dist \\
         --config .github/docs-versions.yml \\
@@ -39,7 +39,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from generate_pages_manifest import collect_pages
+
+from build_scripts.generate_pages_manifest import collect_pages
 
 # Single source of truth for the closest-page algorithm. Both the version
 # picker (inject_version_picker.py) and the 404 page below concat the

@@ -43,6 +43,12 @@ class MyTarget(PromptTarget):
 ``send_prompt_async`` (the public entry point) is ``@final`` and MUST NOT
 be overridden. Override ``_send_prompt_to_target_async`` instead.
 
+Targets that hold external state keyed by conversation (a websocket
+connection, browser page, or upstream session) SHOULD override
+``reset_conversation_async``. It must be safe to call more than once and for
+unknown conversation IDs. Whole-target cleanup stays in
+``cleanup_target_async``.
+
 ## Keyword-only ``__init__`` is enforced
 
 Every ``PromptTarget`` subclass MUST make all ``__init__`` parameters

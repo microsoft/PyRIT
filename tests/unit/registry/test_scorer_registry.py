@@ -26,10 +26,10 @@ from pyrit.score import (
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
 class DummyValidator(ScorerPromptValidator):
@@ -42,7 +42,7 @@ class DummyValidator(ScorerPromptValidator):
         return True
 
 
-class MockTrueFalseScorer(TrueFalseScorer):
+class MockTrueFalseScorer(MessageTrueFalseScorer):
     """Mock TrueFalseScorer for testing."""
 
     def __init__(self):
@@ -66,7 +66,7 @@ class MockTrueFalseScorer(TrueFalseScorer):
         pass
 
 
-class MockFloatScaleScorer(FloatScaleScorer):
+class MockFloatScaleScorer(MessageFloatScaleScorer):
     """Mock FloatScaleScorer for testing."""
 
     def __init__(self):
@@ -272,6 +272,7 @@ class TestDiscovery:
 
     def test_discovers_known_scorers(self, registry: ScorerRegistry):
         names = registry.get_class_names()
+        assert "RobloxPiiScorer" in names
         assert "SelfAskRefusalScorer" in names
         assert "TrueFalseCompositeScorer" in names
 

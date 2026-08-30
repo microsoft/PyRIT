@@ -2,19 +2,23 @@
 # Licensed under the MIT license.
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.score.float_scale.float_scale_score_aggregator import (
-    FloatScaleAggregatorFunc,
-    FloatScaleScoreAggregator,
+from pyrit.models import (
+    ComponentIdentifier,
+    Condition,
+    Scorable,
+    ScorableUnion,
+    Score,
+    ScoreStatus,
+    ScoringExpectation,
 )
+from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggregatorFunc, FloatScaleScoreAggregator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -46,8 +50,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         self._threshold = threshold
         self._float_scale_aggregator = float_scale_aggregator
 
-        # Validation is used by sub-scorers
-        super().__init__(validator=ScorerPromptValidator())
+        super().__init__()
 
         if threshold <= 0 or threshold > 1:
             raise ValueError("The threshold must be between 0 and 1")
@@ -82,35 +85,91 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
-    async def _score_async(
-        self,
-        message: Message,
-        *,
-        objective: str | None = None,
-        role_filter: ChatMessageRole | None = None,
-    ) -> list[Score]:
+    def matched_conditions(self) -> frozenset[type[Condition]]:
         """
-        Scores the piece using the underlying float-scale scorer and thresholds the resulting score.
-
-        Args:
-            message (Message): The message to score.
-            objective (str | None): The objective to evaluate against (the original attacker model's objective).
-                Defaults to None.
-            role_filter (ChatMessageRole | None): Optional filter for message roles. Defaults to None.
+        Report what the wrapped scorer matches.
 
         Returns:
-            list[Score]: A list containing a single true/false Score object based on the threshold comparison.
+            frozenset[type[Condition]]: The condition types the wrapped scorer routes.
         """
-        scores = await self._scorer.score_async(
-            message,
-            objective=objective,
-            role_filter=role_filter,
+        return self._scorer.matched_conditions()
+
+    def required_conditions(self) -> frozenset[type[Condition]]:
+        """
+        Report what the wrapped scorer requires.
+
+        Returns:
+            frozenset[type[Condition]]: The required condition types.
+        """
+        return self._scorer.required_conditions()
+
+    async def _score_scorable_async(
+        self,
+        *,
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Score the scorable with the wrapped float-scale scorer and threshold the result.
+
+        Args:
+            scorable (Scorable): What to look at.
+            expectation (ScoringExpectation | None): What the wrapped scorer should look for.
+
+        Returns:
+            list[Score]: A list containing a single true/false Score based on the threshold comparison.
+        """
+        scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
+        return self._apply_threshold(
+            scores=scores,
+            expectation=expectation,
+            # Score rejects a kind outside the union when it is constructed below.
+            scorable=cast("ScorableUnion | None", scorable),
+            message_piece_id=self._piece_id_from_scorable(scorable),
         )
+
+    def _apply_threshold(
+        self,
+        *,
+        scores: list[Score],
+        expectation: ScoringExpectation | None,
+        scorable: ScorableUnion | None,
+        message_piece_id: uuid.UUID | str | None,
+    ) -> list[Score]:
+        """
+        Turn the aggregated float value into a single true/false verdict.
+
+        Returns:
+            list[Score]: A list containing a single true/false Score.
+        """
+        objective = expectation.objective if expectation else None
 
         # Aggregator handles 0-many scores and returns exactly one result (or raises if configured)
         aggregate_results = self._float_scale_aggregator(scores)
         aggregate_score = aggregate_results[0]
         aggregate_value = aggregate_score.value
+        scorer_type = self._scorer.get_identifier().class_name
+
+        if aggregate_value is None:
+            # There is no value to compare against the threshold.
+            return [
+                Score(
+                    score_type="true_false",
+                    score_value=None,
+                    status=ScoreStatus.UNDETERMINED,
+                    score_value_description=aggregate_score.description,
+                    score_rationale=(
+                        f"based on {scorer_type}\nNo verdict was reachable, so the threshold "
+                        f"{self._threshold} could not be applied.\n{aggregate_score.rationale}"
+                    ),
+                    score_category=aggregate_score.category,
+                    score_metadata=dict(aggregate_score.metadata),
+                    scorer_class_identifier=self.get_identifier(),
+                    message_piece_id=message_piece_id,
+                    scorable=scorable,
+                    objective=objective,
+                )
+            ]
 
         # Calculate threshold result
         threshold_result = aggregate_value >= self._threshold
@@ -121,34 +180,34 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         else:
             comparison_symbol = "="
 
-        scorer_type = self._scorer.get_identifier().class_name
-
         # If we have scores, modify the first one; otherwise create a new score
         if scores:
             score = scores[0]
             score.score_type = "true_false"
             score.score_value = str(threshold_result)
+            score.status = ScoreStatus.COMPLETE
+            # Carry the aggregate's category, metadata and rationale rather than the first
+            # constituent score's. The threshold decision is made on the aggregate, so
+            # describing it with scores[0] mislabels the result whenever the wrapped scorer
+            # returns more than one score (e.g. AzureContentFilterScorer, one per harm
+            # category): the value would say True while the category, rationale and metadata
+            # described a different, possibly zero-valued, category.
             score.score_rationale = (
                 f"based on {scorer_type}\n"
                 f"Normalized scale score: {aggregate_value} {comparison_symbol} threshold {self._threshold}\n"
-                f"Rationale for scale score: {score.score_rationale}"
+                f"Rationale for scale score: {aggregate_score.rationale}"
             )
             score.score_value_description = aggregate_score.description
+            score.score_category = aggregate_score.category
             score.id = uuid.uuid4()
             score.scorer_class_identifier = self.get_identifier()
             # Store the original float value in metadata for granular comparison
-            if score.score_metadata is None:
-                score.score_metadata = {}
-            score.score_metadata[ORIGINAL_FLOAT_VALUE_KEY] = aggregate_value
+            score.score_metadata = {
+                **aggregate_score.metadata,
+                ORIGINAL_FLOAT_VALUE_KEY: aggregate_value,
+            }
         else:
             # Create new score from aggregator result (all pieces were filtered out)
-            # Use the first message piece's id if available, otherwise generate a new UUID
-            piece_id = (
-                message.message_pieces[0].id
-                if message.message_pieces and message.message_pieces[0].id
-                else uuid.uuid4()
-            )
-
             score = Score(
                 score_type="true_false",
                 score_value=str(threshold_result),
@@ -165,21 +224,9 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
                     ORIGINAL_FLOAT_VALUE_KEY: aggregate_value,
                 },
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=piece_id,
+                message_piece_id=message_piece_id,
+                scorable=scorable,
                 objective=objective,
             )
 
         return [score]
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        """
-        Float Scale scorers do not support piecewise scoring.
-
-        Args:
-            message_piece (MessagePiece): Unused.
-            objective (str | None): Unused.
-
-        Raises:
-            NotImplementedError: Always, since composite scoring operates at the response level.
-        """
-        raise NotImplementedError("FloatScaleThresholdScorer does not support piecewise scoring.")

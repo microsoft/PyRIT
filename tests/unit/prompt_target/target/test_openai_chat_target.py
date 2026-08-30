@@ -7,6 +7,7 @@ import logging
 import os
 from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -53,6 +54,17 @@ def create_mock_completion(content: str = "hi", finish_reason: str = "stop"):
         {"choices": [{"finish_reason": finish_reason, "message": {"content": content}}]}
     )
     return mock_completion
+
+
+def _mock_usage(*, prompt_tokens: int, completion_tokens: int, total_tokens: int) -> SimpleNamespace:
+    """Build a Chat Completions ``usage`` stand-in with no nested detail breakdowns."""
+    return SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        prompt_tokens_details=None,
+        completion_tokens_details=None,
+    )
 
 
 @pytest.fixture
@@ -539,6 +551,71 @@ async def test_send_prompt_async_content_filter_200(target: OpenAIChatTarget):
     assert response[0].message_pieces[0].response_error == "blocked"
     assert response[0].message_pieces[0].converted_value_data_type == "error"
     assert response[0].message_pieces[0].structured_refusal is None
+
+
+async def test_send_prompt_async_captures_finish_reason(target: OpenAIChatTarget):
+    message = Message(message_pieces=[MessagePiece(role="user", conversation_id="c", original_value="hi")])
+    mock_completion = create_mock_completion(content="hello", finish_reason="stop")
+    target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+        return_value=mock_completion
+    )
+
+    response = await target.send_prompt_async(message=message)
+
+    assert response[0].message_pieces[0].prompt_metadata["finish_reason"] == "stop"
+
+
+async def test_content_filter_200_captures_token_usage_and_finish_reason(target: OpenAIChatTarget):
+    """A blocked response still reports what it consumed, which is exactly where it matters most."""
+    message = Message(message_pieces=[MessagePiece(role="user", conversation_id="c", original_value="harmful")])
+    mock_completion = create_mock_completion(content="partial", finish_reason="content_filter")
+    mock_completion.usage = _mock_usage(prompt_tokens=12, completion_tokens=5, total_tokens=17)
+    target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+        return_value=mock_completion
+    )
+
+    response = await target.send_prompt_async(message=message)
+
+    piece = response[0].message_pieces[0]
+    assert piece.response_error == "blocked"
+    assert piece.prompt_metadata["finish_reason"] == "content_filter"
+    assert piece.prompt_metadata["token_usage_input_tokens"] == 12
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 5
+    assert piece.prompt_metadata["token_usage_total_tokens"] == 17
+
+
+async def test_truncated_empty_response_captures_finish_reason(target: OpenAIChatTarget):
+    """The graceful empty-truncated fallback must carry metadata too."""
+    message = Message(message_pieces=[MessagePiece(role="user", conversation_id="c", original_value="hi")])
+    mock_completion = create_mock_completion(content=None, finish_reason="length")
+    mock_completion.usage = _mock_usage(prompt_tokens=9, completion_tokens=100, total_tokens=109)
+    target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+        return_value=mock_completion
+    )
+
+    response = await target.send_prompt_async(message=message)
+
+    piece = response[0].message_pieces[0]
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 100
+
+
+async def test_sdk_content_filter_error_omits_finish_reason(
+    target: OpenAIChatTarget, sample_conversations: MutableSequence[MessagePiece]
+):
+    """The SDK-raised path has no response object to read, so no metadata is invented."""
+    message_piece = sample_conversations[0]
+    message_piece.conversation_id = "test-conv-id"
+    request = Message(message_pieces=[message_piece])
+
+    with patch.object(target._async_client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
+        mock_create.side_effect = ContentFilterFinishReasonError()
+        response = await target.send_prompt_async(message=request)
+
+    piece = response[0].message_pieces[0]
+    assert piece.response_error == "blocked"
+    assert "finish_reason" not in piece.prompt_metadata
 
 
 async def test_send_prompt_async_structured_refusal(target: OpenAIChatTarget):
@@ -1079,11 +1156,78 @@ def test_validate_response_success_stop(target: OpenAIChatTarget, dummy_text_mes
     assert result is None
 
 
-def test_validate_response_success_length(target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece):
-    """Test _validate_response passes for valid length response."""
+def test_validate_response_success_length(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """Test _validate_response passes for a truncated response that still has content, and warns."""
     mock_response = create_mock_completion(content="Hello", finish_reason="length")
-    result = target._validate_response(mock_response, dummy_text_message_piece)
+    with caplog.at_level(logging.WARNING):
+        result = target._validate_response(mock_response, dummy_text_message_piece)
     assert result is None
+    assert "finish_reason='length'" in caplog.text
+
+
+def test_validate_response_length_empty_does_not_raise(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """Test _validate_response treats a truncated-but-empty response as valid (warns, does not raise)."""
+    mock_response = create_mock_completion(content="", finish_reason="length")
+    with caplog.at_level(logging.WARNING):
+        result = target._validate_response(mock_response, dummy_text_message_piece)
+    assert result is None
+    assert "finish_reason='length'" in caplog.text
+
+
+def test_is_truncated_response_detects_length_finish_reason(target: OpenAIChatTarget):
+    """_is_truncated_response is True only when the completion stopped on the token limit."""
+    assert target._is_truncated_response(create_mock_completion(content="", finish_reason="length")) is True
+    assert target._is_truncated_response(create_mock_completion(content="hi", finish_reason="stop")) is False
+
+
+async def test_construct_message_length_empty_returns_graceful_empty_and_captures_usage(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test construction returns a graceful empty piece with usage captured for truncated empty responses."""
+    mock_response = create_mock_completion(content="", finish_reason="length")
+    mock_response.usage = MagicMock()
+    mock_response.usage.prompt_tokens = 10
+    mock_response.usage.completion_tokens = 20
+    mock_response.usage.total_tokens = 30
+    mock_response.usage.completion_tokens_details.reasoning_tokens = 100
+
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
+
+    assert isinstance(result, Message)
+    piece = result.message_pieces[0]
+    assert piece.original_value == ""
+    assert piece.response_error == "empty"
+    assert piece.prompt_metadata["token_usage_input_tokens"] == 10
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 20
+    assert piece.prompt_metadata["token_usage_total_tokens"] == 30
+    assert piece.prompt_metadata["token_usage_reasoning_tokens"] == 100
+    assert piece.is_truncated is True
+
+
+async def test_construct_message_length_with_content_sets_truncated_metadata(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test construction preserves partial content and marks token-limit truncation."""
+    mock_response = create_mock_completion(content="Partial answer", finish_reason="length")
+
+    result = await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
+
+    piece = result.message_pieces[0]
+    assert piece.original_value == "Partial answer"
+    assert piece.is_truncated is True
+
+
+async def test_construct_message_empty_non_truncated_raises(
+    target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece
+):
+    """Test construction raises for a genuinely empty (non-truncated) response so retries can kick in."""
+    mock_response = create_mock_completion(content="", finish_reason="stop")
+    with pytest.raises(EmptyResponseException, match="Failed to extract any response content"):
+        await target._construct_message_from_response_async(mock_response, dummy_text_message_piece)
 
 
 def test_validate_response_no_choices(target: OpenAIChatTarget, dummy_text_message_piece: MessagePiece):
@@ -2084,6 +2228,7 @@ async def test_construct_message_from_response_captures_token_usage(
     assert piece.prompt_metadata["token_usage_total_tokens"] == 30
     assert piece.prompt_metadata["token_usage_cached_tokens"] == 5
     assert piece.prompt_metadata["token_usage_reasoning_tokens"] == 7
+    assert piece.is_truncated is False
 
 
 async def test_construct_message_from_response_no_usage_no_metadata(

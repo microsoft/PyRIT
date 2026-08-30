@@ -190,6 +190,25 @@ class ServerErrorException(PyritException):
         self.body = body
 
 
+class KeyVaultInitializationException(PyritException, ValueError):  # noqa: N818
+    """Exception raised when Key Vault-backed environment initialization fails."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int = 500,
+        message: str = "Key Vault environment initialization failed",
+    ) -> None:
+        """
+        Initialize a Key Vault initialization exception.
+
+        Args:
+            status_code (int): HTTP-style status code associated with the failure.
+            message (str): Human-readable failure description.
+        """
+        super().__init__(status_code=status_code, message=message)
+
+
 class EmptyResponseException(BadRequestException):
     """Exception class for empty response errors."""
 

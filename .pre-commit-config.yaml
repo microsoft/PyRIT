@@ -10,46 +10,46 @@ repos:
     hooks:
       - id: sanitize-notebook-paths
         name: Sanitize Notebook Paths
-        entry: python ./build_scripts/sanitize_notebook_paths.py
+        entry: python -m build_scripts.sanitize_notebook_paths
         language: python
         files: ^doc.*\.(ipynb)$
       - id: strip-notebook-progress-bars
         name: Strip Notebook Progress Bars
-        entry: python ./build_scripts/strip_notebook_progress_bars.py
+        entry: python -m build_scripts.strip_notebook_progress_bars
         language: python
         files: ^doc.*\.(ipynb)$
       - id: strip-py-kernelspec
         name: Strip kernelspec from jupytext .py files
-        entry: python ./build_scripts/strip_py_kernelspec.py
+        entry: python -m build_scripts.strip_py_kernelspec
         language: python
         files: ^doc/.*\.py$
       - id: validate-docs
         name: Validate Documentation Structure
-        entry: python ./build_scripts/validate_docs.py
+        entry: python -m build_scripts.validate_docs
         language: python
         files: ^(doc/.*\.(py|ipynb|md)|doc/myst\.yml)$
         pass_filenames: false
         additional_dependencies: ['pyyaml']
       - id: check-no-rest-roles
         name: Reject Sphinx reST cross-reference roles
-        entry: python ./build_scripts/check_no_rest_roles.py
+        entry: python -m build_scripts.check_no_rest_roles
         language: python
         files: ^pyrit/.*\.py$
       - id: enforce_alembic_revision_immutability
         name: Enforce Alembic Revision Immutability
-        entry: python ./build_scripts/enforce_alembic_revision_immutability.py
+        entry: python -m build_scripts.enforce_alembic_revision_immutability
         language: python
         files: ^pyrit/memory/alembic/versions/.*\.py$
         pass_filenames: false
       - id: check-async-suffix
         name: Enforce _async Suffix on async def
-        entry: python ./build_scripts/check_async_suffix.py
+        entry: python -m build_scripts.check_async_suffix
         language: python
         files: ^pyrit/.*\.py$
         pass_filenames: false
       - id: memory-migrations-check
         name: Check Memory Migrations
-        entry: python ./build_scripts/memory_migrations.py check
+        entry: python -m build_scripts.memory_migrations check
         language: system
         pass_filenames: false
         files: ^pyrit/memory/(memory_models\.py|alembic/.*|migration\.py)$
@@ -67,7 +67,7 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.0
+    rev: v0.16.4
     hooks:
       - id: ruff-format
       - id: ruff-check
@@ -89,7 +89,13 @@ repos:
         # ty in an isolated env without project deps, which causes spurious
         # ``unresolved-import`` errors now that the rule is set to ``error``.
         # Include optional modules in the environment, including GCG's torch imports.
-        entry: uv run --extra all --link-mode=copy ty check
+        # ``pass_filenames: false`` keeps this to one invocation. pre-commit otherwise
+        # splits the files into parallel batches, and the concurrent ``uv run`` syncs
+        # fight over the same venv and fail to copy locked files on Windows.
+        # ``--frozen`` stops ``uv run`` from rewriting uv.lock, which rewrites every
+        # index URL when a contributor has a private package index configured.
+        entry: uv run --frozen --extra all --link-mode=copy ty check pyrit
         language: system
         files: ^pyrit/
         types: [python]
+        pass_filenames: false

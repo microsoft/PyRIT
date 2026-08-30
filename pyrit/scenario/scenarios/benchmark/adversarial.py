@@ -11,11 +11,23 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import apply_defaults
-from pyrit.models import AttackOutcome, AttackResult, ObjectiveTargetEvaluationIdentifier, ScenarioResult
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ObjectiveTargetEvaluationIdentifier,
+    ScenarioResult,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder, resolve_technique_factories
+from pyrit.scenario.core.matrix_atomic_attack_builder import (
+    MatrixAtomicAttackBuilder,
+    filter_compatible_seed_groups,
+    resolve_technique_factories,
+    resolve_technique_factories_for_techniques,
+)
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
 if TYPE_CHECKING:
@@ -44,7 +56,8 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     does not narrow the pool further by group. The resulting enum has one
     concrete member per factory (e.g. ``red_teaming``, ``tap``,
     ``crescendo_simulated``) and a ``light`` / ``single_turn`` / ``multi_turn``
-    aggregate for each catalog tag. ``light`` is the scenario's default run.
+    aggregate for each catalog tag. The scenario's default run is the explicit
+    ``role_play_video_game`` / ``crescendo_simulated`` / ``tap`` set.
 
     The (technique × target) cross-product is materialized lazily in
     ``AdversarialBenchmark._build_atomic_attacks_async`` from the
@@ -62,7 +75,7 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
         class_name="BenchmarkTechnique",
         factories=factories,
-        default_tags={"light"},
+        default_names={"role_play_video_game", "crescendo_simulated", "tap"},
     )
 
 
@@ -94,9 +107,12 @@ class AdversarialBenchmark(Scenario):
     #: Bumped from 2 → 3 by dropping the ``core`` pool gate so the selectable
     #: technique pool (and therefore the ``all`` aggregate) reflects whatever the
     #: initializer registered rather than only core-tagged factories.
-    #: ``use_cached`` only matches against prior runs at the current
-    #: ``VERSION``; older results remain queryable but won't suppress v3 runs.
-    VERSION: int = 3
+    #: Bumped from 3 → 4 when the no-selection default changed from the ``light``
+    #: aggregate to ``role_play_video_game``, ``crescendo_simulated``, and ``tap``.
+    #: ``VERSION`` participates in resume identity, so v3 results cannot be resumed
+    #: as v4. The separate ``use_cached`` behavioral cache intentionally remains
+    #: keyed by technique and objective-target identity across scenario versions.
+    VERSION: int = 4
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
@@ -185,6 +201,64 @@ class AdversarialBenchmark(Scenario):
                 max_dataset_size=8,
             ),
             scenario_result_id=scenario_result_id,
+        )
+
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the target-by-technique matrix using execution compatibility.
+
+        Returns:
+            ScenarioRunSizeEstimate: Structured benchmark estimate.
+        """
+        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        target_names = self.params.get("adversarial_targets") or []
+        if not target_names:
+            return ScenarioRunSizeEstimate(
+                datasets=datasets,
+                note=(
+                    "A total is unavailable until adversarial_targets is supplied and resolved. Baseline is forbidden."
+                ),
+            )
+
+        resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
+        factories = resolve_technique_factories_for_techniques(
+            scenario_techniques=self._scenario_techniques,
+        )
+        components: list[ScenarioRunSizeComponent] = []
+        for technique in self._scenario_techniques:
+            factory = factories.get(technique.value)
+            if factory is None:
+                continue
+            compatible_count = sum(
+                len(filter_compatible_seed_groups(factory=factory, seed_groups=groups))
+                for groups in selected_groups.values()
+            )
+            components.append(
+                ScenarioRunSizeComponent(
+                    label=technique.value,
+                    count=len(resolved_targets) * compatible_count,
+                )
+            )
+
+        if self._use_cached or self._estimate_has_binding_size_cap:
+            reasons = []
+            if self._use_cached:
+                reasons.append("Live behavioral-cache hits can suppress work")
+            if self._estimate_has_binding_size_cap:
+                reasons.append("a binding randomized dataset cap may select a different compatibility mix at launch")
+            return ScenarioRunSizeEstimate(
+                components=components,
+                datasets=datasets,
+                note=(
+                    f"Components describe the candidate population. {'; '.join(reasons)}, "
+                    "so the authoritative total is unavailable before launch."
+                ),
+            )
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note="Baseline is forbidden; retries and internal attack turns are excluded.",
         )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:

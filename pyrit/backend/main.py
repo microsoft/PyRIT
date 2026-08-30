@@ -21,6 +21,7 @@ from starlette.types import Scope
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
+from pyrit.backend.models.initializers import BaselineInitializerSetting
 from pyrit.backend.routes import (
     attacks,
     auth,
@@ -34,6 +35,7 @@ from pyrit.backend.routes import (
     targets,
     version,
 )
+from pyrit.backend.services.initializer_service import get_initializer_service
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 # Check for development mode from environment variable
@@ -57,6 +59,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     config = ConfigurationLoader.load_with_overrides(config_file=config_file)
     await config.initialize_pyrit_async()
+
+    # Persisted additional initializers run after the .pyrit_conf baseline, in stored order.
+    app.state.baseline_initializers = [
+        BaselineInitializerSetting(
+            initializer_name=initializer.name,
+            parameters=initializer.args,
+            order_index=order_index,
+        )
+        for order_index, initializer in enumerate(config.initializer_configs)
+    ]
+    await get_initializer_service().run_additional_initializers_async()
 
     # Expose config values to route handlers via app.state
     default_labels: dict[str, str] = {}
@@ -99,8 +112,8 @@ app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 # Attach X-Request-ID to every request/response for log correlation
 app.add_middleware(RequestIdMiddleware)
 
-# Entra ID JWT validation (PKCE — no client secrets needed)
-# Disabled automatically if ENTRA_TENANT_ID / ENTRA_CLIENT_ID are not set
+# Microsoft Graph-backed authentication (PKCE — no client secrets needed)
+# Disabled if tenant/client configuration is absent; enabled deployments require allowed groups.
 app.add_middleware(EntraAuthMiddleware)
 
 
@@ -164,5 +177,5 @@ def setup_frontend() -> None:
         print("⚠️ WARNING: Frontend not found!")
         print(f"   Expected location: {frontend_path}")
         print("   The frontend must be built and included in the package.")
-        print("   Run: python build_scripts/prepare_package.py")
+        print("   Run: python -m build_scripts.prepare_package")
         print("   API endpoints will still work but the UI won't be available.")

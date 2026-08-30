@@ -1,17 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+from unit.mocks import mock_memory_resolving, store_message
 
 from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import MessagePiece
-from pyrit.score import (
-    PlagiarismMetric,
-    PlagiarismScorer,
-)
+from pyrit.score import MessageScorable, PlagiarismMetric, PlagiarismScorer
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -55,7 +52,7 @@ class TestPlagiarismScorer:
 
         request = message_piece.to_message()
 
-        scores = await scorer.score_async(message=request)
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
 
         assert len(scores) == 1
         score = scores[0]
@@ -173,7 +170,6 @@ class TestPlagiarismScorer:
 
     async def test_score_async_adds_to_memory(self):
         """Test that scoring adds results to memory."""
-        memory = MagicMock(MemoryInterface)
         reference_text = "Test reference text"
         scorer = PlagiarismScorer(reference_text=reference_text)
 
@@ -184,8 +180,9 @@ class TestPlagiarismScorer:
             converted_value_data_type="text",
         ).to_message()
 
+        memory = mock_memory_resolving(request)
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-            await scorer.score_async(request)
+            await scorer.score_async(scorable=MessageScorable.from_message(request))
             memory.add_scores_to_memory.assert_called_once()
 
     async def test_score_async_unsupported_data_type_returns_zero(self, patch_central_database):
@@ -202,7 +199,7 @@ class TestPlagiarismScorer:
 
         # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
         # out (mirrors TrueFalseScorer's no-pieces fallback).
-        scores = await scorer.score_async(request)
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
         assert len(scores) == 1
         assert scores[0].score_type == "float_scale"
         assert scores[0].get_value() == 0.0
@@ -374,6 +371,34 @@ class TestPlagiarismScorerUtilityFunctions:
         response = "The AI model responded with: Hello world this is a test message for validation."
         score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.JACCARD, n=3)
         assert score == 1.0  # Should be perfect match when reference is contained
+
+    def test_plagiarism_score_reference_substring_of_word_not_plagiarism(self, scorer):
+        """A reference that is only a substring of a longer response word is not plagiarism.
+
+        The verbatim-match fast path must operate on word-level tokens, not raw
+        characters. Otherwise a short reference such as "cat" would falsely score
+        1.0 against a response containing "concatenate".
+        """
+        reference = "cat"
+        response = "concatenate the results"
+        for metric in PlagiarismMetric:
+            score = scorer._plagiarism_score(response, reference, metric=metric)
+            assert score == 0.0, f"{metric.value} should not treat a sub-word match as plagiarism"
+
+    def test_plagiarism_score_verbatim_match_ignores_case_and_punctuation(self, scorer):
+        """The verbatim fast path should still fire across case and punctuation differences."""
+        reference = "The Secret Plan"
+        response = "the secret plan!"
+        for metric in PlagiarismMetric:
+            score = scorer._plagiarism_score(response, reference, metric=metric)
+            assert score == 1.0, f"{metric.value} should treat a word-level verbatim copy as plagiarism"
+
+    def test_is_contiguous_sublist(self, scorer):
+        """Directly exercise the tokenized sublist helper."""
+        assert scorer._is_contiguous_sublist(sub=["b", "c"], full=["a", "b", "c", "d"]) is True
+        assert scorer._is_contiguous_sublist(sub=["a", "c"], full=["a", "b", "c"]) is False
+        assert scorer._is_contiguous_sublist(sub=[], full=["a"]) is False
+        assert scorer._is_contiguous_sublist(sub=["a", "b"], full=["a"]) is False
 
 
 class TestPlagiarismMetricEnum:

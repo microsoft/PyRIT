@@ -32,6 +32,7 @@ from pyrit.models import (
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
     Identifiable,
+    PromptDataType,
     SeedIdentifier,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -41,6 +42,7 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
+    from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
@@ -82,6 +84,7 @@ class AttackTechniqueFactory(Identifiable):
         adversarial_seed_prompt: SeedPrompt | str | None = None,
         seed_technique: AttackTechniqueSeedGroup | None = None,
         uses_adversarial: bool | None = None,
+        supports_additional_request_converters: bool = False,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> None:
         """
@@ -119,6 +122,9 @@ class AttackTechniqueFactory(Identifiable):
                 chat during execution. ``None`` auto-derives from the attack
                 class constructor signature and seed-technique shape.
                 Authors can override the derivation explicitly.
+            supports_additional_request_converters: Whether callers may safely
+                append request converters to this technique. This is an explicit
+                semantic opt-in, not merely constructor-signature detection.
             scorer_override_policy: What to do when a scenario's scorer is
                 incompatible with the attack's ``attack_scoring_config`` type
                 annotation. Defaults to WARN.
@@ -143,11 +149,13 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_system_prompt is not None or adversarial_seed_prompt is not None
         )
         self._seed_technique = seed_technique
+        self._supports_additional_request_converters = supports_additional_request_converters
         self._scorer_override_policy = scorer_override_policy
 
         self._uses_adversarial = uses_adversarial if uses_adversarial is not None else self._derive_uses_adversarial()
 
         self._validate_kwargs()
+        self._validate_converter_composition()
         self._validate_adversarial_flags()
 
     @classmethod
@@ -166,6 +174,7 @@ class AttackTechniqueFactory(Identifiable):
         attack_kwargs: dict[str, Any] | None = None,
         adversarial_chat: PromptTarget | None = None,
         uses_adversarial: bool | None = None,
+        supports_additional_request_converters: bool = False,
         scorer_override_policy: ScorerOverridePolicy = ScorerOverridePolicy.WARN,
     ) -> AttackTechniqueFactory:
         """
@@ -217,6 +226,9 @@ class AttackTechniqueFactory(Identifiable):
                 during execution. ``None`` auto-derives from the attack class
                 constructor signature and seed-technique shape. Forwarded to
                 the factory constructor.
+            supports_additional_request_converters: Whether callers may safely
+                append request converters to this technique. Forwarded to the
+                factory constructor.
             scorer_override_policy: Policy applied when a scenario's scorer is
                 incompatible with the attack's ``attack_scoring_config`` type
                 annotation. Defaults to ``WARN``. Forwarded to the factory
@@ -277,6 +289,7 @@ class AttackTechniqueFactory(Identifiable):
             adversarial_chat=adversarial_chat,
             seed_technique=seed_technique,
             uses_adversarial=uses_adversarial,
+            supports_additional_request_converters=supports_additional_request_converters,
             scorer_override_policy=scorer_override_policy,
         )
 
@@ -310,6 +323,23 @@ class AttackTechniqueFactory(Identifiable):
                 f"Factory '{self._name}': an adversarial chat or prompt is set but "
                 f"uses_adversarial=False. A technique that doesn't use an adversarial chat "
                 f"should not have one wired."
+            )
+
+    def _validate_converter_composition(self) -> None:
+        """
+        Validate that an opt-in factory can receive additive request converters.
+
+        Raises:
+            ValueError: If composition is enabled but the attack constructor does
+                not accept ``attack_converter_config``.
+        """
+        if (
+            self._supports_additional_request_converters
+            and "attack_converter_config" not in self._get_accepted_params()
+        ):
+            raise ValueError(
+                f"Factory '{self._name}' declares supports_additional_request_converters=True, "
+                f"but {self._attack_class.__name__} does not accept 'attack_converter_config'."
             )
 
     def _validate_kwargs(self) -> None:
@@ -404,6 +434,54 @@ class AttackTechniqueFactory(Identifiable):
         """The optional technique seed group."""
         return self._seed_technique
 
+    def can_append_request_converter(self, *, converter_type: type[Converter]) -> bool:
+        """
+        Return whether ``converter_type`` can safely follow the baked request converter chain.
+
+        The factory starts with a text objective and projects the possible output modalities
+        through each baked request converter. Conditional converter configurations preserve the
+        unconverted modality as another possible path. The appended converter must accept every
+        resulting modality, and the attack class must expose ``attack_converter_config`` so the
+        converter is not silently ignored by ``create()``.
+
+        Args:
+            converter_type (type[Converter]): The request converter type to append.
+
+        Returns:
+            bool: ``True`` when the converter can be appended safely.
+        """
+        if "attack_converter_config" not in self._get_accepted_params():
+            return False
+
+        output_types: set[PromptDataType] = {"text"}
+        converter_config = self._attack_kwargs.get("attack_converter_config")
+        if converter_config is None:
+            return "text" in converter_type.SUPPORTED_INPUT_TYPES
+
+        for configuration in converter_config.request_converters:
+            next_output_types: set[PromptDataType] = set()
+            for output_type in output_types:
+                applies_to_type = (
+                    not configuration.prompt_data_types_to_apply
+                    or output_type in configuration.prompt_data_types_to_apply
+                )
+                if not applies_to_type:
+                    next_output_types.add(output_type)
+                    continue
+
+                converted_types: set[PromptDataType] = {output_type}
+                for built_in_converter in configuration.converters:
+                    if not all(built_in_converter.input_supported(data_type) for data_type in converted_types):
+                        return False
+                    converted_types = set(built_in_converter.supported_output_types)
+
+                next_output_types.update(converted_types)
+                if configuration.indexes_to_apply:
+                    next_output_types.add(output_type)
+            output_types = next_output_types
+
+        return bool(output_types) and output_types.issubset(converter_type.SUPPORTED_INPUT_TYPES)
+
     @property
     def adversarial_chat(self) -> PromptTarget | None:
         """The adversarial chat target baked into this factory, or None."""
@@ -433,6 +511,11 @@ class AttackTechniqueFactory(Identifiable):
     def uses_adversarial(self) -> bool:
         """Whether this technique drives an adversarial chat during execution."""
         return self._uses_adversarial
+
+    @property
+    def supports_additional_request_converters(self) -> bool:
+        """Whether callers may safely append request converters to this technique."""
+        return self._supports_additional_request_converters
 
     @property
     def scoring_config_type(self) -> type | None:
@@ -699,6 +782,8 @@ class AttackTechniqueFactory(Identifiable):
         if inner is None or inner is AttackScoringConfig:
             # Base type or unresolvable — any config is accepted
             return None
+        if not issubclass(inner, AttackScoringConfig):
+            return None
         return inner
 
     @staticmethod
@@ -714,13 +799,15 @@ class AttackTechniqueFactory(Identifiable):
         if origin is Union or (hasattr(annotation, "__args__") and origin is None and hasattr(annotation, "__or__")):
             args = typing.get_args(annotation)
             non_none = [a for a in args if a is not type(None)]
-            return non_none[0] if len(non_none) == 1 else None
+            candidate = non_none[0] if len(non_none) == 1 else None
+            return candidate if isinstance(candidate, type) else None
 
         # types.UnionType from PEP 604 at runtime (3.10+)
         if hasattr(annotation, "__args__") and type(annotation).__name__ == "UnionType":
             args = annotation.__args__
             non_none = [a for a in args if a is not type(None)]
-            return non_none[0] if len(non_none) == 1 else None
+            candidate = non_none[0] if len(non_none) == 1 else None
+            return candidate if isinstance(candidate, type) else None
 
         # Plain type (not Optional)
         if isinstance(annotation, type):
@@ -774,6 +861,7 @@ class AttackTechniqueFactory(Identifiable):
             "attack_class": self._attack_class.__name__,
             "kwargs": kwargs_for_id,
             "uses_adversarial": self._uses_adversarial,
+            "supports_additional_request_converters": self._supports_additional_request_converters,
         }
         if self._technique_tags:
             params["technique_tags"] = list(self._technique_tags)

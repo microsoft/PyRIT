@@ -13,6 +13,7 @@ Route structure:
 """
 
 from fastapi import APIRouter, HTTPException, Query, status
+from starlette.concurrency import run_in_threadpool
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenarios import (
@@ -25,8 +26,11 @@ from pyrit.models import ScenarioResult
 from pyrit.models.catalog.scenario import (
     RegisteredScenario,
     RunScenarioRequest,
+    ScenarioRunSizeEstimate,
+    ScenarioRunSizeEstimateRequest,
     ScenarioRunSummary,
 )
+from pyrit.models.scenario_progress import ScenarioRunProgress
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -86,6 +90,45 @@ async def get_scenario(scenario_name: str) -> RegisteredScenario:  # pyrit-async
     return scenario
 
 
+@router.post(
+    "/catalog/{scenario_name}/estimate",
+    response_model=ScenarioRunSizeEstimate,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid estimate configuration"},
+        404: {"model": ProblemDetail, "description": "Scenario not found"},
+    },
+)
+async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
+    *,
+    scenario_name: str,
+    request: ScenarioRunSizeEstimateRequest,
+) -> ScenarioRunSizeEstimate:
+    """
+    Estimate a configured scenario without creating or persisting a run.
+
+    Args:
+        scenario_name: Registry name of the scenario.
+        request: Techniques, datasets, baseline choice, and scenario parameters to preview.
+
+    Returns:
+        ScenarioRunSizeEstimate: Structured request-specific planned-unit estimate.
+    """
+    service = get_scenario_service()
+    try:
+        estimate = await service.estimate_scenario_run_size_async(
+            scenario_name=scenario_name,
+            request=request,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    if estimate is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scenario '{scenario_name}' not found",
+        )
+    return estimate
+
+
 # ============================================================================
 # Scenario Runs
 # ============================================================================
@@ -122,7 +165,9 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
     "/runs",
     response_model=ScenarioRunListResponse,
 )
-async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListResponse:  # pyrit-async-suffix-exempt
+async def list_scenario_runs(
+    limit: int = Query(100, ge=1, le=100),
+) -> ScenarioRunListResponse:  # pyrit-async-suffix-exempt
     """
     List tracked scenario runs (most recent first).
 
@@ -133,7 +178,7 @@ async def list_scenario_runs(limit: int = Query(100, ge=1)) -> ScenarioRunListRe
         ScenarioRunListResponse: Runs, most recent first.
     """
     service = get_scenario_run_service()
-    return service.list_runs(limit=limit)
+    return await run_in_threadpool(service.list_runs, limit=limit)
 
 
 @router.get(
@@ -154,13 +199,58 @@ async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # py
         ScenarioRunSummary: Current run status (and result if completed).
     """
     service = get_scenario_run_service()
-    run = service.get_run(scenario_result_id=scenario_result_id)
+    active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
+    run = await run_in_threadpool(
+        service.get_run_from_storage,
+        scenario_result_id=scenario_result_id,
+        active_error=active_snapshot.error,
+    )
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Scenario run '{scenario_result_id}' not found",
         )
     return run
+
+
+@router.get(
+    "/runs/{scenario_result_id}/progress",
+    response_model=ScenarioRunProgress,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid progress cursor"},
+        404: {"model": ProblemDetail, "description": "Run not found"},
+    },
+)
+async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
+    *,
+    scenario_result_id: str,
+    since: str | None = Query(None, description="Opaque ascending progress cursor"),
+    limit: int = Query(100, ge=1, le=500),
+) -> ScenarioRunProgress:
+    """
+    Get a compact, refresh-safe page of scenario progress deltas.
+
+    Returns:
+        ScenarioRunProgress: The run plan and ascending result deltas.
+    """
+    service = get_scenario_run_service()
+    active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
+    try:
+        progress = await run_in_threadpool(
+            service.get_run_progress_from_storage,
+            scenario_result_id=scenario_result_id,
+            since=since,
+            limit=limit,
+            active_group_ids=active_snapshot.active_group_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    if progress is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scenario run '{scenario_result_id}' not found",
+        )
+    return progress
 
 
 @router.post(
