@@ -114,6 +114,82 @@ async def test_scores_using_the_preceding_user_turn(sqlite_instance: MemoryInter
     assert "AI assistant:\nSure, here is how." in sent
 
 
+async def test_scores_using_latest_user_turn_before_tool_messages(sqlite_instance: MemoryInterface) -> None:
+    """Tool-call messages between the request and final response do not hide the request."""
+    conversation_id = str(uuid.uuid4())
+    for turn in (
+        _turn(role="user", text="look up the weather", conversation_id=conversation_id),
+        _turn(role="assistant", text="calling weather_tool", conversation_id=conversation_id),
+        _turn(role="tool", text='{"temperature": 72}', conversation_id=conversation_id),
+    ):
+        sqlite_instance.add_message_to_memory(request=turn)
+    answer = _turn(role="assistant", text="It is 72 degrees.", conversation_id=conversation_id)
+    sqlite_instance.add_message_to_memory(request=answer)
+    target = _mock_target(FULL_RESPONSE)
+    scorer = WildGuardScorer(chat_target=target)
+
+    await scorer.score_async(answer)
+
+    sent = _sent_request(target)
+    assert "Human user:\nlook up the weather" in sent
+    assert "calling weather_tool" not in sent
+    assert '"temperature": 72' not in sent
+
+
+async def test_scores_using_every_text_piece_from_latest_user_turn(sqlite_instance: MemoryInterface) -> None:
+    conversation_id = str(uuid.uuid4())
+    request = Message(
+        message_pieces=[
+            MessagePiece(role="user", original_value="first instruction", conversation_id=conversation_id),
+            MessagePiece(role="user", original_value="second instruction", conversation_id=conversation_id),
+        ]
+    )
+    sqlite_instance.add_message_to_memory(request=request)
+    answer = _turn(role="assistant", text="a response", conversation_id=conversation_id)
+    sqlite_instance.add_message_to_memory(request=answer)
+    target = _mock_target(FULL_RESPONSE)
+    scorer = WildGuardScorer(chat_target=target)
+
+    await scorer.score_async(answer)
+
+    assert "Human user:\nfirst instruction\nsecond instruction" in _sent_request(target)
+
+
+async def test_image_only_latest_user_turn_does_not_fall_back_to_older_text(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    sqlite_instance.add_message_to_memory(
+        request=_turn(role="user", text="older text prompt", conversation_id=conversation_id)
+    )
+    sqlite_instance.add_message_to_memory(
+        request=_turn(role="assistant", text="an earlier response", conversation_id=conversation_id)
+    )
+    sqlite_instance.add_message_to_memory(
+        request=Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value="latest-image.png",
+                    original_value_data_type="image_path",
+                    converted_value="latest-image.png",
+                    converted_value_data_type="image_path",
+                    conversation_id=conversation_id,
+                )
+            ]
+        )
+    )
+    answer = _turn(role="assistant", text="a response to the image", conversation_id=conversation_id)
+    sqlite_instance.add_message_to_memory(request=answer)
+    target = _mock_target(FULL_RESPONSE)
+    scorer = WildGuardScorer(chat_target=target)
+
+    with pytest.raises(RuntimeError, match="needs the prompt"):
+        await scorer.score_async(answer)
+
+    target.send_prompt_async.assert_not_called()
+
+
 async def test_scores_using_the_converted_prompt_not_the_original(sqlite_instance: MemoryInterface) -> None:
     """The target saw the converted prompt, so that is the context WildGuard must judge against."""
     answer = _stored_exchange(

@@ -196,30 +196,38 @@ class WildGuardScorer(TrueFalseScorer):
                 conversation and sequence are read, which are shared across the message.
 
         Returns:
-            str | None: The configured prompt, otherwise the preceding user turn of the
-                scored conversation, otherwise None.
+            str | None: The configured prompt, otherwise the latest earlier user turn of
+                the scored conversation, otherwise None.
         """
         if self._user_prompt:
             return self._user_prompt
         if not message_piece.conversation_id or message_piece.sequence < 1:
             return None
 
-        # get_message_pieces is a blocking SQLAlchemy query, so it is offloaded rather than
-        # run on the event loop during scoring.
         # Read synchronously. Moving this to a worker thread makes it intermittently return
         # nothing, because the memory layer is not safe to use from several threads and scoring
         # runs concurrently under asyncio.gather.
         conversation = self._memory.get_message_pieces(conversation_id=message_piece.conversation_id)
+        prior_user_pieces = [
+            piece
+            for piece in conversation
+            if piece.sequence < message_piece.sequence and piece.api_role == "user"
+        ]
+        if not prior_user_pieces:
+            return None
+
+        # Select the latest user turn before filtering by data type. If that turn contains no
+        # text, WildGuard cannot build the prompt/response pair and must not silently fall back
+        # to text from an older user turn.
+        user_sequence = max(piece.sequence for piece in prior_user_pieces)
         # The converted value is what the target actually received. After a converter runs, the
         # original value can be the seed prompt, which the target never saw.
-        preceding_turn = [
+        latest_user_turn = [
             piece.converted_value
-            for piece in conversation
-            if piece.sequence == message_piece.sequence - 1
-            and piece.converted_value_data_type == "text"
-            and piece.api_role == "user"
+            for piece in prior_user_pieces
+            if piece.sequence == user_sequence and piece.converted_value_data_type == "text"
         ]
-        return "\n".join(preceding_turn) or None
+        return "\n".join(latest_user_turn) or None
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
