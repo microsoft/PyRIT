@@ -414,7 +414,9 @@ class MessageScorer(Scorer):
         response: Message,
         objective_scorer: Scorer | None = None,
         auxiliary_scorers: list[Scorer] | None = None,
+        role_filter: ChatMessageRole | None = None,
         objective: str | None = None,
+        skip_on_error_result: bool | None = None,
     ) -> dict[str, list[Score]]:
         """
         Score a response using an objective scorer and optional auxiliary scorers.
@@ -428,7 +430,9 @@ class MessageScorer(Scorer):
             response (Message): Response containing pieces to score.
             objective_scorer (Scorer | None): The main scorer to determine success. Defaults to None.
             auxiliary_scorers (list[Scorer] | None): List of auxiliary scorers to apply. Defaults to None.
+            role_filter (ChatMessageRole | None): Deprecated and ignored.
             objective (str | None): Task/objective for scoring context. Defaults to None.
+            skip_on_error_result (bool | None): Deprecated and ignored.
 
         Returns:
             dict[str, list[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
@@ -437,6 +441,7 @@ class MessageScorer(Scorer):
         Raises:
             ValueError: If response is not provided.
         """
+        _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         result: dict[str, list[Score]] = {"auxiliary_scores": [], "objective_scores": []}
 
         if not response:
@@ -483,7 +488,9 @@ class MessageScorer(Scorer):
         *,
         response: Message,
         scorers: list[Scorer],
+        role_filter: ChatMessageRole | None = None,
         objective: str | None = None,
+        skip_on_error_result: bool | None = None,
     ) -> list[Score]:
         """
         Score a response using multiple scorers in parallel.
@@ -494,11 +501,14 @@ class MessageScorer(Scorer):
         Args:
             response (Message): The response containing pieces to score.
             scorers (list[Scorer]): List of scorers to apply.
+            role_filter (ChatMessageRole | None): Deprecated and ignored.
             objective (str | None): Optional objective description for scoring context.
+            skip_on_error_result (bool | None): Deprecated and ignored.
 
         Returns:
             list[Score]: All scores from all scorers
         """
+        _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         if not scorers:
             return []
 

@@ -172,9 +172,7 @@ async def test_attack_executor_does_not_filter_error_response(
     call_kwargs = mock_score.await_args.kwargs
     for retired in ("skip_on_error_result", "role_filter"):
         assert retired not in call_kwargs, f"{type(attack).__name__} still passes the retired '{retired}' parameter"
-    assert call_kwargs["response"] is error_response, (
-        f"{type(attack).__name__} did not pass the response as it arrived"
-    )
+    assert call_kwargs["response"] is error_response, f"{type(attack).__name__} did not pass the response as it arrived"
 
 
 def _undetermined_score(response: Message) -> Score:
