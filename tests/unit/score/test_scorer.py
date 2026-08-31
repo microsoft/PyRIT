@@ -1848,6 +1848,65 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         # The description should also mention blocked, not just "error"
         assert "blocked" in scores[0].score_value_description.lower()
 
+    @pytest.mark.parametrize("error_first", [False, True])
+    async def test_non_blocking_error_takes_precedence_across_all_pieces(
+        self, true_false_scorer_returns_empty, patch_central_database, error_first
+    ):
+        """A transport error makes the result undetermined in either piece order."""
+        blocked_piece = MessagePiece(
+            role="assistant",
+            original_value="blocked",
+            converted_value_data_type="error",
+            conversation_id="test-convo",
+            response_error="blocked",
+        )
+        error_piece = MessagePiece(
+            role="assistant",
+            original_value="transport failed",
+            converted_value_data_type="error",
+            conversation_id="test-convo",
+            response_error="processing",
+        )
+        pieces = [error_piece, blocked_piece] if error_first else [blocked_piece, error_piece]
+
+        scores = await true_false_scorer_returns_empty.score_async(
+            scorable=MessageScorable.from_message(store_message(Message(message_pieces=pieces)))
+        )
+
+        assert len(scores) == 1
+        assert scores[0].status == ScoreStatus.UNDETERMINED
+        assert "processing" in scores[0].score_rationale
+
+    async def test_filtered_readable_piece_does_not_hide_transport_error(
+        self, true_false_scorer_returns_empty, patch_central_database
+    ):
+        """Fallback classification uses the original multipart response."""
+        response = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="transport failed",
+                    converted_value_data_type="error",
+                    conversation_id="test-convo",
+                    response_error="processing",
+                ),
+                MessagePiece(
+                    role="assistant",
+                    original_value="unsupported",
+                    converted_value_data_type="image_path",
+                    conversation_id="test-convo",
+                ),
+            ]
+        )
+
+        scores = await true_false_scorer_returns_empty.score_async(
+            scorable=MessageScorable.from_message(store_message(response))
+        )
+
+        assert len(scores) == 1
+        assert scores[0].status == ScoreStatus.UNDETERMINED
+        assert "processing" in scores[0].score_rationale
+
 
 class TestFloatScaleScorerEmptyScoreListRationale:
     """Tests for FloatScaleScorer's unified no-pieces fallback that returns Score(0.0).

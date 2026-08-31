@@ -9,6 +9,7 @@ from pyrit.models import (
     ContentScorable,
     Message,
     MessagePiece,
+    Scorable,
     Score,
     ScoringExpectation,
 )
@@ -68,6 +69,27 @@ class ConversationScorer(MessageScorer, ABC):
         """
         return message if message.message_pieces else None
 
+    def _reads_any_role(self, *, message: Message, anchor: Scorable | None) -> bool:
+        """
+        Defer role policy until the conversation locator has acquired its evidence.
+
+        Returns:
+            bool: True because the trigger identifies history; it is not the evidence itself.
+        """
+        return True
+
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+        """
+        Preserve silence when the acquired conversation or wrapped scorer has no verdict.
+
+        Returns:
+            list[Score]: An empty list.
+        """
+        return []
+
+    def _validate_scoring_message(self, *, message: Message, objective: str | None) -> None:
+        """Skip message validation because the trigger is only a conversation locator."""
+
     async def _score_prepared_message_async(
         self,
         *,
@@ -123,7 +145,7 @@ class ConversationScorer(MessageScorer, ABC):
         for conv_message in conversation:
             for piece in conv_message.message_pieces:
                 # Only include user and assistant messages in the conversation text
-                if piece.api_role in ["user", "assistant", "tool"]:
+                if piece.api_role in ["user", "assistant", "tool"] and self._validator.is_role_supported(piece):
                     role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
                     # For blocked pieces with partial content, use the partial content
                     # instead of the error JSON when should_score_blocked_content is enabled
@@ -136,6 +158,9 @@ class ConversationScorer(MessageScorer, ABC):
                     else:
                         text = piece.converted_value
                     conversation_text += f"{role_display}: {text}\n"
+
+        if not conversation_text:
+            return []
 
         wrapped_scorer = self._get_wrapped_scorer()
         scores = await wrapped_scorer._score_nested_async(

@@ -12,6 +12,7 @@ from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import MessagePiece
 from pyrit.score import (
     MessageScorable,
+    ScorerPromptValidator,
     SubStringScorer,
     TrueFalseInverterScorer,
 )
@@ -65,3 +66,15 @@ async def test_substring_scorer_adds_to_memory():
         await scorer.score_text_async(text="string")
 
         memory.add_scores_to_memory.assert_called_once()
+
+
+async def test_inverter_propagates_silent_child(patch_central_database):
+    """An inverter cannot invert a verdict that its child did not make."""
+    sub_scorer = SubStringScorer(substring="test", categories=["new_category"])
+    sub_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseInverterScorer(scorer=sub_scorer)
+    message = MessagePiece(role="user", original_value="test").to_message()
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
+
+    assert scores == []

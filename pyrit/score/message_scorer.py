@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import warnings
 from abc import abstractmethod
 from typing import TYPE_CHECKING, cast
 
@@ -137,15 +136,18 @@ def _warn_retired_message_policy(
     behind it. Role is now declared on the scorer's validator, and an unreadable message
     reaches the scorer, which reports what it could not determine.
     """
-    if role_filter is None and skip_on_error_result is None:
-        return
-    warnings.warn(
-        "'role_filter' and 'skip_on_error_result' are retired and are ignored. Declare "
-        "'supported_roles' on the scorer's ScorerPromptValidator instead; an unreadable "
-        "message now produces an undetermined score rather than being skipped.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
+    if role_filter is not None:
+        print_deprecation_message(
+            old_item="role_filter scoring argument",
+            new_item="ScorerPromptValidator(supported_roles=...)",
+            removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+        )
+    if skip_on_error_result is not None:
+        print_deprecation_message(
+            old_item="skip_on_error_result scoring argument",
+            new_item="the scorer's unreadable-evidence fallback",
+            removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+        )
 
 
 class MessageScorer(Scorer):
@@ -669,7 +671,7 @@ class MessageScorer(Scorer):
             self._finalize_message_scores(message=message, scores=scores, anchor=anchor)
             return scores
 
-        self._validator.validate(scoring_message, objective=objective)
+        self._validate_scoring_message(message=scoring_message, objective=objective)
 
         try:
             scores = await self._score_prepared_message_async(
@@ -712,11 +714,21 @@ class MessageScorer(Scorer):
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
         if not scores and scoring_message.message_pieces:
-            scores = self._build_fallback_score(message=scoring_message, objective=objective)
+            scores = self._build_fallback_score(message=message, objective=objective)
 
         self._finalize_message_scores(message=scoring_message, scores=scores, anchor=anchor)
 
         return scores
+
+    def _validate_scoring_message(self, *, message: Message, objective: str | None) -> None:
+        """
+        Validate the acquired message before it reaches the leaf scorer.
+
+        Args:
+            message (Message): The acquired message.
+            objective (str | None): The objective supplied for scoring.
+        """
+        self._validator.validate(message, objective=objective)
 
     def _finalize_message_scores(
         self,
@@ -1098,7 +1110,7 @@ class MessageScorer(Scorer):
         neutral value.
 
         Args:
-            message (Message): The message whose first piece tells why nothing was scored.
+            message (Message): The message that carries no readable pieces.
             objective (str | None): The objective associated with this scoring call.
             neutral_value (str): The family's neutral score value, such as "false" or "0.0".
 
@@ -1114,19 +1126,28 @@ class MessageScorer(Scorer):
         if piece_id is None:
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
-        if first_piece.is_blocked():
-            rationale = f"The response was blocked with no content to score; returning {neutral_value}."
-            description = f"Blocked response; returning {neutral_value}."
-        elif first_piece.has_error() or first_piece.converted_value_data_type == "error":
+        error_piece = next(
+            (
+                piece
+                for piece in message.message_pieces
+                if not piece.is_blocked() and (piece.has_error() or piece.converted_value_data_type == "error")
+            ),
+            None,
+        )
+
+        if error_piece is not None:
             # A transport or protocol failure is not the target's answer, so there is no verdict.
             return [
                 self._build_undetermined_score(
-                    rationale=f"Response had an error: {first_piece.response_error}; no verdict was reachable.",
+                    rationale=f"Response had an error: {error_piece.response_error}; no verdict was reachable.",
                     description="Error response; no verdict was reachable.",
                     message_piece_id=piece_id,
                     objective=objective,
                 )
             ]
+        if all(piece.is_blocked() for piece in message.message_pieces):
+            rationale = f"The response was blocked with no content to score; returning {neutral_value}."
+            description = f"Blocked response; returning {neutral_value}."
         else:
             # this can happen with multi-modal responses if no supported pieces are present
             rationale = f"No supported pieces to score after filtering; returning {neutral_value}."

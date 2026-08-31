@@ -384,7 +384,7 @@ class TestScorableFilters:
         scorer = RecordingScorer()
         message = _assistant_message()
 
-        with pytest.warns(DeprecationWarning, match="retired"):
+        with pytest.warns(DeprecationWarning, match="deprecated"):
             scores = await scorer.score_async(scorable=MessageScorable.from_message(message), **kwargs)
 
         assert len(scores) == 1
@@ -484,7 +484,7 @@ class TestDeprecatedParameters:
         """Role policy now lives on the validator, so the per-call filter must not skip anything."""
         scorer = RecordingScorer()
 
-        with pytest.warns(DeprecationWarning, match="retired"):
+        with pytest.warns(DeprecationWarning, match="deprecated"):
             scores = await scorer.score_async(
                 scorable=MessageScorable.from_message(_assistant_message()),
                 role_filter="user",
@@ -496,7 +496,7 @@ class TestDeprecatedParameters:
         """An unreadable message now reports an undetermined verdict instead of being skipped."""
         scorer = RecordingScorer()
 
-        with pytest.warns(DeprecationWarning, match="retired"):
+        with pytest.warns(DeprecationWarning, match="deprecated"):
             scores = await scorer.score_async(
                 scorable=MessageScorable.from_message(_error_message()),
                 skip_on_error_result=True,

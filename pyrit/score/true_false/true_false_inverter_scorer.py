@@ -95,6 +95,8 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             list[Score]: A list containing a single Score object with the inverted true/false value.
         """
         scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
+        if not scores:
+            return []
         return self._invert(scores)
 
     def _invert(self, scores: list[Score]) -> list[Score]:

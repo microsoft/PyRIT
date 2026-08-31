@@ -696,6 +696,84 @@ async def test_conversation_scorer_errored_trigger_still_reads_the_conversation(
     assert len(scores) == 1
 
 
+async def test_conversation_scorer_excludes_simulated_history_by_default(patch_central_database):
+    """Conversation role policy checks stored history roles, not API role aliases."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    pieces = [
+        MessagePiece(role="user", original_value="real request", conversation_id=conversation_id, sequence=1),
+        MessagePiece(
+            role="simulated_assistant",
+            original_value="fabricated answer",
+            conversation_id=conversation_id,
+            sequence=2,
+        ),
+        MessagePiece(role="assistant", original_value="real answer", conversation_id=conversation_id, sequence=3),
+    ]
+    memory.add_message_pieces_to_memory(message_pieces=pieces)
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer._score_nested_async = AsyncMock(return_value=[])
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    scorer = create_conversation_scorer(scorer=wrapped_scorer)
+
+    await scorer.score_async(scorable=MessageScorable.from_message(pieces[-1].to_message()))
+
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"].value
+    assert "real request" in rendered
+    assert "real answer" in rendered
+    assert "fabricated answer" not in rendered
+
+
+async def test_conversation_scorer_does_not_apply_role_policy_to_trigger(patch_central_database):
+    """A simulated trigger is only a locator, so valid stored history can still be scored."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    user_piece = MessagePiece(role="user", original_value="real request", conversation_id=conversation_id, sequence=1)
+    trigger = MessagePiece(
+        role="simulated_assistant",
+        original_value="fabricated locator",
+        conversation_id=conversation_id,
+        sequence=2,
+    )
+    memory.add_message_pieces_to_memory(message_pieces=[user_piece, trigger])
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer._score_nested_async = AsyncMock(return_value=[])
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    validator = ScorerPromptValidator(
+        supported_roles=["user"],
+        enforce_all_pieces_valid=True,
+        raise_on_no_valid_pieces=True,
+    )
+    scorer = create_conversation_scorer(scorer=wrapped_scorer, validator=validator)
+
+    await scorer.score_async(scorable=MessageScorable.from_message(trigger.to_message()))
+
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"].value
+    assert "real request" in rendered
+    assert "fabricated locator" not in rendered
+
+
+async def test_conversation_scorer_is_silent_when_all_history_roles_are_excluded(patch_central_database):
+    """No role-supported history means the conversation scorer makes no verdict."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    trigger = MessagePiece(
+        role="simulated_assistant",
+        original_value="fabricated locator",
+        conversation_id=conversation_id,
+        sequence=1,
+    )
+    memory.add_message_pieces_to_memory(message_pieces=[trigger])
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    scorer = create_conversation_scorer(scorer=wrapped_scorer)
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(trigger.to_message()))
+
+    assert scores == []
+    wrapped_scorer._score_nested_async.assert_not_awaited()
+
+
 async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(patch_central_database):
     """When the triggering piece is blocked, the synthetic conversation Message must still be
     built as plain text so the wrapped text-only scorer accepts it and scores the rendered

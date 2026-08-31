@@ -13,6 +13,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import store_message
 
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
@@ -23,6 +24,7 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     MultiPromptSendingAttack,
     PromptSendingAttack,
+    SingleTurnAttackContext,
 )
 from pyrit.models import (
     AttackOutcome,
@@ -33,7 +35,7 @@ from pyrit.models import (
     ScoreStatus,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import TrueFalseScorer
+from pyrit.score import MessageTrueFalseScorer, ScorerPromptValidator, TrueFalseScorer
 
 OBJECTIVE = "test objective"
 
@@ -73,9 +75,9 @@ def create_error_response(conversation_id: str) -> Message:
         message_pieces=[
             MessagePiece(
                 role="assistant",
-                original_value="Content filter error",
+                original_value="Transport error",
                 conversation_id=conversation_id,
-                response_error="blocked",
+                response_error="processing",
                 converted_value_data_type="error",
             )
         ]
@@ -189,42 +191,49 @@ def _undetermined_score(response: Message) -> Score:
         score_type="true_false",
         score_category=None,
         score_metadata=None,
-        score_rationale="Response had an error: blocked; no verdict was reachable.",
+        score_rationale="Response had an error: processing; no verdict was reachable.",
         scorer_class_identifier=_mock_scorer_id("MockScorer"),
         message_piece_id=response.message_pieces[0].id,
         objective=OBJECTIVE,
     )
 
 
-@patch("pyrit.memory.CentralMemory.get_memory_instance")
-async def test_error_response_produces_undetermined_outcome(mock_memory_instance, mock_target, mock_memory):
+class _FallbackTrueFalseScorer(MessageTrueFalseScorer):
+    """A scorer that relies on message-family fallback for unreadable evidence."""
+
+    def __init__(self) -> None:
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        raise AssertionError("Unreadable error evidence must not reach the leaf scorer.")
+
+
+async def test_error_response_produces_undetermined_outcome(mock_target, patch_central_database):
     """
     Test that an error response ends a single-turn attack as undetermined, not as a failure.
 
     The scorer could not reach a verdict, so the attack reports what it could not determine
     instead of reporting that the objective was not met.
     """
-    mock_memory_instance.return_value = mock_memory
-
-    scorer = MagicMock(spec=TrueFalseScorer)
-    scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
-
+    scorer = _FallbackTrueFalseScorer()
     attack = PromptSendingAttack(
         objective_target=mock_target,
         attack_scoring_config=AttackScoringConfig(objective_scorer=scorer, use_score_as_feedback=False),
         max_attempts_on_failure=0,
     )
+    conversation_id = str(uuid.uuid4())
+    error_response = store_message(create_error_response(conversation_id))
 
-    error_response = create_error_response(str(uuid.uuid4()))
+    score = await attack._evaluate_response_async(response=error_response, objective=OBJECTIVE)
+    context = SingleTurnAttackContext(
+        params=AttackParameters(objective=OBJECTIVE),
+        conversation_id=conversation_id,
+    )
+    outcome, _ = attack._determine_attack_outcome(response=error_response, score=score, context=context)
 
-    with patch.object(attack, "_prompt_normalizer") as mock_normalizer:
-        mock_normalizer.send_prompt_async = AsyncMock(return_value=error_response)
-        with patch(
-            "pyrit.score.message_scorer.MessageScorer.score_response_async",
-            new=AsyncMock(
-                return_value={"objective_scores": [_undetermined_score(error_response)], "auxiliary_scores": []}
-            ),
-        ):
-            result = await attack.execute_async(objective=OBJECTIVE)
-
-    assert result.outcome == AttackOutcome.UNDETERMINED
+    assert score is not None
+    assert score.status == ScoreStatus.UNDETERMINED
+    assert outcome == AttackOutcome.UNDETERMINED

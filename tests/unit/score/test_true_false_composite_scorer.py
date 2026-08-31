@@ -202,6 +202,16 @@ async def test_composite_scorer_with_task(mock_request, true_scorer):
     assert scores[0].objective == task
 
 
+async def test_composite_scorer_propagates_silent_child(mock_request, true_scorer):
+    """A composite cannot aggregate when any required child made no verdict."""
+    true_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+    assert scores == []
+
+
 async def test_composite_routes_full_expectation_to_matching_and_nonmatching_leaves(mock_request):
     objective_scorer = MockScorer(
         score_value=True,

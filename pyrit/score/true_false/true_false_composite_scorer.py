@@ -132,6 +132,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         score_list_results = await asyncio.gather(
             *(scorer._score_nested_async(scorable=scorable, expectation=expectation) for scorer in self._scorers)
         )
+        if any(not scores for scores in score_list_results):
+            return []
         return [
             self._build_aggregate_score(
                 score_list_results=list(score_list_results),
