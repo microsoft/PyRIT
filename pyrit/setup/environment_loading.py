@@ -8,7 +8,6 @@ import contextlib
 import logging
 import os
 import pathlib
-import urllib.parse
 from collections.abc import Mapping, Sequence
 from io import StringIO
 from typing import TYPE_CHECKING
@@ -18,6 +17,7 @@ from dotenv.main import DotEnv
 from dotenv.parser import parse_stream
 
 from pyrit.common import path
+from pyrit.common.key_vault import parse_key_vault_secret_uri
 from pyrit.exceptions import KeyVaultInitializationException
 
 if TYPE_CHECKING:
@@ -33,7 +33,6 @@ __all__ = [
 ]
 
 _AKV_REFERENCE_PREFIXES = frozenset({"akv", "kv", "azure_key_vault", "env_akv_ref"})
-_AKV_VAULT_DNS_SUFFIXES = frozenset({"vault.azure.net", "vault.azure.cn", "vault.usgovcloudapi.net"})
 _AKV_RETRY_TOTAL = 3
 _AKV_RETRY_BACKOFF_FACTOR = 0.8
 _DOTENV_DISABLED_VALUES = frozenset({"1", "true", "t", "yes", "y"})
@@ -188,63 +187,6 @@ def _warn_about_dotenv_file(*, env_file: pathlib.Path, ignored_for_akv: bool, si
     logger.warning(message)
 
 
-def _parse_akv_secret_url(secret_url: str) -> tuple[str, str, str | None]:
-    """
-    Parse an AKV secret URL into vault URL, secret name, and optional version.
-
-    Args:
-        secret_url (str): Full AKV secret URL in the format
-            ``https://{vault}.vault.azure.net/secrets/{name}[/{version}]``.
-
-    Returns:
-        tuple[str, str, str | None]: (vault_url, secret_name, secret_version)
-
-    Raises:
-        ValueError: If the URL does not match the expected format.
-    """
-    error_message = (
-        f"Invalid AKV secret URL: '{secret_url}'. Expected an HTTPS Azure Key Vault URL in the format "
-        "https://{vault}.{vault-dns-suffix}/secrets/{name}[/{version}]."
-    )
-    try:
-        parsed_url = urllib.parse.urlsplit(secret_url)
-        port = parsed_url.port
-    except (TypeError, ValueError) as error:
-        raise ValueError(error_message) from error
-
-    hostname = parsed_url.hostname
-    vault_name, separator, dns_suffix = hostname.partition(".") if hostname else ("", "", "")
-    valid_vault_name = 1 <= len(vault_name) <= 63 and all(
-        char.isascii() and (char.isalnum() or char == "-") for char in vault_name
-    )
-    valid_authority = (
-        parsed_url.scheme.casefold() == "https"
-        and parsed_url.username is None
-        and parsed_url.password is None
-        and port is None
-        and separator == "."
-        and dns_suffix in _AKV_VAULT_DNS_SUFFIXES
-        and valid_vault_name
-    )
-    path_parts = parsed_url.path.split("/")
-    valid_path = (
-        len(path_parts) in {3, 4} and path_parts[0] == "" and path_parts[1] == "secrets" and all(path_parts[2:])
-    )
-    if not valid_authority or not valid_path or parsed_url.query or parsed_url.fragment:
-        raise ValueError(error_message)
-
-    secret_name, secret_version = path_parts[2], path_parts[3] if len(path_parts) == 4 else None
-    identifiers = [secret_name] + ([secret_version] if secret_version else [])
-    if any(
-        not 1 <= len(identifier) <= 127
-        or not all(char.isascii() and (char.isalnum() or char == "-") for char in identifier)
-        for identifier in identifiers
-    ):
-        raise ValueError(error_message)
-
-    return f"https://{hostname}", secret_name, secret_version
-
-
 def _create_akv_secret_client(*, vault_url: str, credential: "AsyncTokenCredential") -> "SecretClient":
     """
     Create an asynchronous Key Vault client with an explicit retry policy.
@@ -362,7 +304,7 @@ async def _fetch_akv_document_async(
 
     try:
         _print_msg(f"Loading environment from AKV secret: {secret_url}", quiet=silent, log=True)
-        vault_url, secret_name, secret_version = _parse_akv_secret_url(secret_url)
+        vault_url, secret_name, secret_version = parse_key_vault_secret_uri(secret_url)
         async with DefaultAzureCredential() as credential:
             async with _create_akv_secret_client(vault_url=vault_url, credential=credential) as client:
                 secret = await client.get_secret(secret_name, version=secret_version)
@@ -482,7 +424,7 @@ def _parse_akv_reference(
             "for example kv:https://my-vault.vault.azure.net/secrets/my-secret."
         )
 
-    referenced_vault_url, secret_name, secret_version = _parse_akv_secret_url(target)
+    referenced_vault_url, secret_name, secret_version = parse_key_vault_secret_uri(target)
     if expected_vault_url and referenced_vault_url.rstrip("/").casefold() != expected_vault_url.rstrip("/").casefold():
         raise ValueError(
             f"Cross-vault AKV reference for environment variable '{variable_name}' is not supported. "

@@ -99,6 +99,7 @@ if TYPE_CHECKING:
         RegistryReference,
         display_choices,
     )
+    from pyrit.models.persisted_target import PersistedTarget
     from pyrit.models.question_answering import QuestionAnsweringDataset, QuestionAnsweringEntry, QuestionChoice
     from pyrit.models.results.attack_result import AttackOutcome, AttackResult, AttackResultT
     from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunState
@@ -229,6 +230,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "NextMessageSystemPromptPaths": "pyrit.models.seeds",
     "ObjectiveTargetEvaluationIdentifier": "pyrit.models.identifiers",
     "Parameter": "pyrit.models.parameter",
+    "PersistedTarget": "pyrit.models.persisted_target",
     "ParameterDestination": "pyrit.models.parameter",
     "PromptDataType": "pyrit.models.literals",
     "PromptResponseError": "pyrit.models.literals",

@@ -94,6 +94,15 @@ operation: op_trash_panda
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 # env_akv_strict: true
 
+# API-created Target Persistence
+# ------------------------------
+# Non-secret target settings are stored in the configured memory database.
+# Set this vault URL to persist API keys supplied through the backend UI/API.
+# The backend authenticates to Key Vault with DefaultAzureCredential.
+# Persisted definitions retain each versionless secret URI for config-independent restoration.
+# Without it, targets created with an explicit API key remain memory-only.
+# target_secret_key_vault_url: https://my-vault.vault.azure.net
+
 # Auto-discovered ~/.pyrit/.env remains supported but emits a security warning.
 # Prefer env_akv_ref for shared or deployed secrets.
 # Use ~/.pyrit/.env.local for quick local plaintext patches or when Azure is unavailable.

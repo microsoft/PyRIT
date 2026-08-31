@@ -181,6 +181,18 @@ Complete-value `kv:`, `akv:`, `azure_key_vault:`, and `env_akv_ref:` references 
 
 Ordinary malformed dotenv lines retain python-dotenv's permissive behavior. `env_akv_strict` controls malformed Key Vault reference syntax in all sources: strict mode raises; non-strict mode warns and skips that assignment. Authentication, authorization, transport, missing-secret, and missing-value failures always raise.
 
+### `target_secret_key_vault_url`
+
+Optional Azure Key Vault URL for API keys submitted when users create targets through the backend UI or REST API.
+Non-secret target settings are stored in the configured memory database, while API keys are stored in this vault
+using `DefaultAzureCredential`. The persisted target definition retains the versionless secret URI, so restoration
+does not depend on this setting remaining in the current configuration. Without this setting when creating a target,
+an explicit API key is memory-only and the UI warns that it will be cleared when the backend restarts.
+
+```yaml
+target_secret_key_vault_url: https://my-vault.vault.azure.net
+```
+
 Environment loading preserves the historical non-transactional dotenv behavior. The bootstrap document and each local file update `os.environ` as they load. If a later source or child-secret lookup fails, assignments made by earlier sources remain in the process environment.
 
 When `env_akv_ref` is not configured, an empty `env_files` list or missing default files leaves existing process environment variables unchanged and initialization continues.
@@ -410,6 +422,9 @@ initializers:
 # env_akv_ref:
 #   - https://my-vault.vault.azure.net/secrets/my-pyrit-env
 # env_akv_strict: true
+
+# Optional: persist API keys for targets created through the backend
+# target_secret_key_vault_url: https://my-vault.vault.azure.net
 
 # Optional plaintext local patch or non-Azure workflow
 # env_files:

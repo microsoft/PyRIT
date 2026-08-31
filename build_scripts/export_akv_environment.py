@@ -17,9 +17,9 @@ import dotenv
 from dotenv.parser import parse_stream
 from dotenv.variables import parse_variables
 
+from pyrit.common.key_vault import parse_key_vault_secret_uri
 from pyrit.setup.environment_loading import (
     _parse_akv_reference,
-    _parse_akv_secret_url,
     _validate_dotenv_document,
 )
 
@@ -66,7 +66,7 @@ def _fetch_document(
     strict: bool,
     silent: bool,
 ) -> tuple[str, str]:
-    vault_url, name, version = _parse_akv_secret_url(secret_url)
+    vault_url, name, version = parse_key_vault_secret_uri(secret_url)
     secret = _client_for(vault_url=vault_url, credential=credential, clients=clients).get_secret(name, version=version)
     if not secret.value:
         raise ValueError(f"AKV environment secret has no value: {secret_url}")

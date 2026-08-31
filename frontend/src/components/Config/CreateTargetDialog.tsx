@@ -27,7 +27,7 @@ import {
 import { DeleteRegular } from '@fluentui/react-icons'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TargetInstance, TargetCatalogEntry } from '@/types'
+import type { TargetInstance, TargetCatalogEntry, TargetPersistenceStatus } from '@/types'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -225,6 +225,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   // Available target types + their auth facts, fetched from the backend registry.
   const [catalogEntries, setCatalogEntries] = useState<TargetCatalogEntry[]>([])
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>('loading')
+  const [persistenceStatus, setPersistenceStatus] = useState<TargetPersistenceStatus | null>(null)
   const catalogByType = useMemo(
     () => new Map(catalogEntries.map((entry) => [entry.target_type, entry])),
     [catalogEntries],
@@ -240,6 +241,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (open) {
       setCatalogEntries([])
       setCatalogStatus('loading')
+      setPersistenceStatus(null)
     }
   }
 
@@ -252,12 +254,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       .then((res) => {
         if (!cancelled) {
           setCatalogEntries(res.items)
+          setPersistenceStatus(res.persistence)
           setCatalogStatus('loaded')
         }
       })
       .catch(() => {
         if (!cancelled) {
           setCatalogEntries([])
+          setPersistenceStatus(null)
           setCatalogStatus('error')
         }
       })
@@ -298,6 +302,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     return null
   })()
   const showIdentityEndpointError = identityEndpointError !== null
+  const persistenceWarning = (() => {
+    if (!targetType || !persistenceStatus) return null
+    if (!persistenceStatus.definitions_enabled) {
+      return 'Persistent target storage is not configured. This target will only be registered in memory and will be cleared when the backend restarts.'
+    }
+    if (apiKey && !isIdentity && !persistenceStatus.api_keys_enabled) {
+      return 'Persistent API-key storage is not configured. This target will only be registered in memory and will be cleared when the backend restarts.'
+    }
+    return null
+  })()
 
   // Fetch the available targets when the dialog opens with RoundRobin selected.
   // If the parent already passed targets, derive availableTargets from them
@@ -515,6 +529,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     Target details could not be loaded. You can still select a supported target type,
                     but its catalog description and authentication options are unavailable.
                   </MessageBarBody>
+                </MessageBar>
+              )}
+
+              {persistenceWarning && (
+                <MessageBar intent="warning">
+                  <MessageBarBody>{persistenceWarning}</MessageBarBody>
                 </MessageBar>
               )}
 
@@ -837,7 +857,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 <Field label="API Key">
                   <Input
                     type="password"
-                    placeholder="API key (stored in memory only)"
+                    placeholder="API key"
                     value={apiKey}
                     onChange={(_, data) => setApiKey(data.value)}
                   />

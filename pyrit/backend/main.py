@@ -36,6 +36,8 @@ from pyrit.backend.routes import (
     version,
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
+from pyrit.backend.services.target_service import get_target_service
+from pyrit.memory import CentralMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 # Check for development mode from environment variable
@@ -70,6 +72,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         for order_index, initializer in enumerate(config.initializer_configs)
     ]
     await get_initializer_service().run_additional_initializers_async()
+    target_service = get_target_service()
+    target_service.configure_persistence(
+        memory=CentralMemory.get_memory_instance(),
+        definitions_enabled=config.memory_db_type != "in_memory",
+        target_secret_key_vault_url=config.target_secret_key_vault_url,
+    )
+    await target_service.restore_persisted_targets_async()
 
     # Expose config values to route handlers via app.state
     default_labels: dict[str, str] = {}

@@ -80,6 +80,10 @@ class TestConfigurationLoader:
         with pytest.raises(ValueError, match="Invalid memory_db_type"):
             ConfigurationLoader(memory_db_type="InvalidType")
 
+    def test_empty_target_secret_key_vault_url_raises_error(self) -> None:
+        with pytest.raises(ValueError, match="must be a non-empty Azure Key Vault URL"):
+            ConfigurationLoader(target_secret_key_vault_url=" ")
+
     def test_initializer_as_string(self):
         """Test initializers specified as simple strings."""
         config = ConfigurationLoader(initializers=["simple", "airt"])
@@ -688,6 +692,7 @@ silent: true
             """
 max_concurrent_scenario_runs: 7
 allow_custom_initializers: true
+target_secret_key_vault_url: https://targets.vault.azure.net/
 server:
   url: http://localhost:8765/
   startup_timeout: 45
@@ -701,6 +706,7 @@ extensions:
 
         assert config.max_concurrent_scenario_runs == 7
         assert config.allow_custom_initializers is True
+        assert config.target_secret_key_vault_url == "https://targets.vault.azure.net"
         assert config.server == {"url": "http://localhost:8765/", "startup_timeout": 45}
         assert config.server_config == ServerConfig(url="http://localhost:8765", startup_timeout=45.0)
         assert config.extensions == {"feature_flag": "enabled"}

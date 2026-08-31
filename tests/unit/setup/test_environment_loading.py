@@ -11,11 +11,11 @@ from unittest import mock
 import pytest
 from azure.core.exceptions import ResourceNotFoundError
 
+from pyrit.common.key_vault import parse_key_vault_secret_uri
 from pyrit.exceptions import KeyVaultInitializationException
 from pyrit.setup.environment_loading import (
     _fetch_akv_document_async,
     _parse_akv_reference,
-    _parse_akv_secret_url,
     _warn_about_dotenv_file,
     load_environment_async,
     load_environment_files,
@@ -813,8 +813,8 @@ class TestAkvEnvironmentLoading:
         ],
         ids=["unversioned", "versioned", "public", "china", "us-government"],
     )
-    def test_parse_akv_secret_url_valid(self, url, expected):
-        assert _parse_akv_secret_url(url) == expected
+    def test_parse_key_vault_secret_uri_valid(self, url, expected):
+        assert parse_key_vault_secret_uri(url) == expected
 
     @pytest.mark.parametrize(
         "url",
@@ -834,9 +834,9 @@ class TestAkvEnvironmentLoading:
             "https://myvault.vault.azure.net/secrets/my%2Fsecret",
         ],
     )
-    def test_parse_akv_secret_url_invalid_raises(self, url):
-        with pytest.raises(ValueError, match="Invalid AKV secret URL"):
-            _parse_akv_secret_url(url)
+    def test_parse_key_vault_secret_uri_invalid_raises(self, url):
+        with pytest.raises(ValueError, match="Invalid Azure Key Vault secret URI"):
+            parse_key_vault_secret_uri(url)
 
     async def test_fetch_akv_document_async_rejects_non_azure_host_before_authentication(self):
         with (

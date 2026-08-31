@@ -19,6 +19,7 @@ from pyrit.models.catalog.target import TargetInstance
 __all__ = [
     "CreateTargetRequest",
     "TargetCatalogEntry",
+    "TargetPersistenceStatus",
     "TargetCatalogResponse",
     "TargetListResponse",
 ]
@@ -43,10 +44,18 @@ class TargetCatalogEntry(BaseModel):
     description: str | None = Field(None, description="Short description of the target from its docstring")
 
 
+class TargetPersistenceStatus(BaseModel):
+    """Persistence capabilities for targets created through the backend."""
+
+    definitions_enabled: bool = Field(..., description="Whether non-secret target definitions survive restarts")
+    api_keys_enabled: bool = Field(..., description="Whether submitted API keys can be stored in Azure Key Vault")
+
+
 class TargetCatalogResponse(BaseModel):
     """Response for listing available target types from the registry."""
 
     items: list[TargetCatalogEntry] = Field(..., description="List of available target types")
+    persistence: TargetPersistenceStatus = Field(..., description="Backend target persistence capabilities")
 
 
 class TargetListResponse(BaseModel):

@@ -259,6 +259,12 @@ export interface TargetCatalogEntry {
 
 export interface TargetCatalogResponse {
   items: TargetCatalogEntry[]
+  persistence: TargetPersistenceStatus
+}
+
+export interface TargetPersistenceStatus {
+  definitions_enabled: boolean
+  api_keys_enabled: boolean
 }
 
 // --- Attacks ---

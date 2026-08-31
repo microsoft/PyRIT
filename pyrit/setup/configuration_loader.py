@@ -105,6 +105,8 @@ class ConfigurationLoader(YamlLoadable):
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
         operation: Name for the current operation.
+        target_secret_key_vault_url: Optional Azure Key Vault URL used to store
+            API keys for targets created through the backend.
 
     Example YAML configuration:
         memory_db_type: sqlite
@@ -148,6 +150,7 @@ class ConfigurationLoader(YamlLoadable):
     operation: str | None = None
     max_concurrent_scenario_runs: int = 3
     allow_custom_initializers: bool = False
+    target_secret_key_vault_url: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
@@ -157,6 +160,7 @@ class ConfigurationLoader(YamlLoadable):
         self._normalize_memory_db_type()
         self._normalize_initializers()
         self._validate_env_akv_ref()
+        self._normalize_target_secret_key_vault_url()
         self._normalize_server()
 
     def _validate_env_akv_ref(self) -> None:
@@ -202,6 +206,19 @@ class ConfigurationLoader(YamlLoadable):
 
         # Store normalized snake_case value
         self.memory_db_type = normalized
+
+    def _normalize_target_secret_key_vault_url(self) -> None:
+        """
+        Normalize the optional Key Vault URL used for API-created target secrets.
+
+        Raises:
+            ValueError: If the configured value is not a non-empty string.
+        """
+        if self.target_secret_key_vault_url is None:
+            return
+        if not isinstance(self.target_secret_key_vault_url, str) or not self.target_secret_key_vault_url.strip():
+            raise ValueError("target_secret_key_vault_url must be a non-empty Azure Key Vault URL.")
+        self.target_secret_key_vault_url = self.target_secret_key_vault_url.strip().rstrip("/")
 
     def _normalize_initializers(self) -> None:
         """

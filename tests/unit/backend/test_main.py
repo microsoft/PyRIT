@@ -34,6 +34,14 @@ class TestLifespan:
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
             ),
+            patch(
+                "pyrit.backend.main.get_target_service",
+                return_value=MagicMock(
+                    configure_persistence=MagicMock(),
+                    restore_persisted_targets_async=AsyncMock(),
+                ),
+            ),
+            patch("pyrit.backend.main.CentralMemory.get_memory_instance", return_value=MagicMock()),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
@@ -54,6 +62,14 @@ class TestLifespan:
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
             ),
+            patch(
+                "pyrit.backend.main.get_target_service",
+                return_value=MagicMock(
+                    configure_persistence=MagicMock(),
+                    restore_persisted_targets_async=AsyncMock(),
+                ),
+            ),
+            patch("pyrit.backend.main.CentralMemory.get_memory_instance", return_value=MagicMock()),
             patch("pyrit.backend.main.setup_frontend"),
             patch.object(logging.getLogger("pyrit.backend.main"), "warning") as mock_warning,
         ):
@@ -72,6 +88,14 @@ class TestLifespan:
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
             ),
+            patch(
+                "pyrit.backend.main.get_target_service",
+                return_value=MagicMock(
+                    configure_persistence=MagicMock(),
+                    restore_persisted_targets_async=AsyncMock(),
+                ),
+            ),
+            patch("pyrit.backend.main.CentralMemory.get_memory_instance", return_value=MagicMock()),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):
@@ -90,6 +114,14 @@ class TestLifespan:
                 "pyrit.backend.main.get_initializer_service",
                 return_value=MagicMock(run_additional_initializers_async=AsyncMock()),
             ),
+            patch(
+                "pyrit.backend.main.get_target_service",
+                return_value=MagicMock(
+                    configure_persistence=MagicMock(),
+                    restore_persisted_targets_async=AsyncMock(),
+                ),
+            ),
+            patch("pyrit.backend.main.CentralMemory.get_memory_instance", return_value=MagicMock()),
             patch("pyrit.backend.main.setup_frontend"),
         ):
             async with lifespan(app):

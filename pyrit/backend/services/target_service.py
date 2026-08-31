@@ -16,6 +16,7 @@ import asyncio
 import logging
 from functools import lru_cache
 from typing import Any, Literal, cast
+from uuid import NAMESPACE_URL, uuid5
 
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
@@ -24,8 +25,12 @@ from pyrit.backend.models.targets import (
     TargetCatalogEntry,
     TargetCatalogResponse,
     TargetListResponse,
+    TargetPersistenceStatus,
 )
+from pyrit.common.key_vault import parse_key_vault_secret_uri
+from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.persisted_target import PersistedTarget
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
@@ -43,6 +48,21 @@ class TargetService:
     def __init__(self) -> None:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
+        self._memory: MemoryInterface | None = None
+        self._definition_persistence_enabled = False
+        self._target_secret_key_vault_url: str | None = None
+
+    def configure_persistence(
+        self,
+        *,
+        memory: MemoryInterface,
+        definitions_enabled: bool,
+        target_secret_key_vault_url: str | None,
+    ) -> None:
+        """Configure persistence after Central Memory has been initialized."""
+        self._memory = memory
+        self._definition_persistence_enabled = definitions_enabled
+        self._target_secret_key_vault_url = target_secret_key_vault_url
 
     def _build_instance_from_object(self, *, target_registry_name: str, target_obj: Any) -> TargetInstance:
         """
@@ -148,7 +168,13 @@ class TargetService:
             )
             for metadata in metadata_items
         ]
-        return TargetCatalogResponse(items=items)
+        return TargetCatalogResponse(
+            items=items,
+            persistence=TargetPersistenceStatus(
+                definitions_enabled=self._definition_persistence_enabled,
+                api_keys_enabled=bool(self._definition_persistence_enabled and self._target_secret_key_vault_url),
+            ),
+        )
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
         """
@@ -189,11 +215,110 @@ class TargetService:
             params.pop("api_key", None)
 
         target_obj = self._registry.create_instance(request.type, **params)
-
-        self._registry.instances.register(target_obj)
-
         target_registry_name = target_obj.get_identifier().unique_name
+        await self._persist_target_async(
+            request=request,
+            params=params,
+            target_registry_name=target_registry_name,
+        )
+        self._registry.instances.register(target_obj)
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+
+    async def restore_persisted_targets_async(self) -> None:
+        """Recreate persisted API targets and register them in original creation order."""
+        if not self._definition_persistence_enabled or self._memory is None:
+            return
+
+        definitions = await asyncio.to_thread(self._memory.get_persisted_targets)
+        for definition in definitions:
+            try:
+                params: dict[str, Any] = dict(definition.parameters)
+                if definition.secret_uri:
+                    params["api_key"] = await self._get_api_key_async(secret_uri=definition.secret_uri)
+                if definition.auth_mode == "identity":
+                    params.pop("api_key", None)
+                target_obj = self._registry.create_instance(definition.target_type, **params)
+                self._registry.instances.register(target_obj, name=definition.target_registry_name)
+            except Exception:
+                logger.exception("Failed to restore persisted target '%s'.", definition.target_registry_name)
+
+    async def _persist_target_async(
+        self,
+        *,
+        request: CreateTargetRequest,
+        params: dict[str, Any],
+        target_registry_name: str,
+    ) -> None:
+        """Persist a target definition when durable storage is configured."""
+        if not self._definition_persistence_enabled or self._memory is None:
+            return
+
+        persisted_params = dict(params)
+        api_key = persisted_params.pop("api_key", None)
+        if api_key is not None and not self._target_secret_key_vault_url:
+            logger.warning(
+                "Target '%s' is memory-only because target_secret_key_vault_url is not configured.",
+                target_registry_name,
+            )
+            return
+
+        target_id = str(uuid5(NAMESPACE_URL, f"pyrit-target:{target_registry_name}"))
+        secret_name = f"pyrit-target-{target_id}" if api_key is not None else None
+        secret_uri = None
+        if secret_name:
+            secret_uri = await self._set_api_key_async(secret_name=secret_name, api_key=str(api_key))
+
+        definition = PersistedTarget(
+            id=target_id,
+            target_registry_name=target_registry_name,
+            target_type=request.type,
+            parameters=persisted_params,
+            auth_mode=request.auth_mode,
+            secret_uri=secret_uri,
+        )
+        await asyncio.to_thread(self._memory.add_persisted_target, target=definition)
+
+    async def _set_api_key_async(self, *, secret_name: str, api_key: str) -> str:
+        """
+        Store one API key in the configured Azure Key Vault.
+
+        Returns:
+            The versionless URI of the stored secret.
+        """
+        if not self._target_secret_key_vault_url:
+            raise RuntimeError("Target secret Key Vault is not configured.")
+
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.keyvault.secrets.aio import SecretClient
+
+        async with DefaultAzureCredential() as credential:
+            async with SecretClient(
+                vault_url=self._target_secret_key_vault_url,
+                credential=credential,
+            ) as client:
+                await client.set_secret(secret_name, api_key)
+        return f"{self._target_secret_key_vault_url}/secrets/{secret_name}"
+
+    async def _get_api_key_async(self, *, secret_uri: str) -> str:
+        """
+        Load one API key from its persisted Azure Key Vault secret URI.
+
+        Returns:
+            str: The stored API key.
+        """
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.keyvault.secrets.aio import SecretClient
+
+        vault_url, secret_name, secret_version = parse_key_vault_secret_uri(secret_uri)
+        async with DefaultAzureCredential() as credential:
+            async with SecretClient(
+                vault_url=vault_url,
+                credential=credential,
+            ) as client:
+                secret = await client.get_secret(secret_name, version=secret_version)
+        if secret.value is None:
+            raise ValueError(f"Azure Key Vault secret '{secret_uri}' has no value.")
+        return secret.value
 
 
 @lru_cache(maxsize=1)

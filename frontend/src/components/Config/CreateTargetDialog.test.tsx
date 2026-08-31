@@ -18,6 +18,10 @@ jest.mock("@/services/api", () => ({
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
 
 const TARGET_CATALOG: TargetCatalogResponse = {
+  persistence: {
+    definitions_enabled: true,
+    api_keys_enabled: true,
+  },
   items: [
     {
       target_type: "AzureMLChatTarget",
@@ -259,6 +263,28 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
 
+  it("should warn when a submitted API key cannot be persisted", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetCatalog.mockResolvedValue({
+      ...TARGET_CATALOG,
+      persistence: {
+        definitions_enabled: true,
+        api_keys_enabled: false,
+      },
+    });
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+    await flushCatalogFetch();
+    await selectTargetType("OpenAIChatTarget");
+    await user.type(screen.getByPlaceholderText("API key"), "temporary-key");
+
+    expect(screen.getByText(/only be registered in memory/i)).toBeInTheDocument();
+  });
+
   it("should show friendly names, catalog descriptions, implementation identifiers, and auth for all target types", async () => {
     render(
       <TestWrapper>
@@ -425,7 +451,7 @@ describe("CreateTargetDialog", () => {
       screen.queryByRole("radio", { name: /Identity-based/ })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("API key (stored in memory only)")
+      screen.getByPlaceholderText("API key")
     ).toBeInTheDocument();
 
     // Selecting an identity-capable type should reveal the Authentication field.
@@ -632,7 +658,7 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
 
     // Fill API key — use fireEvent.change for the same reason as endpoint input.
-    fireEvent.change(screen.getByPlaceholderText("API key (stored in memory only)"), {
+    fireEvent.change(screen.getByPlaceholderText("API key"), {
       target: { value: "sk-test-key-123" },
     });
 
@@ -903,7 +929,7 @@ describe("CreateTargetDialog", () => {
 
     // check that API Key field is visible by default.
     expect(
-      screen.getByPlaceholderText("API key (stored in memory only)")
+      screen.getByPlaceholderText("API key")
     ).toBeInTheDocument();
 
     // Select identity option.
@@ -915,7 +941,7 @@ describe("CreateTargetDialog", () => {
 
     // check that API Key field is hidden when identity mode is selected.
     expect(
-      screen.queryByPlaceholderText("API key (stored in memory only)")
+      screen.queryByPlaceholderText("API key")
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByText("Create Target"));
@@ -957,7 +983,7 @@ describe("CreateTargetDialog", () => {
 
     // Type a key, then switch to identity option.
     fireEvent.change(
-      screen.getByPlaceholderText("API key (stored in memory only)"),
+      screen.getByPlaceholderText("API key"),
       { target: { value: "sk-typed-before-switch" } }
     );
 
