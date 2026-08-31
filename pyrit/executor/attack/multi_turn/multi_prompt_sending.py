@@ -16,6 +16,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -32,7 +33,7 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score import Scorer
+from pyrit.score import MessageScorer
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -326,9 +327,12 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
-        if score and score.get_value():
-            # We have a positive score, so it's a success
-            return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+        if score:
+            outcome = attack_outcome_from_score(score)
+            if outcome is AttackOutcome.SUCCESS:
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            if outcome is AttackOutcome.UNDETERMINED:
+                return AttackOutcome.UNDETERMINED, score.score_rationale or "Scorer could not reach a verdict"
 
         if response:
             # We got response(s) but the final response did not achieve the objective
@@ -400,7 +404,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             component_identifier=self._objective_scorer.get_identifier() if self._objective_scorer else None,
             objective=objective,
         ):
-            scoring_results = await Scorer.score_response_async(
+            scoring_results = await MessageScorer.score_response_async(
                 response=response,
                 auxiliary_scorers=self._auxiliary_scorers,
                 objective_scorer=self._objective_scorer if self._objective_scorer else None,

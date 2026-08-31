@@ -39,7 +39,7 @@ from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import MessageScorer, TrueFalseScorer
 from tests.unit.mocks import MockPromptTarget
 
 
@@ -1594,7 +1594,7 @@ class TestRedTeamingConversationTracking:
         with (
             patch.object(attack._conversation_manager, "initialize_context_async") as mock_update,
             patch.object(attack._prompt_normalizer, "send_prompt_async", new_callable=AsyncMock) as mock_send,
-            patch.object(Scorer, "score_response_async", new_callable=AsyncMock) as mock_score,
+            patch.object(MessageScorer, "score_response_async", new_callable=AsyncMock) as mock_score,
             patch.object(attack, "_generate_next_prompt_async", new_callable=AsyncMock) as mock_generate,
         ):
             mock_update.return_value = ConversationState(turn_count=0, last_assistant_message_scores=[])

@@ -93,13 +93,13 @@ ATTACK_TEST_PARAMS = [
             "objective": "test objective",
             "seed_group": SeedGroup(seeds=[SeedPrompt(value="test", data_type="text")]),
         },
-        "pyrit.score.scorer.Scorer.score_response_async",
+        "pyrit.score.message_scorer.MessageScorer.score_response_async",
     ),
     (
         MultiPromptSendingAttack,
         {},
         lambda: {"objective": "test objective", "prompt_sequence": [SeedPrompt(value="test", data_type="text")]},
-        "pyrit.score.scorer.Scorer.score_response_async",
+        "pyrit.score.message_scorer.MessageScorer.score_response_async",
     ),
     (
         RedTeamingAttack,
@@ -109,7 +109,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_turns": 1,
         },
-        "pyrit.score.scorer.Scorer.score_response_async",
+        "pyrit.score.message_scorer.MessageScorer.score_response_async",
     ),
     (
         CrescendoAttack,
@@ -119,7 +119,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_turns": 1,
         },
-        "pyrit.score.scorer.Scorer.score_response_async",
+        "pyrit.score.message_scorer.MessageScorer.score_response_async",
     ),
     (
         TreeOfAttacksWithPruningAttack,
@@ -129,7 +129,7 @@ ATTACK_TEST_PARAMS = [
             "seed_prompt": SeedPrompt(value="test", data_type="text"),
             "max_iterations": 1,
         },
-        "pyrit.score.scorer.Scorer.score_response_async",
+        "pyrit.score.message_scorer.MessageScorer.score_response_async",
     ),
 ]
 
@@ -154,7 +154,7 @@ async def test_attack_executor_skips_scoring_on_error(
     Test that all attack executors skip scoring when target returns an error response.
 
     This parametrized test verifies that each executor:
-    1. Calls Scorer.score_response_async with skip_on_error_result=True
+    1. Calls MessageScorer.score_response_async with skip_on_error_result=True
     2. Handles error responses appropriately without attempting to score them
     """
     # Setup memory mock
@@ -226,7 +226,7 @@ async def test_attack_executor_skips_scoring_on_error(
         else:
             mock_normalizer.send_prompt_async = AsyncMock(return_value=error_response)
 
-        # Mock the Scorer.score_response_async to track if it's called
+        # Mock the MessageScorer.score_response_async to track if it's called
         with patch(scorer_patch_path) as mock_score:
             mock_score.return_value = {"objective_scores": [], "auxiliary_scores": []}
 

@@ -4,15 +4,15 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import logging
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.exceptions import PyritException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
-    ChatMessageRole,
+    MEDIA_PATH_DATA_TYPES,
     ComponentIdentifier,
     Condition,
     ContentScorable,
@@ -20,9 +20,11 @@ from pyrit.models import (
     Message,
     MessageScorable,
     Scorable,
+    ScorableUnion,
     Score,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
+    ScoreStatus,
     ScoreType,
     ScoringExpectation,
 )
@@ -30,8 +32,10 @@ from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 
 if TYPE_CHECKING:
+    import uuid
     from collections.abc import Sequence
 
+    from pyrit.models import ChatMessageRole
     from pyrit.prompt_target import PromptTarget
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
@@ -59,8 +63,8 @@ async def _legacy_score_scorable_async(
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
     print_deprecation_message(
-        old_item=f"{type(self).__name__}._score_async on a direct Scorer subclass",
-        new_item="pyrit.score.MessageScorer (or TrueFalseScorer / FloatScaleScorer) as the base class",
+        old_item=f"{type(self).__name__}._score_async on a scorer without a MessageScorer base",
+        new_item="pyrit.score.MessageScorer (or MessageTrueFalseScorer / MessageFloatScaleScorer) as the base class",
         removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
     )
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
@@ -75,9 +79,10 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
     Give a pre-2.0 direct ``Scorer`` subclass an implementation of the scorable contract.
 
     Subclasses of ``MessageScorer`` already inherit one, so they are left alone. A class that
-    predates the split implements ``_score_async`` instead, and would otherwise fail to
-    instantiate because ``_score_scorable_async`` is abstract. ``ABCMeta`` recomputes
-    ``__abstractmethods__`` after ``__init_subclass__``, so assigning it here is enough.
+    predates the split implements ``_score_async`` or only ``_score_piece_async`` instead, and
+    would otherwise fail to instantiate because ``_score_scorable_async`` is abstract.
+    ``ABCMeta`` recomputes ``__abstractmethods__`` after ``__init_subclass__``, so assigning
+    here is enough.
     """
     for base in cls.__mro__:
         if base is Scorer:
@@ -85,8 +90,29 @@ def _adapt_legacy_message_scorer(cls: type) -> None:
         if "_score_scorable_async" in base.__dict__:
             return
 
-    if not any("_score_async" in base.__dict__ for base in cls.__mro__):
-        return
+    def defines(name: str) -> bool:
+        return any(name in base.__dict__ for base in cls.__mro__)
+
+    if not defines("_score_async"):
+        if not defines("_score_piece_async"):
+            return
+        # A leaf that only fans in at the piece level used to inherit the message pipeline
+        # from its family base. That pipeline now lives on the message-capable family,
+        # so lend the matching family implementation here.
+        from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
+        from pyrit.score.message_scorer import MessageScorer
+        from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
+
+        if issubclass(cls, TrueFalseScorer):
+            score_async = MessageTrueFalseScorer._score_async
+        elif issubclass(cls, FloatScaleScorer):
+            score_async = MessageFloatScaleScorer._score_async
+        else:
+            score_async = MessageScorer._score_async
+
+        cls._score_async = score_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
+        if not defines("_get_supported_pieces"):
+            cls._get_supported_pieces = MessageScorer._get_supported_pieces  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
 
     cls._score_scorable_async = _legacy_score_scorable_async  # type: ignore[ty:invalid-assignment, ty:unresolved-attribute]
 
@@ -212,8 +238,8 @@ class Scorer(Identifiable, abc.ABC):
         The scorer type based on class hierarchy.
 
         Returns:
-            ScoreType: "true_false" for TrueFalseScorer subclasses,
-                      "float_scale" for FloatScaleScorer subclasses,
+            ScoreType: "true_false" for TrueFalseScorerBase subclasses,
+                      "float_scale" for FloatScaleScorerBase subclasses,
                       "unknown" for other scorers.
         """
         # Import here to avoid circular imports
@@ -290,10 +316,19 @@ class Scorer(Identifiable, abc.ABC):
 
         Raises:
             TypeError: If this scorer does not support this kind of scorable.
+            PyritException: If scoring raises a PyRIT exception (re-raised with enhanced context).
+            RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
         self._validate_expectation(expectation=expectation)
-        scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
-        return self._validate_and_persist_scores(scores=scores)
+        try:
+            scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
+        except PyritException as e:
+            e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
+            e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
+        return await self._validate_and_persist_scores_async(scores=scores)
 
     def _validate_expectation(
         self,
@@ -341,7 +376,7 @@ class Scorer(Identifiable, abc.ABC):
             names = ", ".join(sorted(condition_type.__name__ for condition_type in missing))
             raise ValueError(f"{type(self).__name__} requires the condition(s) {names}.")
 
-    def _validate_and_persist_scores(self, *, scores: list[Score]) -> list[Score]:
+    async def _validate_and_persist_scores_async(self, *, scores: list[Score]) -> list[Score]:
         """
         Validate and persist non-empty scorer output.
 
@@ -352,8 +387,93 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         self.validate_return_scores(scores=scores)
-        self._memory.add_scores_to_memory(scores=scores)
+        requires_file_copy = any(
+            isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
+            for score in scores
+        )
+        if requires_file_copy:
+            await self._memory.add_scores_to_memory_async(scores=scores)
+        else:
+            self._memory.add_scores_to_memory(scores=scores)
         return scores
+
+    async def _score_nested_async(
+        self,
+        *,
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Score a scorable as a child in a scorer tree.
+
+        Conditions addressed to sibling leaves are ignored here because the root scorer
+        already validates that every supplied condition reaches at least one leaf. The
+        root scorer owns persistence, so this path only validates child output.
+
+        Args:
+            scorable (Scorable): What to look at.
+            expectation (ScoringExpectation | None): What to look for.
+
+        Returns:
+            list[Score]: The validated child scores.
+        """
+        self._validate_expectation(expectation=expectation, allow_unmatched_conditions=True)
+        scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
+        if scores:
+            self.validate_return_scores(scores=scores)
+        return scores
+
+    def _build_undetermined_score(
+        self,
+        *,
+        rationale: str,
+        description: str | None = None,
+        message_piece_id: uuid.UUID | str | None = None,
+        scorable: ScorableUnion | None = None,
+        objective: str | None = None,
+        score_category: list[str] | None = None,
+        score_metadata: dict[str, str | int | float] | None = None,
+    ) -> Score:
+        """
+        Build a score that reports no verdict was reachable.
+
+        Args:
+            rationale (str): Why no verdict was reachable.
+            description (str | None): Short description of the outcome.
+            message_piece_id (uuid.UUID | str | None): The message piece anchor, if any.
+            scorable (Scorable | None): What the score is about, if known here.
+            objective (str | None): The objective associated with this scoring call.
+            score_category (list[str] | None): Categories whose verdict is undetermined.
+            score_metadata (dict[str, str | int | float] | None): Context retained from the scorer.
+
+        Returns:
+            Score: An undetermined score of this scorer's type.
+        """
+        return Score(
+            score_value=None,
+            status=ScoreStatus.UNDETERMINED,
+            score_value_description=description,
+            score_type=self.scorer_type,
+            score_category=score_category,
+            score_metadata=score_metadata,
+            score_rationale=rationale,
+            scorer_class_identifier=self.get_identifier(),
+            message_piece_id=message_piece_id,
+            scorable=scorable,
+            objective=objective,
+        )
+
+    @staticmethod
+    def _piece_id_from_scorable(scorable: Scorable | None) -> uuid.UUID | str | None:
+        """
+        Return the message piece a scorable names, so message-anchored joins keep working.
+
+        Returns:
+            uuid.UUID | str | None: The first named piece id, or None when none is named.
+        """
+        if isinstance(scorable, MessageScorable) and scorable.message_piece_ids:
+            return scorable.message_piece_ids[0]
+        return None
 
     @abstractmethod
     async def _score_scorable_async(
@@ -495,68 +615,108 @@ class Scorer(Identifiable, abc.ABC):
             expectation=ScoringExpectation(objective=objective),
         )
 
-    async def score_prompts_batch_async(
-        self,
+    @staticmethod
+    async def score_response_async(
         *,
-        messages: Sequence[Message],
-        objectives: Sequence[str] | None = None,
-        batch_size: int = 10,
-        role_filter: ChatMessageRole | None = None,
-        skip_on_error_result: bool = False,
-        infer_objective_from_request: bool = False,
-    ) -> list[Score]:
+        response: Message,
+        objective_scorer: Scorer | None = None,
+        auxiliary_scorers: list[Scorer] | None = None,
+        role_filter: ChatMessageRole = "assistant",
+        objective: str | None = None,
+        skip_on_error_result: bool = True,
+    ) -> dict[str, list[Score]]:
         """
-        Score multiple prompts in batches using the provided objectives.
+        Score a response through the message family. Deprecated.
 
-        Args:
-            messages (Sequence[Message]): The messages to be scored.
-            objectives (Sequence[str]): The objectives/tasks based on which the prompts should be scored.
-                Must have the same length as messages.
-            batch_size (int): The maximum batch size for processing prompts. Defaults to 10.
-            role_filter (ChatMessageRole | None): If provided, only score pieces with this role.
-                Defaults to None (no filtering).
-            skip_on_error_result (bool): If True, skip scoring pieces that have errors. Defaults to False.
-            infer_objective_from_request (bool): If True and objective is empty, attempt to infer
-                the objective from the request. Defaults to False.
+        Response scoring is message-only policy, so it moved to ``MessageScorer``.
 
         Returns:
-            list[Score]: A flattened list of Score objects from all scored prompts.
-
-        Raises:
-            ValueError: If objectives is not None and the number of objectives doesn't match
-                the number of messages.
-            TypeError: If this is not a message scorer.
+            dict[str, list[Score]]: Auxiliary and objective scores, keyed by
+                ``auxiliary_scores`` and ``objective_scores``.
         """
-        if objectives is None:
-            resolved_objectives = [""] * len(messages)
-        elif len(objectives) != len(messages):
-            raise ValueError("The number of objectives must match the number of messages.")
-        else:
-            resolved_objectives = list(objectives)
+        from pyrit.score.message_scorer import MessageScorer
 
-        if len(messages) == 0:
-            return []
-
-        from pyrit.score.message_scorer import (
-            MessageScorer,
-            MessageScoringOptions,
-            extract_objective_from_previous_turn,
+        print_deprecation_message(
+            old_item="Scorer.score_response_async",
+            new_item="MessageScorer.score_response_async",
+            removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
-
-        if not isinstance(self, MessageScorer):
-            raise TypeError("score_prompts_batch_async requires a MessageScorer.")
-        if infer_objective_from_request:
-            resolved_objectives = [
-                objective or extract_objective_from_previous_turn(message=message, memory=self._memory)
-                for message, objective in zip(messages, resolved_objectives, strict=True)
-            ]
-
-        scorables = [MessageScorable.from_message(message) for message in messages]
-        expectations = [ScoringExpectation(objective=objective) for objective in resolved_objectives]
-        message_options = MessageScoringOptions(
+        return await MessageScorer.score_response_async(
+            response=response,
+            objective_scorer=objective_scorer,
+            auxiliary_scorers=auxiliary_scorers,
             role_filter=role_filter,
+            objective=objective,
             skip_on_error_result=skip_on_error_result,
         )
+
+    @staticmethod
+    async def score_response_multiple_scorers_async(
+        *,
+        response: Message,
+        scorers: list[Scorer],
+        role_filter: ChatMessageRole = "assistant",
+        objective: str | None = None,
+        skip_on_error_result: bool = True,
+    ) -> list[Score]:
+        """
+        Score a response with several scorers through the message family. Deprecated.
+
+        Returns:
+            list[Score]: Every score the scorers produced.
+        """
+        from pyrit.score.message_scorer import MessageScorer
+
+        print_deprecation_message(
+            old_item="Scorer.score_response_multiple_scorers_async",
+            new_item="MessageScorer.score_response_multiple_scorers_async",
+            removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
+        )
+        return await MessageScorer.score_response_multiple_scorers_async(
+            response=response,
+            scorers=scorers,
+            role_filter=role_filter,
+            objective=objective,
+            skip_on_error_result=skip_on_error_result,
+        )
+
+    async def score_batch_async(
+        self,
+        *,
+        scorables: Sequence[Scorable],
+        expectations: Sequence[ScoringExpectation | None] | None = None,
+        batch_size: int = 10,
+        **score_async_kwargs: Any,
+    ) -> list[Score]:
+        """
+        Score many scorables concurrently.
+
+        Batching is concurrency and rate limiting only, so it says nothing about what kind of
+        evidence the scorables hold. ``MessageScorer`` builds its message batch API on this.
+
+        Args:
+            scorables (Sequence[Scorable]): The evidence to score.
+            expectations (Sequence[ScoringExpectation | None] | None): What to look for in each
+                scorable. Must match the length of ``scorables``. Defaults to None, which passes
+                no expectation.
+            batch_size (int): The maximum number of scorables to score at once. Defaults to 10.
+            **score_async_kwargs (Any): Extra keyword arguments forwarded to ``score_async``.
+
+        Returns:
+            list[Score]: A flattened list of the scores from every scorable.
+
+        Raises:
+            ValueError: If the number of expectations does not match the number of scorables.
+        """
+        if expectations is None:
+            resolved_expectations: list[ScoringExpectation | None] = [None] * len(scorables)
+        elif len(expectations) != len(scorables):
+            raise ValueError("The number of expectations must match the number of scorables.")
+        else:
+            resolved_expectations = list(expectations)
+
+        if len(scorables) == 0:
+            return []
 
         # Some scorers do not have an associated prompt target; batch helper validates RPM only when present
         prompt_target = getattr(self, "_prompt_target", None)
@@ -565,8 +725,8 @@ class Scorer(Identifiable, abc.ABC):
             task_arguments=["scorable", "expectation"],
             prompt_target=cast("PromptTarget", prompt_target),
             batch_size=batch_size,
-            items_to_batch=[scorables, expectations],
-            message_options=message_options,
+            items_to_batch=[list(scorables), resolved_expectations],
+            **score_async_kwargs,
         )
 
         # results is a list[list[Score]] and needs to be flattened
@@ -644,162 +804,3 @@ class Scorer(Identifiable, abc.ABC):
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
         return extract_objective_from_previous_turn(message=response, memory=self._memory)
-
-    @staticmethod
-    async def _score_response_with_scorer_async(
-        *,
-        scorer: Scorer,
-        response: Message,
-        expectation: ScoringExpectation,
-        role_filter: ChatMessageRole,
-        skip_on_error_result: bool,
-    ) -> list[Score]:
-        """
-        Apply response-scoring policy without storing policy on the scorable.
-
-        Returns:
-            list[Score]: Scores from the message scorer.
-
-        Raises:
-            TypeError: If the scorer does not use the message-scoring contract.
-        """
-        from pyrit.score.message_scorer import MessageScorer, MessageScoringOptions
-
-        if not isinstance(scorer, MessageScorer):
-            raise TypeError("Response scoring helpers require MessageScorer instances.")
-        return await scorer.score_async(
-            scorable=MessageScorable.from_message(response),
-            expectation=expectation,
-            message_options=MessageScoringOptions(
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            ),
-        )
-
-    @staticmethod
-    async def score_response_async(
-        *,
-        response: Message,
-        objective_scorer: Scorer | None = None,
-        auxiliary_scorers: list[Scorer] | None = None,
-        role_filter: ChatMessageRole = "assistant",
-        objective: str | None = None,
-        skip_on_error_result: bool = True,
-    ) -> dict[str, list[Score]]:
-        """
-        Score a response using an objective scorer and optional auxiliary scorers.
-
-        Args:
-            response (Message): Response containing pieces to score.
-            objective_scorer (Scorer | None): The main scorer to determine success. Defaults to None.
-            auxiliary_scorers (list[Scorer] | None): List of auxiliary scorers to apply. Defaults to None.
-            role_filter (ChatMessageRole): Only score pieces with this exact stored role.
-                Defaults to "assistant" (real responses only, not simulated).
-            objective (str | None): Task/objective for scoring context. Defaults to None.
-            skip_on_error_result (bool): If True, skip scoring pieces that have errors. Defaults to True.
-
-        Returns:
-            dict[str, list[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
-                containing lists of scores from each type of scorer.
-
-        Raises:
-            ValueError: If response is not provided.
-        """
-        result: dict[str, list[Score]] = {"auxiliary_scores": [], "objective_scores": []}
-
-        if not response:
-            raise ValueError("Response must be provided for scoring.")
-
-        # If no objective_scorer is provided, only run auxiliary_scorers if present
-        if objective_scorer is None:
-            if auxiliary_scorers:
-                aux_scores = await Scorer.score_response_multiple_scorers_async(
-                    response=response,
-                    scorers=auxiliary_scorers,
-                    role_filter=role_filter,
-                    objective=objective,
-                    skip_on_error_result=skip_on_error_result,
-                )
-                result["auxiliary_scores"] = aux_scores
-            # objective_scores remains empty
-            return result
-
-        # Run auxiliary and objective scoring in parallel if auxiliary_scorers is provided
-        if auxiliary_scorers:
-            aux_task = Scorer.score_response_multiple_scorers_async(
-                response=response,
-                scorers=auxiliary_scorers,
-                role_filter=role_filter,
-                objective=objective,
-                skip_on_error_result=skip_on_error_result,
-            )
-            obj_task = Scorer._score_response_with_scorer_async(
-                scorer=objective_scorer,
-                response=response,
-                expectation=ScoringExpectation(objective=objective),
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            )
-            aux_scores, obj_scores = await asyncio.gather(aux_task, obj_task)
-            result["auxiliary_scores"] = aux_scores
-            result["objective_scores"] = obj_scores
-        else:
-            obj_scores = await Scorer._score_response_with_scorer_async(
-                scorer=objective_scorer,
-                response=response,
-                expectation=ScoringExpectation(objective=objective),
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            )
-            result["objective_scores"] = obj_scores
-        return result
-
-    @staticmethod
-    async def score_response_multiple_scorers_async(
-        *,
-        response: Message,
-        scorers: list[Scorer],
-        role_filter: ChatMessageRole = "assistant",
-        objective: str | None = None,
-        skip_on_error_result: bool = True,
-    ) -> list[Score]:
-        """
-        Score a response using multiple scorers in parallel.
-
-        This method applies each scorer to the first scorable response piece (filtered by role and error),
-        and returns all scores. This is typically used for auxiliary scoring where all results are needed.
-
-        Args:
-            response (Message): The response containing pieces to score.
-            scorers (list[Scorer]): List of scorers to apply.
-            role_filter (ChatMessageRole): Only score pieces with this exact stored role.
-                Defaults to "assistant" (real responses only, not simulated).
-            objective (str | None): Optional objective description for scoring context.
-            skip_on_error_result (bool): If True, skip scoring pieces that have errors (default: True).
-
-        Returns:
-            list[Score]: All scores from all scorers
-        """
-        if not scorers:
-            return []
-
-        expectation = ScoringExpectation(objective=objective)
-        tasks = [
-            Scorer._score_response_with_scorer_async(
-                scorer=scorer,
-                response=response,
-                expectation=expectation,
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            )
-            for scorer in scorers
-        ]
-
-        if not tasks:
-            return []
-
-        # Execute all tasks in parallel
-        score_lists = await asyncio.gather(*tasks)
-
-        # Flatten the list of lists into a single list
-        return [score for scores in score_lists for score in scores]

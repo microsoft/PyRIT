@@ -40,11 +40,18 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoreStatus,
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, MessageScorable, Scorer, TrueFalseScorer
+from pyrit.score import (
+    FloatScaleThresholdScorer,
+    MessageScorable,
+    MessageScorer,
+    Scorer,
+    TrueFalseScorer,
+)
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.score_utils import normalize_score_to_float
 
@@ -149,7 +156,10 @@ class MockNodeFactory:
         # Set up objective score
         if config.objective_score_value is not None:
             node.objective_score = MagicMock(
-                spec=Score, get_value=MagicMock(return_value=config.objective_score_value), score_metadata=None
+                spec=Score,
+                get_value=MagicMock(return_value=config.objective_score_value),
+                is_undetermined=False,
+                score_metadata=None,
             )
         else:
             node.objective_score = None
@@ -366,6 +376,24 @@ class TestHelpers:
         )
 
     @staticmethod
+    def create_undetermined_score() -> Score:
+        """Create an objective score for which no verdict was reachable."""
+        return Score(
+            score_type="float_scale",
+            score_value=None,
+            status=ScoreStatus.UNDETERMINED,
+            score_category=["test"],
+            score_value_description="No verdict",
+            score_rationale="The scorer could not reach a verdict.",
+            score_metadata={"test": "metadata"},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=ComponentIdentifier(
+                class_name="MockScorer",
+                class_module="test_module",
+            ),
+        )
+
+    @staticmethod
     async def create_threshold_score_async(*, original_float_value: float, threshold: float = 0.8) -> Score:
         """
         Create a TrueFalse Score using actual FloatScaleThresholdScorer.
@@ -402,7 +430,7 @@ class TestHelpers:
                 class_module="test_module",
             ),
         )
-        mock_float_scorer._score_nested_message_async = AsyncMock(return_value=[float_score])
+        mock_float_scorer._score_nested_async = AsyncMock(return_value=[float_score])
 
         # Create the actual FloatScaleThresholdScorer
         threshold_scorer = FloatScaleThresholdScorer(scorer=mock_float_scorer, threshold=threshold)
@@ -796,6 +824,50 @@ class TestPruningLogic:
         assert len(completed) == 3
         assert all(not node.off_topic for node in completed)
 
+    def test_sort_prefers_complete_zero_to_undetermined(self, basic_attack, node_factory, helpers):
+        undetermined_node = node_factory.create_node(NodeMockConfig(node_id="undetermined"))
+        undetermined_node.objective_score = helpers.create_undetermined_score()
+        complete_zero_node = node_factory.create_node(NodeMockConfig(node_id="complete_zero"))
+        complete_zero_node.objective_score = helpers.create_score(0.0)
+
+        completed = basic_attack._get_completed_nodes_sorted_by_score([undetermined_node, complete_zero_node])
+
+        assert completed == [complete_zero_node, undetermined_node]
+
+    def test_sort_all_undetermined_scores_is_stable(self, basic_attack, node_factory, helpers):
+        first_node = node_factory.create_node(NodeMockConfig(node_id="first"))
+        second_node = node_factory.create_node(NodeMockConfig(node_id="second"))
+        first_node.objective_score = helpers.create_undetermined_score()
+        second_node.objective_score = helpers.create_undetermined_score()
+        nodes = [first_node, second_node]
+
+        assert basic_attack._get_completed_nodes_sorted_by_score(nodes) == nodes
+        assert basic_attack._get_completed_nodes_sorted_by_score(nodes) == nodes
+
+    def test_sort_equal_complete_scores_is_stable(self, basic_attack, node_factory, helpers):
+        first_node = node_factory.create_node(NodeMockConfig(node_id="first"))
+        second_node = node_factory.create_node(NodeMockConfig(node_id="second"))
+        first_node.objective_score = helpers.create_score(0.5)
+        second_node.objective_score = helpers.create_score(0.5)
+        nodes = [first_node, second_node]
+
+        assert basic_attack._get_completed_nodes_sorted_by_score(nodes) == nodes
+
+    def test_update_best_performing_node_uses_undetermined_when_all_are_undetermined(
+        self, basic_attack, node_factory, helpers
+    ):
+        context = helpers.create_basic_context()
+        first_node = node_factory.create_node(NodeMockConfig(node_id="first"))
+        second_node = node_factory.create_node(NodeMockConfig(node_id="second"))
+        first_node.objective_score = helpers.create_undetermined_score()
+        second_node.objective_score = helpers.create_undetermined_score()
+        context.nodes = [first_node, second_node]
+
+        basic_attack._update_best_performing_node(context)
+
+        assert context.best_objective_score is first_node.objective_score
+        assert context.best_conversation_id == first_node.objective_target_conversation_id
+
     async def test_send_prompts_adds_off_topic_and_incomplete_nodes_to_related_conversations(
         self, attack_builder, node_factory, helpers
     ):
@@ -1091,7 +1163,7 @@ class TestBlockedScoringDefaults:
     """
 
     async def test_score_response_delegates_to_scorer_for_blocked(self, attack_builder):
-        """A blocked response goes straight through Scorer.score_response_async — no TAP-side
+        """A blocked response goes straight through MessageScorer.score_response_async — no TAP-side
         short-circuit. The scorer is responsible for producing 0.0 via its unified fallback."""
         builder = attack_builder.with_default_mocks()
         attack = builder.build()
@@ -1141,16 +1213,15 @@ class TestBlockedScoringDefaults:
             score_value="0.0",
             score_value_description="blocked",
             score_type="float_scale",
-            score_rationale=(
-                "The request was blocked by the target "
-                "(score_blocked_content is False or no partial content available); returning 0.0."
-            ),
+            score_rationale="The response was blocked with no content to score; returning 0.0.",
             message_piece_id=str(piece.id),
             scorer_class_identifier=builder.objective_scorer.get_identifier(),
             objective="test objective",
         )
         with patch.object(
-            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+            MessageScorer,
+            "score_response_async",
+            return_value={"objective_scores": [mock_score], "auxiliary_scores": []},
         ) as mock_score_call:
             await node._score_response_async(response=response, objective="test objective")
 
@@ -1214,7 +1285,9 @@ class TestBlockedScoringDefaults:
             objective="test objective",
         )
         with patch.object(
-            Scorer, "score_response_async", return_value={"objective_scores": [mock_score], "auxiliary_scores": []}
+            MessageScorer,
+            "score_response_async",
+            return_value={"objective_scores": [mock_score], "auxiliary_scores": []},
         ):
             await node._score_response_async(response=response, objective="test objective")
 
@@ -1455,6 +1528,22 @@ class TestHelperMethods:
         # Verify the outcome reason contains the float score, not "False"
         assert "0.65" in result.outcome_reason
         assert result.outcome == AttackOutcome.FAILURE
+
+    def test_auxiliary_score_summary_uses_threshold_verdicts(self, basic_attack, node_factory, helpers):
+        node = node_factory.create_node()
+        node.auxiliary_scores = {
+            "true_threshold": helpers.create_threshold_score(original_float_value=0.35, threshold=0.3),
+            "false_threshold": helpers.create_threshold_score(original_float_value=0.75, threshold=0.8),
+            "undetermined": Score(score_type="true_false", status=ScoreStatus.UNDETERMINED),
+        }
+
+        summary = basic_attack._get_auxiliary_scores_summary([node])
+
+        assert summary == {
+            "true_threshold": 1.0,
+            "false_threshold": 0.0,
+            "undetermined": 0.0,
+        }
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1877,7 +1966,7 @@ class TestTreeOfAttacksNode:
                 return_value=response,
             ),
             patch.object(
-                Scorer,
+                MessageScorer,
                 "score_response_async",
                 new_callable=AsyncMock,
                 return_value={"objective_scores": [], "auxiliary_scores": []},
@@ -1900,11 +1989,11 @@ class TestTreeOfAttacksNode:
         on_topic_scorer = MagicMock(spec=Scorer)
 
         # Create a score that indicates off-topic
-        on_topic_score = MagicMock(spec=Score)
-        on_topic_score.get_value = MagicMock(return_value=False)  # False = off-topic
-        on_topic_score.score_value = "False"
-        on_topic_score.score_type = "true_false"
-        on_topic_score.score_rationale = "Prompt is not relevant to the objective"
+        on_topic_score = Score(
+            score_value="False",
+            score_type="true_false",
+            score_rationale="Prompt is not relevant to the objective",
+        )
         on_topic_scorer.score_text_async = AsyncMock(return_value=[on_topic_score])
 
         components_with_scorer = node_components.copy()
@@ -1933,6 +2022,38 @@ class TestTreeOfAttacksNode:
         red_teaming_mock.assert_called_once()
         # Verify the on-topic scorer was called multiple times (initial + retries + final check)
         assert on_topic_scorer.score_text_async.call_count >= 2
+
+    async def test_node_undetermined_topic_score_does_not_prune(self, node_components):
+        on_topic_scorer = MagicMock(spec=Scorer)
+        on_topic_scorer.score_text_async = AsyncMock(
+            return_value=[
+                Score(
+                    score_type="true_false",
+                    status=ScoreStatus.UNDETERMINED,
+                    score_rationale="The scorer could not reach a verdict.",
+                )
+            ]
+        )
+        components_with_scorer = node_components.copy()
+        components_with_scorer["on_topic_scorer"] = on_topic_scorer
+        node = _TreeOfAttacksNode(**components_with_scorer)
+        send_feedback = AsyncMock(return_value="unused prompt")
+
+        with (
+            patch.object(
+                node,
+                "_generate_single_red_teaming_prompt_async",
+                new_callable=AsyncMock,
+                return_value="candidate prompt",
+            ),
+            patch.object(node, "_send_to_adversarial_chat_async", send_feedback),
+        ):
+            prompt = await node._generate_red_teaming_prompt_async(objective="Test objective")
+
+        assert prompt == "candidate prompt"
+        assert node.off_topic is False
+        on_topic_scorer.score_text_async.assert_awaited_once_with(text="candidate prompt")
+        send_feedback.assert_not_awaited()
 
     async def test_node_auxiliary_scoring(self, node_components):
         """Test auxiliary scoring functionality."""
@@ -2008,12 +2129,12 @@ class TestTreeOfAttacksNode:
         )
         node._objective_scorer.score_async = AsyncMock(return_value=[obj_score])
 
-        # Mock for Scorer.score_response_async
+        # Mock for MessageScorer.score_response_async
         def mock_score_response(*args, **kwargs):
             return {"objective_scores": [obj_score], "auxiliary_scores": [aux_score1, aux_score2]}
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             side_effect=mock_score_response,
         ):

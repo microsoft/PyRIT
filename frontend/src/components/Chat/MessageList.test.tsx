@@ -165,6 +165,49 @@ describe("MessageList", () => {
     expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
   });
 
+  it("should show an undetermined score in the chip, tooltip, label, and details", async () => {
+    const user = userEvent.setup();
+    const scoredMessages: Message[] = [
+      {
+        role: "assistant",
+        content: "Response without a verdict",
+        timestamp: new Date().toISOString(),
+        scores: [
+          {
+            id: "score-undetermined",
+            message_piece_id: "piece-1",
+            scorer_type: "SelfAskScaleScorer",
+            score_type: "float_scale",
+            score_value: null,
+            status: "undetermined",
+            pieceIndex: 0,
+            pieceType: "text",
+            sourceLabel: "Piece 1 · text",
+            timestamp: "2026-02-15T00:01:00Z",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={scoredMessages} />
+      </TestWrapper>
+    );
+
+    const scoreButton = screen.getByRole("button", {
+      name: /score undetermined from selfaskscalescorer, piece 1 · text/i,
+    });
+    expect(scoreButton).toHaveTextContent("undetermined");
+
+    await user.hover(scoreButton);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("undetermined");
+
+    await user.unhover(scoreButton);
+    await user.click(scoreButton);
+    expect(within(screen.getByTestId("message-score-details-0-0")).getByText("undetermined")).toBeInTheDocument();
+  });
+
   it("should preserve a long single-score value outside its ellipsized chip", async () => {
     const user = userEvent.setup();
     const longScoreValue = "a".repeat(200);

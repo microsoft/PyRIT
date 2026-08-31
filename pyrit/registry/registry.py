@@ -288,6 +288,18 @@ class Registry(ABC, Generic[T, MetadataT]):
             f"{type(self).__name__} must implement _base_type()/_discovery_package() or override _discover()."
         )
 
+    def _should_register_discovered_class(self, cls: type[T]) -> bool:
+        """
+        Determine whether a concrete subclass belongs in this registry.
+
+        Args:
+            cls (type[T]): The discovered concrete subclass.
+
+        Returns:
+            bool: True when the class belongs in the buildable catalog.
+        """
+        return True
+
     def _discover(self) -> None:
         """
         Populate the catalog with every concrete subclass of the domain base.
@@ -320,6 +332,9 @@ class Registry(ABC, Generic[T, MetadataT]):
         for cls in self._iter_concrete_subclasses(base):
             module = cls.__module__ or ""
             if module != package_name and not module.startswith(package_prefix):
+                continue
+            if not self._should_register_discovered_class(cls):
+                logger.debug(f"Skipping non-buildable class: {cls.__name__}")
                 continue
             if (cls.__doc__ or "").strip().startswith("Deprecated alias"):
                 logger.debug(f"Skipping deprecated alias: {cls.__name__}")

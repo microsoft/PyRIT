@@ -2,26 +2,29 @@
 # Licensed under the MIT license.
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, cast
 
-from pyrit.models import ComponentIdentifier, Condition, Message, MessagePiece, Score, ScoringExpectation
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.models import (
+    ComponentIdentifier,
+    Condition,
+    ContentScorable,
+    Message,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+)
+from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
 from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
-
-if TYPE_CHECKING:
-    from uuid import UUID
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
 
 
 class ConversationScorer(MessageScorer, ABC):
     """
     Scorer that evaluates entire conversation history rather than individual messages.
 
-    This scorer wraps another scorer (FloatScaleScorer or TrueFalseScorer) and evaluates
-    the full conversation context. Useful for multi-turn conversations where context matters
-    (e.g., psychosocial harms that emerge over time or persuasion/deception over many messages).
+    This scorer wraps a float-scale or true/false scorer that supports text
+    ``ContentScorable`` evidence and evaluates the full conversation context.
 
     The ConversationScorer dynamically inherits from the same base class as the wrapped scorer,
     ensuring proper type compatibility.
@@ -52,6 +55,19 @@ class ConversationScorer(MessageScorer, ABC):
         """
         return self._get_wrapped_scorer().required_conditions()
 
+    def _build_scoring_message(self, *, message: Message) -> Message | None:
+        """
+        Keep the trigger that identifies the conversation to acquire.
+
+        The trigger content is not sent to the child scorer. ``_score_prepared_message_async``
+        replaces it with a text view of the full conversation. The base class applies
+        ``skip_on_error_result`` before this hook.
+
+        Returns:
+            Message | None: The trigger message, or None if it has no pieces.
+        """
+        return message if message.message_pieces else None
+
     async def _score_prepared_message_async(
         self,
         *,
@@ -63,16 +79,15 @@ class ConversationScorer(MessageScorer, ABC):
 
         The synthetic conversation Message is always built as ``text`` regardless of the
         triggering piece's data type or error state. Errors from individual turns are
-        preserved within the rendered text (either as the rendered error JSON or, with
-        ``score_blocked_content`` enabled, as the partial content). This ensures the wrapped
+        preserved within the rendered text (either as the partial content, or as the rendered
+        error JSON when ``should_score_blocked_content`` is turned off). This ensures the wrapped
         scorer's text-only validator accepts the synthetic message and scores the full
         conversation, even when the triggering turn was blocked or errored; the wrapped
         scorer's fallback only fires when the rendered conversation is genuinely unscoreable.
 
-        The wrapped scorer is invoked via its protected prepared-message hook so it does not
-        persist its own copy of the scores. The outer ``Scorer.score_async`` that invoked
-        this method persists the returned scores exactly once, keyed to the original
-        ``message_piece_id``.
+        The wrapped scorer is invoked through its non-persisting nested path. The outer
+        ``Scorer.score_async`` persists the returned scores exactly once, anchored to the
+        trigger message.
 
         Args:
             message (Message): A message from the conversation to be scored.
@@ -87,8 +102,6 @@ class ConversationScorer(MessageScorer, ABC):
         """
         if not message.message_pieces:
             return []
-
-        objective = expectation.objective if expectation else None
 
         # Get conversation ID from the first message piece
         conversation_id = message.message_pieces[0].conversation_id
@@ -113,9 +126,9 @@ class ConversationScorer(MessageScorer, ABC):
                 if piece.api_role in ["user", "assistant", "tool"]:
                     role_display = "Assistant (simulated)" if piece.is_simulated else piece.api_role.capitalize()
                     # For blocked pieces with partial content, use the partial content
-                    # instead of the error JSON when score_blocked_content is enabled
+                    # instead of the error JSON when should_score_blocked_content is enabled
                     if (
-                        self.score_blocked_content
+                        self.should_score_blocked_content
                         and piece.is_blocked()
                         and piece.prompt_metadata.get("partial_content")
                     ):
@@ -124,42 +137,16 @@ class ConversationScorer(MessageScorer, ABC):
                         text = piece.converted_value
                     conversation_text += f"{role_display}: {text}\n"
 
-        # Create a new message with the concatenated conversation text
-        # Preserve the original message piece metadata
-        original_piece = message.message_pieces[0]
-        conversation_message = Message(
-            message_pieces=[
-                MessagePiece(
-                    role=original_piece.role,
-                    original_value=conversation_text,
-                    converted_value=conversation_text,
-                    id=original_piece.id,
-                    conversation_id=original_piece.conversation_id,
-                    original_value_data_type="text",
-                    converted_value_data_type="text",
-                    response_error="none",
-                    original_prompt_id=(
-                        cast("UUID", original_piece.original_prompt_id)
-                        if isinstance(original_piece.original_prompt_id, str)
-                        else original_piece.original_prompt_id
-                    ),
-                    timestamp=original_piece.timestamp,
-                )
-            ]
-        )
-
         wrapped_scorer = self._get_wrapped_scorer()
-        # Call the wrapped scorer's protected prepared-message hook rather than the public
-        # ``score_async`` so the wrapped scorer does not persist its own copy of the
-        # scores.
-        wrapped_scorer._validate_expectation(
-            expectation=expectation,
-            allow_unmatched_conditions=True,
-        )
-        return await wrapped_scorer._score_prepared_message_async(
-            message=conversation_message,
+        scores = await wrapped_scorer._score_nested_async(
+            scorable=ContentScorable(value=conversation_text),
             expectation=expectation,
         )
+        trigger_piece = message.message_pieces[0]
+        for score in scores:
+            score.message_piece_id = trigger_piece.id or trigger_piece.original_prompt_id
+            score.scorable = None
+        return scores
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
@@ -172,7 +159,7 @@ class ConversationScorer(MessageScorer, ABC):
         raise NotImplementedError("ConversationScorer does not support piecewise scoring")
 
     @abstractmethod
-    def _get_wrapped_scorer(self) -> MessageScorer:
+    def _get_wrapped_scorer(self) -> Scorer:
         """
         Abstract method to enforce that ConversationScorer cannot be instantiated directly.
 
@@ -198,13 +185,13 @@ def create_conversation_scorer(
     """
     Create a ConversationScorer that inherits from the same type as the wrapped scorer.
 
-    This factory dynamically creates a ConversationScorer class that inherits from the wrapped scorer's
-    base class (FloatScaleScorer or TrueFalseScorer), ensuring the returned scorer is an instance
-    of both ConversationScorer and the wrapped scorer's type.
+    This factory dynamically creates a ConversationScorer class that inherits from the
+    wrapped scorer's message-family base. The returned scorer is an instance of both
+    ``ConversationScorer`` and the wrapped scorer's result family.
 
     Args:
-        scorer (Scorer): The scorer to wrap for conversation-level evaluation.
-            Must be an instance of FloatScaleScorer or TrueFalseScorer.
+        scorer (Scorer): The true/false or float-scale scorer to wrap for
+            conversation-level evaluation. It must support text ``ContentScorable`` evidence.
         validator (ScorerPromptValidator | None): Optional validator override.
             If not provided, uses the wrapped scorer's validator.
 
@@ -213,7 +200,7 @@ def create_conversation_scorer(
 
     Raises:
         TypeError: If the dynamic scorer does not inherit from ``Scorer``.
-        ValueError: If the scorer is not an instance of FloatScaleScorer or TrueFalseScorer.
+        ValueError: If the scorer is outside the true/false and float-scale families.
 
     Example:
         >>> float_scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=scale)
@@ -225,41 +212,34 @@ def create_conversation_scorer(
     scorer_base_class: type[Scorer] | None = None
 
     if isinstance(scorer, FloatScaleScorer):
-        scorer_base_class = FloatScaleScorer
+        scorer_base_class = MessageFloatScaleScorer
     elif isinstance(scorer, TrueFalseScorer):
-        scorer_base_class = TrueFalseScorer
+        scorer_base_class = MessageTrueFalseScorer
     else:
         raise ValueError(
             f"Unsupported scorer type: {type(scorer).__name__}. "
-            f"Scorer must be an instance of FloatScaleScorer or TrueFalseScorer."
+            "Scorer must belong to the true/false or float-scale family."
         )
-
-    # Both branches above narrow to a MessageScorer, which supplies the prepared-message hook.
-    wrapped_scorer: MessageScorer = scorer
 
     # Dynamically create a class that inherits from both ConversationScorer and the scorer's base class
     class DynamicConversationScorer(ConversationScorer, scorer_base_class):  # type: ignore[valid-type]  # type: ignore[ty:unsupported-base]
         """Dynamic ConversationScorer that inherits from both ConversationScorer and the wrapped scorer's base class."""
 
+        _wrapped_scorer: Scorer
+
         def __init__(self) -> None:
             # Initialize with the validator and wrapped scorer
             MessageScorer.__init__(self, validator=validator or ConversationScorer._DEFAULT_VALIDATOR)
-            self._wrapped_scorer: MessageScorer = wrapped_scorer
+            self._wrapped_scorer = scorer
 
-        def _get_wrapped_scorer(self) -> MessageScorer:
+        def _get_wrapped_scorer(self) -> Scorer:
             """
             Return the wrapped scorer.
 
             Returns:
-                MessageScorer: The scorer used for conversation-level evaluation.
-
-            Raises:
-                TypeError: If the stored wrapped scorer is not a ``MessageScorer``.
+                Scorer: The scorer used for conversation-level evaluation.
             """
-            wrapped_scorer = self._wrapped_scorer
-            if not isinstance(wrapped_scorer, MessageScorer):
-                raise TypeError("Wrapped conversation scorer must inherit from MessageScorer")
-            return wrapped_scorer
+            return self._wrapped_scorer
 
         def _build_identifier(self) -> ComponentIdentifier:
             """

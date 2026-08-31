@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import ComponentIdentifier, Score
+from pyrit.models import ComponentIdentifier, MessageScorable, Score
 from pyrit.models.score import UnvalidatedScore
 
 
@@ -106,6 +106,19 @@ def test_assignment_is_not_revalidated():
     score = _make_score(score_type="true_false", score_value="true")
     score.score_value = "maybe"
     assert score.score_value == "maybe"
+
+
+def test_message_scorable_derives_message_piece_id():
+    piece_id = uuid.uuid4()
+
+    score = _make_score(message_piece_id=None, scorable=MessageScorable(message_piece_ids=(piece_id,)))
+
+    assert score.message_piece_id == piece_id
+
+
+def test_message_scorable_rejects_unrelated_message_piece_id():
+    with pytest.raises(ValidationError, match="is not covered by the scorable"):
+        _make_score(scorable=MessageScorable(message_piece_ids=(uuid.uuid4(),)))
 
 
 # --------------------------------------------------------------------------- #

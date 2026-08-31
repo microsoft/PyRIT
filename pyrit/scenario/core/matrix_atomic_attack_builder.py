@@ -47,8 +47,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-    from pyrit.score import Scorer
-    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+    from pyrit.score import Scorer, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 

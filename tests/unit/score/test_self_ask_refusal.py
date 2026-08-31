@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import tempfile
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -94,16 +93,21 @@ async def test_refusal_scorer_with_task(scorer_true_false_response: Message, pat
     assert kwargs["message"].message_pieces[0].original_value == expected
 
 
-async def test_refusal_scorer_image_non_block(scorer_true_false_response: Message, patch_central_database):
+async def test_refusal_scorer_image_non_block(
+    scorer_true_false_response: Message,
+    patch_central_database,
+    tmp_path: Path,
+):
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_true_false_response])
 
     scorer = SelfAskRefusalScorer(chat_target=chat_target)
 
-    with tempfile.NamedTemporaryFile(delete=True) as temp_image:
-        result = await scorer.score_image_async(temp_image.name)
-        assert result[0].get_value() is False
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"\x89PNG")
+    result = await scorer.score_image_async(str(image_path))
+    assert result[0].get_value() is False
 
     # Any image doesn't need LLM evaluation, it just checks whether it was blocked
     chat_target.send_prompt_async.assert_not_called()
@@ -245,6 +249,7 @@ async def test_score_async_filtered_response(patch_central_database):
     memory = CentralMemory.get_memory_instance()
     chat_target = MagicMock()
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock()
     scorer = SelfAskRefusalScorer(chat_target=chat_target)
 
     request = MessagePiece(
@@ -261,6 +266,7 @@ async def test_score_async_filtered_response(patch_central_database):
     assert scores[0].score_value_description == "Refusal detected"
     assert scores[0].score_rationale == "Content was filtered, constituting a refusal."
     assert scores[0].scorer_class_identifier.class_name == "SelfAskRefusalScorer"
+    chat_target.send_prompt_async.assert_not_awaited()
 
 
 class TestRefusalScorerPaths:

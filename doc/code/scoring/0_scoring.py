@@ -62,31 +62,41 @@ print(df.to_string(index=False))
 # %% [markdown]
 # ## The class hierarchy
 #
-# Every scorer derives from the abstract `Scorer` class through one of three intermediate
-# bases: `TrueFalseScorer`, `FloatScaleScorer`, or `ConversationScorer`.
+# `Scorer` separates the evidence to inspect from the result family. `TrueFalseScorer` and
+# `FloatScaleScorer` define the two result families. `MessageScorer` adds message resolution
+# and message-only policy. Most built-in scorers combine one result-family base with
+# `MessageScorer`.
 
 # %% [markdown] class="col-page-right"
 #
 # ```mermaid
 # classDiagram
 #     class Scorer { <<abstract>> }
+#     class MessageScorer { <<abstract>> }
 #     class FloatScaleScorer { <<abstract>> }
 #     class TrueFalseScorer { <<abstract>> }
+#     class MessageFloatScaleScorer { <<abstract>> }
+#     class MessageTrueFalseScorer { <<abstract>> }
 #     class ConversationScorer { <<abstract>> }
 #
+#     Scorer <|-- MessageScorer
 #     Scorer <|-- FloatScaleScorer
 #     Scorer <|-- TrueFalseScorer
-#     Scorer <|-- ConversationScorer
+#     MessageScorer <|-- MessageFloatScaleScorer
+#     FloatScaleScorer <|-- MessageFloatScaleScorer
+#     MessageScorer <|-- MessageTrueFalseScorer
+#     TrueFalseScorer <|-- MessageTrueFalseScorer
+#     MessageScorer <|-- ConversationScorer
 #
-#     FloatScaleScorer <|-- AzureContentFilterScorer
-#     FloatScaleScorer <|-- SelfAskLikertScorer
-#     FloatScaleScorer <|-- SelfAskScaleScorer
-#     FloatScaleScorer <|-- InsecureCodeScorer
+#     MessageFloatScaleScorer <|-- AzureContentFilterScorer
+#     MessageFloatScaleScorer <|-- SelfAskLikertScorer
+#     MessageFloatScaleScorer <|-- SelfAskScaleScorer
+#     MessageFloatScaleScorer <|-- InsecureCodeScorer
 #
-#     TrueFalseScorer <|-- SubStringScorer
-#     TrueFalseScorer <|-- RegexScorer
-#     TrueFalseScorer <|-- SelfAskRefusalScorer
-#     TrueFalseScorer <|-- SelfAskCategoryScorer
+#     MessageTrueFalseScorer <|-- SubStringScorer
+#     MessageTrueFalseScorer <|-- RegexScorer
+#     MessageTrueFalseScorer <|-- SelfAskRefusalScorer
+#     MessageTrueFalseScorer <|-- SelfAskCategoryScorer
 #     TrueFalseScorer <|-- TrueFalseCompositeScorer
 #     TrueFalseScorer <|-- FloatScaleThresholdScorer
 # ```
@@ -94,9 +104,28 @@ print(df.to_string(index=False))
 # %% [markdown]
 #
 # `ConversationScorer` is never instantiated directly. `create_conversation_scorer()`
-# builds a subclass that mixes it with a `TrueFalseScorer` or `FloatScaleScorer` so the
-# wrapped scorer can run over a whole conversation — covered in
+# accepts a `MessageTrueFalseScorer` or `MessageFloatScaleScorer` and builds a compatible
+# subclass that evaluates a whole conversation.
+#
+# Generic family scorers consume a `Scorable` without assuming that it resolves to a
+# message. Message scorers also support message-specific entry points and policy. Generic
+# wrappers do not inherit those message APIs from their children; use their canonical
+# `score_async(scorable=..., expectation=...)` entry point. See
 # [Combining & stacking scorers](3_combining_scorers.ipynb).
+# %% [markdown]
+# ## Evidence and score status
+#
+# A `Scorable` identifies what a scorer evaluates. `MessageScorable` refers to message pieces
+# in memory. `ContentScorable` carries loose text or media. When a file-backed
+# `ContentScorable` is persisted with a score, PyRIT copies the file to configured results
+# storage and stores its SHA-256 digest. The score remains resolvable after the source file is
+# removed.
+#
+# A complete score has `status="complete"` and a typed value. An undetermined score has
+# `status="undetermined"` and no value. A fully blocked response is a complete negative result
+# by default: `False` for message true/false scorers and `0.0` for message float-scale scorers.
+# `SelfAskRefusalScorer` is the intentional exception because a content-filter block is a
+# refusal, so it returns `True`. Other response errors remain undetermined.
 # %% [markdown]
 # ## Scoring directly
 #

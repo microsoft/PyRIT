@@ -10,7 +10,7 @@ from unit.mocks import store_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score import FloatScaleThresholdScorer, MessageScorable
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
@@ -20,8 +20,8 @@ def create_mock_float_scorer(score_value: float):
         class_name="MockScorer",
         class_module="test.mock",
     )
-    scorer = MagicMock(spec=FloatScaleScorer)
-    scorer._score_nested_message_async = AsyncMock(
+    scorer = MagicMock(spec=MessageFloatScaleScorer)
+    scorer._score_nested_async = AsyncMock(
         return_value=[
             Score(
                 score_value=str(score_value),
@@ -73,9 +73,9 @@ async def test_float_scale_threshold_scorer_returns_single_score_with_multi_cate
     )
 
     # Mock a scorer that returns multiple scores (like AzureContentFilterScorer)
-    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer = MagicMock(spec=MessageFloatScaleScorer)
     prompt_id = uuid.uuid4()
-    scorer._score_nested_message_async = AsyncMock(
+    scorer._score_nested_async = AsyncMock(
         return_value=[
             Score(
                 score_value="0.2",
@@ -146,8 +146,8 @@ async def test_float_scale_threshold_scorer_attributes_result_to_aggregate_not_f
     mock_identifier = ComponentIdentifier(class_name="MockScorer", class_module="test.mock")
 
     prompt_id = uuid.uuid4()
-    scorer = MagicMock(spec=FloatScaleScorer)
-    scorer._score_nested_message_async = AsyncMock(
+    scorer = MagicMock(spec=MessageFloatScaleScorer)
+    scorer._score_nested_async = AsyncMock(
         return_value=[
             Score(
                 score_value="0.857",
@@ -218,8 +218,8 @@ async def test_float_scale_threshold_scorer_handles_empty_scores():
     memory = MagicMock(MemoryInterface)
 
     # Mock a scorer that returns empty list (all pieces filtered)
-    scorer = MagicMock(spec=FloatScaleScorer)
-    scorer._score_nested_message_async = AsyncMock(return_value=[])
+    scorer = MagicMock(spec=MessageFloatScaleScorer)
+    scorer._score_nested_async = AsyncMock(return_value=[])
     # get_identifier() returns a ComponentIdentifier
     mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
@@ -253,8 +253,8 @@ async def test_float_scale_threshold_scorer_with_raise_on_empty_aggregator():
     memory = MagicMock(MemoryInterface)
 
     # Mock a scorer that returns empty list (all pieces filtered)
-    scorer = MagicMock(spec=FloatScaleScorer)
-    scorer._score_nested_message_async = AsyncMock(return_value=[])
+    scorer = MagicMock(spec=MessageFloatScaleScorer)
+    scorer._score_nested_async = AsyncMock(return_value=[])
     # get_identifier() returns a ComponentIdentifier
     mock_identifier = ComponentIdentifier(
         class_name="MockScorer",
@@ -296,7 +296,7 @@ def test_get_chat_target_returns_none_when_wrapped_has_none():
 
 
 async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(patch_central_database):
-    """Integration test: a real FloatScaleScorer subclass returns Score(0.0) on blocked input
+    """Integration test: a real MessageFloatScaleScorer subclass returns Score(0.0) on blocked input
     (via its unified no-pieces fallback), and the threshold wrapper correctly converts that
     to a False true_false score.
 
@@ -305,7 +305,7 @@ async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(pa
     any special blocked-handling logic.
     """
 
-    class _RealFloatScaleScorer(FloatScaleScorer):
+    class _RealFloatScaleScorer(MessageFloatScaleScorer):
         def __init__(self):
             super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 

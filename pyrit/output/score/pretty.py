@@ -55,12 +55,15 @@ class PrettyScorePrinter(_PrettyPrinterMixin, PrinterBase):
         lines.append(self._format_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX))
         lines.append(self._format_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN))
 
-        if score.score_type == "true_false":
+        if score.is_undetermined:
+            score_color = Fore.LIGHTBLACK_EX
+        elif score.score_type == "true_false":
             score_color = Fore.GREEN if score.get_value() else Fore.RED
         else:
             score_color = Fore.YELLOW
 
-        lines.append(self._format_colored(f"{indent}• Value: {score.score_value}", score_color))
+        value_str = score.score_value if score.score_value is not None else "undetermined"
+        lines.append(self._format_colored(f"{indent}• Value: {value_str}", score_color))
 
         if score.score_rationale:
             lines.append(f"{indent}• Rationale:\n")

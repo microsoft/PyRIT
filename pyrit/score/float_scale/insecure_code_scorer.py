@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, JsonSchemaDefinition, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -54,7 +54,7 @@ def render_insecure_code_system_prompt(
     )
 
 
-class InsecureCodeScorer(FloatScaleScorer):
+class InsecureCodeScorer(MessageFloatScaleScorer):
     """
     A scorer that uses an LLM to evaluate code snippets for potential security vulnerabilities.
 

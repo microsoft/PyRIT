@@ -15,6 +15,7 @@ from pyrit.executor.attack.component import ConversationManager, PrependedConver
 from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -40,13 +41,12 @@ from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     MessageScorable,
-    MessageScoringOptions,
+    MessageScorer,
     NumericRubric,
-    Scorer,
     SelfAskRefusalScorer,
     SelfAskScaleScorer,
 )
-from pyrit.score.score_utils import normalize_score_to_float
+from pyrit.score.score_utils import normalize_score_to_float, score_is_true
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -433,24 +433,26 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             context.last_score = await self._score_response_async(context=context)
 
             # Check if objective achieved
-            achieved_objective = bool(context.last_score.get_value()) if context.last_score else False
+            achieved_objective = score_is_true(context.last_score)
 
             # Increment the executed turns
             context.executed_turns += 1
 
         # Create the outcome reason based on whether the objective was achieved
-        outcome_reason = (
-            f"Objective achieved in {context.executed_turns} turns"
-            if achieved_objective
-            else f"Max turns ({self._max_turns}) reached without achieving objective"
-        )
+        outcome = attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE
+        if outcome is AttackOutcome.SUCCESS:
+            outcome_reason = f"Objective achieved in {context.executed_turns} turns"
+        elif outcome is AttackOutcome.UNDETERMINED:
+            outcome_reason = "Objective scorer could not reach a verdict"
+        else:
+            outcome_reason = f"Max turns ({self._max_turns}) reached without achieving objective"
 
         # Prepare the result
         result = CrescendoAttackResult(
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             conversation_id=context.session.conversation_id,
             objective=context.objective,
-            outcome=(AttackOutcome.SUCCESS if achieved_objective else AttackOutcome.FAILURE),
+            outcome=outcome,
             outcome_reason=outcome_reason,
             executed_turns=context.executed_turns,
             last_response=context.last_response.get_piece() if context.last_response else None,
@@ -680,7 +682,6 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             scores = await self._refusal_scorer.score_async(
                 scorable=MessageScorable.from_message(context.last_response),
                 expectation=ScoringExpectation(objective=objective),
-                message_options=MessageScoringOptions(skip_on_error_result=False),
             )
         return scores[0]
 
@@ -708,7 +709,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
-            scoring_results = await Scorer.score_response_async(
+            scoring_results = await MessageScorer.score_response_async(
                 response=context.last_response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
@@ -722,7 +723,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             raise RuntimeError("No objective scores returned from scoring process.")
 
         score = objective_score[0]
-        self._logger.debug(f"Objective score: {score.get_value():.2f} - {score.score_rationale}")
+        self._logger.debug(f"Objective score: {normalize_score_to_float(score):.2f} - {score.score_rationale}")
         return score
 
     async def _backtrack_memory_async(self, *, conversation_id: str) -> str:
@@ -798,10 +799,8 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         """
         # Check for refusal using the scorer (handles blocked/error responses internally)
         refusal_score = await self._check_refusal_async(context, prompt_sent)
-        self._logger.debug(
-            f"Refusal check: {refusal_score.get_value()} - {(refusal_score.score_rationale or '')[:100]}..."
-        )
-        is_refusal = bool(refusal_score.get_value())
+        is_refusal = score_is_true(refusal_score)
+        self._logger.debug(f"Refusal check: {is_refusal} - {(refusal_score.score_rationale or '')[:100]}...")
         context.last_response_was_refusal = is_refusal
 
         if not is_refusal:

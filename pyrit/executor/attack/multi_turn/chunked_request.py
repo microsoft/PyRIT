@@ -15,6 +15,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -356,7 +357,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         if not score:
             return AttackOutcome.FAILURE, "No score returned from scorer"
 
-        outcome = AttackOutcome.SUCCESS if score.get_value() else AttackOutcome.FAILURE
+        outcome = attack_outcome_from_score(score)
         outcome_reason = score.score_rationale if score.score_rationale else None
         return outcome, outcome_reason
 
