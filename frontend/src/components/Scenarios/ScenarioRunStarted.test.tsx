@@ -134,6 +134,6 @@ describe('ScenarioRunStarted', () => {
     mockGetRun.mockResolvedValueOnce(makeRunSummary())
     renderShell('/scenario-history/sr-1')
 
-    expect(screen.getByRole('link', { name: /back to scenarios/i })).toHaveAttribute('href', '/scanner')
+    expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner')
   })
 })

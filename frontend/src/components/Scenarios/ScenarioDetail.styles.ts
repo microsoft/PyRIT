@@ -39,21 +39,13 @@ export const useScenarioDetailStyles = makeStyles({
     gap: tokens.spacingVerticalXS,
   },
   description: {
-    maxWidth: '75ch',
-    color: tokens.colorNeutralForeground2,
-    fontSize: tokens.fontSizeBase400,
-    lineHeight: tokens.lineHeightBase500,
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
   },
   layout: {
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(18rem, 23rem)',
-    alignItems: 'start',
-    gap: tokens.spacingHorizontalXXL,
+    display: 'block',
     minWidth: 0,
-    [NARROW_VIEWPORT_QUERY]: {
-      gridTemplateColumns: 'minmax(0, 1fr)',
-      gap: tokens.spacingVerticalXL,
-    },
   },
   formColumn: {
     display: 'flex',
@@ -121,17 +113,6 @@ export const useScenarioDetailStyles = makeStyles({
   hint: {
     color: tokens.colorNeutralForeground3,
   },
-  advancedSection: {
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusLarge,
-    backgroundColor: tokens.colorNeutralBackground1,
-  },
-  advancedFields: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
-    paddingTop: tokens.spacingVerticalS,
-  },
   dynamicParameters: {
     display: 'flex',
     flexDirection: 'column',
@@ -157,25 +138,66 @@ export const useScenarioDetailStyles = makeStyles({
       minHeight: MINIMUM_TOUCH_TARGET_SIZE,
     },
   },
-  previewRail: {
-    position: 'sticky',
-    top: 0,
+  launchSection: {
+    display: 'flex',
+    minWidth: 0,
+    padding: 0,
+    borderRadius: tokens.borderRadiusLarge,
+    overflow: 'hidden',
+  },
+  estimateHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: tokens.spacingHorizontalS,
+  },
+  costEstimateList: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalL,
-    minWidth: 0,
-    padding: tokens.spacingVerticalL,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: tokens.borderRadiusLarge,
-    backgroundColor: tokens.colorNeutralBackground1,
-    [NARROW_VIEWPORT_QUERY]: {
-      position: 'static',
+    gap: 0,
+    margin: 0,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  costEstimateRow: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: tokens.spacingHorizontalL,
+    padding: `${tokens.spacingVerticalS} 0`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    '& > dt': {
+      color: tokens.colorNeutralForeground2,
+    },
+    '& > dd': {
+      margin: 0,
+      fontWeight: tokens.fontWeightSemibold,
+      textAlign: 'right',
+      overflowWrap: 'anywhere',
     },
   },
-  previewHeader: {
+  totalEstimateRow: {
+    padding: `${tokens.spacingVerticalM} 0`,
+    '& > dt': {
+      color: tokens.colorNeutralForeground1,
+      fontWeight: tokens.fontWeightRegular,
+    },
+    '& > dd': {
+      fontWeight: tokens.fontWeightRegular,
+    },
+  },
+  inlineStatus: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+  },
+  warningText: {
+    color: tokens.colorPaletteDarkOrangeForeground1,
+  },
+  dialogContent: {
     display: 'flex',
     flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
+    gap: tokens.spacingVerticalM,
+    maxHeight: '65vh',
+    overflowY: 'auto',
   },
   previewList: {
     display: 'flex',
@@ -198,9 +220,6 @@ export const useScenarioDetailStyles = makeStyles({
       margin: 0,
       overflowWrap: 'anywhere',
     },
-    [NARROW_VIEWPORT_QUERY]: {
-      gridTemplateColumns: 'minmax(7rem, 35%) minmax(0, 1fr)',
-    },
   },
   previewStack: {
     display: 'flex',
@@ -211,9 +230,6 @@ export const useScenarioDetailStyles = makeStyles({
     display: 'flex',
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalXXS,
-  },
-  errorText: {
-    color: tokens.colorPaletteRedForeground1,
   },
   parameterPreview: {
     display: 'flex',
@@ -234,19 +250,12 @@ export const useScenarioDetailStyles = makeStyles({
       overflowWrap: 'anywhere',
     },
   },
-  estimateGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
-    paddingTop: tokens.spacingVerticalM,
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  previewActions: {
-    paddingTop: tokens.spacingVerticalM,
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  errorText: {
+    color: tokens.colorPaletteRedForeground1,
   },
   launchButton: {
     width: '100%',
-    ...mobileTouchTargetHeight,
+    minHeight: '3.5rem',
+    borderRadius: tokens.borderRadiusLarge,
   },
 })

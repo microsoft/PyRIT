@@ -78,10 +78,14 @@ function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredSc
   }
 }
 
-function makeTarget(name: string): TargetInstance {
+function makeTarget(name: string, modelName?: string): TargetInstance {
   return {
     target_registry_name: name,
-    identifier: { class_name: 'OpenAIChatTarget', hash: `${name}-hash` },
+    identifier: {
+      class_name: 'OpenAIChatTarget',
+      hash: `${name}-hash`,
+      model_name: modelName,
+    },
   }
 }
 
@@ -117,6 +121,16 @@ async function advanceTimers(milliseconds: number): Promise<void> {
     jest.advanceTimersByTime(milliseconds)
     await Promise.resolve()
   })
+}
+
+async function openRunPreview(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(screen.getByTestId('launch-scenario-btn'))
+  return screen.findByRole('dialog', { name: 'Run preview' }, { timeout: 5_000 })
+}
+
+async function confirmRunPreview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await openRunPreview(user)
+  await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
 }
 
 function renderDetail(
@@ -184,11 +198,13 @@ describe('ScenarioDetail', () => {
   it('decodes a slash-bearing encoded scenario name back to the original', async () => {
     renderDetail('/scanner/foundry%2Fred_team_agent')
     await waitFor(() => expect(mockGetScenario).toHaveBeenCalledWith('foundry/red_team_agent'))
+    await screen.findByTestId('scenario-target-select')
   })
 
   it('preserves a literal percent sequence in a scenario registry name', async () => {
     renderDetail('/scanner/discount%2550')
     await waitFor(() => expect(mockGetScenario).toHaveBeenCalledWith('discount%50'))
+    await screen.findByTestId('scenario-target-select')
   })
 
   it('handles a malformed percent sequence without throwing during render', async () => {
@@ -212,7 +228,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/missing.scenario')
 
     expect(await screen.findByTestId('scenario-not-found')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /back to scenarios/i })).toHaveAttribute('href', '/scanner')
+    expect(screen.getByRole('link', { name: /back to scanners/i })).toHaveAttribute('href', '/scanner')
     expect(screen.queryByTestId('scenario-error')).not.toBeInTheDocument()
   })
 
@@ -251,7 +267,7 @@ describe('ScenarioDetail', () => {
       },
       expect.any(AbortSignal),
     )
-    expect(screen.getByText('8 attacks')).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('8')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Configure target to launch' }))
     expect(onNavigate).toHaveBeenCalledWith('config')
   })
@@ -262,17 +278,41 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByTestId('scenario-target-select')).toHaveValue('target-b')
   })
 
+  it('shows model names in target options without another request', async () => {
+    mockListTargets.mockResolvedValueOnce({
+      items: [makeTarget('target-a', 'gpt-4o'), makeTarget('target-b')],
+      pagination: { limit: 200, has_more: false },
+    })
+
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    expect(await screen.findByRole('option', { name: 'target-a (gpt-4o)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'target-b' })).toBeInTheDocument()
+    expect(mockListTargets).toHaveBeenCalledTimes(1)
+  })
+
   it('defaults the target selector to the first fetched target when there is no matching active target', async () => {
     renderDetail('/scanner/foundry.red_team_agent')
 
     expect(await screen.findByTestId('scenario-target-select')).toHaveValue('target-a')
   })
 
-  it('exposes the configuration form and run preview as ordered landmarks', async () => {
+  it('shows the configuration, estimate, and launch sections before the preview dialog', async () => {
+    const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
 
     expect(await screen.findByRole('form', { name: 'Scenario run configuration' })).toBeInTheDocument()
-    expect(screen.getByRole('complementary', { name: 'Run preview' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Scenario description' })).toBeInTheDocument()
+    expect(screen.getByTestId('run-estimate')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Launch scan' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
+
+    const preview = await openRunPreview(user)
+    expect(preview).toBeInTheDocument()
+    expect(mockStartRun).not.toHaveBeenCalled()
+    await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument()
   })
 
   it('debounces preview requests and aborts the superseded request', async () => {
@@ -326,13 +366,13 @@ describe('ScenarioDetail', () => {
 
     resolveSecond(makeEstimate(12))
     await flushRenderedPromises()
-    const preview = screen.getByRole('complementary', { name: 'Run preview' })
-    expect(within(preview).getByText('12 attacks')).toBeInTheDocument()
+    const estimate = screen.getByTestId('run-estimate')
+    expect(within(estimate).getByText('12')).toBeInTheDocument()
 
     resolveFirst(makeEstimate(8))
     await flushRenderedPromises()
-    expect(within(preview).getByText('12 attacks')).toBeInTheDocument()
-    expect(within(preview).queryByText('8 attacks')).not.toBeInTheDocument()
+    expect(within(estimate).getByText('12')).toBeInTheDocument()
+    expect(within(estimate).queryByText('8')).not.toBeInTheDocument()
   })
 
   it('keeps the last good estimate and entered state after a transient preview failure', async () => {
@@ -349,17 +389,15 @@ describe('ScenarioDetail', () => {
     await flushRenderedPromises()
     await advanceTimers(300)
     await flushRenderedPromises()
-    expect(screen.getByText('8 attacks')).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('8')).toBeInTheDocument()
 
     await user.selectOptions(screen.getByTestId('scenario-target-select'), 'target-b')
     await advanceTimers(300)
     await flushRenderedPromises()
 
-    const preview = screen.getByRole('complementary', { name: 'Run preview' })
-    expect(within(preview).getByText('target-b')).toBeInTheDocument()
-    expect(within(preview).getByText('Previous estimate')).toBeInTheDocument()
-    expect(within(preview).getByText('8 attacks')).toBeInTheDocument()
-    expect(within(preview).getByText('Preview service unavailable')).toBeInTheDocument()
+    const estimate = screen.getByTestId('run-estimate')
+    expect(within(estimate).getByText('8')).toBeInTheDocument()
+    expect(within(estimate).getByText('Preview service unavailable')).toBeInTheDocument()
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
     expect(screen.getByTestId('launch-scenario-btn')).not.toBeDisabled()
   })
@@ -375,8 +413,7 @@ describe('ScenarioDetail', () => {
 
     expect(mockEstimateRun).not.toHaveBeenCalled()
     expect(screen.getByTestId('launch-scenario-btn')).toBeDisabled()
-    expect(screen.getByText('Complete the required configuration to request an estimate.'))
-      .toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Unavailable')).toBeInTheDocument()
   })
 
   it('renders a backend conditional estimate without inventing a total', async () => {
@@ -387,9 +424,8 @@ describe('ScenarioDetail', () => {
     await advanceTimers(300)
     await flushRenderedPromises()
 
-    const preview = screen.getByRole('complementary', { name: 'Run preview' })
-    expect(within(preview).getByText('Conditional estimate')).toBeInTheDocument()
-    expect(within(preview).getByText('8-12 attacks')).toBeInTheDocument()
+    const estimate = screen.getByTestId('run-estimate')
+    expect(within(estimate).getByText('8-12')).toBeInTheDocument()
   })
 
   it('renders MyST literals through the shared safe Markdown renderer', async () => {
@@ -472,7 +508,7 @@ describe('ScenarioDetail', () => {
     expect(screen.getByTestId('technique-crescendo')).toBeChecked()
 
     await user.click(screen.getByTestId('technique-prompt_sending'))
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     const request = mockStartRun.mock.calls[0][0]
@@ -523,7 +559,7 @@ describe('ScenarioDetail', () => {
     expect(screen.getByTestId('technique-prompt_sending')).toBeChecked()
     expect(screen.getByTestId('technique-crescendo')).toBeChecked()
 
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['prompt_sending', 'crescendo'])
   })
@@ -551,7 +587,7 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByRole('heading', { name: 'Baseline' })).not.toBeInTheDocument()
 
     await user.click(checkbox)
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(false)
@@ -592,7 +628,7 @@ describe('ScenarioDetail', () => {
     expect(checkbox).toBeDisabled()
     expect(checkbox).not.toBeChecked()
 
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(false)
   })
@@ -648,8 +684,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByRole('button', { name: 'Advanced options' }))
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     const request = mockStartRun.mock.calls[0][0]
@@ -659,20 +694,85 @@ describe('ScenarioDetail', () => {
     expect(request.max_retries).toBe(0)
   })
 
-  it('includes dataset override and max dataset size when provided', async () => {
+  it('shows the combined configured dataset size without submitting it as an override', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValueOnce(
+      makeScenario({
+        default_dataset_summaries: [
+          {
+            name: 'harmbench',
+            kind: 'dataset',
+            logical_seed_group_count: 400,
+            selected_seed_group_count: 4,
+            configured_caps: [
+              {
+                label: 'per-dataset cap',
+                count: 4,
+                configured_on: 'dataset',
+                dataset_name: 'harmbench',
+              },
+            ],
+            selection_note: 'The default selection uses 4 of 400 logical seed groups.',
+          },
+          {
+            name: 'adv_bench',
+            kind: 'dataset',
+            logical_seed_group_count: 300,
+            selected_seed_group_count: 4,
+            configured_caps: [
+              {
+                label: 'per-dataset cap',
+                count: 4,
+                configured_on: 'dataset',
+                dataset_name: 'adv_bench',
+              },
+            ],
+            selection_note: 'The default selection uses 4 of 300 logical seed groups.',
+          },
+        ],
+      }),
+    )
+
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    expect(await screen.findByRole('heading', { name: 'Parameters' })).toBeInTheDocument()
+    expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
+    expect(screen.getByTestId('max-dataset-size-input')).toHaveValue(8)
+    expect(screen.getByText(
+      'The scenario default is 8. Edit it to override the default.',
+    )).toBeInTheDocument()
+    const estimate = screen.getByTestId('run-estimate')
+    expect(within(estimate).getByText('Dataset size')).toBeInTheDocument()
+    expect(within(estimate).getByText('8')).toBeInTheDocument()
+    expect(within(estimate).getByText('Number techniques')).toBeInTheDocument()
+    expect(within(estimate).getByText('2')).toBeInTheDocument()
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
+    expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('includes dataset overrides and filters when provided', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByRole('button', { name: 'Advanced options' }))
     await user.type(screen.getByTestId('dataset-override-input'), 'ds_a, ds_b')
     await user.type(screen.getByTestId('max-dataset-size-input'), '25')
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await user.type(screen.getByTestId('harm-categories-filter-input'), 'cyber, violence')
+    await user.type(screen.getByTestId('data-types-filter-input'), 'text, image_path')
+    await confirmRunPreview(user)
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     const request = mockStartRun.mock.calls[0][0]
     expect(request.dataset_names).toEqual(['ds_a', 'ds_b'])
     expect(request.max_dataset_size).toBe(25)
+    expect(request.dataset_filters).toEqual({
+      harm_categories: ['cyber', 'violence'],
+      data_types: ['text', 'image_path'],
+    })
     await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
       'foundry.red_team_agent',
       expect.objectContaining({
@@ -680,6 +780,10 @@ describe('ScenarioDetail', () => {
         techniques: ['default_technique'],
         dataset_names: ['ds_a', 'ds_b'],
         max_dataset_size: 25,
+        dataset_filters: {
+          harm_categories: ['cyber', 'violence'],
+          data_types: ['text', 'image_path'],
+        },
         include_baseline: true,
       }),
       expect.any(AbortSignal),
@@ -692,7 +796,6 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByRole('button', { name: 'Advanced options' }))
     await user.type(screen.getByTestId('max-dataset-size-input'), '0')
     await user.click(screen.getByTestId('launch-scenario-btn'))
 
@@ -707,7 +810,6 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByRole('button', { name: 'Advanced options' }))
     fireEvent.change(screen.getByTestId('max-concurrency-input'), { target: { value: '500' } })
     fireEvent.blur(screen.getByTestId('max-concurrency-input'))
     await user.click(screen.getByTestId('launch-scenario-btn'))
@@ -725,7 +827,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent', { labels: { operator: 'roakey', operation: 'op1' } })
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
     expect(mockStartRun).toHaveBeenCalledWith({
@@ -739,7 +841,7 @@ describe('ScenarioDetail', () => {
     })
   })
 
-  it('sends only prompt_sending for the Jailbreak regression and displays the backend total of 8', async () => {
+  it('uses effective Jailbreak defaults and sends only prompt_sending', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(
       makeScenario({
@@ -802,6 +904,10 @@ describe('ScenarioDetail', () => {
           selection_note: 'One incompatible group is excluded.',
         },
       ],
+      effective_parameters: {
+        num_jailbreaks: 2,
+        num_jailbreak_attempts: 1,
+      },
       note: 'The backend total is authoritative.',
     })
 
@@ -809,8 +915,6 @@ describe('ScenarioDetail', () => {
     await screen.findByTestId('scenario-target-select')
 
     await user.click(screen.getByTestId('technique-jailbreak_system_prompt'))
-    await user.clear(screen.getByTestId('scenario-param-num_jailbreaks'))
-    await user.type(screen.getByTestId('scenario-param-num_jailbreaks'), '2')
     await user.clear(screen.getByTestId('scenario-param-num_jailbreak_attempts'))
     await user.type(screen.getByTestId('scenario-param-num_jailbreak_attempts'), '1')
     await user.click(screen.getByTestId('baseline-checkbox'))
@@ -824,7 +928,6 @@ describe('ScenarioDetail', () => {
       include_baseline: false,
       labels: { operator: 'roakey' },
       scenario_params: {
-        num_jailbreaks: 2,
         num_jailbreak_attempts: 1,
       },
     }
@@ -833,7 +936,6 @@ describe('ScenarioDetail', () => {
       techniques: ['prompt_sending'],
       include_baseline: false,
       scenario_params: {
-        num_jailbreaks: 2,
         num_jailbreak_attempts: 1,
       },
     }
@@ -843,15 +945,23 @@ describe('ScenarioDetail', () => {
       expectedEstimateRequest,
       expect.any(AbortSignal),
     ))
-    const preview = screen.getByRole('complementary', { name: 'Run preview' })
+    const estimate = screen.getByTestId('run-estimate')
+    expect(within(estimate).getByText('num_jailbreaks').parentElement).toHaveTextContent(
+      'num_jailbreaks2',
+    )
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText('target-a')).toBeInTheDocument()
     expect(within(preview).getByText('prompt_sending')).toBeInTheDocument()
-    expect(within(preview).getAllByText('harmbench')).toHaveLength(2)
-    expect(within(preview).queryByText('baseline')).not.toBeInTheDocument()
+    expect(within(preview).getByText('harmbench')).toBeInTheDocument()
+    expect(within(preview).getByText('num_jailbreaks').parentElement).toHaveTextContent(
+      'num_jailbreaks2',
+    )
     expect(within(preview).getByText('8 attacks')).toBeInTheDocument()
-    expect(within(preview).getByText('Jailbreak templates: 2 (configuration)')).toBeInTheDocument()
-    expect(within(preview).getByText('2')).toBeInTheDocument()
+    expect(within(preview).getByText('Prompt sending: 8 = 8')).toBeInTheDocument()
+    expect(within(preview).queryByText('Backend estimate')).not.toBeInTheDocument()
+    expect(within(preview).queryByText('Current configuration')).not.toBeInTheDocument()
 
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
     expect(mockStartRun).toHaveBeenCalledWith(expectedRunRequest)
@@ -869,7 +979,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
 
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
@@ -889,7 +999,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
 
     expect(await screen.findByText('Invalid target')).toBeInTheDocument()
     expect(screen.getByTestId('launch-scenario-btn')).not.toBeDisabled()
@@ -897,6 +1007,7 @@ describe('ScenarioDetail', () => {
   })
 
   it('guards against a duplicate submit from a fast double click', async () => {
+    const user = userEvent.setup()
     let resolveStartRun: (value: { scenario_result_id: string }) => void = () => {}
     mockStartRun.mockReturnValue(
       new Promise((resolve) => {
@@ -906,8 +1017,9 @@ describe('ScenarioDetail', () => {
 
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
+    await openRunPreview(user)
 
-    const button = screen.getByTestId('launch-scenario-btn')
+    const button = screen.getByTestId('confirm-launch-scenario-btn')
     // Fire two rapid clicks without waiting between them (userEvent.click awaits internally,
     // so dispatch native clicks to simulate a true double-click within one tick).
     act(() => {
@@ -920,7 +1032,7 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(button).not.toBeDisabled())
   })
 
-  it('preserves entered values and preview content after a failed submission', async () => {
+  it('preserves entered values and keeps the preview open after a failed submission', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(
       makeScenario({
@@ -949,7 +1061,7 @@ describe('ScenarioDetail', () => {
     await user.click(screen.getByTestId('technique-crescendo'))
     await user.clear(screen.getByTestId('scenario-param-attempts'))
     await user.type(screen.getByTestId('scenario-param-attempts'), '3')
-    await user.click(screen.getByTestId('launch-scenario-btn'))
+    await confirmRunPreview(user)
 
     await screen.findByText('boom')
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
@@ -957,10 +1069,10 @@ describe('ScenarioDetail', () => {
     expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
     expect(screen.getByTestId('scenario-param-attempts')).toHaveValue(3)
 
-    const preview = screen.getByRole('complementary', { name: 'Run preview' })
+    const preview = screen.getByRole('dialog', { name: 'Run preview' })
     expect(within(preview).getByText('target-b')).toBeInTheDocument()
     expect(within(preview).getByText('crescendo')).toBeInTheDocument()
     expect(within(preview).getByText('harmbench')).toBeInTheDocument()
-    expect(within(preview).getByText('3')).toBeInTheDocument()
+    expect(within(preview).getByText('attempts').parentElement).toHaveTextContent('attempts3')
   })
 })

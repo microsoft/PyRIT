@@ -35,6 +35,7 @@ def _metadata_to_registered_scenario(
     *,
     metadata: ScenarioMetadata,
     default_run_size: ScenarioRunSizeEstimate | None = None,
+    default_run_size_pending: bool = False,
 ) -> RegisteredScenario:
     """
     Convert a ScenarioMetadata dataclass to a ScenarioSummary Pydantic model.
@@ -42,6 +43,7 @@ def _metadata_to_registered_scenario(
     Args:
         metadata: The registry metadata for a scenario.
         default_run_size: Scenario-owned default-run estimate.
+        default_run_size_pending: Whether the estimate is still being calculated.
 
     Returns:
         RegisteredScenario: Public catalog projection.
@@ -67,6 +69,7 @@ def _metadata_to_registered_scenario(
         baseline_policy=metadata.baseline_policy,
         include_baseline_by_default=metadata.include_baseline_by_default,
         default_run_size=estimate,
+        default_run_size_pending=default_run_size_pending,
     )
 
 
@@ -86,30 +89,47 @@ class ScenarioService:
         *,
         limit: int = 50,
         cursor: str | None = None,
+        include_estimates: bool = True,
     ) -> ListRegisteredScenariosResponse:
         """
-        List scenarios with cached default estimates and cursor pagination.
+        List scenarios with optional default estimates and cursor pagination.
+
+        Args:
+            limit: Maximum number of scenarios to return.
+            cursor: Scenario name after which the page starts.
+            include_estimates: Whether to wait for default run-size estimates.
 
         Returns:
             ListRegisteredScenariosResponse: The requested catalog page.
         """
         all_metadata = self._registry.get_all_registered_class_metadata()
-        all_summaries = [_metadata_to_registered_scenario(metadata=m) for m in all_metadata]
+        all_summaries = [
+            _metadata_to_registered_scenario(
+                metadata=metadata,
+                default_run_size_pending=not include_estimates,
+            )
+            for metadata in all_metadata
+        ]
 
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
-        metadata_by_name = {metadata.registry_name: metadata for metadata in all_metadata}
-        estimates = await asyncio.gather(
-            *(self._get_default_run_size_estimate_async(metadata=metadata_by_name[item.scenario_name]) for item in page)
-        )
-        page = [
-            item.model_copy(
-                update={
-                    "default_run_size": estimate,
-                    "default_dataset_summaries": estimate.datasets,
-                }
+        if include_estimates:
+            metadata_by_name = {metadata.registry_name: metadata for metadata in all_metadata}
+            estimates = await asyncio.gather(
+                *(
+                    self._get_default_run_size_estimate_async(metadata=metadata_by_name[item.scenario_name])
+                    for item in page
+                )
             )
-            for item, estimate in zip(page, estimates, strict=True)
-        ]
+            page = [
+                item.model_copy(
+                    update={
+                        "default_run_size": estimate,
+                        "default_dataset_summaries": estimate.datasets,
+                        "default_run_size_pending": False,
+                    }
+                )
+                for item, estimate in zip(page, estimates, strict=True)
+            ]
         next_cursor = page[-1].scenario_name if has_more and page else None
         return ListRegisteredScenariosResponse(
             items=page,

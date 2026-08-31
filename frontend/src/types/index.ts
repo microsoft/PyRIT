@@ -452,6 +452,7 @@ export interface RegisteredScenario {
   include_baseline_by_default: boolean
   supported_parameters: Parameter[]
   default_run_size: ScenarioRunSizeEstimateResponse
+  default_run_size_pending?: boolean
 }
 
 export interface ScenarioTechniqueSummary {
@@ -511,6 +512,7 @@ export interface ScenarioRunSizeEstimateResponse {
   maximum_attack_count?: number | null
   components: ScenarioRunSizeComponent[]
   datasets: ScenarioDatasetSummary[]
+  effective_parameters?: Record<string, boolean | number | string | string[]>
   note: string | null
 }
 
@@ -557,6 +559,7 @@ export interface ScenarioRunEstimate {
   maximum?: number | null
   components: ScenarioRunEstimateComponent[]
   datasets: ScenarioRunEstimateDataset[]
+  effectiveParameters: Record<string, boolean | number | string | string[]>
   note: string | null
 }
 

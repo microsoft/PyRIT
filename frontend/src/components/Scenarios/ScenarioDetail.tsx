@@ -1,24 +1,33 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
-  Accordion,
-  AccordionHeader,
-  AccordionItem,
-  AccordionPanel,
   Badge,
   Button,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   Field,
   Input,
   MessageBar,
   MessageBarBody,
+  mergeClasses,
   Select,
   Spinner,
   SpinButton,
   Text,
+  Tooltip,
   ToggleButton,
 } from '@fluentui/react-components'
-import { ArrowLeftRegular, ArrowSyncRegular, SettingsRegular } from '@fluentui/react-icons'
+import {
+  ArrowLeftRegular,
+  ArrowSyncRegular,
+  InfoRegular,
+  SettingsRegular,
+} from '@fluentui/react-icons'
 import { Link, useNavigate, useParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
@@ -35,6 +44,7 @@ import type {
   Parameter,
   RegisteredScenario,
   RunScenarioRequest,
+  ScenarioRunEstimate,
   ScenarioRunEstimateResult,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunEstimateState,
@@ -43,6 +53,7 @@ import type {
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 import { routerPathParamValue } from '@/utils/routeParams'
+import { targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
@@ -78,6 +89,31 @@ const MAX_MAX_RETRIES = 20
 const DEFAULT_MAX_CONCURRENCY = 10
 const DEFAULT_MAX_RETRIES = 0
 const ESTIMATE_DEBOUNCE_MS = 300
+
+function targetOptionLabel(target: TargetInstance): string {
+  const modelName = targetModelName(target)
+  return modelName
+    ? `${target.target_registry_name} (${modelName})`
+    : target.target_registry_name
+}
+
+function defaultMaxDatasetSize(scenario: RegisteredScenario): string {
+  if (scenario.default_dataset_summaries.length === 0) {
+    return ''
+  }
+
+  for (const dataset of scenario.default_dataset_summaries) {
+    if (dataset.configured_caps.length === 0) {
+      return ''
+    }
+  }
+
+  const selectedGroupCount = scenario.default_dataset_summaries.reduce(
+    (total, dataset) => total + dataset.selected_seed_group_count,
+    0,
+  )
+  return selectedGroupCount > 0 ? String(selectedGroupCount) : ''
+}
 
 /** Resolves a Fluent `SpinButton` change event to a numeric value, preferring the parsed `value` over the raw `displayValue`. */
 function resolveSpinButtonValue(data: { value?: number | null; displayValue?: string }, previous: number): number {
@@ -141,6 +177,67 @@ function formatParameterPreview(value: ParameterFormValue | undefined): string {
   return value?.trim() || 'Not set'
 }
 
+function formatEffectiveParameterPreview(
+  parameterName: string,
+  value: ParameterFormValue | undefined,
+  estimate: ScenarioRunEstimate | undefined,
+): string {
+  const configuredValue = formatParameterPreview(value)
+  if (configuredValue !== 'Not set') {
+    return configuredValue
+  }
+  const effectiveValue = estimate?.effectiveParameters[parameterName]
+  if (Array.isArray(effectiveValue)) {
+    return effectiveValue.length > 0 ? effectiveValue.join(', ') : 'Not set'
+  }
+  return effectiveValue?.toString() ?? 'Not set'
+}
+function estimateFromState(state: ScenarioRunEstimateState): ScenarioRunEstimate | undefined {
+  switch (state.status) {
+    case 'available':
+    case 'conditional':
+    case 'refreshing':
+    case 'stale':
+      return state.estimate
+    default:
+      return undefined
+  }
+}
+
+function formatAtomicAttackCount(state: ScenarioRunEstimateState): string {
+  const estimate = estimateFromState(state)
+  if (!estimate) {
+    return state.status === 'loading' ? 'Calculating...' : 'Unavailable'
+  }
+  if (estimate.total !== null) {
+    return estimate.total.toLocaleString()
+  }
+  if (estimate.minimum != null && estimate.maximum != null) {
+    return estimate.minimum === estimate.maximum
+      ? estimate.minimum.toLocaleString()
+      : `${estimate.minimum.toLocaleString()}-${estimate.maximum.toLocaleString()}`
+  }
+  if (estimate.minimum != null) {
+    return `At least ${estimate.minimum.toLocaleString()}`
+  }
+  if (estimate.maximum != null) {
+    return `Up to ${estimate.maximum.toLocaleString()}`
+  }
+  return 'Varies'
+}
+
+function estimateNotes(state: ScenarioRunEstimateState): string | null {
+  const estimate = estimateFromState(state)
+  if (!estimate) {
+    return state.status === 'unavailable' ? state.note ?? state.label : null
+  }
+  const notes = [
+    estimate.note,
+    ...estimate.components.map((component) => component.note),
+  ].filter((note): note is string => Boolean(note))
+  return notes.length > 0 ? notes.join('\n\n') : null
+}
+
 interface BuildEstimateRequestInput {
   scenario: RegisteredScenario
   targetName: string
@@ -149,6 +246,8 @@ interface BuildEstimateRequestInput {
   scenarioParamValues: Record<string, ParameterFormValue>
   datasetOverride: string
   maxDatasetSize: string
+  harmCategoriesFilter: string
+  dataTypesFilter: string
   includeBaseline: boolean
 }
 
@@ -202,6 +301,8 @@ function buildEstimateRequest({
   scenarioParamValues,
   datasetOverride,
   maxDatasetSize,
+  harmCategoriesFilter,
+  dataTypesFilter,
   includeBaseline,
 }: BuildEstimateRequestInput): BuildEstimateRequestResult {
   if (techniques.length === 0) {
@@ -239,6 +340,14 @@ function buildEstimateRequest({
   }
   if (maxDatasetSizeValue !== undefined) {
     request.max_dataset_size = maxDatasetSizeValue
+  }
+  const harmCategories = parseDatasetNames(harmCategoriesFilter)
+  const dataTypes = parseDatasetNames(dataTypesFilter)
+  if (harmCategories.length > 0 || dataTypes.length > 0) {
+    request.dataset_filters = {
+      ...(harmCategories.length > 0 ? { harm_categories: harmCategories } : {}),
+      ...(dataTypes.length > 0 ? { data_types: dataTypes } : {}),
+    }
   }
   if (scenarioParams) {
     request.scenario_params = scenarioParams
@@ -290,6 +399,9 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
   }
   if (estimateRequest.max_dataset_size !== undefined) {
     request.max_dataset_size = estimateRequest.max_dataset_size
+  }
+  if (estimateRequest.dataset_filters !== undefined) {
+    request.dataset_filters = estimateRequest.dataset_filters
   }
   if (estimateRequest.scenario_params !== undefined) {
     request.scenario_params = estimateRequest.scenario_params
@@ -398,7 +510,7 @@ function ScenarioDetailContent({
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.content}>
           <Link to="/scanner" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scenarios
+            <ArrowLeftRegular /> Back to scanners
           </Link>
           <div className={styles.centeredState} data-testid="scenario-not-found">
             <Text size={400}>Scenario &quot;{decodedScenarioName}&quot; was not found</Text>
@@ -414,7 +526,7 @@ function ScenarioDetailContent({
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.content}>
           <Link to="/scanner" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scenarios
+            <ArrowLeftRegular /> Back to scanners
           </Link>
           <div className={styles.centeredState} data-testid="scenario-error">
             <MessageBar intent="error">
@@ -460,7 +572,13 @@ interface ScenarioLaunchFormProps {
   onNavigate: (view: ViewName) => void
 }
 
-function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigate }: ScenarioLaunchFormProps) {
+function ScenarioLaunchForm({
+  scenario,
+  targets,
+  activeTarget,
+  labels,
+  onNavigate,
+}: ScenarioLaunchFormProps) {
   const styles = useScenarioDetailStyles()
   const navigate = useNavigate()
   const formId = `scenario-launch-${encodeURIComponent(scenario.scenario_name).replace(/%/g, '-')}`
@@ -489,7 +607,13 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     () => !isBaselineForbidden && scenario.include_baseline_by_default,
   )
   const [datasetOverride, setDatasetOverride] = useState('')
-  const [maxDatasetSize, setMaxDatasetSize] = useState('')
+  const configuredDefaultMaxDatasetSize = useMemo(
+    () => defaultMaxDatasetSize(scenario),
+    [scenario],
+  )
+  const [maxDatasetSize, setMaxDatasetSize] = useState(configuredDefaultMaxDatasetSize)
+  const [harmCategoriesFilter, setHarmCategoriesFilter] = useState('')
+  const [dataTypesFilter, setDataTypesFilter] = useState('')
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
   const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)
   const [scenarioParamValues, setScenarioParamValues] = useState<Record<string, ParameterFormValue>>(() =>
@@ -498,6 +622,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
   const [validationError, setValidationError] = useState<string | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
   const [estimateRequestState, setEstimateRequestState] = useState<EstimateRequestState | null>(null)
   const [lastGoodEstimate, setLastGoodEstimate] = useState<SuccessfulEstimateResult | null>(null)
   // Synchronous guard against a double-submit racing ahead of the state update.
@@ -520,6 +645,10 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     [isBaselineForbidden, techniqueOptions],
   )
   const techniques = selectedTechniques
+  const maxDatasetSizeOverride = maxDatasetSize.trim()
+    && maxDatasetSize !== configuredDefaultMaxDatasetSize
+    ? maxDatasetSize
+    : ''
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -528,15 +657,19 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
       dynamicParameters,
       scenarioParamValues,
       datasetOverride,
-      maxDatasetSize,
+      maxDatasetSize: maxDatasetSizeOverride,
+      harmCategoriesFilter,
+      dataTypesFilter,
       includeBaseline: isBaselineForbidden ? false : baselineChecked,
     }),
     [
       baselineChecked,
       datasetOverride,
+      dataTypesFilter,
       dynamicParameters,
+      harmCategoriesFilter,
       isBaselineForbidden,
-      maxDatasetSize,
+      maxDatasetSizeOverride,
       scenario,
       scenarioParamValues,
       targetName,
@@ -551,7 +684,9 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
       dynamicParameters,
       scenarioParamValues,
       datasetOverride,
-      maxDatasetSize,
+      maxDatasetSize: maxDatasetSizeOverride,
+      harmCategoriesFilter,
+      dataTypesFilter,
       maxConcurrency,
       maxRetries,
       includeBaseline: isBaselineForbidden ? false : baselineChecked,
@@ -560,11 +695,13 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     [
       baselineChecked,
       datasetOverride,
+      dataTypesFilter,
       dynamicParameters,
+      harmCategoriesFilter,
       isBaselineForbidden,
       labels,
       maxConcurrency,
-      maxDatasetSize,
+      maxDatasetSizeOverride,
       maxRetries,
       scenario,
       scenarioParamValues,
@@ -719,7 +856,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     setScenarioParamValues((current) => ({ ...current, [name]: value }))
   }
 
-  const handleSubmit = async (): Promise<void> => {
+  const handleLaunchConfirmed = async (): Promise<void> => {
     if (isSubmittingRef.current) {
       return
     }
@@ -727,6 +864,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     setApiError(null)
     if (!requestResult.ok) {
       setValidationError(requestResult.error)
+      setPreviewOpen(false)
       return
     }
 
@@ -736,6 +874,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
 
     try {
       const summary = await scenariosApi.startRun(requestResult.request)
+      setPreviewOpen(false)
       navigate(`/scenario-history/${encodeURIComponent(summary.scenario_result_id)}`, {
         state: { scenarioName: scenario.scenario_name },
       })
@@ -749,12 +888,23 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    void handleSubmit()
+    setApiError(null)
+    if (!requestResult.ok) {
+      setValidationError(requestResult.error)
+      return
+    }
+    setValidationError(null)
+    setPreviewOpen(true)
   }
 
   const techniqueSelectionInvalid = selectedTechniques.length === 0
+  const displayedEstimateNotes = estimateNotes(estimateState)
+  const displayedEstimate = estimateFromState(estimateState)
+  const selectedTechniqueCount = selectedTechniques.length + (baselineChecked ? 1 : 0)
   const previewDatasets = parseDatasetNames(datasetOverride)
   const effectiveDatasets = previewDatasets.length > 0 ? previewDatasets : scenario.default_datasets
+  const previewHarmCategories = parseDatasetNames(harmCategoriesFilter)
+  const previewDataTypes = parseDatasetNames(dataTypesFilter)
 
   return (
     <section
@@ -764,20 +914,13 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
     >
       <div className={styles.content}>
         <Link to="/scanner" className={styles.backLink}>
-          <ArrowLeftRegular /> Back to scenarios
+          <ArrowLeftRegular /> Back to scanners
         </Link>
 
         <div className={styles.headerText}>
           <Text id="scenario-detail-title" as="h1" size={600} weight="semibold">
             {scenario.scenario_name}
           </Text>
-          <MarkdownContent
-            content={normalizeScenarioMarkdown(
-              scenario.description_markdown || scenario.description,
-            )}
-            className={styles.description}
-            testId="scenario-detail-description"
-          />
         </div>
 
         <div className={styles.layout}>
@@ -799,6 +942,16 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
               </MessageBar>
             )}
 
+            <section className={styles.section} aria-label="Scenario description">
+              <MarkdownContent
+                content={normalizeScenarioMarkdown(
+                  scenario.description_markdown || scenario.description,
+                )}
+                className={styles.description}
+                testId="scenario-detail-description"
+              />
+            </section>
+
             <section className={styles.section} aria-labelledby="target-section-title">
               <Text id="target-section-title" as="h2" size={400} weight="semibold">Target</Text>
               <Field hint="The registered target this scenario will run against.">
@@ -813,7 +966,7 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
                   {targets.length === 0 && <option value="">No targets configured</option>}
                   {targets.map((target) => (
                     <option key={target.target_registry_name} value={target.target_registry_name}>
-                      {target.target_registry_name}
+                      {targetOptionLabel(target)}
                     </option>
                   ))}
                 </Select>
@@ -844,12 +997,14 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
                 </Text>
               )}
               <div className={styles.techniqueList} role="group" aria-label="Techniques">
-                {selectableTechniques.map((technique) => (
-                  <div className={styles.techniqueOption} key={technique.name}>
+                {selectableTechniques.map((technique) => {
+                  const selected = isTechniqueSelected(technique)
+                  return (
+                    <div className={styles.techniqueOption} key={technique.name}>
                     <Checkbox
                       className={styles.selectionControl}
                       label={technique.name === 'baseline' ? 'Baseline' : technique.name}
-                      checked={isTechniqueSelected(technique)}
+                      checked={selected}
                       disabled={submitting || technique.disabled}
                       onChange={(_, data) => handleTechniqueChange(technique, data.checked === true)}
                       data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
@@ -889,166 +1044,299 @@ function ScenarioLaunchForm({ scenario, targets, activeTarget, labels, onNavigat
                       )}
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </section>
 
-            {dynamicParameters.length > 0 && (
-              <section className={styles.section} aria-labelledby="parameters-section-title">
-                <Text id="parameters-section-title" as="h2" size={400} weight="semibold">
-                  Scenario parameters
-                </Text>
-                <div className={styles.dynamicParameters}>
-                  {dynamicParameters.map((parameter) => (
-                    <ParameterField
-                      key={parameter.name}
-                      parameter={parameter}
-                      value={scenarioParamValues[parameter.name]}
-                      disabled={submitting}
-                      onChange={updateScenarioParam}
-                      testIdPrefix="scenario-param"
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
-
-            <Accordion collapsible className={styles.advancedSection}>
-              <AccordionItem value="advanced">
-                <AccordionHeader>Advanced options</AccordionHeader>
-                <AccordionPanel>
-                  <div className={styles.advancedFields}>
-                    <Field
-                      label="Dataset override"
-                      hint="Comma-separated dataset names. Leave blank to use the scenario's default datasets."
-                    >
-                      <Input
-                        className={styles.control}
-                        value={datasetOverride}
-                        disabled={submitting}
-                        onChange={(_, data) => setDatasetOverride(data.value)}
-                        placeholder={scenario.default_datasets.join(', ') || undefined}
-                        data-testid="dataset-override-input"
-                      />
-                    </Field>
-                    <Field label="Max dataset size" hint="Optional. Leave blank for no cap.">
-                      <Input
-                        className={styles.numberInput}
-                        type="number"
-                        min={1}
-                        value={maxDatasetSize}
-                        disabled={submitting}
-                        onChange={(_, data) => setMaxDatasetSize(data.value)}
-                        data-testid="max-dataset-size-input"
-                      />
-                    </Field>
-                    <Field label="Max concurrency">
-                      <SpinButton
-                        className={styles.numberInput}
-                        value={maxConcurrency}
-                        min={MIN_MAX_CONCURRENCY}
-                        max={MAX_MAX_CONCURRENCY}
-                        disabled={submitting}
-                        onChange={(_, data) => setMaxConcurrency(resolveSpinButtonValue(data, maxConcurrency))}
-                        data-testid="max-concurrency-input"
-                      />
-                    </Field>
-                    <Field label="Max retries">
-                      <SpinButton
-                        className={styles.numberInput}
-                        value={maxRetries}
-                        min={MIN_MAX_RETRIES}
-                        max={MAX_MAX_RETRIES}
-                        disabled={submitting}
-                        onChange={(_, data) => setMaxRetries(resolveSpinButtonValue(data, maxRetries))}
-                        data-testid="max-retries-input"
-                      />
-                    </Field>
-                  </div>
-                </AccordionPanel>
-              </AccordionItem>
-            </Accordion>
-          </form>
-
-          <aside className={styles.previewRail} aria-labelledby="run-preview-title">
-            <div className={styles.previewHeader}>
-              <Text id="run-preview-title" as="h2" size={500} weight="semibold">Run preview</Text>
-              <Text size={200} className={styles.hint}>
-                Review the exact configuration sent to the backend.
+            <section className={styles.section} aria-labelledby="parameters-section-title">
+              <Text id="parameters-section-title" as="h2" size={400} weight="semibold">
+                Parameters
               </Text>
-            </div>
-            <dl className={styles.previewList}>
-              <div className={styles.previewGroup}>
-                <dt>Target</dt>
-                <dd>{targetName}</dd>
+              <div className={styles.dynamicParameters}>
+                {dynamicParameters.map((parameter) => (
+                  <ParameterField
+                    key={parameter.name}
+                    parameter={parameter}
+                    value={scenarioParamValues[parameter.name]}
+                    disabled={submitting}
+                    onChange={updateScenarioParam}
+                    testIdPrefix="scenario-param"
+                  />
+                ))}
+                <Field
+                  label="Dataset override"
+                  hint="Comma-separated dataset names. Leave blank to use the scenario's default datasets."
+                >
+                  <Input
+                    className={styles.control}
+                    value={datasetOverride}
+                    disabled={submitting}
+                    onChange={(_, data) => setDatasetOverride(data.value)}
+                    placeholder={scenario.default_datasets.join(', ') || undefined}
+                    data-testid="dataset-override-input"
+                  />
+                </Field>
+                <Field
+                  label="Max dataset size"
+                  hint={configuredDefaultMaxDatasetSize
+                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Edit it to override the default.`
+                    : 'Enter a positive integer to limit the selected dataset size.'}
+                >
+                  <Input
+                    className={styles.numberInput}
+                    type="number"
+                    min={1}
+                    value={maxDatasetSize}
+                    disabled={submitting}
+                    onChange={(_, data) => setMaxDatasetSize(data.value)}
+                    data-testid="max-dataset-size-input"
+                  />
+                </Field>
+                <Field
+                  label="Harm categories"
+                  hint="Comma-separated values. A seed must match every listed category."
+                >
+                  <Input
+                    className={styles.control}
+                    value={harmCategoriesFilter}
+                    disabled={submitting}
+                    placeholder="cyber, violence"
+                    onChange={(_, data) => setHarmCategoriesFilter(data.value)}
+                    data-testid="harm-categories-filter-input"
+                  />
+                </Field>
+                <Field
+                  label="Data types"
+                  hint="Comma-separated values. A seed can match any listed data type."
+                >
+                  <Input
+                    className={styles.control}
+                    value={dataTypesFilter}
+                    disabled={submitting}
+                    placeholder="text, image_path"
+                    onChange={(_, data) => setDataTypesFilter(data.value)}
+                    data-testid="data-types-filter-input"
+                  />
+                </Field>
+                <Field label="Max concurrency">
+                  <SpinButton
+                    className={styles.numberInput}
+                    value={maxConcurrency}
+                    min={MIN_MAX_CONCURRENCY}
+                    max={MAX_MAX_CONCURRENCY}
+                    disabled={submitting}
+                    onChange={(_, data) => setMaxConcurrency(resolveSpinButtonValue(data, maxConcurrency))}
+                    data-testid="max-concurrency-input"
+                  />
+                </Field>
+                <Field label="Max retries">
+                  <SpinButton
+                    className={styles.numberInput}
+                    value={maxRetries}
+                    min={MIN_MAX_RETRIES}
+                    max={MAX_MAX_RETRIES}
+                    disabled={submitting}
+                    onChange={(_, data) => setMaxRetries(resolveSpinButtonValue(data, maxRetries))}
+                    data-testid="max-retries-input"
+                  />
+                </Field>
               </div>
-              <div className={styles.previewGroup}>
-                <dt>Techniques</dt>
-                <dd>
-                  {selectedTechniques.length > 0 ? (
-                    <div className={styles.previewBadges}>
-                      {baselineChecked && <Badge appearance="outline">baseline</Badge>}
-                      {selectedTechniques.map((name) => (
-                        <Badge key={name} appearance="outline">{name}</Badge>
-                      ))}
-                    </div>
-                  ) : (
-                    <Text className={styles.errorText}>No attack techniques selected</Text>
-                  )}
-                </dd>
+            </section>
+
+            <section
+              className={styles.section}
+              aria-labelledby="run-estimate-title"
+              data-testid="run-estimate"
+            >
+              <div className={styles.estimateHeader}>
+                <Text id="run-estimate-title" as="h2" size={400} weight="semibold">
+                  Run estimate
+                </Text>
+                {displayedEstimateNotes && (
+                  <Tooltip
+                    content={displayedEstimateNotes}
+                    relationship="description"
+                    positioning="above"
+                  >
+                    <Button
+                      appearance="subtle"
+                      icon={<InfoRegular />}
+                      aria-label="Estimate notes"
+                      size="small"
+                    />
+                  </Tooltip>
+                )}
               </div>
-              <div className={styles.previewGroup}>
-                <dt>Datasets</dt>
-                <dd>
-                  <div className={styles.previewStack}>
-                    <Text>
-                      {effectiveDatasets.length > 0 ? effectiveDatasets.join(', ') : 'No datasets declared'}
-                    </Text>
-                    <Text size={200} className={styles.hint}>
-                      {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
-                      {maxDatasetSize.trim() ? ` · capped at ${maxDatasetSize.trim()} each` : ''}
-                    </Text>
+              <dl className={styles.costEstimateList}>
+                <div className={mergeClasses(styles.costEstimateRow, styles.totalEstimateRow)}>
+                  <dt>Total atomic attacks</dt>
+                  <dd>{formatAtomicAttackCount(estimateState)}</dd>
+                </div>
+                <div className={styles.costEstimateRow}>
+                  <dt>Dataset size</dt>
+                  <dd>
+                    {maxDatasetSizeOverride.trim()
+                      || configuredDefaultMaxDatasetSize
+                      || 'Not configured'}
+                  </dd>
+                </div>
+                <div className={styles.costEstimateRow}>
+                  <dt>Number techniques</dt>
+                  <dd>{selectedTechniqueCount}</dd>
+                </div>
+                {dynamicParameters.map((parameter) => (
+                  <div className={styles.costEstimateRow} key={parameter.name}>
+                    <dt>{parameter.name}</dt>
+                    <dd>
+                      {formatEffectiveParameterPreview(
+                        parameter.name,
+                        scenarioParamValues[parameter.name],
+                        displayedEstimate,
+                      )}
+                    </dd>
                   </div>
-                </dd>
-              </div>
-              <div className={styles.previewGroup}>
-                <dt>Scenario parameters</dt>
-                <dd>
-                  {dynamicParameters.length > 0 ? (
-                    <dl className={styles.parameterPreview}>
-                      {dynamicParameters.map((parameter) => (
-                        <div className={styles.parameterPreviewRow} key={parameter.name}>
-                          <dt>{parameter.name}</dt>
-                          <dd>{formatParameterPreview(scenarioParamValues[parameter.name])}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  ) : (
-                    'No scenario-specific parameters'
-                  )}
-                </dd>
-              </div>
-            </dl>
-            <div className={styles.estimateGroup}>
-              <Text as="h3" size={400} weight="semibold">Backend-owned size</Text>
-              <ScenarioRunEstimateDetails
-                state={estimateState}
-                idPrefix={`${formId}-estimate`}
-              />
-            </div>
-            <div className={styles.previewActions}>
+                ))}
+              </dl>
+              {estimateState.status === 'refreshing' && (
+                <div className={styles.inlineStatus}>
+                  <Spinner size="tiny" />
+                  <Text size={200} className={styles.hint}>Updating estimate...</Text>
+                </div>
+              )}
+              {estimateState.status === 'stale' && (
+                <Text size={200} className={styles.warningText}>
+                  {estimateState.error}
+                </Text>
+              )}
+            </section>
+
+            <section className={styles.launchSection} aria-label="Launch scan">
               <Button
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                form={formId}
                 disabled={submitting || techniqueSelectionInvalid}
                 data-testid="launch-scenario-btn"
               >
-                {submitting ? 'Launching...' : 'Launch scenario'}
+                Launch scan
               </Button>
-            </div>
-          </aside>
+            </section>
+          </form>
+
+          <Dialog
+            open={previewOpen}
+            onOpenChange={(_, data) => {
+              if (!submitting) {
+                setPreviewOpen(data.open)
+              }
+            }}
+          >
+            <DialogSurface>
+              <DialogBody>
+                <DialogTitle>Run preview</DialogTitle>
+                <DialogContent className={styles.dialogContent}>
+                  <dl className={styles.previewList}>
+                    <div className={styles.previewGroup}>
+                      <dt>Target</dt>
+                      <dd>{targetName}</dd>
+                    </div>
+                    <div className={styles.previewGroup}>
+                      <dt>Techniques</dt>
+                      <dd>
+                        <div className={styles.previewBadges}>
+                          {baselineChecked && <Badge appearance="outline">baseline</Badge>}
+                          {selectedTechniques.map((name) => (
+                            <Badge key={name} appearance="outline">{name}</Badge>
+                          ))}
+                        </div>
+                      </dd>
+                    </div>
+                    <div className={styles.previewGroup}>
+                      <dt>Datasets</dt>
+                      <dd>
+                        <div className={styles.previewStack}>
+                          <Text>
+                            {effectiveDatasets.length > 0
+                              ? effectiveDatasets.join(', ')
+                              : 'No datasets declared'}
+                          </Text>
+                          <Text size={200} className={styles.hint}>
+                            {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
+                            {maxDatasetSize.trim() ? ` - capped at ${maxDatasetSize.trim()} each` : ''}
+                          </Text>
+                        </div>
+                      </dd>
+                    </div>
+                    <div className={styles.previewGroup}>
+                      <dt>Dataset filters</dt>
+                      <dd>
+                        {previewHarmCategories.length > 0 || previewDataTypes.length > 0 ? (
+                          <dl className={styles.parameterPreview}>
+                            {previewHarmCategories.length > 0 && (
+                              <div className={styles.parameterPreviewRow}>
+                                <dt>Harm categories</dt>
+                                <dd>{previewHarmCategories.join(', ')}</dd>
+                              </div>
+                            )}
+                            {previewDataTypes.length > 0 && (
+                              <div className={styles.parameterPreviewRow}>
+                                <dt>Data types</dt>
+                                <dd>{previewDataTypes.join(', ')}</dd>
+                              </div>
+                            )}
+                          </dl>
+                        ) : (
+                          'None'
+                        )}
+                      </dd>
+                    </div>
+                    <div className={styles.previewGroup}>
+                      <dt>Parameters</dt>
+                      <dd>
+                        {dynamicParameters.length > 0 ? (
+                          <dl className={styles.parameterPreview}>
+                            {dynamicParameters.map((parameter) => (
+                              <div className={styles.parameterPreviewRow} key={parameter.name}>
+                                <dt>{parameter.name}</dt>
+                                <dd>
+                                  {formatEffectiveParameterPreview(
+                                    parameter.name,
+                                    scenarioParamValues[parameter.name],
+                                    displayedEstimate,
+                                  )}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        ) : (
+                          'No scenario-specific parameters'
+                        )}
+                      </dd>
+                    </div>
+                  </dl>
+                  <ScenarioRunEstimateDetails state={estimateState} />
+                </DialogContent>
+                <DialogActions>
+                  <Button
+                    appearance="secondary"
+                    disabled={submitting}
+                    onClick={() => setPreviewOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    appearance="primary"
+                    disabled={submitting}
+                    onClick={() => void handleLaunchConfirmed()}
+                    data-testid="confirm-launch-scenario-btn"
+                  >
+                    {submitting ? 'Launching...' : 'Launch scan'}
+                  </Button>
+                </DialogActions>
+              </DialogBody>
+            </DialogSurface>
+          </Dialog>
         </div>
       </div>
     </section>

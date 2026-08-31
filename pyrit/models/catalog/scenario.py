@@ -111,6 +111,10 @@ class ScenarioRunSizeEstimate(BaseModel):
     maximum_attack_count: int | None = Field(default=None, ge=0)
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
+    effective_parameters: dict[str, bool | int | float | str | list[str]] = Field(
+        default_factory=dict,
+        description="Scenario parameter values used by this estimate, including implicit runtime defaults.",
+    )
     note: str | None = None
 
     @model_validator(mode="after")
@@ -196,6 +200,10 @@ class RegisteredScenario(BaseModel):
     default_run_size: ScenarioRunSizeEstimate = Field(
         default_factory=ScenarioRunSizeEstimate.unavailable,
         description="Scenario-owned structured estimate of the default planned execution units",
+    )
+    default_run_size_pending: bool = Field(
+        False,
+        description="Whether the default run-size estimate is still being calculated",
     )
 
 

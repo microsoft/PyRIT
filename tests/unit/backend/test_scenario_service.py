@@ -164,6 +164,22 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].baseline_policy == "enabled"
             assert result.items[0].include_baseline_by_default is True
 
+    async def test_list_scenarios_can_return_metadata_without_waiting_for_estimates(self) -> None:
+        """Metadata-only catalog pages mark estimates pending without constructing scenarios."""
+        metadata = _make_scenario_metadata()
+
+        with patch.object(ScenarioService, "__init__", lambda self: None):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
+
+            result = await service.list_scenarios_async(include_estimates=False)
+
+        assert result.items[0].scenario_name == "test.scenario"
+        assert result.items[0].default_run_size_pending is True
+        assert result.items[0].default_dataset_summaries == []
+        service._registry.create_instance.assert_not_called()
+
     async def test_estimate_is_offloaded_and_cached(self) -> None:
         """Scenario-owned estimates run in a worker once and are reused by subsequent reads."""
         metadata = _make_scenario_metadata()
@@ -717,7 +733,32 @@ class TestScenarioRoutes:
             response = client.get("/api/scenarios/catalog?limit=10&cursor=test.scenario_1")
 
             assert response.status_code == status.HTTP_200_OK
-            mock_service.list_scenarios_async.assert_called_once_with(limit=10, cursor="test.scenario_1")
+            mock_service.list_scenarios_async.assert_called_once_with(
+                limit=10,
+                cursor="test.scenario_1",
+                include_estimates=True,
+            )
+
+    def test_list_scenarios_can_skip_estimates(self, client: TestClient) -> None:
+        """The catalog route forwards metadata-only requests to the service."""
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_scenarios_async = AsyncMock(
+                return_value=ListRegisteredScenariosResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/scenarios/catalog?include_estimates=false")
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_service.list_scenarios_async.assert_awaited_once_with(
+            limit=50,
+            cursor=None,
+            include_estimates=False,
+        )
 
     def test_get_scenario_returns_200(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog/{name} returns 200 when found."""

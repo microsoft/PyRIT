@@ -232,6 +232,10 @@ export const useScenarioCatalogStyles = makeStyles({
     maxHeight: '3.75rem',
     overflow: 'hidden',
   },
+  inlineSummaryCollapsed: {
+    maxHeight: '2.75rem',
+    overflow: 'hidden',
+  },
   descriptionToggle: {
     alignSelf: 'flex-start',
     minWidth: 0,

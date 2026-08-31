@@ -81,6 +81,7 @@ export function mapScenarioRunEstimate(
       }
     }),
     datasets: mapDatasets(response.datasets),
+    effectiveParameters: response.effective_parameters ?? {},
     note: response.note,
   }
 

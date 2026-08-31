@@ -107,11 +107,75 @@ describe('ScenarioCatalog', () => {
     expect(await screen.findByText('foundry.red_team_agent')).toBeInTheDocument()
     expect(screen.getByText('encoding.base64')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Scanner' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Read the scanner documentation' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Scanner' })).toHaveAttribute(
       'href',
-      'https://microsoft.github.io/PyRIT/scanner/0_scanner/',
+      'https://microsoft.github.io/PyRIT/latest/scanner/scanner/',
     )
+    expect(
+      screen.getByText('Launch comprehensive testing campaigns with multiple attack techniques against a target.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Browse registered scenarios/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Read the scanner documentation/i)).not.toBeInTheDocument()
     expect(mockListCatalog).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders metadata while default estimates are calculated', async () => {
+    let resolveEstimates: ((value: {
+      items: RegisteredScenario[]
+      pagination: { limit: number; has_more: boolean }
+    }) => void) | undefined
+    const pendingScenario = makeScenario({
+      scenario_name: 'scenario.pending',
+      default_datasets: ['harmbench'],
+      default_run_size_pending: true,
+    })
+    const estimatedScenario = makeScenario({
+      scenario_name: 'scenario.pending',
+      default_datasets: ['harmbench'],
+      default_dataset_summaries: [
+        {
+          name: 'harmbench',
+          kind: 'dataset',
+          logical_seed_group_count: 400,
+          selected_seed_group_count: 4,
+          configured_caps: [],
+          selection_note: null,
+        },
+      ],
+      default_run_size: {
+        estimated_attack_count: 4,
+        minimum_attack_count: null,
+        maximum_attack_count: null,
+        components: [{ label: 'Default', count: 4, is_baseline: false, note: null }],
+        datasets: [],
+        note: null,
+      },
+      default_run_size_pending: false,
+    })
+    mockListCatalog
+      .mockResolvedValueOnce({
+        items: [pendingScenario],
+        pagination: { limit: 200, has_more: false },
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveEstimates = resolve
+      }))
+
+    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+
+    expect(await screen.findByText('scenario.pending')).toBeInTheDocument()
+    expect(screen.getAllByText('Calculating...')).toHaveLength(2)
+    expect(mockListCatalog).toHaveBeenNthCalledWith(1, 200, undefined, false)
+
+    await act(async () => {
+      resolveEstimates?.({
+        items: [estimatedScenario],
+        pagination: { limit: 200, has_more: false },
+      })
+    })
+
+    expect(await screen.findByText('4 attacks')).toBeInTheDocument()
+    expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
   })
 
   it('renders Markdown descriptions and lets users expand long previews', async () => {
@@ -140,14 +204,14 @@ describe('ScenarioCatalog', () => {
     expect(within(row).getByText('inline_code').tagName).toBe('CODE')
 
     const expandButton = await within(row).findByRole('button', {
-      name: 'Expand description for scenario.markdown',
+      name: 'Expand row details for scenario.markdown',
     })
     expect(expandButton).toHaveAttribute('aria-expanded', 'false')
 
     await user.click(expandButton)
 
     expect(within(row).getByRole('button', {
-      name: 'Collapse description for scenario.markdown',
+      name: 'Collapse row details for scenario.markdown',
     })).toHaveAttribute('aria-expanded', 'true')
     clientHeight.mockRestore()
     scrollHeight.mockRestore()
@@ -165,7 +229,7 @@ describe('ScenarioCatalog', () => {
 
     const row = await screen.findByTestId('scenario-card-scenario.visible')
     expect(within(row).queryByRole('button', {
-      name: 'Expand description for scenario.visible',
+      name: 'Expand row details for scenario.visible',
     })).not.toBeInTheDocument()
     clientHeight.mockRestore()
     scrollHeight.mockRestore()
@@ -214,8 +278,9 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const table = await screen.findByRole('table', { name: 'Registered scenarios' })
-    expect(screen.getByText(/packages objective datasets, technique sets or selected techniques/i))
-      .toBeInTheDocument()
+    expect(
+      screen.getByText('Launch comprehensive testing campaigns with multiple attack techniques against a target.'),
+    ).toBeInTheDocument()
     const headers = within(table).getAllByRole('columnheader')
     expect(headers).toHaveLength(4)
     expect(headers.map((header) => header.textContent)).toEqual([
@@ -249,7 +314,7 @@ describe('ScenarioCatalog', () => {
     expect(await screen.findByText('scenario.page1')).toBeInTheDocument()
     expect(screen.getByText('scenario.page2')).toBeInTheDocument()
     expect(mockListCatalog).toHaveBeenCalledTimes(2)
-    expect(mockListCatalog).toHaveBeenNthCalledWith(2, 200, 'cursor-1')
+    expect(mockListCatalog).toHaveBeenNthCalledWith(2, 200, 'cursor-1', false)
   })
 
   it('stops paging if the backend repeats a cursor instead of looping forever', async () => {
@@ -583,6 +648,7 @@ describe('ScenarioCatalog', () => {
     expect(within(row).getByText('4 objectives')).toBeInTheDocument()
     expect(within(row).getByText('harmbench')).toBeInTheDocument()
     expect(within(row).getByText('2 techniques')).toBeInTheDocument()
+    expect(within(row).getByText('prompt_sending · jailbreak_system_prompt')).toBeInTheDocument()
     expect(within(row).getByText('12-20 attacks')).toBeInTheDocument()
     expect(within(row).queryByText('default')).not.toBeInTheDocument()
     expect(within(row).queryByText(/aggregate presets|compatible concrete/i)).not.toBeInTheDocument()

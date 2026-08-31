@@ -52,7 +52,7 @@ const EXACT_ESTIMATE: ScenarioRunSizeEstimateResponse = {
 }
 
 describe('ScenarioRunEstimate', () => {
-  it('renders the authoritative total, components, dataset counts, caps, and notes', () => {
+  it('renders only the authoritative total and formula in the detailed preview', () => {
     const state = mapScenarioRunEstimate(EXACT_ESTIMATE, 'request')
 
     render(
@@ -62,16 +62,13 @@ describe('ScenarioRunEstimate', () => {
     )
 
     expect(screen.getByText('8 attacks')).toBeInTheDocument()
-    expect(screen.getByText('Prompt sending')).toBeInTheDocument()
-    expect(screen.getByText('Baseline attack')).toBeInTheDocument()
-    expect(screen.getByText('Baseline')).toBeInTheDocument()
-    expect(screen.getByText('harmbench')).toBeInTheDocument()
-    expect(screen.getByText('Jailbreak templates: 2 (configuration)')).toBeInTheDocument()
-    expect(screen.getByText('Four compatible objective groups selected.')).toBeInTheDocument()
     expect(screen.getByText(
-      'Prompt sending: 6 + Baseline attack: 2; backend total = 8',
+      'Prompt sending: 6 + Baseline attack: 2 = 8',
     )).toBeInTheDocument()
-    expect(screen.getByText('The backend total is authoritative.')).toBeInTheDocument()
+    expect(screen.queryByText('Backend estimate')).not.toBeInTheDocument()
+    expect(screen.queryByText('Current configuration')).not.toBeInTheDocument()
+    expect(screen.queryByText('Planned components')).not.toBeInTheDocument()
+    expect(screen.queryByText('Dataset populations')).not.toBeInTheDocument()
   })
 
   it('supports loading, conditional null totals, unavailable, and stale states', () => {
@@ -81,7 +78,7 @@ describe('ScenarioRunEstimate', () => {
         <ScenarioRunEstimateDetails state={loading} />
       </TestWrapper>,
     )
-    expect(screen.getByText('Loading backend run estimate...')).toBeInTheDocument()
+    expect(screen.getByText('Calculating run estimate...')).toBeInTheDocument()
 
     const conditional = mapScenarioRunEstimate({
       ...EXACT_ESTIMATE,
@@ -97,11 +94,9 @@ describe('ScenarioRunEstimate', () => {
         <ScenarioRunEstimateDetails state={conditional} />
       </TestWrapper>,
     )
-    expect(screen.getByText('Conditional estimate')).toBeInTheDocument()
     expect(screen.getByText('12-20 attacks')).toBeInTheDocument()
-    expect(screen.getByText('Default configuration')).toBeInTheDocument()
     expect(screen.getByText(
-      'Possible attacks: 20; backend total is conditional',
+      'Possible attacks: 20 = conditional total',
     )).toBeInTheDocument()
 
     const unavailable = mapScenarioRunEstimate({
@@ -119,7 +114,7 @@ describe('ScenarioRunEstimate', () => {
         <ScenarioRunEstimateDetails state={unavailable} />
       </TestWrapper>,
     )
-    expect(screen.getAllByText('Estimate unavailable')).toHaveLength(2)
+    expect(screen.getByText('Estimate unavailable')).toBeInTheDocument()
     expect(screen.getByText('Configured run size unavailable')).toBeInTheDocument()
     expect(screen.getByText('Target capability is not available.')).toBeInTheDocument()
 
@@ -138,9 +133,8 @@ describe('ScenarioRunEstimate', () => {
         <ScenarioRunEstimateDetails state={stale} />
       </TestWrapper>,
     )
-    expect(screen.getByText('Previous estimate')).toBeInTheDocument()
     expect(screen.getByText('8 attacks')).toBeInTheDocument()
-    expect(screen.getByText('Showing the last successful estimate.')).toBeInTheDocument()
-    expect(screen.getByText('Preview service timed out.')).toBeInTheDocument()
+    expect(screen.queryByText('Showing the last successful estimate.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Preview service timed out.')).not.toBeInTheDocument()
   })
 })

@@ -80,7 +80,7 @@ function ScenarioRunStartedContent({ encodedId }: ScenarioRunStartedContentProps
   return (
     <div className={styles.root} data-testid="scenario-run-started">
       <Link to="/scanner" className={styles.backLink}>
-        <ArrowLeftRegular /> Back to scenarios
+        <ArrowLeftRegular /> Back to scanners
       </Link>
 
       <Text as="h1" size={600} weight="semibold">Scenario run started</Text>

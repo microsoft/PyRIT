@@ -15,7 +15,6 @@ interface ScenarioRunEstimateSummaryProps {
 
 interface ScenarioRunEstimateDetailsProps {
   state: ScenarioRunEstimateState
-  idPrefix?: string
 }
 
 function stateEstimate(state: ScenarioRunEstimateState): ScenarioRunEstimate | undefined {
@@ -102,9 +101,9 @@ function formatBackendFormula(estimate: ScenarioRunEstimate): string {
     ? estimate.components.map(formatComponentFormula).join(' + ')
     : 'No additive components supplied'
   const total = estimate.total === null
-    ? 'backend total is conditional'
-    : `backend total = ${formatEstimateValue(estimate.total)}`
-  return `${components}; ${total}`
+    ? 'conditional total'
+    : formatEstimateValue(estimate.total)
+  return `${components} = ${total}`
 }
 
 export function ScenarioRunEstimateSummary({ state, compact = false }: ScenarioRunEstimateSummaryProps) {
@@ -127,123 +126,13 @@ export function ScenarioRunEstimateSummary({ state, compact = false }: ScenarioR
   )
 }
 
-function EstimateComponents({
-  estimate,
-  idPrefix,
-}: {
-  estimate: ScenarioRunEstimate
-  idPrefix: string
-}) {
-  const styles = useScenarioRunEstimateStyles()
-  const headingId = `${idPrefix}-components`
-
-  return (
-    <section className={styles.detailGroup} aria-labelledby={headingId}>
-      <Text as="h4" id={headingId} weight="semibold">
-        Planned components
-      </Text>
-      {estimate.components.length === 0 ? (
-        <Text size={200} className={styles.muted}>
-          No additive components supplied by the backend.
-        </Text>
-      ) : (
-        <ol className={styles.componentList}>
-          {estimate.components.map((component) => (
-            <li className={styles.component} key={component.id}>
-              <div className={styles.componentHeader}>
-                <Text weight="semibold">{component.label}</Text>
-                <div className={styles.componentCount}>
-                  {component.isBaseline && (
-                    <Badge appearance="tint" color="informative">Baseline</Badge>
-                  )}
-                  <Text weight="semibold">{formatEstimateValue(component.count)}</Text>
-                </div>
-              </div>
-              {component.note && (
-                <Text size={200} className={styles.muted}>{component.note}</Text>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
-  )
-}
-
-function EstimateDatasets({
-  estimate,
-  idPrefix,
-}: {
-  estimate: ScenarioRunEstimate
-  idPrefix: string
-}) {
-  const styles = useScenarioRunEstimateStyles()
-  const headingId = `${idPrefix}-datasets`
-
-  return (
-    <section className={styles.detailGroup} aria-labelledby={headingId}>
-      <Text as="h4" id={headingId} weight="semibold">
-        Dataset populations
-      </Text>
-      {estimate.datasets.length === 0 ? (
-        <Text size={200} className={styles.muted}>
-          No dataset population details supplied by the backend.
-        </Text>
-      ) : (
-        <div className={styles.datasetList}>
-          {estimate.datasets.map((dataset) => (
-            <article className={styles.dataset} key={dataset.id}>
-              <div className={styles.datasetHeader}>
-                <Text weight="semibold">{dataset.name}</Text>
-                <Badge appearance="tint" color="informative">{dataset.kind}</Badge>
-              </div>
-              <dl className={styles.countList}>
-                <div className={styles.countRow}>
-                  <dt>Logical seed groups</dt>
-                  <dd>{formatEstimateValue(dataset.logicalSeedGroupCount)}</dd>
-                </div>
-                <div className={styles.countRow}>
-                  <dt>Selected seed groups</dt>
-                  <dd>{formatEstimateValue(dataset.selectedSeedGroupCount)}</dd>
-                </div>
-              </dl>
-              {dataset.configuredCaps.length > 0 && (
-                <div className={styles.capGroup}>
-                  <Text size={200} weight="semibold">Configured caps</Text>
-                  <ul className={styles.capList}>
-                    {dataset.configuredCaps.map((cap) => (
-                      <li key={cap.id}>
-                        <Text size={200}>
-                          {cap.label}: {formatEstimateValue(cap.count)}
-                          {' '}({cap.configuredOn}{cap.datasetName ? `: ${cap.datasetName}` : ''})
-                        </Text>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {dataset.selectionNote && (
-                <Text size={200} className={styles.muted}>{dataset.selectionNote}</Text>
-              )}
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
-  )
-}
-
-export function ScenarioRunEstimateDetails({
-  state,
-  idPrefix = 'scenario-run-estimate',
-}: ScenarioRunEstimateDetailsProps) {
+export function ScenarioRunEstimateDetails({ state }: ScenarioRunEstimateDetailsProps) {
   const styles = useScenarioRunEstimateStyles()
 
   if (state.status === 'loading') {
     return (
       <div className={styles.details} aria-live="polite">
-        <Spinner size="tiny" label="Loading backend run estimate..." />
-        <Text size={200} className={styles.muted}>{scopeLabel(state)}</Text>
+        <Spinner size="tiny" label="Calculating run estimate..." />
       </div>
     )
   }
@@ -251,8 +140,7 @@ export function ScenarioRunEstimateDetails({
   if (state.status === 'unavailable') {
     return (
       <div className={styles.details} aria-live="polite">
-        <ScenarioRunEstimateSummary state={state} />
-        <Text>{state.label}</Text>
+        <Text weight="semibold">{state.label}</Text>
         {state.note && <Text size={200} className={styles.muted}>{state.note}</Text>}
       </div>
     )
@@ -261,32 +149,10 @@ export function ScenarioRunEstimateDetails({
   const { estimate } = state
   return (
     <div className={styles.details} aria-live="polite">
-      <ScenarioRunEstimateSummary state={state} />
-      {state.status === 'refreshing' && (
-        <Text size={200} className={styles.muted}>{state.label}</Text>
-      )}
-      {state.status === 'stale' && (
-        <div className={styles.staleNotice} role="status">
-          <Text weight="semibold">{state.label}</Text>
-          <Text size={200}>{state.error}</Text>
-        </div>
-      )}
-      <EstimateComponents estimate={estimate} idPrefix={idPrefix} />
-      <EstimateDatasets estimate={estimate} idPrefix={idPrefix} />
-      <section className={styles.detailGroup} aria-labelledby={`${idPrefix}-formula`}>
-        <Text as="h4" id={`${idPrefix}-formula`} weight="semibold">
-          Backend formula
-        </Text>
-        <code className={styles.formula}>{formatBackendFormula(estimate)}</code>
-      </section>
-      <section className={styles.detailGroup} aria-labelledby={`${idPrefix}-notes`}>
-        <Text as="h4" id={`${idPrefix}-notes`} weight="semibold">
-          Estimate notes
-        </Text>
-        <Text size={200} className={styles.muted}>
-          {estimate.note ?? 'No additional note supplied by the backend.'}
-        </Text>
-      </section>
+      <Text className={styles.total} weight="semibold">
+        {formatPlannedAttackSummary(estimate)}
+      </Text>
+      <code className={styles.formula}>{formatBackendFormula(estimate)}</code>
     </div>
   )
 }

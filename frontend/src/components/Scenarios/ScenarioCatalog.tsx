@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 
 import {
   Button,
@@ -83,11 +83,17 @@ function formatObjectiveCount(value: number): string {
 function DefaultDatasetSummary({
   datasets,
   declaredDatasets,
+  calculating,
 }: {
   datasets: ScenarioDatasetSummary[]
   declaredDatasets: string[]
+  calculating: boolean
 }) {
   const styles = useScenarioCatalogStyles()
+
+  if (calculating) {
+    return <Spinner size="tiny" label="Calculating..." labelPosition="after" />
+  }
 
   if (datasets.length === 0 && declaredDatasets.length === 0) {
     return <Text weight="semibold">No default datasets</Text>
@@ -122,75 +128,73 @@ interface ScenarioCatalogRowProps {
   scenario: RegisteredScenario
 }
 
-interface ScenarioDescriptionProps {
-  content: string
-  scenarioName: string
+interface CollapsibleContentProps {
+  children: ReactNode
+  collapsedClassName: string
+  contentId: string
+  contentKey: string
+  expanded: boolean
+  onClippedChange: (clipped: boolean) => void
 }
 
-function ScenarioDescription({ content, scenarioName }: ScenarioDescriptionProps) {
-  const styles = useScenarioCatalogStyles()
-  const descriptionId = useId()
-  const descriptionRef = useRef<HTMLDivElement>(null)
-  const [descriptionExpanded, setDescriptionExpanded] = useState(false)
-  const [descriptionClipped, setDescriptionClipped] = useState(false)
+function CollapsibleContent({
+  children,
+  collapsedClassName,
+  contentId,
+  contentKey,
+  expanded,
+  onClippedChange,
+}: CollapsibleContentProps) {
+  const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const description = descriptionRef.current
-    if (!description) {
+    const content = contentRef.current
+    if (!content || expanded) {
       return
     }
 
     const updateClippedState = () => {
-      if (!descriptionExpanded) {
-        setDescriptionClipped(
-          description.scrollHeight - description.clientHeight > DESCRIPTION_OVERFLOW_TOLERANCE_PX,
-        )
-      }
+      onClippedChange(content.scrollHeight - content.clientHeight > DESCRIPTION_OVERFLOW_TOLERANCE_PX)
     }
     updateClippedState()
 
     const resizeObserver = new ResizeObserver(updateClippedState)
-    resizeObserver.observe(description)
+    resizeObserver.observe(content)
     return () => resizeObserver.disconnect()
-  }, [content, descriptionExpanded])
+  }, [contentKey, expanded, onClippedChange])
 
   return (
-    <>
-      <div
-        id={descriptionId}
-        ref={descriptionRef}
-        className={descriptionExpanded ? undefined : styles.purposePreviewCollapsed}
-      >
-        <MarkdownContent
-          content={content}
-          className={styles.purposePreview}
-          testId={`scenario-description-${scenarioName}`}
-        />
-      </div>
-      {descriptionClipped && (
-        <Button
-          appearance="transparent"
-          size="small"
-          className={styles.descriptionToggle}
-          icon={descriptionExpanded ? <ChevronUpRegular /> : <ChevronDownRegular />}
-          aria-controls={descriptionId}
-          aria-expanded={descriptionExpanded}
-          aria-label={`${descriptionExpanded ? 'Collapse' : 'Expand'} description for ${scenarioName}`}
-          onClick={() => setDescriptionExpanded((expanded) => !expanded)}
-        />
-      )}
-    </>
+    <div
+      id={contentId}
+      ref={contentRef}
+      className={expanded ? undefined : collapsedClassName}
+    >
+      {children}
+    </div>
   )
 }
 
 function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
   const styles = useScenarioCatalogStyles()
+  const descriptionId = useId()
+  const techniquesId = useId()
+  const [expanded, setExpanded] = useState(false)
+  const [descriptionClipped, setDescriptionClipped] = useState(false)
+  const [techniquesClipped, setTechniquesClipped] = useState(false)
   const defaultConcreteTechniques = uniqueNames(scenario.default_techniques)
   const estimateState = mapScenarioRunEstimate(scenario.default_run_size, 'default')
   const scenarioPath = `/scanner/${encodeURIComponent(scenario.scenario_name)}`
   const descriptionMarkdown = normalizeScenarioMarkdown(
     scenario.description_markdown || scenario.description,
   )
+  const techniqueNames = defaultConcreteTechniques.join(' · ')
+  const handleDescriptionClippedChange = useCallback((clipped: boolean) => {
+    setDescriptionClipped(clipped)
+  }, [])
+  const handleTechniquesClippedChange = useCallback((clipped: boolean) => {
+    setTechniquesClipped(clipped)
+  }, [])
+  const rowCanExpand = descriptionClipped || techniquesClipped
 
   return (
     <TableRow
@@ -207,10 +211,31 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
           <Link to={scenarioPath} className={styles.scenarioLink}>
             {scenario.scenario_name}
           </Link>
-          <ScenarioDescription
-            content={descriptionMarkdown}
-            scenarioName={scenario.scenario_name}
-          />
+          <CollapsibleContent
+            contentId={descriptionId}
+            contentKey={descriptionMarkdown}
+            expanded={expanded}
+            collapsedClassName={styles.purposePreviewCollapsed}
+            onClippedChange={handleDescriptionClippedChange}
+          >
+            <MarkdownContent
+              content={descriptionMarkdown}
+              className={styles.purposePreview}
+              testId={`scenario-description-${scenario.scenario_name}`}
+            />
+          </CollapsibleContent>
+          {rowCanExpand && (
+            <Button
+              appearance="transparent"
+              size="small"
+              className={styles.descriptionToggle}
+              icon={expanded ? <ChevronUpRegular /> : <ChevronDownRegular />}
+              aria-controls={`${descriptionId} ${techniquesId}`}
+              aria-expanded={expanded}
+              aria-label={`${expanded ? 'Collapse' : 'Expand'} row details for ${scenario.scenario_name}`}
+              onClick={() => setExpanded((current) => !current)}
+            />
+          )}
         </div>
       </TableCell>
       <TableCell
@@ -222,6 +247,7 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
         <DefaultDatasetSummary
           datasets={scenario.default_dataset_summaries}
           declaredDatasets={scenario.default_datasets}
+          calculating={scenario.default_run_size_pending === true}
         />
       </TableCell>
       <TableCell
@@ -230,11 +256,24 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
         <Text className={styles.mobileLabel} size={200} weight="semibold">
           Default techniques
         </Text>
-        <Text weight="semibold">
-          {defaultConcreteTechniques.length === 0
-            ? 'No default techniques'
-            : `${defaultConcreteTechniques.length} technique${defaultConcreteTechniques.length === 1 ? '' : 's'}`}
-        </Text>
+        {defaultConcreteTechniques.length === 0 ? (
+          <Text weight="semibold">No default techniques</Text>
+        ) : (
+          <div className={styles.compactStack}>
+            <Text weight="semibold">
+              {defaultConcreteTechniques.length} technique{defaultConcreteTechniques.length === 1 ? '' : 's'}
+            </Text>
+            <CollapsibleContent
+              contentId={techniquesId}
+              contentKey={techniqueNames}
+              expanded={expanded}
+              collapsedClassName={styles.inlineSummaryCollapsed}
+              onClippedChange={handleTechniquesClippedChange}
+            >
+              <Text size={200} className={styles.secondaryText}>{techniqueNames}</Text>
+            </CollapsibleContent>
+          </div>
+        )}
       </TableCell>
       <TableCell
         className={mergeClasses(styles.tableCell, styles.tableCellPadding, 'scenario-catalog-cell-padding')}
@@ -242,7 +281,11 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
         <Text className={styles.mobileLabel} size={200} weight="semibold">
           Default run size
         </Text>
-        <ScenarioRunEstimateSummary state={estimateState} compact />
+        {scenario.default_run_size_pending ? (
+          <Spinner size="tiny" label="Calculating..." labelPosition="after" />
+        ) : (
+          <ScenarioRunEstimateSummary state={estimateState} compact />
+        )}
       </TableCell>
     </TableRow>
   )
@@ -253,30 +296,51 @@ export default function ScenarioCatalog() {
   const [scenarios, setScenarios] = useState<RegisteredScenario[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [estimateError, setEstimateError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [refetchCount, setRefetchCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
 
-    fetchAllPages(
-      (cursor) => scenariosApi.listCatalog(CATALOG_PAGE_SIZE, cursor),
-      undefined,
-      (scenario) => scenario.scenario_name,
-    )
-      .then((items) => {
+    const loadCatalog = async (): Promise<void> => {
+      try {
+        const items = await fetchAllPages(
+          (cursor) => scenariosApi.listCatalog(CATALOG_PAGE_SIZE, cursor, false),
+          undefined,
+          (scenario) => scenario.scenario_name,
+        )
         if (cancelled) return
         setScenarios(items)
         setError(null)
-      })
-      .catch((err: unknown) => {
+        setLoading(false)
+
+        if (!items.some((scenario) => scenario.default_run_size_pending)) {
+          return
+        }
+
+        try {
+          const estimatedItems = await fetchAllPages(
+            (cursor) => scenariosApi.listCatalog(CATALOG_PAGE_SIZE, cursor),
+            undefined,
+            (scenario) => scenario.scenario_name,
+          )
+          if (cancelled) return
+          setScenarios(estimatedItems)
+          setEstimateError(null)
+        } catch (err: unknown) {
+          if (cancelled) return
+          setEstimateError(toApiError(err).detail)
+        }
+      } catch (err: unknown) {
         if (cancelled) return
         setScenarios([])
         setError(toApiError(err).detail)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+        setLoading(false)
+      }
+    }
+
+    void loadCatalog()
 
     return () => {
       cancelled = true
@@ -286,6 +350,7 @@ export default function ScenarioCatalog() {
   const handleRetry = useCallback(() => {
     setLoading(true)
     setError(null)
+    setEstimateError(null)
     setRefetchCount((count) => count + 1)
   }, [])
 
@@ -303,22 +368,17 @@ export default function ScenarioCatalog() {
       <div className={styles.header}>
         <div className={styles.headerText}>
           <Text id="scenario-catalog-title" as="h1" size={600} weight="semibold">
-            Scanner
+            <FluentLink
+              href="https://microsoft.github.io/PyRIT/latest/scanner/scanner/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Scanner
+            </FluentLink>
           </Text>
           <Text size={300} className={styles.subtitle}>
-            Browse registered scenarios and launch a run against a configured target.
+            Launch comprehensive testing campaigns with multiple attack techniques against a target.
           </Text>
-          <Text as="p" size={300} className={styles.explanation}>
-            A scenario packages objective datasets, technique sets or selected techniques, baseline policy,
-            and scenario-specific axes into a run plan.
-          </Text>
-          <FluentLink
-            href="https://microsoft.github.io/PyRIT/scanner/0_scanner/"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read the scanner documentation
-          </FluentLink>
         </div>
         <div className={styles.headerActions}>
           <Input
@@ -340,6 +400,12 @@ export default function ScenarioCatalog() {
           </Button>
         </div>
       </div>
+
+      {estimateError && (
+        <MessageBar intent="warning">
+          <MessageBarBody>Default run sizes could not be calculated: {estimateError}</MessageBarBody>
+        </MessageBar>
+      )}
 
       {loading ? (
         <div className={styles.centeredState}>

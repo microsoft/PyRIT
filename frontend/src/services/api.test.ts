@@ -499,6 +499,19 @@ describe("api service", () => {
       });
     });
 
+    it("can request scenario metadata without estimates", async () => {
+      const mockResponse = {
+        data: { items: [], pagination: { limit: 50, has_more: false } },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listCatalog(50, undefined, false);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/catalog", {
+        params: { limit: 50, include_estimates: false },
+      });
+    });
+
     it("encodes a dotted scenario registry name as a single path segment", async () => {
       const mockResponse = {
         data: {

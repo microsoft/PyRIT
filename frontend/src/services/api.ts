@@ -351,9 +351,14 @@ export const scenariosApi = {
    * Lists one page of the scenario catalog. Callers that need the full
    * catalog should follow `pagination.next_cursor` until `has_more` is false.
    */
-  listCatalog: async (limit = 50, cursor?: string): Promise<ListRegisteredScenariosResponse> => {
-    const params: Record<string, string | number> = { limit }
+  listCatalog: async (
+    limit = 50,
+    cursor?: string,
+    includeEstimates = true,
+  ): Promise<ListRegisteredScenariosResponse> => {
+    const params: Record<string, string | number | boolean> = { limit }
     if (cursor) params.cursor = cursor
+    if (!includeEstimates) params.include_estimates = false
     const response = await apiClient.get('/scenarios/catalog', { params })
     return response.data
   },

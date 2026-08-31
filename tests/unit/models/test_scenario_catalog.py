@@ -55,6 +55,7 @@ def test_run_size_estimate_serializes_canonical_api_shape() -> None:
             }
         ],
         "datasets": [],
+        "effective_parameters": {},
         "note": None,
     }
 
