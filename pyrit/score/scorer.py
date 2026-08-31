@@ -621,33 +621,34 @@ class Scorer(Identifiable, abc.ABC):
         response: Message,
         objective_scorer: Scorer | None = None,
         auxiliary_scorers: list[Scorer] | None = None,
-        role_filter: ChatMessageRole = "assistant",
+        role_filter: ChatMessageRole | None = None,
         objective: str | None = None,
-        skip_on_error_result: bool = True,
+        skip_on_error_result: bool | None = None,
     ) -> dict[str, list[Score]]:
         """
         Score a response through the message family. Deprecated.
 
         Response scoring is message-only policy, so it moved to ``MessageScorer``.
+        ``role_filter`` and ``skip_on_error_result`` are retired and ignored; a scorer
+        declares the roles it reads, and applies that after acquiring its evidence.
 
         Returns:
             dict[str, list[Score]]: Auxiliary and objective scores, keyed by
                 ``auxiliary_scores`` and ``objective_scores``.
         """
-        from pyrit.score.message_scorer import MessageScorer
+        from pyrit.score.message_scorer import MessageScorer, _warn_retired_message_policy
 
         print_deprecation_message(
             old_item="Scorer.score_response_async",
             new_item="MessageScorer.score_response_async",
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
+        _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         return await MessageScorer.score_response_async(
             response=response,
             objective_scorer=objective_scorer,
             auxiliary_scorers=auxiliary_scorers,
-            role_filter=role_filter,
             objective=objective,
-            skip_on_error_result=skip_on_error_result,
         )
 
     @staticmethod
@@ -655,29 +656,30 @@ class Scorer(Identifiable, abc.ABC):
         *,
         response: Message,
         scorers: list[Scorer],
-        role_filter: ChatMessageRole = "assistant",
+        role_filter: ChatMessageRole | None = None,
         objective: str | None = None,
-        skip_on_error_result: bool = True,
+        skip_on_error_result: bool | None = None,
     ) -> list[Score]:
         """
         Score a response with several scorers through the message family. Deprecated.
 
+        ``role_filter`` and ``skip_on_error_result`` are retired and ignored.
+
         Returns:
             list[Score]: Every score the scorers produced.
         """
-        from pyrit.score.message_scorer import MessageScorer
+        from pyrit.score.message_scorer import MessageScorer, _warn_retired_message_policy
 
         print_deprecation_message(
             old_item="Scorer.score_response_multiple_scorers_async",
             new_item="MessageScorer.score_response_multiple_scorers_async",
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
+        _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         return await MessageScorer.score_response_multiple_scorers_async(
             response=response,
             scorers=scorers,
-            role_filter=role_filter,
             objective=objective,
-            skip_on_error_result=skip_on_error_result,
         )
 
     async def score_batch_async(

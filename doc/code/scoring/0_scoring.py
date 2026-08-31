@@ -126,6 +126,13 @@ print(df.to_string(index=False))
 # by default: `False` for message true/false scorers and `0.0` for message float-scale scorers.
 # `SelfAskRefusalScorer` is the intentional exception because a content-filter block is a
 # refusal, so it returns `True`. Other response errors remain undetermined.
+#
+# A scorer declares which evidence it reads; the caller does not filter evidence on its behalf.
+# A message scorer names the conversation roles it reads with `supported_roles` on its
+# `ScorerPromptValidator`, and returns no score when the message carries no role it reads.
+# Prepended (`simulated_assistant`) turns are fabricated history, so a scorer must opt in to
+# read them. Every scorer still receives a failed response, because a scorer whose evidence
+# never came from the response must run even when the response failed.
 # %% [markdown]
 # ## Scoring directly
 #

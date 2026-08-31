@@ -1122,7 +1122,7 @@ class TestResponseScoring:
         with pytest.raises(ValueError, match="No response available in context to score"):
             await attack._score_response_async(context=basic_context)
 
-    async def test_score_response_does_not_skip_on_error_result(
+    async def test_score_response_scores_error_responses(
         self,
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
@@ -1131,14 +1131,12 @@ class TestResponseScoring:
         sample_response: Message,
         success_objective_score: Score,
     ):
-        """Test that _score_response_async does not skip scoring on error responses.
+        """Test that _score_response_async carries no skip policy.
 
-        When the target returns an error response (e.g., blocked by content filter),
-        the objective scorer should still be called with skip_on_error_result=False
-        so that error responses get scored (as false/not achieved) rather than
-        raising RuntimeError due to empty score list.
-
-        This allows Crescendo to gracefully handle all-rejection scenarios.
+        When the target returns an error response (e.g., blocked by a content filter),
+        the objective scorer still receives the response and reports an undetermined
+        verdict rather than no verdict, so Crescendo never raises RuntimeError on an
+        empty score list. This lets Crescendo handle all-rejection scenarios.
         """
         adversarial_config = AttackAdversarialConfig(target=mock_adversarial_chat)
         scoring_config = AttackScoringConfig(objective_scorer=mock_objective_scorer)
@@ -1151,7 +1149,6 @@ class TestResponseScoring:
 
         basic_context.last_response = sample_response
 
-        # Mock MessageScorer.score_response_async to capture the call arguments
         with patch(
             "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
@@ -1159,14 +1156,10 @@ class TestResponseScoring:
         ) as mock_score_response:
             await attack._score_response_async(context=basic_context)
 
-            # Verify score_response_async was called with skip_on_error_result=False
             mock_score_response.assert_called_once()
             call_kwargs = mock_score_response.call_args.kwargs
-            assert call_kwargs.get("skip_on_error_result") is False, (
-                "MessageScorer.score_response_async must be called with skip_on_error_result=False "
-                "to ensure error responses are scored rather than skipped, "
-                "allowing Crescendo to handle all-rejection scenarios gracefully"
-            )
+            assert "skip_on_error_result" not in call_kwargs
+            assert "role_filter" not in call_kwargs
 
     async def test_check_refusal_detects_refusal(
         self,
@@ -1195,7 +1188,7 @@ class TestResponseScoring:
         assert result == refusal_score
         mock_refusal_scorer.score_async.assert_called_once()
 
-    async def test_check_refusal_does_not_skip_on_error_result(
+    async def test_check_refusal_scores_error_responses(
         self,
         mock_objective_target: MagicMock,
         mock_adversarial_chat: MagicMock,
@@ -1229,7 +1222,9 @@ class TestResponseScoring:
         # Refusal scoring carries no skip policy, so an error response is still scored
         # rather than skipped, which would leave scores[0] to raise IndexError.
         mock_refusal_scorer.score_async.assert_called_once()
-        assert "message_options" not in mock_refusal_scorer.score_async.call_args.kwargs
+        call_kwargs = mock_refusal_scorer.score_async.call_args.kwargs
+        assert "skip_on_error_result" not in call_kwargs
+        assert "role_filter" not in call_kwargs
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -60,8 +60,8 @@ class ConversationScorer(MessageScorer, ABC):
         Keep the trigger that identifies the conversation to acquire.
 
         The trigger content is not sent to the child scorer. ``_score_prepared_message_async``
-        replaces it with a text view of the full conversation. The base class applies
-        ``skip_on_error_result`` before this hook.
+        replaces it with a text view of the full conversation. Overriding this hook keeps an
+        unreadable trigger, because the conversation behind it is still there to read.
 
         Returns:
             Message | None: The trigger message, or None if it has no pieces.

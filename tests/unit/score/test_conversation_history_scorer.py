@@ -14,7 +14,6 @@ from pyrit.score import (
     FloatScaleThresholdScorer,
     MessageScorable,
     MessageScorer,
-    MessageScoringOptions,
     Scorer,
     SelfAskGeneralFloatScaleScorer,
     TrueFalseCompositeScorer,
@@ -668,30 +667,33 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
     mock_scorer._score_nested_async.assert_awaited_once()
 
 
-async def test_conversation_scorer_skip_on_error_omits_blocked_trigger(patch_central_database):
+async def test_conversation_scorer_errored_trigger_still_reads_the_conversation(patch_central_database):
+    """A ConversationScorer reads the conversation, so an errored trigger must not silence it."""
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
+    prior_piece = MessagePiece(
+        role="assistant",
+        original_value="an earlier answer",
+        conversation_id=conversation_id,
+        sequence=1,
+    )
     blocked_piece = MessagePiece(
         role="assistant",
         original_value='{"message": "content_filter"}',
         original_value_data_type="error",
         converted_value_data_type="error",
         conversation_id=conversation_id,
+        sequence=2,
         response_error="blocked",
     )
-    memory.add_message_pieces_to_memory(message_pieces=[blocked_piece])
+    memory.add_message_pieces_to_memory(message_pieces=[prior_piece, blocked_piece])
 
     wrapped_scorer = MockFloatScaleScorer()
-    wrapped_scorer._score_nested_async = AsyncMock()
     scorer = create_conversation_scorer(scorer=wrapped_scorer)
 
-    scores = await scorer.score_async(
-        scorable=MessageScorable.from_message(blocked_piece.to_message()),
-        message_options=MessageScoringOptions(skip_on_error_result=True),
-    )
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(blocked_piece.to_message()))
 
-    assert scores == []
-    wrapped_scorer._score_nested_async.assert_not_awaited()
+    assert len(scores) == 1
 
 
 async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(patch_central_database):
