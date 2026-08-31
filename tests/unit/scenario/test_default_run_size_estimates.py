@@ -372,6 +372,82 @@ async def test_matrix_estimate_with_binding_cap_reports_compatibility_bounds() -
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_matrix_estimate_with_unsupported_binding_cap_is_conditional() -> None:
+    """A cross-dataset cap cannot provide independent per-dataset compatibility bounds."""
+    scenario = _CompatibilityMatrixEstimateScenario(objective_scorer=_scorer())
+    scenario.set_params_from_args(args={"include_baseline": False})
+    full_groups = [_seed_group("one"), _seed_group("two")]
+
+    async def resolve_groups() -> tuple[dict[str, list[AttackSeedGroup]], list[ScenarioDatasetSummary]]:
+        scenario._estimate_has_binding_size_cap = True
+        scenario._estimate_full_groups_by_dataset = {"sample": full_groups}
+        return (
+            {"sample": full_groups[:1]},
+            [
+                ScenarioDatasetSummary(
+                    name="sample",
+                    logical_seed_group_count=2,
+                    selected_seed_group_count=1,
+                    configured_caps=[
+                        ScenarioDatasetSizeCap(
+                            label="combined cap",
+                            count=1,
+                            configured_on="compound",
+                        )
+                    ],
+                )
+            ],
+        )
+
+    scenario._resolve_dataset_groups_for_estimate_async = AsyncMock(side_effect=resolve_groups)
+    factory = MagicMock()
+    factory.seed_technique = None
+
+    with patch(
+        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        return_value={"one": factory, "two": factory},
+    ):
+        estimate = await scenario.get_run_size_estimate_async()
+
+    assert estimate.estimated_attack_count is None
+    assert estimate.minimum_attack_count is None
+    assert estimate.maximum_attack_count is None
+    assert "binding randomized dataset cap" in estimate.note
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_compatibility_bounds_skip_missing_factories_and_require_dataset_summaries() -> None:
+    """Compatibility bounds ignore missing factories and reject incomplete dataset metadata."""
+    scenario = _CompatibilityMatrixEstimateScenario(objective_scorer=_scorer())
+    scenario._scenario_techniques = [_TwoTechniqueDefault.ONE]
+    scenario._estimate_full_groups_by_dataset = {"sample": [_seed_group("one")]}
+
+    with patch(
+        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        return_value={},
+    ):
+        assert scenario._get_technique_compatibility_bounds(datasets=[]) == {}
+
+    factory = MagicMock()
+    factory.seed_technique = None
+    with patch(
+        "pyrit.scenario.core.matrix_atomic_attack_builder.resolve_technique_factories_for_techniques",
+        return_value={"one": factory},
+    ):
+        assert scenario._get_technique_compatibility_bounds(datasets=[]) is None
+
+
+def test_sampled_compatibility_bounds_are_exact_without_sampling() -> None:
+    """An uncut population has one exact compatible-group count."""
+    assert Scenario._get_sampled_compatibility_bounds(
+        full_count=3,
+        selected_count=3,
+        compatible_count=2,
+        uses_only_per_dataset_caps=False,
+    ) == (2, 2)
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_adaptive_estimate_is_target_conditional_and_does_not_multiply_techniques() -> None:
     """Adaptive techniques are selected internally rather than forming an outer axis."""
     with patch.object(TextAdaptive, "get_technique_class", return_value=_TwoTechniqueDefault):
@@ -457,6 +533,29 @@ async def test_jailbreak_configured_estimate_counts_prompt_sending_without_basel
     assert [component.count for component in estimate.components] == [8]
     assert "2 template(s) x 4 selected logical seed group(s) x 1 selected" in estimate.note
     assert "Baseline is disabled" in estimate.note
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_jailbreak_configured_estimate_reports_explicit_template_names() -> None:
+    """Explicit template names replace the random template-count parameter in the estimate."""
+    with patch("pyrit.scenario.scenarios.airt.jailbreak._build_jailbreak_technique", return_value=_JailbreakDefault):
+        scenario = Jailbreak(objective_scorer=_scorer())
+    scenario._resolve_dataset_groups_for_estimate_async = AsyncMock(return_value=_resolved_groups({"harmbench": 2}))
+    scenario.set_params_from_args(
+        args={
+            "scenario_techniques": [_JailbreakDefault.PROMPT_SENDING],
+            "include_baseline": False,
+            "jailbreak_names": ["aim.yaml", "dan.yaml"],
+            "num_jailbreak_attempts": 1,
+        }
+    )
+
+    estimate = await scenario.get_run_size_estimate_async()
+
+    assert estimate.effective_parameters == {
+        "jailbreak_names": ["aim.yaml", "dan.yaml"],
+        "num_jailbreak_attempts": 1,
+    }
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -671,6 +770,58 @@ async def test_adversarial_benchmark_resolves_targets_and_filters_each_technique
     resolve_targets.assert_called_once_with(target_names=["target-a", "target-b"])
     assert estimate.estimated_attack_count == expected_total
     assert [(component.label, component.count) for component in estimate.components] == [("one", 4), ("two", 2)]
+
+
+@pytest.mark.parametrize(
+    ("compatibility_bounds", "expected_minimum", "expected_maximum"),
+    [
+        (None, None, None),
+        ({"one": (0, 1), "two": (1, 1)}, 1, 2),
+    ],
+)
+@pytest.mark.usefixtures("patch_central_database")
+async def test_adversarial_benchmark_binding_cap_reports_available_bounds(
+    compatibility_bounds: dict[str, tuple[int, int]] | None,
+    expected_minimum: int | None,
+    expected_maximum: int | None,
+) -> None:
+    """A binding cap reports a range only when independent sampling makes one available."""
+    with patch(
+        "pyrit.scenario.scenarios.benchmark.adversarial._build_benchmark_technique",
+        return_value=_TwoTechniqueDefault,
+    ):
+        scenario = AdversarialBenchmark(objective_scorer=_scorer())
+    scenario.set_params_from_args(args={"adversarial_targets": ["target-a"]})
+    selected_group = _seed_group("selected")
+
+    async def resolve_groups() -> tuple[dict[str, list[AttackSeedGroup]], list[ScenarioDatasetSummary]]:
+        scenario._estimate_has_binding_size_cap = True
+        return (
+            {"harmbench": [selected_group]},
+            [
+                ScenarioDatasetSummary(
+                    name="harmbench",
+                    logical_seed_group_count=2,
+                    selected_seed_group_count=1,
+                )
+            ],
+        )
+
+    scenario._resolve_dataset_groups_for_estimate_async = AsyncMock(side_effect=resolve_groups)
+    scenario._resolve_adversarial_targets = MagicMock(return_value=[MagicMock(spec=PromptTarget)])
+    scenario._get_technique_compatibility_bounds = MagicMock(return_value=compatibility_bounds)
+    factory = MagicMock()
+    factory.seed_technique = None
+
+    with patch(
+        "pyrit.scenario.scenarios.benchmark.adversarial.resolve_technique_factories_for_techniques",
+        return_value={"one": factory, "two": factory},
+    ):
+        estimate = await scenario.get_run_size_estimate_async()
+
+    assert estimate.estimated_attack_count is None
+    assert estimate.minimum_attack_count == expected_minimum
+    assert estimate.maximum_attack_count == expected_maximum
 
 
 @pytest.mark.usefixtures("patch_central_database")

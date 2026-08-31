@@ -124,8 +124,10 @@ async function advanceTimers(milliseconds: number): Promise<void> {
 }
 
 async function openRunPreview(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
-  await user.click(screen.getByTestId('launch-scenario-btn'))
-  return screen.findByRole('dialog', { name: 'Run preview' }, { timeout: 5_000 })
+  await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+  const dialog = await screen.findByRole('dialog', { hidden: true }, { timeout: 5_000 })
+  expect(within(dialog).getByText('Run preview')).toBeInTheDocument()
+  return dialog
 }
 
 async function confirmRunPreview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
