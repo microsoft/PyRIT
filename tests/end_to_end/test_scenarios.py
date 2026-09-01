@@ -27,6 +27,16 @@ from pyrit.registry import ScenarioRegistry
 
 CONFIG_FILE = Path(__file__).parent / "test_config.yaml"
 
+#: Read timeout for the ``pyrit_scan`` client, in seconds. Starting a scenario is a single
+#: request that runs the initializers, resolves the target and builds the scenario before the
+#: server responds; loading the default datasets alone measures around three minutes on a cold
+#: database, and the tests share one session-scoped backend, so every scenario after the first
+#: re-runs that load against a table already holding the full corpus and takes considerably
+#: longer. The client default of 60 seconds always expires. The resulting ``ReadTimeout``
+#: stringifies to nothing, so the failure surfaces only as an empty "Error starting scenario:"
+#: message.
+REQUEST_TIMEOUT_SECONDS = 900
+
 #: Initializers run for every scenario unless overridden in ``SCENARIO_INITIALIZERS``.
 #: ``target`` populates ``TargetRegistry`` from env vars; ``load_default_datasets``
 #: fetches each scenario's declared default datasets into memory.
@@ -91,6 +101,8 @@ def test_scenario_with_pyrit_scan(scenario_name):
                 "openai_chat",
                 "--config-file",
                 str(CONFIG_FILE),
+                "--request-timeout",
+                str(REQUEST_TIMEOUT_SECONDS),
                 "--max-dataset-size",
                 "1",
                 "--log-level",

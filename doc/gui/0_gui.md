@@ -16,6 +16,10 @@ pyrit_backend
 
 Then open `http://localhost:8000` in your browser.
 
+Authentication-disabled local servers deny administrator operations by default. To enable configuration and initializer
+administration for a trusted local development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
+setting on a network-accessible deployment.
+
 ### Docker
 
 CoPyRIT is also available as a Docker container. See the [Docker setup](https://github.com/microsoft/PyRIT/blob/main/docker/) for details.
@@ -172,6 +176,16 @@ For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **
 #### Auto-Populating Targets
 
 Targets can also be auto-populated by adding the `target` initializer to your `~/.pyrit/.pyrit_conf` file. This reads endpoints from your `.env` and `.env.local` files. See [.pyrit_conf_example](https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example) for details.
+
+### Configuration Editor
+
+The **Configuration** page provides administrator-only editing for the files and scripts used to configure PyRIT. It has three tabs:
+
+- **PyRIT Configuration** edits the active `.pyrit_conf` YAML file. The source may be a local file or an Azure Blob URI. Saving validates the configuration before replacing it.
+- **Environment & Secrets** lists the configured local dotenv files and Azure Key Vault bootstrap secrets. Content is loaded only after selecting a source. Saves validate the dotenv document and reject the update if the source changed since it was loaded.
+- **Custom Initializers** registers or removes Python initializer scripts. This tab requires `allow_custom_initializers: true`; scripts are stored in the configured local directory or Azure Blob container and must define a concrete `PyRITInitializer` subclass.
+
+Use **Reload** to discard local edits and fetch the latest source content. Saved configuration and environment changes take effect after restarting PyRIT. Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
 
 ### Initializers
 

@@ -13,6 +13,8 @@ import numpy as np
 from scipy.stats import ttest_1samp
 
 from pyrit.common.path import SCORER_EVALS_PATH
+from pyrit.models import MessageScorable, Score, ScoringExpectation, UndeterminedScoreError
+from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.score.message_scorer import extract_objective_from_previous_turn
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pyrit.models import Message
+    from pyrit.prompt_target import PromptTarget
     from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
@@ -384,28 +387,6 @@ class ScorerEvaluator(abc.ABC):
         # Transpose human scores so each row is a complete set of scores across all responses
         all_human_scores = np.array(human_scores_list).T
 
-        # Run scoring trials and measure timing
-        all_model_scores_list = []
-        total_scoring_time = 0.0
-        total_scored_items = 0
-        for _ in range(num_scorer_trials):
-            start_time = time.perf_counter()
-            scores = await self.scorer.score_prompts_batch_async(
-                messages=assistant_responses,
-                objectives=resolved_objectives,
-                batch_size=max_concurrency,
-            )
-            elapsed_time = time.perf_counter() - start_time
-            total_scoring_time += elapsed_time
-            total_scored_items += len(scores)
-            score_values = [score.get_value() for score in scores]
-            all_model_scores_list.append(score_values)
-        all_model_scores = np.array(all_model_scores_list)
-
-        # Calculate average time per scored item
-        average_score_time = total_scoring_time / total_scored_items if total_scored_items > 0 else 0.0
-
-        # Extract harm category if this is a harm dataset
         harm_category = None
         if labeled_dataset.metrics_type == MetricsType.HARM and labeled_dataset.entries:
             first_entry = labeled_dataset.entries[0]
@@ -416,6 +397,42 @@ class ScorerEvaluator(abc.ABC):
                     "harm_category must be set in HarmHumanLabeledEntry for HARM datasets. "
                     "Ensure all entries have a valid harm_category."
                 )
+
+        # Run scoring trials and measure timing
+        all_model_scores_list = []
+        determined_responses = np.ones(len(assistant_responses), dtype=bool)
+        total_scoring_time = 0.0
+        total_scored_items = 0
+        for _ in range(num_scorer_trials):
+            start_time = time.perf_counter()
+            score_groups = await self._score_responses_grouped_async(
+                responses=assistant_responses,
+                objectives=resolved_objectives,
+                max_concurrency=max_concurrency,
+            )
+            elapsed_time = time.perf_counter() - start_time
+            total_scoring_time += elapsed_time
+            total_scored_items += len(score_groups)
+            score_values: list[bool | float] = []
+            for index, scores in enumerate(score_groups):
+                score = self._select_evaluation_score(scores=scores, harm_category=harm_category)
+                if score is None:
+                    determined_responses[index] = False
+                    score_values.append(False if self.expected_metrics_type == MetricsType.OBJECTIVE else 0.0)
+                    continue
+                try:
+                    score_values.append(score.get_value())
+                except UndeterminedScoreError:
+                    determined_responses[index] = False
+                    score_values.append(False if self.expected_metrics_type == MetricsType.OBJECTIVE else 0.0)
+            all_model_scores_list.append(score_values)
+        if not determined_responses.any():
+            raise ValueError("Scorer evaluation produced no determined scores to compare with human labels.")
+        all_model_scores = np.array(all_model_scores_list)[:, determined_responses]
+        all_human_scores = all_human_scores[:, determined_responses]
+
+        # Calculate average time per scored item
+        average_score_time = total_scoring_time / total_scored_items if total_scored_items > 0 else 0.0
 
         # Compute metrics using subclass implementation
         metrics = self._compute_metrics(
@@ -436,6 +453,70 @@ class ScorerEvaluator(abc.ABC):
         metrics.average_score_time_seconds = average_score_time
 
         return metrics
+
+    async def _score_responses_grouped_async(
+        self,
+        *,
+        responses: list[Message],
+        objectives: list[str],
+        max_concurrency: int,
+    ) -> list[list[Score]]:
+        """
+        Score each response while retaining its result-list boundary.
+
+        Returns:
+            list[list[Score]]: One score list for each response.
+        """
+        results = await batch_task_async(
+            task_func=self.scorer.score_async,
+            task_arguments=["scorable", "expectation"],
+            prompt_target=cast("PromptTarget", getattr(self.scorer, "_prompt_target", None)),
+            batch_size=max_concurrency,
+            items_to_batch=[
+                [MessageScorable.from_message(response) for response in responses],
+                [ScoringExpectation(objective=objective) for objective in objectives],
+            ],
+        )
+        return cast("list[list[Score]]", results)
+
+    @staticmethod
+    def _select_evaluation_score(*, scores: list[Score], harm_category: str | None) -> Score | None:
+        """
+        Select the one score that corresponds to a labeled response.
+
+        A lone score is taken as the answer, because most scorers report one verdict and leave
+        ``score_category`` empty. It is rejected only when it names categories and the labeled
+        harm is not among them, which is a real mismatch rather than a missing label.
+
+        Returns:
+            Score | None: The selected score, or None if the scorer returned no scores.
+
+        Raises:
+            ValueError: If the scores do not hold exactly one match for the labeled harm.
+        """
+        if not scores:
+            return None
+
+        if len(scores) == 1:
+            categories = scores[0].score_category or []
+            if harm_category is None or not categories or harm_category in categories:
+                return scores[0]
+            raise ValueError(
+                f"Scorer evaluation requires a score for harm category '{harm_category}', "
+                f"but the single score returned is categorized as {categories}."
+            )
+
+        category_matches = [
+            score for score in scores if harm_category is not None and harm_category in (score.score_category or [])
+        ]
+        if len(category_matches) == 1:
+            return category_matches[0]
+
+        category_detail = f" for harm category '{harm_category}'" if harm_category else ""
+        raise ValueError(
+            f"Scorer evaluation requires exactly one score per response{category_detail}, "
+            f"but received {len(scores)} scores and found {len(category_matches)} category matches."
+        )
 
     @abc.abstractmethod
     def _validate_and_extract_data(

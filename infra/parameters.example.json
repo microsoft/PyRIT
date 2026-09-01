@@ -18,6 +18,9 @@
     "allowedGroupObjectIds": {
       "value": "YOUR_ENTRA_GROUP_OBJECT_IDS"
     },
+    "adminGroupObjectId": {
+      "value": "YOUR_ADMIN_ENTRA_GROUP_OBJECT_ID"
+    },
     "allowedCidr": {
       "value": ""
     },
@@ -29,6 +32,9 @@
     },
     "pyritInitializer": {
       "value": "target"
+    },
+    "pyritConfigFileUri": {
+      "value": ""
     },
     "envSecretName": {
       "value": "env-global"

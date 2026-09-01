@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -34,6 +35,107 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import Scorer, TrueFalseScorer
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_execute_resets_invoked_objective_target_conversation() -> None:
+    target = MockPromptTarget()
+    target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+    attack = PromptSendingAttack(objective_target=target)
+
+    await attack.execute_async(objective="Test objective")
+
+    target.reset_conversation_async.assert_awaited_once()
+    assert target.reset_conversation_async.await_args.kwargs["conversation_id"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_execute_resets_objective_target_conversation_after_send_failure() -> None:
+    target = MockPromptTarget()
+    target._send_prompt_to_target_async = AsyncMock(side_effect=RuntimeError("send failed"))  # type: ignore[method-assign]
+    target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+    attack = PromptSendingAttack(objective_target=target)
+
+    with pytest.raises(Exception, match="Error sending prompt"):
+        await attack.execute_async(objective="Test objective")
+
+    target.reset_conversation_async.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_cancelled_execute_resets_blocked_objective_target_conversation() -> None:
+    target = MockPromptTarget()
+    send_started = asyncio.Event()
+    wait_forever = asyncio.Event()
+    sent_conversation_id: str | None = None
+
+    async def block_send(*, normalized_conversation: list[Message]) -> list[Message]:
+        nonlocal sent_conversation_id
+        sent_conversation_id = normalized_conversation[-1].get_piece().conversation_id
+        send_started.set()
+        await wait_forever.wait()
+        return []
+
+    target._send_prompt_to_target_async = block_send  # type: ignore[method-assign]
+    target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+    attack = PromptSendingAttack(objective_target=target)
+    task = asyncio.create_task(attack.execute_async(objective="Test objective"))
+    await send_started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    target.reset_conversation_async.assert_awaited_once_with(conversation_id=sent_conversation_id)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_concurrent_attacks_reset_only_their_own_conversations() -> None:
+    target = MockPromptTarget()
+    send_started = {
+        "first objective": asyncio.Event(),
+        "second objective": asyncio.Event(),
+    }
+    release_send = {
+        "first objective": asyncio.Event(),
+        "second objective": asyncio.Event(),
+    }
+    conversation_ids: dict[str, str] = {}
+
+    async def controlled_send(*, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1]
+        objective = request.get_value()
+        conversation_id = request.get_piece().conversation_id
+        conversation_ids[objective] = conversation_id
+        send_started[objective].set()
+        await release_send[objective].wait()
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value="response",
+                conversation_id=conversation_id,
+            ).to_message()
+        ]
+
+    target._send_prompt_to_target_async = controlled_send  # type: ignore[method-assign]
+    target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+    first_attack = PromptSendingAttack(objective_target=target)
+    second_attack = PromptSendingAttack(objective_target=target)
+    first_task = asyncio.create_task(first_attack.execute_async(objective="first objective"))
+    second_task = asyncio.create_task(second_attack.execute_async(objective="second objective"))
+    await asyncio.gather(*(event.wait() for event in send_started.values()))
+
+    release_send["first objective"].set()
+    await first_task
+
+    target.reset_conversation_async.assert_awaited_once_with(conversation_id=conversation_ids["first objective"])
+    assert not second_task.done()
+
+    release_send["second objective"].set()
+    await second_task
+
+    assert target.reset_conversation_async.await_count == 2
+    target.reset_conversation_async.assert_any_await(conversation_id=conversation_ids["second objective"])
 
 
 @pytest.fixture
@@ -539,7 +641,7 @@ class TestResponseEvaluation:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": [success_score]},
         ) as mock_score_method:
@@ -561,7 +663,7 @@ class TestResponseEvaluation:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": []},
         ) as mock_score_method:
@@ -602,7 +704,7 @@ class TestResponseEvaluation:
         )
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [auxiliary_score], "objective_scores": [success_score]},
         ) as mock_score_method:
@@ -770,6 +872,31 @@ class TestAttackExecution:
         # Verify completion after retry
         assert result.last_response == sample_response.get_piece()
         assert attack._send_prompt_to_objective_target_async.call_count == 2
+
+    async def test_retry_without_response_does_not_reuse_previous_score(
+        self,
+        mock_target,
+        mock_true_false_scorer,
+        basic_context,
+        sample_response,
+        failure_score,
+    ):
+        attack = PromptSendingAttack(
+            objective_target=mock_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
+            max_attempts_on_failure=1,
+        )
+        attack._get_prompt_group = MagicMock(
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
+        )
+        attack._send_prompt_to_objective_target_async = AsyncMock(side_effect=[sample_response, None])
+        attack._evaluate_response_async = AsyncMock(return_value=failure_score)
+
+        result = await attack._perform_async(context=basic_context)
+
+        assert result.last_response is None
+        assert result.last_score is None
+        assert result.outcome is AttackOutcome.FAILURE
 
     async def test_perform_async_sets_atomic_attack_identifier(self, mock_target, basic_context, sample_response):
         """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
@@ -1228,7 +1355,7 @@ class TestEdgeCasesAndErrorHandling:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             side_effect=RuntimeError("Scorer error"),
         ):

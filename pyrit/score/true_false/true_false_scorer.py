@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pyrit.models import Message, Score
+from pyrit.models import Message, Score, ScoreStatus, UndeterminedScoreError
 from pyrit.score.message_scorer import MessageScorer
+from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
 if TYPE_CHECKING:
@@ -17,26 +18,14 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
-class TrueFalseScorer(MessageScorer):
+class TrueFalseScorer(Scorer):
     """
-    Base class for scorers that return true/false binary scores.
+    Family base for scorers that return a single true/false verdict.
 
-    This scorer evaluates prompt responses and returns a single boolean score indicating
-    whether the response meets a specific criterion. Multiple pieces in a request response
-    are aggregated using a TrueFalseAggregatorFunc function (default: TrueFalseScoreAggregator.OR).
-
-    **Default error / blocked behavior**
-
-    When no supported pieces remain after validator filtering (e.g. the response is
-    blocked, has another error type, or no piece matches the scorer's supported data
-    types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
-    single ``Score(False)`` whose rationale distinguishes blocked / error / filtered
-    cases. This mirrors ``FloatScaleScorer``'s ``0.0`` default so that downstream
-    consumers (attack strategies, threshold wrappers) get a consistent, "attack did not
-    succeed" value without each call site needing special-cased error handling.
-    Subclasses that need different semantics (e.g. ``SelfAskRefusalScorer``, which
-    returns ``True`` on blocked) should override ``_score_piece_async`` and accept the
-    error data type in their validator.
+    This is the family axis only — what a score means — and says nothing about what kind of
+    evidence produced it. ``MessageTrueFalseScorer`` adds the message pipeline for scorers
+    whose evidence is a message; wrapping scorers use this base directly so a composite can
+    hold a child that scores something other than a message.
     """
 
     # Default evaluation configuration - evaluates against all objective CSVs
@@ -45,21 +34,16 @@ class TrueFalseScorer(MessageScorer):
     def __init__(
         self,
         *,
-        validator: ScorerPromptValidator,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
-        chat_target: PromptTarget | None = None,
-        message_resolver: MessageScorableResolver | None = None,
+        **kwargs: Any,
     ) -> None:
         """
-        Initialize the TrueFalseScorer.
+        Initialize the true/false family state.
 
         Args:
-            validator (ScorerPromptValidator): Custom validator.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
-            chat_target (PromptTarget | None): Optional chat target used by the scorer,
-                forwarded to the base class for validation against ``TARGET_REQUIREMENTS``.
-            message_resolver (MessageScorableResolver | None): Message evidence resolver.
+            **kwargs (Any): Forwarded to the remaining bases in the MRO.
         """
         self._score_aggregator = score_aggregator
 
@@ -72,11 +56,7 @@ class TrueFalseScorer(MessageScorer):
                 result_file="objective/objective_achieved_metrics.jsonl",
             )
 
-        super().__init__(
-            validator=validator,
-            chat_target=chat_target,
-            message_resolver=message_resolver,
-        )
+        super().__init__(**kwargs)
 
     def validate_return_scores(self, scores: list[Score]) -> None:
         """
@@ -87,12 +67,21 @@ class TrueFalseScorer(MessageScorer):
 
         Raises:
             ValueError: If the number of scores is not exactly one.
-            ValueError: If the score value is not "true" or "false".
+            ValueError: If a complete score has no value, or a value that is not "true" or "false".
         """
         if len(scores) != 1:
             raise ValueError("TrueFalseScorer should return exactly one score.")
 
-        if scores[0].score_value.lower() not in ["true", "false"]:
+        score = scores[0]
+        try:
+            score.get_value()
+        except UndeterminedScoreError:
+            return
+
+        if score.score_value is None:
+            raise ValueError("A complete TrueFalseScorer score must carry a value. Mark it undetermined instead.")
+
+        if str(score.score_value).lower() not in ["true", "false"]:
             raise ValueError("TrueFalseScorer score value must be True or False.")
 
     def get_scorer_metrics(self) -> ObjectiveScorerMetrics | None:
@@ -119,6 +108,68 @@ class TrueFalseScorer(MessageScorer):
 
         return find_objective_metrics_by_eval_hash(eval_hash=eval_hash, file_path=result_file)
 
+
+class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
+    """
+    Base class for scorers that return true/false binary scores.
+
+    This scorer evaluates prompt responses and returns a single boolean score indicating
+    whether the response meets a specific criterion. Multiple pieces in a request response
+    are aggregated using a TrueFalseAggregatorFunc function (default: TrueFalseScoreAggregator.OR).
+
+    **Default error / blocked behavior**
+
+    When no supported pieces remain after validator filtering (e.g. the response is
+    blocked, has another error type, or no piece matches the scorer's supported data
+    types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
+    single ``Score(False)`` whose rationale distinguishes blocked / error / filtered
+    cases. This mirrors ``MessageFloatScaleScorer``'s ``0.0`` default so that downstream
+    consumers (attack strategies, threshold wrappers) get a consistent, "attack did not
+    succeed" value without each call site needing special-cased error handling.
+    Subclasses that need different semantics (e.g. ``SelfAskRefusalScorer``, which
+    returns ``True`` on blocked) should override ``_build_fallback_score``.
+    """
+
+    def __init__(
+        self,
+        *,
+        validator: ScorerPromptValidator,
+        score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
+        chat_target: PromptTarget | None = None,
+        message_resolver: MessageScorableResolver | None = None,
+    ) -> None:
+        """
+        Initialize the TrueFalseScorer.
+
+        Args:
+            validator (ScorerPromptValidator): Custom validator.
+            score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
+                Defaults to TrueFalseScoreAggregator.OR.
+            chat_target (PromptTarget | None): Optional chat target used by the scorer,
+                forwarded to the base class for validation against ``TARGET_REQUIREMENTS``.
+            message_resolver (MessageScorableResolver | None): Message evidence resolver.
+        """
+        super().__init__(
+            score_aggregator=score_aggregator,
+            validator=validator,
+            chat_target=chat_target,
+            message_resolver=message_resolver,
+        )
+
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+        """
+        Build a single-element list containing a ``false`` score when no pieces could be scored.
+
+        Args:
+            message (Message): The message whose first piece tells why nothing was scored.
+            objective (str | None): The objective associated with this scoring call.
+
+        Returns:
+            list[Score]: A single-element list containing a ``false`` ``true_false`` score,
+                or an undetermined score when the response failed with an error.
+        """
+        return self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="false")
+
     async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         """
         Score the given request response asynchronously.
@@ -137,18 +188,20 @@ class TrueFalseScorer(MessageScorer):
                 list when no pieces could be scored (the base class will supply a fallback).
         """
         # Get individual scores for all supported pieces using base implementation logic
-        score_list = await super()._score_async(message, objective=objective)
+        score_list = await MessageScorer._score_async(self, message, objective=objective)
 
         if not score_list:
             return []
 
         # Use score aggregator to combine multiple piece scores into a single score
         result = self._score_aggregator(score_list)
+        undetermined = result.value is None
 
         # Use the message_piece_id from the first score
         return [
             Score(
-                score_value=str(result.value).lower(),
+                score_value=None if undetermined else str(result.value).lower(),
+                status=ScoreStatus.UNDETERMINED if undetermined else ScoreStatus.COMPLETE,
                 score_value_description=result.description,
                 score_type="true_false",
                 score_category=result.category,
@@ -156,67 +209,6 @@ class TrueFalseScorer(MessageScorer):
                 score_rationale=result.rationale,
                 scorer_class_identifier=self.get_identifier(),
                 message_piece_id=score_list[0].message_piece_id,
-                objective=objective,
-            )
-        ]
-
-    def _build_fallback_score(
-        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
-    ) -> list[Score]:
-        """
-        Build a single-element list containing a ``false`` score when no pieces could be scored.
-
-        Inspects the first message piece to produce a rationale/description that
-        distinguishes blocked, error, and filtered cases.
-
-        Args:
-            message (Message): The message whose first piece is inspected for status.
-            objective (str | None): The objective associated with this scoring call.
-            scorer_response_blocked (bool): When True, the scorer's own LLM response was
-                blocked by content filtering; reflected in the rationale.
-
-        Returns:
-            list[Score]: A single-element list containing a ``false`` ``true_false`` score
-                attributed to the first piece.
-
-        Raises:
-            ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
-        """
-        first_piece = message.message_pieces[0]
-        piece_id = first_piece.id or first_piece.original_prompt_id
-        if piece_id is None:
-            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
-
-        if scorer_response_blocked:
-            rationale = (
-                "The scorer's own LLM response was blocked by content filtering "
-                "(raise_if_scorer_blocks is False); returning false."
-            )
-            description = "Scorer response blocked; returning false."
-        elif first_piece.is_blocked():
-            rationale = (
-                "The request was blocked by the target "
-                "(score_blocked_content is False or no partial content available); returning false."
-            )
-            description = "Blocked response; returning false."
-        elif first_piece.has_error():
-            rationale = f"Response had an error: {first_piece.response_error}; returning false."
-            description = "Error response; returning false."
-        else:
-            # this can happen with multi-modal responses if no supported pieces are present
-            rationale = "No supported pieces to score after filtering; returning false."
-            description = "No pieces to score after filtering; returning false."
-
-        return [
-            Score(
-                score_value=str(False).lower(),
-                score_value_description=description,
-                score_type="true_false",
-                score_category=None,
-                score_metadata=None,
-                score_rationale=rationale,
-                scorer_class_identifier=self.get_identifier(),
-                message_piece_id=piece_id,
                 objective=objective,
             )
         ]

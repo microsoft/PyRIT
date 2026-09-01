@@ -20,7 +20,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 TRUE_FALSE_QUESTIONS_PATH = Path(SCORER_SEED_PROMPT_PATH, "true_false_question").resolve()
 
@@ -126,7 +126,7 @@ def render_true_false_system_prompt(
     )
 
 
-class SelfAskTrueFalseScorer(TrueFalseScorer):
+class SelfAskTrueFalseScorer(MessageTrueFalseScorer):
     """
     A self-ask true/false scorer with scorer-owned composition.
 

@@ -25,7 +25,7 @@ from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AzureContentFilterScorer(FloatScaleScorer):
+class AzureContentFilterScorer(MessageFloatScaleScorer):
     """
     A scorer that uses Azure Content Safety API to evaluate text and images for harmful content.
 
@@ -340,9 +340,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
             for result in aggregated_results
         ]
 
-    def _build_fallback_score(
-        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
-    ) -> list[Score]:
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
         Build one neutral ``0.0`` fallback score per configured harm category.
 
@@ -351,7 +349,7 @@ class AzureContentFilterScorer(FloatScaleScorer):
         input, this override emits one neutral ``0.0`` score per configured category
         (each tagged with the category name and matching the normal-path metadata),
         instead of the single category-less score produced by the base
-        ``FloatScaleScorer._build_fallback_score``.
+        ``MessageFloatScaleScorer._build_fallback_score``.
 
         Inspects the first message piece to tailor the rationale/description for
         blocked, error, and filtered cases.
@@ -359,8 +357,6 @@ class AzureContentFilterScorer(FloatScaleScorer):
         Args:
             message (Message): The message whose first piece is inspected for status.
             objective (str | None): The objective associated with this scoring call.
-            scorer_response_blocked (bool): When True, the scorer's own LLM response was
-                blocked by content filtering; reflected in the rationale.
 
         Returns:
             list[Score]: One ``0.0`` ``float_scale`` score per configured harm category,
@@ -374,17 +370,22 @@ class AzureContentFilterScorer(FloatScaleScorer):
         if piece_id is None:
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
 
-        if scorer_response_blocked:
-            status = "The scorer's own LLM response was blocked by content filtering (raise_if_scorer_blocks is False)"
-            description = "Scorer response blocked; returning 0.0 per configured category."
-        elif first_piece.is_blocked():
-            status = (
-                "The request was blocked by the target (score_blocked_content is False or no partial content available)"
-            )
+        if first_piece.is_blocked():
+            status = "The response was blocked with no content to score"
             description = "Blocked response; returning 0.0 per configured category."
         elif first_piece.has_error():
-            status = f"Response had an error: {first_piece.response_error}"
-            description = "Error response; returning 0.0 per configured category."
+            # A transport or protocol failure is not the target's answer, so there is no verdict.
+            return [
+                self._build_undetermined_score(
+                    rationale=f"Response had an error: {first_piece.response_error}; no verdict was reachable.",
+                    description="Error response; no verdict was reachable.",
+                    message_piece_id=piece_id,
+                    objective=objective,
+                    score_category=[category.value],
+                    score_metadata={"azure_severity": 0},
+                )
+                for category in self._harm_categories
+            ]
         else:
             status = "No supported pieces to score after filtering"
             description = "No pieces to score after filtering; returning 0.0 per configured category."

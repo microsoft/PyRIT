@@ -2,7 +2,9 @@
 # Licensed under the MIT license.
 
 import abc
+import asyncio
 import atexit
+import hashlib
 import json
 import logging
 import re
@@ -14,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
+from urllib.parse import urlparse
 
 from sqlalchemy import MetaData, and_, func, not_, or_, select
 from sqlalchemy.engine.base import Engine
@@ -40,6 +43,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
     ScenarioResultEntry,
+    ScorableContentEntry,
     ScoreEntry,
     ScorerIdentifierEntry,
     SeedEntry,
@@ -53,6 +57,7 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
+    MEDIA_PATH_DATA_TYPES,
     AdditionalInitializer,
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -60,6 +65,8 @@ from pyrit.models import (
     AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    ContentEntryScorable,
+    ContentScorable,
     Conversation,
     ConversationRetry,
     ConversationRetryReason,
@@ -69,6 +76,7 @@ from pyrit.models import (
     IdentifierType,
     Message,
     MessagePiece,
+    MessageScorable,
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioIdentifier,
@@ -94,6 +102,15 @@ logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _PreparedScorableContent:
+    """A loose-content value prepared for durable database persistence."""
+
+    source: ContentScorable
+    stored: ContentScorable
+    value_sha256: str
 
 
 class AttackResultKeysetCursor(NamedTuple):
@@ -1605,6 +1622,95 @@ class MemoryInterface(abc.ABC):
 
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
+        Persist scores whose loose-content anchors need no asynchronous file copy.
+
+        File-backed ``ContentScorable`` values must use ``add_scores_to_memory_async``
+        so the source bytes can be copied into managed results storage.
+        """
+        self._add_scores_to_memory(scores=scores, prepared_content_hashes={})
+
+    async def add_scores_to_memory_async(self, *, scores: Sequence[Score]) -> None:
+        """Prepare file-backed loose content, then persist the scores and their anchors."""
+        media_scorables = list(
+            dict.fromkeys(
+                score.scorable
+                for score in scores
+                if isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
+            )
+        )
+        if not media_scorables:
+            self.add_scores_to_memory(scores=scores)
+            return
+
+        prepared_content = await asyncio.gather(
+            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
+        )
+        prepared_by_source = {content.source: content for content in prepared_content}
+        prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
+
+        copied_scores: list[tuple[Score, Score]] = []
+        scores_to_persist: list[Score] = []
+        for score in scores:
+            scorable = score.scorable
+            prepared = prepared_by_source.get(scorable) if isinstance(scorable, ContentScorable) else None
+            if prepared is None:
+                scores_to_persist.append(score)
+                continue
+            copied_score = score.model_copy(update={"scorable": prepared.stored})
+            copied_scores.append((score, copied_score))
+            scores_to_persist.append(copied_score)
+
+        self._add_scores_to_memory(
+            scores=scores_to_persist,
+            prepared_content_hashes=prepared_hashes,
+        )
+        for original_score, copied_score in copied_scores:
+            original_score.scorable = copied_score.scorable
+
+    async def _prepare_scorable_content_async(
+        self,
+        *,
+        scorable: ContentScorable,
+    ) -> _PreparedScorableContent:
+        """
+        Copy one media value into managed results storage and calculate its digest.
+
+        Returns:
+            _PreparedScorableContent: The managed content reference and its digest.
+        """
+        source_serializer = data_serializer_factory(
+            category="scorable-content-entries",
+            data_type=scorable.data_type,
+            value=scorable.value,
+        )
+        content = await source_serializer.read_data_async()
+        value_sha256 = hashlib.sha256(content).hexdigest()
+        parsed_source = urlparse(scorable.value)
+        extension_source = parsed_source.path if parsed_source.scheme in {"http", "https"} else scorable.value
+        extension = DataTypeSerializer.get_extension(extension_source)
+        destination_serializer = data_serializer_factory(
+            category="scorable-content-entries",
+            data_type=scorable.data_type,
+            extension=extension.removeprefix(".") if extension else None,
+        )
+        await destination_serializer.save_data_async(content, output_filename=value_sha256)
+        stored = ContentScorable(
+            value=destination_serializer.value,
+            data_type=scorable.data_type,
+        )
+        return _PreparedScorableContent(
+            source=scorable,
+            stored=stored,
+            value_sha256=value_sha256,
+        )
+
+    def _add_scores_to_memory(
+        self,
+        *,
+        scores: Sequence[Score],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> None:
+        """
         Insert a list of scores into the memory storage.
 
         Callers that produce scores for pieces flagged via
@@ -1615,22 +1721,58 @@ class MemoryInterface(abc.ABC):
         analytics (e.g. refusal rate over a batch) still want the score row
         even when the scored content was never a real conversation turn.
 
+        A score anchored on loose content has that content written to
+        ``ScorableContentEntries`` and its anchor rewritten to name the stored row, so a
+        score's input can still be recovered when it was never a conversation turn.
+
         Raises:
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
+        referenced_piece_ids = {str(score.message_piece_id) for score in scores if score.message_piece_id}
+        referenced_piece_ids.update(
+            str(piece_id)
+            for score in scores
+            if isinstance(score.scorable, MessageScorable)
+            for piece_id in score.scorable.message_piece_ids
+        )
+        pieces_by_id = {
+            str(piece.id): piece
+            for piece in (
+                self.get_message_pieces(prompt_ids=sorted(referenced_piece_ids)) if referenced_piece_ids else []
+            )
+        }
+        original_ids: dict[str, uuid.UUID] = {
+            piece_id: original_prompt_id
+            for piece_id, piece in pieces_by_id.items()
+            if (original_prompt_id := piece.original_prompt_id) is not None and original_prompt_id != piece.id
+        }
         for score in scores:
-            if score.message_piece_id:
-                message_piece_id = score.message_piece_id
-                pieces = self.get_message_pieces(prompt_ids=[str(message_piece_id)])
-                if not pieces:
-                    logger.error(f"MessagePiece with ID {message_piece_id} not found in memory.")
-                    continue
-                # auto-link score to the original prompt id if the prompt is a duplicate
-                if pieces[0].original_prompt_id != pieces[0].id:
-                    score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
-        entries = [ScoreEntry(entry=score) for score in scores]
+            if score.message_piece_id and str(score.message_piece_id) not in pieces_by_id:
+                logger.error(f"MessagePiece with ID {score.message_piece_id} not found in memory.")
+            if score.message_piece_id and (original_id := original_ids.get(str(score.message_piece_id))):
+                score.message_piece_id = original_id  # type: ignore[ty:invalid-assignment]
+            if isinstance(score.scorable, MessageScorable):
+                mapped_piece_ids: tuple[uuid.UUID, ...] = tuple(
+                    original_ids.get(str(piece_id), uuid.UUID(str(piece_id)))
+                    for piece_id in score.scorable.message_piece_ids
+                )
+                if mapped_piece_ids != score.scorable.message_piece_ids:
+                    score.scorable = MessageScorable(message_piece_ids=mapped_piece_ids)
+        content_entries, anchor_rewrites = self._store_scorable_content(
+            scores=scores,
+            prepared_content_hashes=prepared_content_hashes,
+        )
+        anchors_by_score = {id(score): anchor for score, anchor in anchor_rewrites}
+        persisted_scores = [
+            score.model_copy(update={"scorable": anchors_by_score[id(score)]})
+            if id(score) in anchors_by_score
+            else score
+            for score in scores
+        ]
+        entries = [ScoreEntry(entry=score) for score in persisted_scores]
         with closing(self.get_session()) as session:
             try:
+                session.add_all(content_entries)
                 for entry in entries:
                     if entry.scorer_class_identifier:
                         self._persist_scorer_identifier(
@@ -1639,10 +1781,80 @@ class MemoryInterface(abc.ABC):
                         )
                 session.add_all(entries)
                 session.commit()
+                for score, anchor in anchor_rewrites:
+                    score.scorable = anchor
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error inserting scores: {e}")
                 raise
+
+    @staticmethod
+    def _store_scorable_content(
+        *,
+        scores: Sequence[Score],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+        """
+        Turn loose-content anchors into stored references.
+
+        Scores sharing the same content share one row, so a scorer that returns several
+        scores over one input (a category per harm, say) does not duplicate it.
+
+        Returns:
+            tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+                Content rows to insert and anchor rewrites to publish after commit.
+
+        Raises:
+            ValueError: If file-backed content was not prepared through the async path.
+        """
+        rows: dict[ContentScorable, ScorableContentEntry] = {}
+        anchor_rewrites: list[tuple[Score, ContentEntryScorable]] = []
+        for score in scores:
+            scorable = score.scorable
+            if not isinstance(scorable, ContentScorable):
+                continue
+            row = rows.get(scorable)
+            if row is None:
+                value_sha256 = prepared_content_hashes.get(scorable)
+                if scorable.data_type in MEDIA_PATH_DATA_TYPES and value_sha256 is None:
+                    raise ValueError(
+                        "File-backed ContentScorable values require add_scores_to_memory_async "
+                        "so PyRIT can copy the source bytes into managed storage."
+                    )
+                row = ScorableContentEntry(
+                    id=uuid.uuid4(),
+                    value=scorable.value,
+                    value_sha256=value_sha256 or hashlib.sha256(scorable.value.encode("utf-8")).hexdigest(),
+                    data_type=scorable.data_type,
+                    timestamp=datetime.now(tz=timezone.utc),
+                )
+                rows[scorable] = row
+            anchor_rewrites.append((score, ContentEntryScorable(content_id=row.id, data_type=scorable.data_type)))
+        return list(rows.values()), anchor_rewrites
+
+    def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
+        """
+        Load the loose content that stored scores are anchored on.
+
+        Args:
+            content_ids: The ids named by ``ContentEntryScorable`` anchors.
+
+        Returns:
+            dict[uuid.UUID, ContentScorable]: The content by id, omitting ids with no row.
+        """
+        if not content_ids:
+            return {}
+        wanted = [str(content_id) for content_id in content_ids]
+        entries = self._execute_batched_query(
+            ScorableContentEntry,
+            batch_column=ScorableContentEntry.id,
+            batch_values=wanted,
+        )
+        return {
+            entry.id: ContentScorable(value=entry.value, data_type=entry.data_type)
+            for entry in entries
+            if entry.value is not None
+        }
 
     @classmethod
     def _persist_scorer_identifier(cls, *, session: Any, scorer_identifier: ScorerIdentifier) -> None:
@@ -1782,7 +1994,22 @@ class MemoryInterface(abc.ABC):
             batch_values=list(original_ids),
             other_conditions=[],
         )
-        return [entry.get_score() for entry in score_entries]
+        entries_by_id = {entry.id: entry for entry in score_entries}
+
+        original_id_values = [str(original_id) for original_id in original_ids]
+        json_batch_size = max(1, self._MAX_BIND_VARS - 1)
+        for start in range(0, len(original_id_values), json_batch_size):
+            batch = original_id_values[start : start + json_batch_size]
+            scorable_condition = self._get_condition_json_array_match(
+                json_column=ScoreEntry.scorable,
+                property_path="$.message_piece_ids",
+                array_to_match=batch,
+                match_mode="any",
+            )
+            anchored_entries = self._query_entries(ScoreEntry, conditions=scorable_condition)
+            entries_by_id.update({entry.id: entry for entry in anchored_entries})
+
+        return [entry.get_score() for entry in entries_by_id.values()]
 
     def get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
         """

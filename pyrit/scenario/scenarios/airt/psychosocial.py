@@ -49,7 +49,6 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import (
-    FloatScaleScorer,
     FloatScaleThresholdScorer,
     NumericRange,
     SelfAskGeneralFloatScaleScorer,
@@ -62,7 +61,7 @@ if TYPE_CHECKING:
     from pyrit.models import AttackSeedGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.score import TrueFalseScorer
+    from pyrit.score import FloatScaleScorer, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
@@ -21,8 +22,34 @@ from pydantic import (
 )
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.score.scorable import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    MessageScorable,
+    ScorableUnion,
+)
 
 ScoreType = Literal["true_false", "float_scale", "unknown"]
+
+
+class ScoreStatus(str, Enum):
+    """
+    Whether a verdict was reachable at all.
+
+    Completeness is a separate axis from the value, which is what keeps the model honest on
+    both score types at once: a complete true/false score has a boolean, a complete float
+    score has a number, and an undetermined score of either type has nothing.
+
+    Inherits from ``str`` so values serialize naturally in Pydantic models and REST responses.
+    """
+
+    #: A value is present.
+    COMPLETE = "complete"
+
+    #: No verdict was reachable; there is no value.
+    UNDETERMINED = "undetermined"
+
+
+class UndeterminedScoreError(ValueError):
+    """Raised when a caller reads the value of a score that has none."""
 
 
 # Annotated alias that round-trips ``ComponentIdentifier`` fields through the flat
@@ -47,8 +74,12 @@ class Score(BaseModel):
 
     id: uuid.UUID | str = Field(default_factory=uuid4)
 
-    # The value the scorer ended up with; e.g. "true" (if true_false) or "0.5" (if float_scale)
-    score_value: str
+    # The value the scorer ended up with; e.g. "true" (if true_false) or "0.5" (if float_scale).
+    # None if and only if status is UNDETERMINED.
+    score_value: str | None = None
+
+    # Whether a verdict was reachable at all.
+    status: ScoreStatus = ScoreStatus.COMPLETE
 
     # Value that can include a description of the score value
     score_value_description: str | None = None
@@ -71,7 +102,11 @@ class Score(BaseModel):
     # This is the ID of the MessagePiece that the score is scoring. Note a scorer can
     # generate an additional request. This is NOT that, but the ID associated with what
     # we're scoring.
-    message_piece_id: uuid.UUID | str
+    message_piece_id: uuid.UUID | str | None = None
+
+    # What the score is about. Stays a reference once persisted, so a score about a trace,
+    # a file, or loose content has something honest to point at.
+    scorable: ScorableUnion | None = None
 
     # Timestamp of when the score was created
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
@@ -96,37 +131,79 @@ class Score(BaseModel):
     @model_validator(mode="after")
     def _validate_score_value(self) -> Score:
         """
-        Enforce that ``score_value`` is consistent with ``score_type``.
+        Enforce that ``score_value`` is present iff the score is complete, and type-consistent.
 
         Returns:
             ``self`` when validation passes.
 
         Raises:
-            ValueError: If the value is incompatible with the score-type constraints.
+            ValueError: If the value contradicts the status, or is incompatible with the
+                score-type constraints.
         """
         self._check_score_value()
         return self
 
-    def _check_score_value(self) -> None:
+    @model_validator(mode="after")
+    def _reconcile_message_piece_id(self) -> Score:
         """
-        Validate ``score_value`` against ``score_type`` constraints.
+        Keep ``message_piece_id`` consistent with a message anchor.
+
+        ``scorable`` is the anchor and ``message_piece_id`` is the legacy view of it, so the
+        two must not name different pieces. An unset id is derived from the anchor.
+
+        Returns:
+            ``self`` when the two anchors agree.
 
         Raises:
-            ValueError: If the value is incompatible with the score-type constraints.
+            ValueError: If ``message_piece_id`` names a piece the scorable does not cover.
         """
-        if self.score_type == "true_false" and str(self.score_value).lower() not in ("true", "false"):
-            raise ValueError(f"True False scorers must have a score value of 'true' or 'false' not {self.score_value}")
+        scorable = getattr(self, "scorable", None)
+        if not isinstance(scorable, MessageScorable):
+            return self
+
+        piece_ids = [str(piece_id) for piece_id in scorable.message_piece_ids]
+        if self.message_piece_id is None:
+            self.message_piece_id = scorable.message_piece_ids[0]
+        elif str(self.message_piece_id) not in piece_ids:
+            raise ValueError(
+                f"message_piece_id {self.message_piece_id} is not covered by the scorable, which names {piece_ids}."
+            )
+        return self
+
+    def _check_score_value(self) -> None:
+        """
+        Validate ``score_value`` against ``status`` and ``score_type`` constraints.
+
+        Raises:
+            ValueError: If the value contradicts the status, or is incompatible with the
+                score-type constraints.
+        """
+        if self.status is ScoreStatus.UNDETERMINED:
+            if self.score_value is not None:
+                raise ValueError(f"An undetermined score carries no value, got {self.score_value!r}.")
+            return
+        if self.score_value is None:
+            raise ValueError("A complete score requires a score_value. Set status to UNDETERMINED instead.")
+
+        score_value = str(self.score_value)
+        if self.score_type == "true_false" and score_value.lower() not in ("true", "false"):
+            raise ValueError(f"True False scorers must have a score value of 'true' or 'false' not {score_value}")
         if self.score_type == "float_scale":
             try:
-                numeric = float(self.score_value)
+                numeric = float(score_value)
             except ValueError as e:
-                raise ValueError(f"Float scale scorers require a numeric score value. Got {self.score_value}") from e
+                raise ValueError(f"Float scale scorers require a numeric score value. Got {score_value}") from e
             if not (0 <= numeric <= 1):
-                raise ValueError(f"Float scale scorers must have a score value between 0 and 1. Got {self.score_value}")
+                raise ValueError(f"Float scale scorers must have a score value between 0 and 1. Got {score_value}")
 
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
+    @property
+    def is_undetermined(self) -> bool:
+        """Whether no verdict was reachable for this score."""
+        return self.status is ScoreStatus.UNDETERMINED
+
     def get_value(self) -> bool | float:
         """
         Return the value of the score based on its type.
@@ -140,12 +217,18 @@ class Score(BaseModel):
             bool | float: Parsed score value.
 
         Raises:
+            UndeterminedScoreError: If no verdict was reachable, so there is no value to read.
             ValueError: If the score type is unknown.
         """
+        if self.status is ScoreStatus.UNDETERMINED or self.score_value is None:
+            raise UndeterminedScoreError(
+                "This score is undetermined and has no value. Check Score.is_undetermined before reading it."
+            )
+        score_value = str(self.score_value)
         if self.score_type == "true_false":
-            return self.score_value.lower() == "true"
+            return score_value.lower() == "true"
         if self.score_type == "float_scale":
-            return float(self.score_value)
+            return float(score_value)
 
         raise ValueError(f"Unknown scorer type: {self.score_type}")
 
@@ -157,10 +240,11 @@ class Score(BaseModel):
             str: Human-readable score summary.
         """
         category_str = f": {', '.join(self.score_category) if self.score_category else ''}"
+        value = self.score_value if self.score_value is not None else self.status.value
         if self.scorer_class_identifier:
             scorer_type = self.scorer_class_identifier.class_name or "Unknown"
-            return f"{scorer_type}{category_str}: {self.score_value}"
-        return f"{category_str}: {self.score_value}"
+            return f"{scorer_type}{category_str}: {value}"
+        return f"{category_str}: {value}"
 
     __repr__ = __str__
 
@@ -180,10 +264,11 @@ class UnvalidatedScore:
     score_rationale: str
     score_metadata: dict[str, str | int | float] | None
     scorer_class_identifier: ComponentIdentifier
-    message_piece_id: uuid.UUID | str
+    message_piece_id: uuid.UUID | str | None
     objective: str | None
     id: uuid.UUID | str | None = None
     timestamp: datetime | None = None
+    scorable: ScorableUnion | None = None
 
     def to_score(self, *, score_value: str, score_type: ScoreType) -> Score:
         """
@@ -207,6 +292,7 @@ class UnvalidatedScore:
             score_metadata=self.score_metadata,
             scorer_class_identifier=self.scorer_class_identifier,
             message_piece_id=self.message_piece_id,
+            scorable=self.scorable,
             timestamp=self.timestamp if self.timestamp else datetime.now(tz=timezone.utc),
             objective=self.objective,
         )

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
         FloatScaleScorerAllCategories,
         FloatScaleScorerByCategory,
     )
-    from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+    from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
     from pyrit.score.float_scale.insecure_code_scorer import InsecureCodeScorer, render_insecure_code_system_prompt
     from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
@@ -128,7 +128,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
     from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
     from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
-    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+    from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
     from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -151,6 +151,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FloatScaleScorerAllCategories": "pyrit.score.float_scale.float_scale_score_aggregator",
     "FloatScaleScorerByCategory": "pyrit.score.float_scale.float_scale_score_aggregator",
     "FloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
+    "MessageFloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
+    "MessageTrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "FloatScaleThresholdScorer": "pyrit.score.true_false.float_scale_threshold_scorer",
     "GandalfScorer": "pyrit.score.true_false.gandalf_scorer",
     "HarmHumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",

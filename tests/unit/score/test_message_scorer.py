@@ -4,15 +4,18 @@
 import dataclasses
 import inspect
 import uuid
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory.memory_models import ScorableContentEntry
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
     Condition,
+    ContentEntryScorable,
     MatchesObjective,
     Message,
     MessagePiece,
@@ -23,16 +26,15 @@ from pyrit.score import (
     ContentScorable,
     MessageScorable,
     MessageScorer,
+    MessageTrueFalseScorer,
     Scorable,
     Scorer,
     ScorerPromptValidator,
-    TrueFalseScorer,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import MessageScoringOptions, extract_objective_from_previous_turn
 
 
-@dataclasses.dataclass(frozen=True)
 class UnsupportedScorable(Scorable):
     """A scorable kind no message scorer handles."""
 
@@ -50,7 +52,7 @@ class PermissiveValidator(ScorerPromptValidator):
         return True
 
 
-class RecordingScorer(TrueFalseScorer):
+class RecordingScorer(MessageTrueFalseScorer):
     """A message scorer that remembers what it was asked to score."""
 
     def __init__(
@@ -176,7 +178,7 @@ class TestScorableResolution:
                 )
             )
 
-    async def test_content_scorable_is_never_persisted(self):
+    async def test_content_scorable_does_not_persist_a_message_piece(self):
         scorer = RecordingScorer()
 
         scores = await scorer.score_async(scorable=ContentScorable(value="loose text"))
@@ -187,6 +189,41 @@ class TestScorableResolution:
         assert scored_piece.not_in_memory is True
         # Memory cannot link a score to a piece it never stored.
         assert scores[0].message_piece_id is None
+
+    async def test_score_image_copies_source_before_persisting_anchor(
+        self,
+        sqlite_instance: MemoryInterface,
+        tmp_path: Path,
+    ):
+        source = tmp_path / "source.png"
+        image_bytes = b"\x89PNG scorer evidence"
+        source.write_bytes(image_bytes)
+        scorer = RecordingScorer()
+
+        score = (await scorer.score_image_async(str(source)))[0]
+
+        assert isinstance(score.scorable, ContentEntryScorable)
+        stored_content = sqlite_instance.get_scorable_content(content_ids=[score.scorable.content_id])[
+            score.scorable.content_id
+        ]
+        assert stored_content.value != str(source)
+        source.unlink()
+        assert Path(stored_content.value).read_bytes() == image_bytes
+
+        rescored = await scorer.score_async(scorable=score.scorable)
+        assert rescored[0].scorable == score.scorable
+
+    async def test_rescoring_stored_content_keeps_its_anchor(self, sqlite_instance: MemoryInterface):
+        """Re-scoring must point at the row the content already has, not copy it into a new one."""
+        scorer = RecordingScorer()
+        first = (await scorer.score_async(scorable=ContentScorable(value="loose text")))[0]
+        anchor = first.scorable
+        assert isinstance(anchor, ContentEntryScorable)
+
+        second = (await scorer.score_async(scorable=anchor))[0]
+
+        assert second.scorable == anchor
+        assert len(sqlite_instance._query_entries(ScorableContentEntry)) == 1
 
     async def test_message_scorer_uses_injected_resolver(self):
         message = _assistant_message()
@@ -203,6 +240,18 @@ class TestScorableResolution:
 
         with pytest.raises(TypeError, match="cannot score UnsupportedScorable"):
             await scorer.score_async(scorable=UnsupportedScorable(uri="/tmp/out.txt"))  # type: ignore[arg-type]
+
+    def test_stamping_an_unknown_anchor_raises_type_error(self):
+        score = MagicMock(spec=Score)
+        score.scorable = None
+
+        with pytest.raises(TypeError, match="cannot anchor a score"):
+            MessageScorer._stamp_scorable(
+                message=_assistant_message(),
+                scores=[score],
+                anchor=UnsupportedScorable(uri="/tmp/out.txt"),
+                persisted_piece_ids=None,
+            )
 
 
 class TestScorerBaseIsScorableAgnostic:
@@ -275,13 +324,43 @@ class TestScorableFilters:
         assert scores == []
         assert scorer.scored_messages == []
 
-    async def test_error_message_is_scored_when_not_skipping(self):
+    @pytest.mark.parametrize("skip_on_error_result", [True, False])
+    async def test_partly_errored_message_scores_only_readable_pieces(self, skip_on_error_result):
+        """One bad piece must neither discard nor reach the scorer beside readable content."""
+        scorer = RecordingScorer()
+        conversation_id = str(uuid.uuid4())
+        message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="blocked",
+                    original_value_data_type="error",
+                    response_error="blocked",
+                    conversation_id=conversation_id,
+                ),
+                MessagePiece(role="assistant", original_value="usable text", conversation_id=conversation_id),
+            ]
+        )
+        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+
+        scores = await scorer.score_async(
+            scorable=MessageScorable.from_message(message),
+            message_options=MessageScoringOptions(skip_on_error_result=skip_on_error_result),
+        )
+
+        assert len(scores) == 1
+        assert len(scorer.scored_messages) == 1
+        assert [piece.original_value for piece in scorer.scored_messages[0].message_pieces] == ["usable text"]
+
+    async def test_error_message_uses_fallback_when_not_skipping(self):
         scorer = RecordingScorer()
         message = _error_message()
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert scorer.scored_messages == []
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -336,7 +415,6 @@ class TestDeprecatedParameters:
             role="assistant",
             original_value="original",
             converted_value="converted",
-            response_error="blocked",
         ).to_message()
         message.set_response_not_in_memory()
 
@@ -346,7 +424,7 @@ class TestDeprecatedParameters:
         scored = scorer.scored_messages[0]
         assert scored.get_value() == "converted"
         assert scored.get_piece().role == "assistant"
-        assert scored.is_error()
+        assert not scored.is_error()
 
     async def test_message_does_not_widen_to_the_stored_conversation(self, sqlite_instance: MemoryInterface):
         """The shim scores the supplied message, never the whole conversation behind it."""
@@ -539,19 +617,44 @@ class TestInHandMessages:
         resolver.resolve.assert_not_called()
         assert scorer.scored_messages == [message]
 
-    async def test_score_message_async_preserves_ephemeral_error_state(self):
+    async def test_score_message_async_does_not_dispatch_ephemeral_unreadable_error(self):
         scorer = RecordingScorer()
         message = MessagePiece(
             role="assistant",
             original_value="",
             original_value_data_type="error",
-            response_error="blocked",
+            response_error="unknown",
         ).to_message()
         message.set_response_not_in_memory()
 
-        await scorer.score_message_async(message=message)
+        scores = await scorer.score_message_async(message=message)
 
-        assert scorer.scored_messages[0].is_error()
+        assert len(scores) == 1
+        assert scores[0].is_undetermined
+        assert scorer.scored_messages == []
+
+    async def test_score_message_async_detects_unmarked_ephemeral_message(self):
+        scorer = RecordingScorer()
+        message = MessagePiece(role="assistant", original_value="not stored").to_message()
+
+        score = (await scorer.score_message_async(message=message))[0]
+
+        assert score.message_piece_id is None
+        assert isinstance(score.scorable, ContentEntryScorable)
+
+    async def test_score_message_async_does_not_anchor_unmarked_ephemeral_multipart_message(self):
+        scorer = RecordingScorer()
+        message = Message(
+            message_pieces=[
+                MessagePiece(role="assistant", original_value="first"),
+                MessagePiece(role="assistant", original_value="second"),
+            ]
+        )
+
+        score = (await scorer.score_message_async(message=message))[0]
+
+        assert score.message_piece_id is None
+        assert score.scorable is None
 
     async def test_score_message_async_applies_message_options(self):
         scorer = RecordingScorer()

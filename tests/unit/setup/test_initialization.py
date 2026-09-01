@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
 import os
 import pathlib
 import tempfile
@@ -13,6 +14,7 @@ from pyrit.common.random_context import get_configured_random_seed
 from pyrit.common.singleton import Singleton
 from pyrit.registry import InitializerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 class TestLoadInitializersFromScripts:
@@ -223,6 +225,42 @@ class ScriptInit(PyRITInitializer):
                 )
 
         mock_load_environment.assert_not_awaited()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
+    async def test_initializer_failure_raises_by_default(self, mock_load_environment, mock_set_memory):
+        failing = mock.MagicMock(spec=PyRITInitializer)
+        failing.validate.side_effect = ValueError("invalid initializer")
+        healthy = mock.MagicMock(spec=PyRITInitializer)
+        healthy.initialize_with_tracking_async = mock.AsyncMock()
+
+        with pytest.raises(ValueError, match="invalid initializer"):
+            await initialize_pyrit_async(
+                memory_db_type=IN_MEMORY,
+                initializers=[failing, healthy],
+            )
+
+        healthy.validate.assert_not_called()
+        healthy.initialize_with_tracking_async.assert_not_awaited()
+
+    @mock.patch("pyrit.memory.central_memory.CentralMemory.set_memory_instance")
+    @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
+    async def test_initializer_failure_can_be_logged_and_skipped(self, mock_load_environment, mock_set_memory, caplog):
+        failing = mock.MagicMock(spec=PyRITInitializer)
+        failing.validate.side_effect = ValueError("invalid initializer")
+        healthy = mock.MagicMock(spec=PyRITInitializer)
+        healthy.initialize_with_tracking_async = mock.AsyncMock()
+
+        with caplog.at_level(logging.ERROR, logger="pyrit.setup.initialization"):
+            await initialize_pyrit_async(
+                memory_db_type=IN_MEMORY,
+                initializers=[failing, healthy],
+                raise_on_initializer_error=False,
+            )
+
+        healthy.validate.assert_called_once_with()
+        healthy.initialize_with_tracking_async.assert_awaited_once_with()
+        assert "Error executing initializer" in caplog.text
 
 
 @pytest.fixture

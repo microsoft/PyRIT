@@ -10,7 +10,11 @@ from unit.mocks import get_image_message_piece, store_message
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import MessagePiece
-from pyrit.score import MessageScorable, SubStringScorer, TrueFalseInverterScorer
+from pyrit.score import (
+    MessageScorable,
+    SubStringScorer,
+    TrueFalseInverterScorer,
+)
 
 
 @pytest.fixture

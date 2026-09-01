@@ -977,7 +977,7 @@ function ScenarioLaunchForm({
                   appearance="secondary"
                   icon={<SettingsRegular />}
                   type="button"
-                  onClick={() => onNavigate('config')}
+                  onClick={() => onNavigate('targets')}
                 >
                   Configure target to launch
                 </Button>

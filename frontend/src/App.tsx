@@ -9,6 +9,7 @@ import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import Initializers from './components/Initializers/Initializers'
+import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
 import ScenarioDetail from './components/Scenarios/ScenarioDetail'
@@ -30,7 +31,7 @@ import {
   targetModelName,
   targetType,
 } from './utils/targetIdentity'
-import { attacksApi, versionApi } from './services/api'
+import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { useTour } from './hooks/useTour'
 
@@ -41,9 +42,10 @@ const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
   history: '/history',
-  config: '/config',
+  targets: '/targets',
   initializers: '/initializers',
   scenarios: '/scanner',
+  configuration: '/config',
 }
 
 /**
@@ -118,6 +120,21 @@ function App() {
   const routeAttackId = conversationMatch?.params.attackId ?? attackMatch?.params.attackId ?? null
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
+  const [canManageConfiguration, setCanManageConfiguration] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    authApi.getAccess()
+      .then((access) => {
+        if (!cancelled) setCanManageConfiguration(access.isAdmin)
+      })
+      .catch(() => {
+        if (!cancelled) setCanManageConfiguration(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Read once, before the effect below can overwrite what the user picked.
   const [storedLabels] = useState(readStoredGlobalLabels)
@@ -437,6 +454,7 @@ function App() {
             currentView={currentView}
             onNavigate={handleNavigate}
             onOpenFeedback={() => setFeedbackOpen(true)}
+            canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
           >
             <Routes>
@@ -465,7 +483,7 @@ function App() {
                 element={chatElement}
               />
               <Route
-                path="/config"
+                path="/targets"
                 element={
                   <TargetConfig
                     activeTarget={activeTarget}
@@ -486,6 +504,7 @@ function App() {
                 }
               />
               <Route path="/scenario-history/:scenarioResultId" element={<ScenarioRunStarted />} />
+              <Route path="/config" element={<Configuration />} />
               <Route
                 path="/history"
                 element={

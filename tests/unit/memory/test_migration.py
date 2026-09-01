@@ -318,6 +318,24 @@ def _config_for(connection):
     return config
 
 
+def test_scorable_content_migration_creates_hash_column():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "scorable-content.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                command.upgrade(_config_for(connection), "5a1d3c7e9f04")
+                columns = {
+                    column["name"]: column for column in inspect(connection).get_columns("ScorableContentEntries")
+                }
+
+            assert columns["value"]["nullable"] is False
+            assert columns["value_sha256"]["nullable"] is False
+            assert columns["value_sha256"]["type"].length == 64
+        finally:
+            engine.dispose()
+
+
 def test_backfill_links_attack_results_via_conversation_id():
     """Upgrading from the pre-foreign-key revision backfills
     attribution_parent_id + attribution_data on AttackResultEntries by

@@ -360,6 +360,24 @@ class PromptTarget(Identifiable):
             ).to_message(),
         )
 
+    async def reset_conversation_async(self, *, conversation_id: str) -> None:
+        """
+        Release any target-side state held for a conversation.
+
+        The attack execution scope calls this for objective-target conversations
+        recorded at the common dispatch boundary. Targets that keep external state
+        keyed by conversation (a websocket connection, a browser page, an upstream
+        session) override this to close or discard it. Targets that are stateless
+        between calls need not override it.
+
+        This is best-effort cleanup, so implementations should not raise for a
+        conversation id they do not recognize, and should be safe to call more
+        than once for the same id.
+
+        Args:
+            conversation_id (str): The conversation id to release state for.
+        """
+
     def dispose_db_engine(self) -> None:
         """
         Dispose database engine to release database connections and resources.

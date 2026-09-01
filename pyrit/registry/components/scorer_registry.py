@@ -97,6 +97,18 @@ class ScorerRegistry(Registry["Scorer", ScorerMetadata]):
 
         return score
 
+    def _should_register_discovered_class(self, cls: type[Scorer]) -> bool:
+        """
+        Exclude private scorer implementation classes from the buildable catalog.
+
+        Args:
+            cls (type[Scorer]): The discovered scorer class.
+
+        Returns:
+            bool: True for public scorer classes.
+        """
+        return not cls.__name__.startswith("_")
+
     def _identifier_type(self) -> type[ScorerIdentifier]:
         """Return ``ScorerIdentifier`` so its ``Param.*`` markers drive derivation."""
         return ScorerIdentifier

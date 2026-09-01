@@ -448,13 +448,6 @@ class Jailbreak(Scenario):
         num_attempts = self.params.get("num_jailbreak_attempts", 1)
 
         technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())
-        selected_names = {technique.value for technique in context.scenario_techniques}
-        missing = selected_names - set(technique_factories)
-        if missing:
-            raise ValueError(
-                "Jailbreak selected techniques that are no longer available: "
-                f"{sorted(missing)}. Refresh the plan and select a supported delivery method."
-            )
 
         prompt_sending_factory = technique_factories.get(_PROMPT_SENDING)
         system_selected = _JAILBREAK_SYSTEM_PROMPT in technique_factories
