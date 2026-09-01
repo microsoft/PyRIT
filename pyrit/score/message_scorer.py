@@ -969,6 +969,8 @@ class MessageScorer(Scorer):
         different questions. An unread role means the evidence belongs to another scorer, so
         this one stays silent; an unsupported data type means this scorer was handed evidence
         it should have judged but cannot read, which its family reports as a fallback score.
+        ``Message`` validation requires every piece in one message to have the same role, so
+        readable evidence from an unsupported role cannot mask an unreadable supported role.
 
         Args:
             message (Message): The acquired message.
