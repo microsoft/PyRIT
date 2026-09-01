@@ -489,7 +489,6 @@ function App() {
                   />
                 }
               />
-              <Route path="/initializers" element={<Navigate to="/config" replace />} />
               <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
                 path="/scanner/:scenarioName"
