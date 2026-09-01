@@ -68,6 +68,9 @@ class AegisHarmCategory(Enum):
 _HUMAN_LABELED_HARM_PROFILES: dict[AegisHarmCategory, tuple[str, str]] = {
     AegisHarmCategory.VIOLENCE: ("violence", "violence.yaml"),
     AegisHarmCategory.HATE_IDENTITY_HATE: ("hate_speech", "hate_speech.yaml"),
+    AegisHarmCategory.MALWARE: ("cyber", "cyber.yaml"),
+    AegisHarmCategory.SEXUAL: ("sexual", "sexual.yaml"),
+    AegisHarmCategory.SUICIDE_AND_SELF_HARM: ("self_harm", "self_harm.yaml"),
 }
 
 
