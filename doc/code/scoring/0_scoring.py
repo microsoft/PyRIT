@@ -132,7 +132,9 @@ print(df.to_string(index=False))
 # `ScorerPromptValidator`, and returns no score when the message carries no role it reads.
 # Prepended (`simulated_assistant`) turns are fabricated history, so a scorer must opt in to
 # read them. Every scorer still receives a failed response, because a scorer whose evidence
-# never came from the response must run even when the response failed.
+# never came from the response must run even when the response failed. The deprecated
+# `role_filter` and `skip_on_error_result` arguments remain supported until removal, but new
+# code should use `supported_roles` and the scorer's unreadable-evidence fallback instead.
 # %% [markdown]
 # ## Scoring directly
 #

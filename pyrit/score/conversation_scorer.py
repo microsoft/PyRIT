@@ -218,7 +218,7 @@ def create_conversation_scorer(
         scorer (Scorer): The true/false or float-scale scorer to wrap for
             conversation-level evaluation. It must support text ``ContentScorable`` evidence.
         validator (ScorerPromptValidator | None): Optional validator override.
-            If not provided, uses the wrapped scorer's validator.
+            If not provided, uses the conversation scorer's default text validator.
 
     Returns:
         Scorer: A ConversationScorer instance that is also an instance of the wrapped scorer's type.

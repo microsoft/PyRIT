@@ -210,8 +210,8 @@ async def test_float_scale_threshold_scorer_single_score_attribution_unchanged()
     assert score.score_metadata["original_float_value"] == pytest.approx(0.9)
 
 
-async def test_float_scale_threshold_scorer_propagates_empty_scores():
-    """A threshold cannot classify a verdict that its child did not make."""
+async def test_float_scale_threshold_scorer_aggregates_empty_scores():
+    """The configured aggregator defines the empty-input value."""
     memory = MagicMock(MemoryInterface)
 
     # Mock a scorer that returns empty list (all pieces filtered)
@@ -229,12 +229,12 @@ async def test_float_scale_threshold_scorer_propagates_empty_scores():
 
         result_scores = await float_scale_threshold_scorer.score_text_async(text="mock example")
 
-        assert result_scores == []
-        memory.add_scores_to_memory.assert_not_called()
+        assert len(result_scores) == 1
+        assert result_scores[0].get_value() is False
+        memory.add_scores_to_memory.assert_called_once()
 
 
-async def test_float_scale_threshold_scorer_does_not_aggregate_empty_scores():
-    """Child silence is policy, so it bypasses the configured value aggregator."""
+async def test_float_scale_threshold_scorer_raises_on_empty_when_configured():
     from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleScoreAggregator
 
     memory = MagicMock(MemoryInterface)
@@ -254,9 +254,8 @@ async def test_float_scale_threshold_scorer_does_not_aggregate_empty_scores():
             scorer=scorer, threshold=0.5, float_scale_aggregator=FloatScaleScoreAggregator.MAX_RAISE_ON_EMPTY
         )
 
-        result_scores = await float_scale_threshold_scorer.score_text_async(text="mock example")
-
-        assert result_scores == []
+        with pytest.raises(RuntimeError, match="No scores available for aggregation"):
+            await float_scale_threshold_scorer.score_text_async(text="mock example")
         memory.add_scores_to_memory.assert_not_called()
 
 

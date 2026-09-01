@@ -129,12 +129,10 @@ def _warn_retired_message_policy(
     skip_on_error_result: bool | None,
 ) -> None:
     """
-    Warn that per-call message policy is retired and no longer applied.
+    Warn that per-call message policy is retired.
 
-    Both settled before the scorer acquired its evidence, which decided for scorers whose
-    evidence is not the response and for scorers that widen a message into the conversation
-    behind it. Role is now declared on the scorer's validator, and an unreadable message
-    reaches the scorer, which reports what it could not determine.
+    The compatibility arguments continue to apply until removal. New code declares role
+    support on the scorer's validator and lets unreadable evidence reach the scorer fallback.
     """
     if role_filter is not None:
         print_deprecation_message(
@@ -148,6 +146,37 @@ def _warn_retired_message_policy(
             new_item="the scorer's unreadable-evidence fallback",
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
+
+
+def _legacy_policy_allows_message(
+    *,
+    message: Message,
+    role_filter: ChatMessageRole | None,
+    skip_on_error_result: bool,
+    should_score_blocked_content: bool,
+) -> bool:
+    """
+    Apply the deprecated per-call message filters.
+
+    Args:
+        message (Message): The message to filter.
+        role_filter (ChatMessageRole | None): Required role, when supplied.
+        skip_on_error_result (bool): Whether to skip unreadable error results.
+        should_score_blocked_content (bool): Whether partial blocked content is readable.
+
+    Returns:
+        bool: True when the message passes the compatibility filters.
+    """
+    if role_filter is not None and (not message.message_pieces or message.message_pieces[0].role != role_filter):
+        logger.debug("Skipping scoring due to legacy role filter mismatch.")
+        return False
+    if skip_on_error_result and not _readable_pieces(
+        message=message,
+        should_score_blocked_content=should_score_blocked_content,
+    ):
+        logger.debug("Skipping scoring due to legacy error-result policy.")
+        return False
+    return True
 
 
 class MessageScorer(Scorer):
@@ -274,24 +303,26 @@ class MessageScorer(Scorer):
             scorable (Scorable | None): Message-shaped evidence to acquire.
             expectation (ScoringExpectation | None): What to look for.
             objective (str | None): Deprecated objective string.
-            role_filter (ChatMessageRole | None): Deprecated and ignored. Declare
-                ``supported_roles`` on the scorer's validator instead.
-            skip_on_error_result (bool | None): Deprecated and ignored. An unreadable message
-                now scores undetermined rather than being skipped before it is acquired.
+            role_filter (ChatMessageRole | None): Deprecated compatibility filter. Declare
+                ``supported_roles`` on the scorer's validator for new code.
+            skip_on_error_result (bool | None): Deprecated compatibility policy. If True,
+                unreadable error results are skipped.
             infer_objective_from_request (bool | None): Deprecated inference policy.
 
         Returns:
             list[Score]: The persisted scores, or an empty list when the scorer does not read
                 this message's role.
         """
-        resolved_expectation, infer_objective = self._consolidate_message_inputs(
-            message=message,
-            scorable=scorable,
-            expectation=expectation,
-            objective=objective,
-            role_filter=role_filter,
-            skip_on_error_result=skip_on_error_result,
-            infer_objective_from_request=infer_objective_from_request,
+        resolved_expectation, infer_objective, legacy_role_filter, legacy_skip_on_error = (
+            self._consolidate_message_inputs(
+                message=message,
+                scorable=scorable,
+                expectation=expectation,
+                objective=objective,
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
+                infer_objective_from_request=infer_objective_from_request,
+            )
         )
         self._validate_expectation(expectation=resolved_expectation)
 
@@ -303,12 +334,16 @@ class MessageScorer(Scorer):
                 message=message,
                 expectation=resolved_expectation,
                 infer_objective_from_request=infer_objective,
+                role_filter=legacy_role_filter,
+                skip_on_error_result=legacy_skip_on_error,
             )
         else:
             scores = await self._score_message_scorable_async(
                 scorable=cast("Scorable", scorable),
                 expectation=resolved_expectation,
                 infer_objective_from_request=infer_objective,
+                role_filter=legacy_role_filter,
+                skip_on_error_result=legacy_skip_on_error,
             )
         return await self._validate_and_persist_scores_async(scores=scores)
 
@@ -365,10 +400,8 @@ class MessageScorer(Scorer):
             objectives (Sequence[str]): The objectives/tasks based on which the prompts should be scored.
                 Must have the same length as messages.
             batch_size (int): The maximum batch size for processing prompts. Defaults to 10.
-            role_filter (ChatMessageRole | None): Deprecated and ignored. Declare
-                ``supported_roles`` on the scorer's validator instead.
-            skip_on_error_result (bool | None): Deprecated and ignored. An unreadable message now
-                scores undetermined rather than being skipped before it is acquired.
+            role_filter (ChatMessageRole | None): Deprecated compatibility filter.
+            skip_on_error_result (bool | None): Deprecated compatibility policy.
             infer_objective_from_request (bool): If True and objective is empty, attempt to infer
                 the objective from the request. Defaults to False.
 
@@ -402,9 +435,22 @@ class MessageScorer(Scorer):
                 for message, objective in zip(messages, resolved_objectives, strict=True)
             ]
 
+        filtered_pairs = [
+            (message, objective)
+            for message, objective in zip(messages, resolved_objectives, strict=True)
+            if _legacy_policy_allows_message(
+                message=message,
+                role_filter=role_filter,
+                skip_on_error_result=bool(skip_on_error_result),
+                should_score_blocked_content=self.should_score_blocked_content,
+            )
+        ]
+        if not filtered_pairs:
+            return []
+
         return await self.score_batch_async(
-            scorables=[MessageScorable.from_message(message) for message in messages],
-            expectations=[ScoringExpectation(objective=objective) for objective in resolved_objectives],
+            scorables=[MessageScorable.from_message(message) for message, _ in filtered_pairs],
+            expectations=[ScoringExpectation(objective=objective) for _, objective in filtered_pairs],
             batch_size=batch_size,
         )
 
@@ -421,18 +467,17 @@ class MessageScorer(Scorer):
         """
         Score a response using an objective scorer and optional auxiliary scorers.
 
-        Every scorer receives the response as it arrived. Which roles a scorer reads, and
-        what an unreadable message produces, are the scorer's own declarations, applied after
-        it acquires its evidence. Filtering here would decide for scorers whose evidence never
-        came from the response at all.
+        Every scorer receives the response as it arrived unless a deprecated compatibility
+        filter skips it. Otherwise, which roles a scorer reads and what an unreadable message
+        produces are the scorer's own declarations.
 
         Args:
             response (Message): Response containing pieces to score.
             objective_scorer (Scorer | None): The main scorer to determine success. Defaults to None.
             auxiliary_scorers (list[Scorer] | None): List of auxiliary scorers to apply. Defaults to None.
-            role_filter (ChatMessageRole | None): Deprecated and ignored.
+            role_filter (ChatMessageRole | None): Deprecated compatibility filter.
             objective (str | None): Task/objective for scoring context. Defaults to None.
-            skip_on_error_result (bool | None): Deprecated and ignored.
+            skip_on_error_result (bool | None): Deprecated compatibility policy.
 
         Returns:
             dict[str, list[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
@@ -443,6 +488,7 @@ class MessageScorer(Scorer):
         """
         _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         result: dict[str, list[Score]] = {"auxiliary_scores": [], "objective_scores": []}
+        expectation = ScoringExpectation(objective=objective)
 
         if not response:
             raise ValueError("Response must be provided for scoring.")
@@ -450,10 +496,12 @@ class MessageScorer(Scorer):
         # If no objective_scorer is provided, only run auxiliary_scorers if present
         if objective_scorer is None:
             if auxiliary_scorers:
-                aux_scores = await MessageScorer.score_response_multiple_scorers_async(
+                aux_scores = await MessageScorer._score_response_multiple_scorers_async(
                     response=response,
                     scorers=auxiliary_scorers,
-                    objective=objective,
+                    expectation=expectation,
+                    role_filter=role_filter,
+                    skip_on_error_result=skip_on_error_result,
                 )
                 result["auxiliary_scores"] = aux_scores
             # objective_scores remains empty
@@ -461,15 +509,19 @@ class MessageScorer(Scorer):
 
         # Run auxiliary and objective scoring in parallel if auxiliary_scorers is provided
         if auxiliary_scorers:
-            aux_task = MessageScorer.score_response_multiple_scorers_async(
+            aux_task = MessageScorer._score_response_multiple_scorers_async(
                 response=response,
                 scorers=auxiliary_scorers,
-                objective=objective,
+                expectation=expectation,
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
             )
             obj_task = MessageScorer._score_response_with_scorer_async(
                 scorer=objective_scorer,
                 response=response,
-                expectation=ScoringExpectation(objective=objective),
+                expectation=expectation,
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
             )
             aux_scores, obj_scores = await asyncio.gather(aux_task, obj_task)
             result["auxiliary_scores"] = aux_scores
@@ -478,7 +530,9 @@ class MessageScorer(Scorer):
             obj_scores = await MessageScorer._score_response_with_scorer_async(
                 scorer=objective_scorer,
                 response=response,
-                expectation=ScoringExpectation(objective=objective),
+                expectation=expectation,
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
             )
             result["objective_scores"] = obj_scores
         return result
@@ -501,23 +555,47 @@ class MessageScorer(Scorer):
         Args:
             response (Message): The response containing pieces to score.
             scorers (list[Scorer]): List of scorers to apply.
-            role_filter (ChatMessageRole | None): Deprecated and ignored.
+            role_filter (ChatMessageRole | None): Deprecated compatibility filter.
             objective (str | None): Optional objective description for scoring context.
-            skip_on_error_result (bool | None): Deprecated and ignored.
+            skip_on_error_result (bool | None): Deprecated compatibility policy.
 
         Returns:
             list[Score]: All scores from all scorers
         """
         _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
+        return await MessageScorer._score_response_multiple_scorers_async(
+            response=response,
+            scorers=scorers,
+            expectation=ScoringExpectation(objective=objective),
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result,
+        )
+
+    @staticmethod
+    async def _score_response_multiple_scorers_async(
+        *,
+        response: Message,
+        scorers: list[Scorer],
+        expectation: ScoringExpectation,
+        role_filter: ChatMessageRole | None,
+        skip_on_error_result: bool | None,
+    ) -> list[Score]:
+        """
+        Score a response with each scorer after applying compatibility filters.
+
+        Returns:
+            list[Score]: All scores from applicable scorers.
+        """
         if not scorers:
             return []
 
-        expectation = ScoringExpectation(objective=objective)
         tasks = [
             MessageScorer._score_response_with_scorer_async(
                 scorer=scorer,
                 response=response,
                 expectation=expectation,
+                role_filter=role_filter,
+                skip_on_error_result=skip_on_error_result,
             )
             for scorer in scorers
         ]
@@ -534,6 +612,8 @@ class MessageScorer(Scorer):
         scorer: Scorer,
         response: Message,
         expectation: ScoringExpectation,
+        role_filter: ChatMessageRole | None = None,
+        skip_on_error_result: bool | None = None,
     ) -> list[Score]:
         """
         Name the response as evidence and hand it to the scorer.
@@ -541,6 +621,15 @@ class MessageScorer(Scorer):
         Returns:
             list[Score]: Scores from the scorer.
         """
+        if not _legacy_policy_allows_message(
+            message=response,
+            role_filter=role_filter,
+            skip_on_error_result=bool(skip_on_error_result) and isinstance(scorer, MessageScorer),
+            should_score_blocked_content=(
+                scorer.should_score_blocked_content if isinstance(scorer, MessageScorer) else True
+            ),
+        ):
+            return []
         return await scorer.score_async(
             scorable=MessageScorable.from_message(response),
             expectation=expectation,
@@ -556,7 +645,7 @@ class MessageScorer(Scorer):
         role_filter: ChatMessageRole | None,
         skip_on_error_result: bool | None,
         infer_objective_from_request: bool | None,
-    ) -> tuple[ScoringExpectation | None, bool]:
+    ) -> tuple[ScoringExpectation | None, bool, ChatMessageRole | None, bool]:
         if message is not None and scorable is not None:
             raise ValueError("Pass either 'message' or 'scorable', not both.")
         if message is None and scorable is None:
@@ -576,7 +665,7 @@ class MessageScorer(Scorer):
         _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
 
         resolved_expectation = ScoringExpectation(objective=objective) if objective is not None else expectation
-        return resolved_expectation, bool(infer_objective_from_request)
+        return resolved_expectation, bool(infer_objective_from_request), role_filter, bool(skip_on_error_result)
 
     async def _score_scorable_async(
         self,
@@ -594,6 +683,8 @@ class MessageScorer(Scorer):
             scorable=scorable,
             expectation=expectation,
             infer_objective_from_request=False,
+            role_filter=None,
+            skip_on_error_result=False,
         )
 
     async def _score_message_scorable_async(
@@ -602,6 +693,8 @@ class MessageScorer(Scorer):
         scorable: Scorable,
         expectation: ScoringExpectation | None,
         infer_objective_from_request: bool,
+        role_filter: ChatMessageRole | None,
+        skip_on_error_result: bool,
     ) -> list[Score]:
         """
         Resolve a message scorable and score the message it names.
@@ -611,6 +704,8 @@ class MessageScorer(Scorer):
             expectation (ScoringExpectation | None): What to look for.
             infer_objective_from_request (bool): Deprecated; read the objective from the
                 previous turn when the expectation carries none.
+            role_filter (ChatMessageRole | None): Deprecated compatibility filter.
+            skip_on_error_result (bool): Deprecated compatibility policy.
 
         Returns:
             list[Score]: The scores, or an empty list when the scorer does not read this role.
@@ -624,6 +719,8 @@ class MessageScorer(Scorer):
             expectation=expectation,
             infer_objective_from_request=infer_objective_from_request,
             anchor=scorable,
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result,
         )
 
     async def _score_resolved_message_async(
@@ -633,6 +730,8 @@ class MessageScorer(Scorer):
         expectation: ScoringExpectation | None,
         infer_objective_from_request: bool,
         anchor: Scorable | None = None,
+        role_filter: ChatMessageRole | None = None,
+        skip_on_error_result: bool = False,
     ) -> list[Score]:
         """
         Run the message-scoring pipeline over an acquired message.
@@ -644,6 +743,8 @@ class MessageScorer(Scorer):
                 previous turn when the expectation carries none.
             anchor (Scorable | None): The scorable the caller named, when the message was
                 acquired from one. Scores anchor on it rather than on the acquired message.
+            role_filter (ChatMessageRole | None): Deprecated compatibility filter.
+            skip_on_error_result (bool): Deprecated compatibility policy.
 
         Returns:
             list[Score]: The scores, or an empty list when the scorer does not read this role.
@@ -655,6 +756,14 @@ class MessageScorer(Scorer):
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
         objective = expectation.objective if expectation else None
+
+        if not _legacy_policy_allows_message(
+            message=message,
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result,
+            should_score_blocked_content=self.should_score_blocked_content,
+        ):
+            return []
 
         # A role this scorer does not read means the evidence is not its to judge, which is
         # neither a verdict nor a failed acquisition. The scorer says nothing at all.
@@ -724,7 +833,7 @@ class MessageScorer(Scorer):
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
         if not scores and scoring_message.message_pieces:
-            scores = self._build_fallback_score(message=message, objective=objective)
+            scores = self._build_fallback_score(message=scoring_message, objective=objective)
 
         self._finalize_message_scores(message=scoring_message, scores=scores, anchor=anchor)
 
@@ -1131,7 +1240,10 @@ class MessageScorer(Scorer):
         Raises:
             ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
         """
-        first_piece = message.message_pieces[0]
+        scorer_pieces = [
+            piece for piece in message.message_pieces if self._validator.is_role_supported(message_piece=piece)
+        ]
+        first_piece = scorer_pieces[0] if scorer_pieces else message.message_pieces[0]
         piece_id = first_piece.id or first_piece.original_prompt_id
         if piece_id is None:
             raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
@@ -1139,7 +1251,7 @@ class MessageScorer(Scorer):
         error_piece = next(
             (
                 piece
-                for piece in message.message_pieces
+                for piece in scorer_pieces
                 if not piece.is_blocked() and (piece.has_error() or piece.converted_value_data_type == "error")
             ),
             None,
@@ -1155,7 +1267,7 @@ class MessageScorer(Scorer):
                     objective=objective,
                 )
             ]
-        if all(piece.is_blocked() for piece in message.message_pieces):
+        if scorer_pieces and all(piece.is_blocked() for piece in scorer_pieces):
             rationale = f"The response was blocked with no content to score; returning {neutral_value}."
             description = f"Blocked response; returning {neutral_value}."
         else:

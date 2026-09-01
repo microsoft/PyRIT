@@ -120,8 +120,6 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             list[Score]: A list containing a single true/false Score based on the threshold comparison.
         """
         scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
-        if not scores:
-            return []
         return self._apply_threshold(
             scores=scores,
             expectation=expectation,

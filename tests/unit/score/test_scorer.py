@@ -1631,6 +1631,21 @@ class TestLegacyDirectScorerSubclass:
 
         assert len(results["objective_scores"]) == 1
 
+    async def test_scorer_score_response_async_preserves_role_filter(self, patch_central_database):
+        scorer = MockScorer()
+        message = store_message(
+            MessagePiece(role="assistant", original_value="response", conversation_id="legacy-role").to_message()
+        )
+
+        with pytest.warns(DeprecationWarning, match="role_filter"):
+            results = await Scorer.score_response_async(
+                response=message,
+                objective_scorer=scorer,
+                role_filter="user",
+            )
+
+        assert results["objective_scores"] == []
+
     async def test_scorer_score_response_multiple_scorers_async_still_dispatches(self, patch_central_database):
         scorer = MockScorer()
         message = store_message(
@@ -1877,10 +1892,10 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert scores[0].status == ScoreStatus.UNDETERMINED
         assert "processing" in scores[0].score_rationale
 
-    async def test_filtered_readable_piece_does_not_hide_transport_error(
+    async def test_filtered_error_piece_does_not_control_fallback(
         self, true_false_scorer_returns_empty, patch_central_database
     ):
-        """Fallback classification uses the original multipart response."""
+        """Fallback classification uses only the message view passed to the scorer."""
         response = Message(
             message_pieces=[
                 MessagePiece(
@@ -1904,8 +1919,9 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         )
 
         assert len(scores) == 1
-        assert scores[0].status == ScoreStatus.UNDETERMINED
-        assert "processing" in scores[0].score_rationale
+        assert scores[0].status == ScoreStatus.COMPLETE
+        assert scores[0].get_value() is False
+        assert "processing" not in scores[0].score_rationale
 
 
 class TestFloatScaleScorerEmptyScoreListRationale:

@@ -379,15 +379,28 @@ class TestScorableFilters:
         assert len(scorer.scored_messages) == 1
         assert [piece.original_value for piece in scorer.scored_messages[0].message_pieces] == ["usable text"]
 
-    @pytest.mark.parametrize("kwargs", [{"role_filter": "user"}, {"skip_on_error_result": True}])
-    async def test_retired_policy_parameters_warn_and_are_ignored(self, kwargs):
+    async def test_explicit_legacy_role_filter_still_applies(self):
         scorer = RecordingScorer()
         message = _assistant_message()
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
-            scores = await scorer.score_async(scorable=MessageScorable.from_message(message), **kwargs)
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(message),
+                role_filter="user",
+            )
 
-        assert len(scores) == 1
+        assert scores == []
+
+    async def test_explicit_legacy_skip_on_error_still_applies(self):
+        scorer = RecordingScorer()
+
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(_error_message()),
+                skip_on_error_result=True,
+            )
+
+        assert scores == []
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -480,8 +493,7 @@ class TestDeprecatedParameters:
 
         assert scorer.scored_objectives == ["legacy objective"]
 
-    async def test_retired_role_filter_is_ignored(self):
-        """Role policy now lives on the validator, so the per-call filter must not skip anything."""
+    async def test_retired_role_filter_is_preserved(self):
         scorer = RecordingScorer()
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
@@ -490,10 +502,9 @@ class TestDeprecatedParameters:
                 role_filter="user",
             )
 
-        assert len(scores) == 1
+        assert scores == []
 
-    async def test_retired_skip_on_error_result_is_ignored(self):
-        """An unreadable message now reports an undetermined verdict instead of being skipped."""
+    async def test_retired_skip_on_error_result_is_preserved(self):
         scorer = RecordingScorer()
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
@@ -502,7 +513,7 @@ class TestDeprecatedParameters:
                 skip_on_error_result=True,
             )
 
-        assert len(scores) == 1
+        assert scores == []
 
     async def test_explicit_false_legacy_boolean_emits_warning(self):
         scorer = RecordingScorer()

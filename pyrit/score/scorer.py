@@ -629,26 +629,27 @@ class Scorer(Identifiable, abc.ABC):
         Score a response through the message family. Deprecated.
 
         Response scoring is message-only policy, so it moved to ``MessageScorer``.
-        ``role_filter`` and ``skip_on_error_result`` are retired and ignored; a scorer
-        declares the roles it reads, and applies that after acquiring its evidence.
+        ``role_filter`` and ``skip_on_error_result`` are deprecated compatibility filters.
+        New code declares the roles it reads on the scorer.
 
         Returns:
             dict[str, list[Score]]: Auxiliary and objective scores, keyed by
                 ``auxiliary_scores`` and ``objective_scores``.
         """
-        from pyrit.score.message_scorer import MessageScorer, _warn_retired_message_policy
+        from pyrit.score.message_scorer import MessageScorer
 
         print_deprecation_message(
             old_item="Scorer.score_response_async",
             new_item="MessageScorer.score_response_async",
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
-        _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         return await MessageScorer.score_response_async(
             response=response,
             objective_scorer=objective_scorer,
             auxiliary_scorers=auxiliary_scorers,
+            role_filter=role_filter,
             objective=objective,
+            skip_on_error_result=skip_on_error_result,
         )
 
     @staticmethod
@@ -663,23 +664,24 @@ class Scorer(Identifiable, abc.ABC):
         """
         Score a response with several scorers through the message family. Deprecated.
 
-        ``role_filter`` and ``skip_on_error_result`` are retired and ignored.
+        ``role_filter`` and ``skip_on_error_result`` are deprecated compatibility filters.
 
         Returns:
             list[Score]: Every score the scorers produced.
         """
-        from pyrit.score.message_scorer import MessageScorer, _warn_retired_message_policy
+        from pyrit.score.message_scorer import MessageScorer
 
         print_deprecation_message(
             old_item="Scorer.score_response_multiple_scorers_async",
             new_item="MessageScorer.score_response_multiple_scorers_async",
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
-        _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         return await MessageScorer.score_response_multiple_scorers_async(
             response=response,
             scorers=scorers,
+            role_filter=role_filter,
             objective=objective,
+            skip_on_error_result=skip_on_error_result,
         )
 
     async def score_batch_async(
