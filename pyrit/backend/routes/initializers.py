@@ -4,12 +4,11 @@
 """
 Initializer API routes.
 
-Provides endpoints for listing, applying, registering, and removing initializers.
+Provides endpoints for listing, registering, and removing initializers.
 
 Route structure:
     GET    /api/initializers                — list all initializers
     GET    /api/initializers/settings       — list initializers configured in .pyrit_conf
-    POST   /api/initializers/{name}/apply   — apply an initializer immediately
     GET    /api/initializers/{name}         — get single initializer detail
     POST   /api/initializers                — register initializer from script
     DELETE /api/initializers/{name}         — unregister an initializer
@@ -21,8 +20,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
-    ApplyInitializerRequest,
-    ApplyInitializerResponse,
     ConfiguredInitializerSetting,
     CustomInitializerListResponse,
     InitializerSettingsResponse,
@@ -123,44 +120,6 @@ async def get_initializer_settings(  # pyrit-async-suffix-exempt
         InitializerSettingsResponse: The configured initializer list.
     """
     return InitializerSettingsResponse(configured=_configured_initializers(request))
-
-
-@router.post(
-    "/{initializer_name}/apply",
-    response_model=ApplyInitializerResponse,
-    dependencies=[Depends(require_admin)],
-    responses={
-        400: {"model": ProblemDetail, "description": "Initializer apply failed"},
-        404: {"model": ProblemDetail, "description": "Initializer not found"},
-    },
-)
-async def apply_initializer(  # pyrit-async-suffix-exempt
-    initializer_name: str,
-    body: ApplyInitializerRequest | None = None,
-) -> ApplyInitializerResponse:
-    """
-    Apply one initializer immediately without saving it.
-
-    Args:
-        initializer_name: Registry name of the initializer to apply.
-        body: Optional one-time parameters for this execution.
-
-    Returns:
-        ApplyInitializerResponse: Success metadata for the apply-now operation.
-    """
-    service = get_initializer_service()
-    try:
-        return await service.apply_initializer_async(
-            initializer_name=initializer_name,
-            parameters=body.parameters if body else None,
-        )
-    except KeyError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Initializer '{initializer_name}' not found",
-        ) from None
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
 
 @router.get(

@@ -1,4 +1,4 @@
-import { Button, Text } from '@fluentui/react-components'
+import { Text } from '@fluentui/react-components'
 
 import type { ConfiguredInitializerSetting, RegisteredInitializer } from '@/types'
 
@@ -9,19 +9,11 @@ import { useInitializersStyles } from './Initializers.styles'
 interface ConfiguredInitializersProps {
   items: ConfiguredInitializerSetting[]
   registeredInitializers: RegisteredInitializer[]
-  applyingInitializerKey?: string | null
-  onApply: (
-    key: string,
-    initializerName: string,
-    parameters?: Record<string, unknown> | null,
-  ) => Promise<void>
 }
 
 export default function ConfiguredInitializers({
   items,
   registeredInitializers,
-  applyingInitializerKey = null,
-  onApply,
 }: ConfiguredInitializersProps) {
   const styles = useInitializersStyles()
 
@@ -42,7 +34,6 @@ export default function ConfiguredInitializers({
           {items.map((item: ConfiguredInitializerSetting) => {
             const initializer = resolveRegisteredInitializer(item.initializer_name, registeredInitializers)
             const initializerKey = `${item.initializer_name}:${item.order_index}`
-            const isApplying = applyingInitializerKey === initializerKey
             return (
               <div
                 key={initializerKey}
@@ -50,25 +41,15 @@ export default function ConfiguredInitializers({
                 role="listitem"
                 data-testid={`configured-initializer-row-${item.order_index}`}
               >
-                <div className={styles.configuredHeader}>
-                  <div className={styles.titleGroup}>
-                    <Text weight="semibold" size={400}>{item.initializer_name}</Text>
-                    <Text size={300}>{initializer.description || 'No description available.'}</Text>
-                    <Text size={200} className={styles.metadataText}>
-                      Required env vars: {initializer.required_env_vars.length > 0
-                        ? initializer.required_env_vars.join(', ')
-                        : 'None'}
-                    </Text>
-                    <Text size={200} className={styles.metadataText}>Order: {item.order_index}</Text>
-                  </div>
-                  <Button
-                    appearance="secondary"
-                    className={styles.touchTarget}
-                    onClick={() => void onApply(initializerKey, item.initializer_name, item.parameters)}
-                    disabled={isApplying}
-                  >
-                    {isApplying ? 'Applying...' : 'Apply now'}
-                  </Button>
+                <div className={styles.titleGroup}>
+                  <Text weight="semibold" size={400}>{item.initializer_name}</Text>
+                  <Text size={300}>{initializer.description || 'No description available.'}</Text>
+                  <Text size={200} className={styles.metadataText}>
+                    Required env vars: {initializer.required_env_vars.length > 0
+                      ? initializer.required_env_vars.join(', ')
+                      : 'None'}
+                  </Text>
+                  <Text size={200} className={styles.metadataText}>Order: {item.order_index}</Text>
                 </div>
                 <div>
                   <Text weight="semibold" size={300}>Parameters</Text>

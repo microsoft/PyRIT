@@ -2,24 +2,21 @@
 # Licensed under the MIT license.
 
 """
-Initializer service for catalog, registration, and apply-now operations.
+Initializer service for catalog and registration operations.
 """
 
 import asyncio
 import logging
 from functools import lru_cache
-from typing import Any
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
-    ApplyInitializerResponse,
     CustomInitializerListResponse,
     CustomInitializerResponse,
     ListRegisteredInitializersResponse,
 )
 from pyrit.models.catalog.initializer import RegisteredInitializer
 from pyrit.registry import InitializerMetadata, InitializerRegistry
-from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +42,7 @@ def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> Regist
 
 class InitializerService:
     """
-    Service for listing, registering, and applying initializers.
+    Service for listing and registering initializers.
     """
 
     def __init__(self) -> None:
@@ -91,39 +88,6 @@ class InitializerService:
         """
         metadata = self._get_metadata_by_name().get(initializer_name)
         return _metadata_to_registered_initializer(metadata) if metadata else None
-
-    async def apply_initializer_async(
-        self,
-        *,
-        initializer_name: str,
-        parameters: dict[str, Any] | None = None,
-    ) -> ApplyInitializerResponse:
-        """
-        Build, validate, and run one initializer immediately.
-
-        The build/validate/initialize steps run in a worker thread because an initializer's
-        ``initialize_async`` can perform blocking I/O (e.g. target construction acquiring Entra
-        tokens). Running it inline would block the event loop and make the backend unresponsive
-        to concurrent requests for the duration of the apply.
-
-        Args:
-            initializer_name: The initializer registry name to execute.
-            parameters: Optional one-time parameters for this execution.
-
-        Returns:
-            ApplyInitializerResponse: Success metadata for the apply-now execution.
-        """
-        await asyncio.to_thread(
-            self._build_and_run_initializer,
-            initializer_name=initializer_name,
-            parameters=parameters,
-        )
-
-        return ApplyInitializerResponse(
-            initializer_name=initializer_name,
-            status="applied",
-            applied_parameters=parameters,
-        )
 
     async def register_initializer_async(
         self,
@@ -177,52 +141,6 @@ class InitializerService:
         """
         await asyncio.to_thread(self._registry.unregister_and_cleanup, initializer_name)
         logger.info("Unregistered initializer: %s", initializer_name)
-
-    def _build_and_run_initializer(
-        self,
-        *,
-        initializer_name: str,
-        parameters: dict[str, Any] | None,
-    ) -> None:
-        """
-        Build, validate, and run one initializer synchronously (for thread offload).
-
-        Args:
-            initializer_name: The initializer registry name to execute.
-            parameters: Optional parameters for this execution.
-        """
-        initializer = self._registry.create_and_configure(
-            initializer_name,
-            initializer_params=parameters or None,
-        )
-        self._validate_parameter_values(instance=initializer, parameters=parameters)
-        initializer.validate()
-        asyncio.run(initializer.initialize_async())
-
-    @staticmethod
-    def _validate_parameter_values(*, instance: PyRITInitializer, parameters: dict[str, Any] | None) -> None:
-        """
-        Validate raw parameter values against each declared parameter's type.
-
-        ``create_and_configure`` only checks parameter *names*; this coerces each provided
-        value with ``Parameter.coerce_value`` so a value that cannot satisfy its declared
-        type (e.g. a non-integer ``days`` or an out-of-set tag) is rejected up front with a
-        clear error instead of failing later when the initializer runs.
-
-        Args:
-            instance: The configured initializer whose ``supported_parameters`` declare the types.
-            parameters: The raw parameter values to validate.
-
-        Raises:
-            ValueError: If a value cannot be coerced to its parameter's declared type.
-        """
-        if not parameters:
-            return
-        parameter_by_name = {parameter.name: parameter for parameter in instance.supported_parameters}
-        for name, value in parameters.items():
-            parameter = parameter_by_name.get(name)
-            if parameter is not None:
-                parameter.coerce_value(value)
 
     def _get_metadata_by_name(self) -> dict[str, InitializerMetadata]:
         return {metadata.registry_name: metadata for metadata in self._registry.get_all_registered_class_metadata()}

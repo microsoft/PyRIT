@@ -6,18 +6,12 @@ export const useInitializersStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100%',
+    flex: 1,
     width: '100%',
     minWidth: 0,
+    minHeight: 0,
     maxWidth: '100%',
     gap: tokens.spacingVerticalL,
-    padding: tokens.spacingVerticalXXL,
-    overflowX: 'hidden',
-    overflowY: 'auto',
-    backgroundColor: tokens.colorNeutralBackground2,
-    '@media (max-width: 600px)': {
-      padding: `${tokens.spacingVerticalL} ${tokens.spacingHorizontalM}`,
-    },
   },
   header: {
     display: 'flex',
@@ -25,11 +19,6 @@ export const useInitializersStyles = makeStyles({
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: tokens.spacingVerticalM,
-  },
-  headerText: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXS,
   },
   headerActions: {
     display: 'flex',
@@ -82,13 +71,6 @@ export const useInitializersStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusLarge,
     backgroundColor: tokens.colorNeutralBackground1,
-  },
-  configuredHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: tokens.spacingHorizontalM,
-    flexWrap: 'wrap',
   },
   titleGroup: {
     display: 'flex',

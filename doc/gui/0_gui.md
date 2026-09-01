@@ -179,21 +179,14 @@ Targets can also be auto-populated by adding the `target` initializer to your `~
 
 ### Configuration Editor
 
-The **Configuration** page provides administrator-only editing for the files and scripts used to configure PyRIT. It has three tabs:
+The **Configuration** page provides administrator-only editing for the files and scripts used to configure PyRIT. It has four tabs:
 
 - **PyRIT Configuration** edits the active `.pyrit_conf` YAML file. The source may be a local file or an Azure Blob URI. Saving validates the configuration before replacing it.
 - **Environment & Secrets** lists the configured local dotenv files and Azure Key Vault bootstrap secrets. Content is loaded only after selecting a source. Saves validate the dotenv document and reject the update if the source changed since it was loaded.
+- **Initializers** shows the read-only startup sequence from the active `.pyrit_conf`, in run order, along with the catalog of registered initializers.
 - **Custom Initializers** registers or removes Python initializer scripts. This tab requires `allow_custom_initializers: true`; scripts are stored in the configured local directory or Azure Blob container and must define a concrete `PyRITInitializer` subclass.
 
 Use **Reload** to discard local edits and fetch the latest source content. Saved configuration and environment changes take effect after restarting PyRIT. Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
-
-### Initializers
-
-The **Initializers** page (in the left navigation) lets you review how PyRIT sets itself up at startup — for example, the `target` initializer's `tags` and `auto_group` settings.
-
-**Configured initializers** are read-only. They come from your active configuration file (`~/.pyrit/.pyrit_conf`) and run in the order shown. Update the configuration file and restart the backend to change this sequence.
-
-Use **Apply now** to re-run a configured initializer immediately against the running backend — handy for picking up an environment or setting change without a restart.
 
 ---
 

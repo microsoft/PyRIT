@@ -9,7 +9,7 @@ Canonical initializer catalog types (``RegisteredInitializer``) live in
 Initializer parameters are described by the shared ``pyrit.models.Parameter``.
 """
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,8 +18,6 @@ from pyrit.models import REGISTRY_NAME_PATTERN
 from pyrit.models.catalog.initializer import RegisteredInitializer
 
 __all__ = [
-    "ApplyInitializerRequest",
-    "ApplyInitializerResponse",
     "CustomInitializerListResponse",
     "CustomInitializerResponse",
     "ConfiguredInitializerSetting",
@@ -76,24 +74,4 @@ class InitializerSettingsResponse(BaseModel):
     configured: list[ConfiguredInitializerSetting] = Field(
         ...,
         description="Read-only initializers from the active ``.pyrit_conf``, in run order.",
-    )
-
-
-class ApplyInitializerRequest(BaseModel):
-    """Optional request body for applying an initializer immediately."""
-
-    parameters: dict[str, Any] | None = Field(
-        default=None,
-        description="Optional one-time parameters for this apply-now request.",
-    )
-
-
-class ApplyInitializerResponse(BaseModel):
-    """Response for a successful apply-now initializer run."""
-
-    initializer_name: str = Field(..., description="Initializer registry name that was applied.")
-    status: Literal["applied"] = Field(default="applied", description="Result status.")
-    applied_parameters: dict[str, Any] | None = Field(
-        default=None,
-        description="Parameters used for this apply-now execution.",
     )

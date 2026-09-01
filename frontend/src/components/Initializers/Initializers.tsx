@@ -12,7 +12,7 @@ import ConfiguredInitializers from './ConfiguredInitializers'
 import { useInitializersStyles } from './Initializers.styles'
 
 interface StatusMessage {
-  intent: 'success' | 'error'
+  intent: 'error'
   text: string
 }
 
@@ -27,7 +27,6 @@ export default function Initializers() {
   const [loading, setLoading] = useState(true)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
-  const [applyingInitializerKey, setApplyingInitializerKey] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -73,31 +72,12 @@ export default function Initializers() {
     setRefetchCount((currentCount: number) => currentCount + 1)
   }
 
-  const handleApply = async (
-    key: string,
-    initializerName: string,
-    parameters?: Record<string, unknown> | null,
-  ): Promise<void> => {
-    setApplyingInitializerKey(key)
-    try {
-      await initializersApi.applyNow(initializerName, { parameters })
-      setStatusMessage({ intent: 'success', text: `Applied ${initializerName}.` })
-    } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
-    } finally {
-      setApplyingInitializerKey(null)
-    }
-  }
-
   return (
-    <main className={styles.root} data-testid="initializers">
+    <section className={styles.root} data-testid="initializers">
       <div className={styles.header}>
-        <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">Initializers</Text>
-          <Text size={300}>
-            Browse every registered initializer and review the startup sequence from the active .pyrit_conf.
-          </Text>
-        </div>
+        <Text size={300}>
+          Browse every registered initializer and review the startup sequence from the active .pyrit_conf.
+        </Text>
         <div className={styles.headerActions}>
           <AvailableInitializersDialog
             registeredInitializers={registeredInitializers}
@@ -126,15 +106,11 @@ export default function Initializers() {
           <Spinner label="Loading initializer settings..." />
         </div>
       ) : (
-        <>
-          <ConfiguredInitializers
-            items={settings.configured}
-            registeredInitializers={registeredInitializers}
-            applyingInitializerKey={applyingInitializerKey}
-            onApply={handleApply}
-          />
-        </>
+        <ConfiguredInitializers
+          items={settings.configured}
+          registeredInitializers={registeredInitializers}
+        />
       )}
-    </main>
+    </section>
   )
 }

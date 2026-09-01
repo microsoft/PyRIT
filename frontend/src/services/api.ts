@@ -3,8 +3,6 @@ import { InteractionRequiredAuthError, type PublicClientApplication } from '@azu
 import { toApiError } from './errors'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
-  ApplyInitializerRequest,
-  ApplyInitializerResponse,
   TargetInstance,
   TargetListResponse,
   TargetCatalogResponse,
@@ -272,16 +270,6 @@ export const initializersApi = {
     await apiClient.delete(`/initializers/${encodeURIComponent(initializerName)}`)
   },
 
-  applyNow: async (
-    initializerName: string,
-    request?: ApplyInitializerRequest,
-  ): Promise<ApplyInitializerResponse> => {
-    const response = await apiClient.post(
-      `/initializers/${encodeURIComponent(initializerName)}/apply`,
-      request ?? {},
-    )
-    return response.data
-  },
 }
 
 export const attacksApi = {

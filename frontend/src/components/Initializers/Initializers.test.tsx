@@ -15,7 +15,6 @@ jest.mock('@/services/api', () => ({
   initializersApi: {
     getSettings: jest.fn(),
     listRegistered: jest.fn(),
-    applyNow: jest.fn(),
   },
 }))
 
@@ -69,11 +68,6 @@ describe('Initializers', () => {
       items: [targetInitializer],
       pagination: { limit: 200, has_more: false },
     })
-    mockedInitializersApi.applyNow.mockResolvedValue({
-      initializer_name: 'target',
-      status: 'applied',
-      applied_parameters: { tags: ['configured'] },
-    })
   })
 
   it('should show loading state initially', () => {
@@ -117,21 +111,6 @@ describe('Initializers', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('Available initializers')).toBeInTheDocument()
     expect(screen.getByTestId('available-initializer-row-target')).toHaveTextContent('Registers targets.')
-  })
-
-  it('should apply a configured initializer', async () => {
-    const user = userEvent.setup()
-    renderInitializers()
-
-    const configuredRow = await screen.findByTestId('configured-initializer-row-0')
-    await user.click(within(configuredRow).getByRole('button', { name: 'Apply now' }))
-
-    await waitFor(() => {
-      expect(mockedInitializersApi.applyNow).toHaveBeenCalledWith('target', {
-        parameters: { tags: ['configured'] },
-      })
-      expect(screen.getByText('Applied target.')).toBeInTheDocument()
-    })
   })
 
   it('should keep configured settings visible when catalog loading fails', async () => {

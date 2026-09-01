@@ -1,5 +1,4 @@
 import { render, screen, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import type { ConfiguredInitializerSetting, RegisteredInitializer } from '@/types'
@@ -20,8 +19,6 @@ const registeredInitializers: RegisteredInitializer[] = [
   },
 ]
 
-const onApply = jest.fn()
-
 describe('ConfiguredInitializers', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -33,7 +30,6 @@ describe('ConfiguredInitializers', () => {
         <ConfiguredInitializers
           items={[]}
           registeredInitializers={registeredInitializers}
-          onApply={onApply}
         />
       </TestWrapper>,
     )
@@ -52,7 +48,6 @@ describe('ConfiguredInitializers', () => {
         <ConfiguredInitializers
           items={items}
           registeredInitializers={registeredInitializers}
-          onApply={onApply}
         />
       </TestWrapper>,
     )
@@ -65,27 +60,6 @@ describe('ConfiguredInitializers', () => {
     expect(within(row).getByText(/"tags"/)).toBeInTheDocument()
   })
 
-  it('applies the configured initializer with its parameters', async () => {
-    const user = userEvent.setup()
-    const items: ConfiguredInitializerSetting[] = [
-      { initializer_name: 'target', parameters: { tags: ['default'] }, order_index: 0 },
-    ]
-
-    render(
-      <TestWrapper>
-        <ConfiguredInitializers
-          items={items}
-          registeredInitializers={registeredInitializers}
-          onApply={onApply}
-        />
-      </TestWrapper>,
-    )
-
-    await user.click(screen.getByRole('button', { name: 'Apply now' }))
-
-    expect(onApply).toHaveBeenCalledWith('target:0', 'target', { tags: ['default'] })
-  })
-
   it('falls back to a placeholder for a name that is no longer registered', () => {
     const items: ConfiguredInitializerSetting[] = [
       { initializer_name: 'ghost', parameters: null, order_index: 1 },
@@ -96,7 +70,6 @@ describe('ConfiguredInitializers', () => {
         <ConfiguredInitializers
           items={items}
           registeredInitializers={registeredInitializers}
-          onApply={onApply}
         />
       </TestWrapper>,
     )

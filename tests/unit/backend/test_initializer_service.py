@@ -16,7 +16,6 @@ from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
-    ApplyInitializerResponse,
     ConfiguredInitializerSetting,
     ListRegisteredInitializersResponse,
     RegisteredInitializer,
@@ -201,92 +200,6 @@ class TestInitializerServiceGetInitializer:
             assert result is None
 
 
-class TestInitializerServiceApply:
-    """Tests for applying initializers immediately."""
-
-    async def test_apply_initializer_uses_explicit_parameters(self) -> None:
-        initializer = MagicMock()
-        initializer.validate = MagicMock()
-        initializer.initialize_async = AsyncMock(return_value=None)
-
-        with patch.object(InitializerService, "__init__", lambda self: None):
-            service = InitializerService()
-            service._registry = MagicMock()
-            service._registry.create_and_configure.return_value = initializer
-
-            result = await service.apply_initializer_async(
-                initializer_name="target",
-                parameters={"tags": ["explicit"]},
-            )
-
-            service._registry.create_and_configure.assert_called_once_with(
-                "target",
-                initializer_params={"tags": ["explicit"]},
-            )
-            initializer.validate.assert_called_once()
-            initializer.initialize_async.assert_awaited_once()
-            assert result == ApplyInitializerResponse(
-                initializer_name="target",
-                status="applied",
-                applied_parameters={"tags": ["explicit"]},
-            )
-
-    async def test_apply_initializer_with_no_parameters(self) -> None:
-        initializer = MagicMock()
-        initializer.validate = MagicMock()
-        initializer.initialize_async = AsyncMock(return_value=None)
-
-        with patch.object(InitializerService, "__init__", lambda self: None):
-            service = InitializerService()
-            service._registry = MagicMock()
-            service._registry.create_and_configure.return_value = initializer
-
-            result = await service.apply_initializer_async(initializer_name="target")
-
-            service._registry.create_and_configure.assert_called_once_with(
-                "target",
-                initializer_params=None,
-            )
-            assert result.applied_parameters is None
-
-    async def test_apply_initializer_propagates_validation_errors(self) -> None:
-        with patch.object(InitializerService, "__init__", lambda self: None):
-            service = InitializerService()
-            service._registry = MagicMock()
-            service._registry.create_and_configure.side_effect = ValueError("Unknown parameter")
-
-            with pytest.raises(ValueError, match="Unknown parameter"):
-                await service.apply_initializer_async(initializer_name="target")
-
-
-# ============================================================================
-# Route Tests
-# ============================================================================
-
-
-class TestInitializerServiceValueValidation:
-    """Raw parameter values are coerced against declared types and rejected when invalid."""
-
-    @staticmethod
-    def _service_with_parameters(parameters: list[Parameter]) -> InitializerService:
-        with patch.object(InitializerService, "__init__", lambda self: None):
-            service = InitializerService()
-            service._registry = MagicMock()
-            configured = MagicMock()
-            configured.supported_parameters = parameters
-            service._registry.create_and_configure.return_value = configured
-            return service
-
-    async def test_apply_rejects_value_that_violates_declared_type(self) -> None:
-        service = self._service_with_parameters([Parameter(name="days", description="d", default=30, param_type=int)])
-
-        with pytest.raises(ValueError, match="days"):
-            await service.apply_initializer_async(
-                initializer_name="refresh_datasets",
-                parameters={"days": "abc"},
-            )
-
-
 class TestInitializerRoutes:
     """Tests for initializer API routes."""
 
@@ -418,46 +331,13 @@ class TestInitializerRoutes:
             status.HTTP_405_METHOD_NOT_ALLOWED,
         }
 
-    def test_post_apply_initializer_returns_200(self, client: TestClient) -> None:
-        apply_result = ApplyInitializerResponse(
-            initializer_name="target",
-            status="applied",
-            applied_parameters={"tags": ["saved"]},
-        )
+    def test_apply_initializer_route_is_removed(self, client: TestClient) -> None:
+        response = client.post("/api/initializers/target/apply", json={"parameters": {}})
 
-        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
-            mock_service = MagicMock()
-            mock_service.apply_initializer_async = AsyncMock(return_value=apply_result)
-            mock_get_service.return_value = mock_service
-
-            response = client.post("/api/initializers/target/apply", json={"parameters": {"tags": ["saved"]}})
-
-            assert response.status_code == status.HTTP_200_OK
-            assert response.json()["status"] == "applied"
-            mock_service.apply_initializer_async.assert_called_once_with(
-                initializer_name="target",
-                parameters={"tags": ["saved"]},
-            )
-
-    def test_post_apply_initializer_returns_400_for_invalid_parameters(self, client: TestClient) -> None:
-        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
-            mock_service = MagicMock()
-            mock_service.apply_initializer_async = AsyncMock(side_effect=ValueError("bad params"))
-            mock_get_service.return_value = mock_service
-
-            response = client.post("/api/initializers/target/apply", json={"parameters": {"bad": True}})
-
-            assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_apply_initializer_requires_admin(self, client: TestClient) -> None:
-        def reject_non_admin() -> None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access is required")
-
-        app.dependency_overrides[require_admin] = reject_non_admin
-
-        response = client.post("/api/initializers/target/apply")
-
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in {
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        }
 
 
 # ============================================================================

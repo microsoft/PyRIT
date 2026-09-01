@@ -217,16 +217,6 @@ export interface CustomInitializerListResponse {
   items: CustomInitializer[]
 }
 
-export interface ApplyInitializerRequest {
-  parameters?: Record<string, unknown> | null
-}
-
-export interface ApplyInitializerResponse {
-  initializer_name: string
-  status: 'applied'
-  applied_parameters?: Record<string, unknown> | null
-}
-
 // --- Converters ---
 
 export interface ConverterIdentifier {
