@@ -104,6 +104,8 @@ The head-to-head above scored success with a harm proxy: a `FloatScaleThresholdS
 
 *Figure 5 - PyRIT's scenario-results view for the combined task-achievement run, showing 168 attack results across 14 objectives and grouped success rates for the three adversarial models.*
 
+The per-group names in the screenshot are the target-registry aliases used for this run: `adversarial_chat_multiturn` is Qwen MT, `adversarial_chat_singleturn` is Qwen ST, and `adversarial_chat` is Grok.
+
 Importantly, changing just the scorer completely reorders the models. Under the harm proxy's scoring mechanism, Grok ranked second (46.4%); under the task-achievement judge it ranks last (28.6%), while Qwen ST leads under both scorers. The two scorers even disagree in direction on individual technique-model combinations: the judge credits Grok more on `red_teaming` (42.9% to 71.4%) but much less on `role_play_video_game` (78.6% to 35.7%) and `crescendo_simulated` (57.1% to 7.1%). We theorize the harm proxy content classifier rewarded harmful-sounding but off-objective text. This doesn't mean that a benchmark run is right or wrong for using content classification models for scoring over a judge LLM; just that in terms of benchmarking, the definition of "most adversarial behavior" depends on the scoring mechanism.
 
 ![Grouped bars showing Qwen MT, Qwen ST, and Grok task-achievement success rates for four techniques and an all-technique aggregate, with the recovered Grok red-teaming combination hatched.](2026_09_03_adversarial_model_selection_llm_judge.png)
