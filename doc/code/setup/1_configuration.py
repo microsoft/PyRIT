@@ -212,7 +212,7 @@ for result in results:
 # All you need to do is create a `PyRITInitializer` class (e.g. myinitializer.py). Then you can use `set_global_variable` and use it everywhere. Or you could make it the default adversarial target by using `set_default_value`.
 #
 #
-# ### More Initializer information
+# ### Additional Initializer information
 #
 # - For more information on how default values work, see the [default values](./default_values.md) section.
 # - For more information on how initializers work, see the [initializers](./pyrit_initializer.ipynb) section
