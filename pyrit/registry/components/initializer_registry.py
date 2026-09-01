@@ -445,20 +445,22 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             name: The registry name to remove.
 
         Raises:
-            KeyError: If the name is not registered.
+            KeyError: If no stored custom initializer has the requested name.
             ValueError: If the name refers to a built-in initializer.
         """
         self._ensure_discovered()
-        if name in self._builtin_names:
-            raise ValueError(f"Cannot remove built-in initializer '{name}'.")
-        if name not in self._classes:
-            available = ", ".join(self.get_class_names())
-            raise KeyError(f"'{name}' not found in registry. Available: {available}")
+        storage = self._get_custom_storage()
+        stored_names = storage.list_scripts().keys()
+        if name not in stored_names:
+            if name in self._builtin_names:
+                raise ValueError(f"Cannot remove built-in initializer '{name}'.")
+            available = ", ".join(stored_names)
+            raise KeyError(f"'{name}' not found in registry or custom initializer storage. Available: {available}")
 
-        self._get_custom_storage().delete_script(name)
-
-        del self._classes[name]
-        self._metadata_cache = None
+        storage.delete_script(name)
+        if name in self._classes and name not in self._builtin_names:
+            del self._classes[name]
+            self._metadata_cache = None
 
     def _load_custom_initializer_class(
         self,

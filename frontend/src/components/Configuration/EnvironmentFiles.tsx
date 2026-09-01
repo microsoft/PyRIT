@@ -146,6 +146,11 @@ export default function EnvironmentFiles() {
           <MessageBarBody>{statusMessage.text}</MessageBarBody>
         </MessageBar>
       )}
+      {selectedFile?.read_only_reason && (
+        <MessageBar intent="warning" className={styles.message}>
+          <MessageBarBody>{selectedFile.read_only_reason}</MessageBarBody>
+        </MessageBar>
+      )}
 
       <EditorWorkspace
         items={files.map((file) => ({
@@ -172,7 +177,7 @@ export default function EnvironmentFiles() {
               appearance="primary"
               className={styles.action}
               icon={<SaveRegular />}
-              disabled={saving || loadingContent || !hasUnsavedChanges}
+              disabled={saving || loadingContent || selectedFile?.read_only || !hasUnsavedChanges}
               onClick={() => void handleSave()}
             >
               {saving ? 'Saving...' : 'Save'}
@@ -194,7 +199,7 @@ export default function EnvironmentFiles() {
             >
               <DotenvEditor
                 value={selectedFile.content}
-                disabled={saving}
+                disabled={saving || selectedFile.read_only === true}
                 onChange={handleContentChange}
               />
             </Field>

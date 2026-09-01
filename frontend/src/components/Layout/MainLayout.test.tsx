@@ -53,6 +53,8 @@ describe("MainLayout", () => {
   const defaultProps = {
     currentView: 'chat' as const,
     onNavigate: jest.fn(),
+    onOpenFeedback: jest.fn(),
+    canManageConfiguration: true,
   };
 
   it("renders the header with title and subtitle", async () => {

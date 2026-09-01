@@ -4,6 +4,7 @@
 """Read, update, and locally materialize the backend configuration file."""
 
 import asyncio
+import hashlib
 import os
 import tempfile
 from collections.abc import AsyncGenerator
@@ -13,9 +14,24 @@ from urllib.parse import urlparse
 
 import aiofiles
 import yaml
+from azure.core.exceptions import ResourceNotFoundError
 
 from pyrit.common.azure_storage import has_sas_signature, is_azure_blob_uri, redact_url_credentials
 from pyrit.setup.configuration_loader import ConfigurationLoader
+
+
+class ConfigurationFileConflictError(Exception):
+    """The configuration source changed after it was read."""
+
+
+def _configuration_version(*, content: str, exists: bool = True) -> str:
+    """
+    Create an opaque version token from configuration source state.
+
+    Returns:
+        str: The source-state version token.
+    """
+    return hashlib.sha256(f"{int(exists)}\0{content}".encode()).hexdigest()
 
 
 def _is_azure_blob_uri(value: str) -> bool:
@@ -89,6 +105,7 @@ def _replace_local_config_file(*, path: Path, content: str) -> None:
     """Atomically replace a local configuration file."""
     temporary_path: Path | None = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -112,6 +129,7 @@ class ConfigurationFileService:
         """Initialize the service with an explicit source or the default configuration path."""
         self._config_file_value = config_file_value
         self._source = config_file_value or str(ConfigurationLoader.get_default_config_path())
+        self._update_lock = asyncio.Lock()
 
     @property
     def source(self) -> str:
@@ -129,6 +147,28 @@ class ConfigurationFileService:
         """
         return await self._read_source_async()
 
+    async def read_with_version_async(self) -> tuple[str, str]:
+        """
+        Read current content and its version, treating a missing source as empty.
+
+        Returns:
+            tuple[str, str]: Current content and opaque source-state version.
+        """
+        content, exists = await self._read_state_async()
+        return content, _configuration_version(content=content, exists=exists)
+
+    async def _read_state_async(self) -> tuple[str, bool]:
+        """
+        Read the current source state without failing when it does not exist.
+
+        Returns:
+            tuple[str, bool]: Current content and whether the source exists.
+        """
+        try:
+            return await self._read_source_async(), True
+        except (FileNotFoundError, ResourceNotFoundError):
+            return "", False
+
     async def _read_source_async(self) -> str:
         """
         Read the source and replace the cached content.
@@ -143,10 +183,21 @@ class ConfigurationFileService:
         assert isinstance(content, str)
         return content
 
-    async def update_async(self, content: str) -> None:
-        """Replace the current configuration contents."""
+    async def update_async(self, content: str, *, expected_version: str) -> str:
+        """
+        Replace the current configuration contents if its version is unchanged.
+
+        Returns:
+            str: The version token for the persisted content.
+        """
         _validate_configuration_content(content)
-        await self._write_source_async(content)
+        async with self._update_lock:
+            current_content, exists = await self._read_state_async()
+            current_version = _configuration_version(content=current_content, exists=exists)
+            if current_version != expected_version:
+                raise ConfigurationFileConflictError("Configuration changed; reload it before saving")
+            await self._write_source_async(content)
+        return _configuration_version(content=content)
 
     async def _write_source_async(self, content: str) -> str:
         """

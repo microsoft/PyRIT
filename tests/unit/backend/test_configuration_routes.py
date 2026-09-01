@@ -6,7 +6,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from azure.core.exceptions import AzureError, ResourceNotFoundError
+from azure.core.exceptions import AzureError
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -18,7 +18,7 @@ from pyrit.backend.routes.configuration import (
     _get_configuration_file_service,
     _get_environment_file_service,
 )
-from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.configuration_file_service import ConfigurationFileConflictError, ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 
 
@@ -92,7 +92,7 @@ def test_require_admin_rejects_non_admin_user() -> None:
 def test_get_configuration_file_returns_content(client: TestClient) -> None:
     """Test reading configuration contents through the API."""
     service = MagicMock(spec=ConfigurationFileService)
-    service.read_async = AsyncMock(return_value="operator: alice\n")
+    service.read_with_version_async = AsyncMock(return_value=("operator: alice\n", "version-1"))
     service.source = "C:/Users/test/.pyrit/config.yaml"
     with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
         response = client.get("/api/config")
@@ -101,51 +101,65 @@ def test_get_configuration_file_returns_content(client: TestClient) -> None:
     assert response.json() == {
         "content": "operator: alice\n",
         "source": "C:/Users/test/.pyrit/config.yaml",
+        "version": "version-1",
     }
 
 
 def test_update_configuration_file_persists_content(client: TestClient) -> None:
     """Test replacing configuration contents through the API."""
     service = MagicMock(spec=ConfigurationFileService)
-    service.read_async = AsyncMock()
-    service.update_async = AsyncMock()
+    service.update_async = AsyncMock(return_value="version-2")
     service.source = "https://account.blob.core.windows.net/config/config.yaml"
     with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
-        response = client.put("/api/config", json={"content": "operator: bob\n"})
+        response = client.put("/api/config", json={"content": "operator: bob\n", "version": "version-1"})
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {
         "content": "operator: bob\n",
         "source": "https://account.blob.core.windows.net/config/config.yaml",
+        "version": "version-2",
     }
-    service.update_async.assert_awaited_once_with("operator: bob\n")
+    service.update_async.assert_awaited_once_with("operator: bob\n", expected_version="version-1")
 
 
-def test_get_configuration_file_returns_404_when_missing(client: TestClient) -> None:
-    """Test that a missing configuration source returns 404."""
-    service = MagicMock(read_async=AsyncMock(side_effect=FileNotFoundError))
+def test_get_configuration_file_returns_empty_bootstrap_when_missing(client: TestClient) -> None:
+    """Test that a missing configuration source can be bootstrapped through the API."""
+    service = MagicMock(
+        read_with_version_async=AsyncMock(return_value=("", "missing-version")),
+        source="C:/missing/.pyrit_conf",
+    )
     with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
         response = client.get("/api/config")
 
-    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {
+        "content": "",
+        "source": "C:/missing/.pyrit_conf",
+        "version": "missing-version",
+    }
 
 
-def test_update_configuration_file_returns_404_when_blob_missing(client: TestClient) -> None:
-    """Test that updating a missing blob configuration source returns 404."""
-    service = MagicMock(read_async=AsyncMock(side_effect=ResourceNotFoundError("missing")))
+def test_update_configuration_file_returns_409_for_stale_version(client: TestClient) -> None:
+    """Test that updating a changed configuration source returns a conflict."""
+    service = MagicMock(
+        update_async=AsyncMock(side_effect=ConfigurationFileConflictError("Configuration changed; reload it")),
+        source="config.yaml",
+    )
     with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
-        response = client.put("/api/config", json={"content": "operator: bob\n"})
+        response = client.put("/api/config", json={"content": "operator: bob\n", "version": "stale"})
 
-    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.status_code == status.HTTP_409_CONFLICT
 
 
 def test_update_configuration_file_returns_400_for_invalid_content(client: TestClient) -> None:
     """Test that invalid configuration content produces a client error."""
     service = MagicMock(spec=ConfigurationFileService)
-    service.read_async = AsyncMock()
     service.update_async = AsyncMock(side_effect=ValueError("Invalid YAML configuration"))
     with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
-        response = client.put("/api/config", json={"content": "operator: [unterminated\n"})
+        response = client.put(
+            "/api/config",
+            json={"content": "operator: [unterminated\n", "version": "version-1"},
+        )
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert response.json()["detail"] == "Invalid YAML configuration"
@@ -251,7 +265,7 @@ def test_update_environment_file_returns_404_for_unknown_id(client: TestClient) 
 
 def test_get_configuration_file_maps_azure_error_to_503(client: TestClient) -> None:
     service = MagicMock(spec=ConfigurationFileService)
-    service.read_async = AsyncMock(side_effect=AzureError("credential details"))
+    service.read_with_version_async = AsyncMock(side_effect=AzureError("credential details"))
     service.source = "https://account.blob.core.windows.net/config/config.yaml"
 
     with patch("pyrit.backend.routes.configuration._get_configuration_file_service", return_value=service):
@@ -267,7 +281,7 @@ def test_configuration_read_writes_secret_free_audit_record(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     service = MagicMock(spec=ConfigurationFileService)
-    service.read_async = AsyncMock(return_value="SECRET=value\n")
+    service.read_with_version_async = AsyncMock(return_value=("SECRET=value\n", "version-1"))
     service.source = "C:/config/.pyrit_conf"
 
     with (

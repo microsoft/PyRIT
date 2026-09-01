@@ -48,6 +48,34 @@ else
     echo "No inline PYRIT_ENV_CONTENTS set — using configured environment sources"
 fi
 
+write_deployment_config() {
+    local target_file="$1"
+    mkdir -p "$(dirname "$target_file")"
+    {
+        if [ -n "$AZURE_SQL_SERVER" ]; then
+            echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)" >&2
+            echo "memory_db_type: AzureSQL"
+        else
+            echo "Using SQLite database (AZURE_SQL_SERVER not set)" >&2
+            echo "memory_db_type: SQLite"
+        fi
+        if [ -n "$PYRIT_INITIALIZER" ]; then
+            echo "Using initializer: $PYRIT_INITIALIZER" >&2
+            echo "initializers:"
+            # Split comma-separated initializer names into a YAML list.
+            IFS=',' read -ra INIT_NAMES <<<"$PYRIT_INITIALIZER"
+            for name in "${INIT_NAMES[@]}"; do
+                echo "  - $(echo "$name" | xargs)"
+            done
+        fi
+        if [ -n "$PYRIT_ENV_AKV_REF" ]; then
+            echo "Using Azure Key Vault environment reference" >&2
+            echo "env_akv_ref:"
+            echo "  - $PYRIT_ENV_AKV_REF"
+        fi
+    } >"$target_file"
+}
+
 # Start the appropriate service based on PYRIT_MODE
 if [ "$PYRIT_MODE" = "jupyter" ]; then
     echo "Starting JupyterLab on port 8888..."
@@ -58,37 +86,21 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
     echo "Starting PyRIT GUI on port 8000..."
     if [ -n "${PYRIT_CONFIG_FILE:-}" ]; then
         CONFIG_FILE="$PYRIT_CONFIG_FILE"
-        echo "Using external PyRIT configuration"
-        if [ -n "${PYRIT_ENV_AKV_REF:-}" ]; then
-            echo "WARNING: Ignoring PYRIT_ENV_AKV_REF because the external PyRIT configuration controls environment sources" >&2
+        DEPLOYMENT_BASE_CONFIG="$HOME/.pyrit/.pyrit_conf"
+        if [ "$CONFIG_FILE" = "$DEPLOYMENT_BASE_CONFIG" ]; then
+            echo "ERROR: PYRIT_CONFIG_FILE cannot point to $DEPLOYMENT_BASE_CONFIG in this container" >&2
+            exit 1
         fi
+        # ConfigurationLoader overlays the explicit source on its default file.
+        # Materialize deployment-derived values there so omitted external keys do
+        # not silently switch Azure SQL to local SQLite or drop the AKV source.
+        write_deployment_config "$DEPLOYMENT_BASE_CONFIG"
+        echo "Using external PyRIT configuration over deployment defaults"
     else
         # Translate deployment settings into a runtime config file so the FastAPI
         # lifespan (ConfigurationLoader) picks them up on startup.
         RUNTIME_CONFIG=/tmp/pyrit_runtime.yaml
-        {
-            if [ -n "$AZURE_SQL_SERVER" ]; then
-                echo "Using Azure SQL database (server: $AZURE_SQL_SERVER)" >&2
-                echo "memory_db_type: AzureSQL"
-            else
-                echo "Using SQLite database (AZURE_SQL_SERVER not set)" >&2
-                echo "memory_db_type: SQLite"
-            fi
-            if [ -n "$PYRIT_INITIALIZER" ]; then
-                echo "Using initializer: $PYRIT_INITIALIZER" >&2
-                echo "initializers:"
-                # Split comma-separated initializer names into a YAML list.
-                IFS=',' read -ra INIT_NAMES <<<"$PYRIT_INITIALIZER"
-                for name in "${INIT_NAMES[@]}"; do
-                    echo "  - $(echo "$name" | xargs)"
-                done
-            fi
-            if [ -n "$PYRIT_ENV_AKV_REF" ]; then
-                echo "Using Azure Key Vault environment reference" >&2
-                echo "env_akv_ref:"
-                echo "  - $PYRIT_ENV_AKV_REF"
-            fi
-        } >"$RUNTIME_CONFIG"
+        write_deployment_config "$RUNTIME_CONFIG"
         CONFIG_FILE="$RUNTIME_CONFIG"
     fi
 

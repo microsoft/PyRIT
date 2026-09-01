@@ -18,6 +18,7 @@ describe("Navigation", () => {
     currentView: "chat" as const,
     onNavigate: jest.fn(),
     onOpenFeedback: jest.fn(),
+    canManageConfiguration: true,
   };
 
   beforeEach(() => {
@@ -99,6 +100,16 @@ describe("Navigation", () => {
 
     await user.click(screen.getByRole("button", { name: "Configuration" }));
     expect(onNavigate).toHaveBeenCalledWith("configuration");
+  });
+
+  it("hides configuration from users without administrator access", () => {
+    renderWithProvider(
+      <Navigation {...defaultProps} canManageConfiguration={false} />
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Configuration" })
+    ).not.toBeInTheDocument();
   });
 
   it("renders the attack history button", () => {

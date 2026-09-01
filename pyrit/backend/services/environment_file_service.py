@@ -92,6 +92,7 @@ class EnvironmentFileService:
         resolved_env_files: list[Path] | None,
         env_akv_ref: list[str] | None = None,
         env_akv_strict: bool = True,
+        read_only_file_sources: dict[Path, str] | None = None,
     ) -> None:
         """Initialize from ``ConfigurationLoader.resolve_env_files()`` output."""
         self._env_akv_strict = env_akv_strict
@@ -102,6 +103,7 @@ class EnvironmentFileService:
         )
         self._akv_sources = {_source_id(kind="akv", source=secret_url): secret_url for secret_url in env_akv_ref or []}
         self._file_sources = {_source_id(kind="file", source=str(path)): path for path in paths}
+        self._read_only_file_sources = read_only_file_sources or {}
         self._update_locks: dict[str, asyncio.Lock] = {}
 
     async def list_async(self) -> list[EnvironmentFileContent]:
@@ -126,6 +128,7 @@ class EnvironmentFileService:
 
         exists_values = await asyncio.gather(*(asyncio.to_thread(path.exists) for path in self._file_sources.values()))
         for (file_id, path), exists in zip(self._file_sources.items(), exists_values, strict=True):
+            read_only_reason = self._read_only_file_sources.get(path)
             items.append(
                 EnvironmentFileContent(
                     id=file_id,
@@ -133,6 +136,8 @@ class EnvironmentFileService:
                     path=str(path),
                     content="",
                     exists=exists,
+                    read_only=read_only_reason is not None,
+                    read_only_reason=read_only_reason,
                 )
             )
         return items
@@ -163,6 +168,8 @@ class EnvironmentFileService:
         """
         if file_id not in self._akv_sources and file_id not in self._file_sources:
             raise KeyError(file_id)
+        if read_only_reason := self._get_read_only_reason(file_id):
+            raise ValueError(read_only_reason)
 
         lock = self._update_locks.setdefault(file_id, asyncio.Lock())
         async with lock:
@@ -190,6 +197,7 @@ class EnvironmentFileService:
 
     async def _read_file_source_async(self, *, file_id: str) -> EnvironmentFileContent:
         path = self._get_file_path(file_id)
+        read_only_reason = self._read_only_file_sources.get(path)
         exists = await asyncio.to_thread(path.exists)
         content = ""
         if exists:
@@ -202,13 +210,25 @@ class EnvironmentFileService:
             content=content,
             exists=exists,
             version=_content_version(content=content, exists=exists),
+            read_only=read_only_reason is not None,
+            read_only_reason=read_only_reason,
         )
 
     async def _write_source_async(self, *, file_id: str, content: str) -> EnvironmentFileContent:
-        strict = self._env_akv_strict if file_id in self._akv_sources else True
-        validated_content = _validate_dotenv_document(content, strict=strict, silent=True)
         if file_id in self._akv_sources:
+            validated_content = _validate_dotenv_document(
+                content,
+                strict=self._env_akv_strict,
+                silent=True,
+            )
             return await self._write_akv_source_async(file_id=file_id, content=validated_content)
+        validated_content = _validate_dotenv_document(
+            content,
+            strict=True,
+            silent=True,
+            allow_valueless=True,
+            source_name="Local environment file",
+        )
         path = self._get_file_path(file_id)
         await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(_replace_file, path=path, content=validated_content)
@@ -248,3 +268,8 @@ class EnvironmentFileService:
             return self._file_sources[file_id]
         except KeyError:
             raise KeyError(file_id) from None
+
+    def _get_read_only_reason(self, file_id: str) -> str | None:
+        """Return the configured read-only reason for a local source."""
+        path = self._file_sources.get(file_id)
+        return self._read_only_file_sources.get(path) if path else None

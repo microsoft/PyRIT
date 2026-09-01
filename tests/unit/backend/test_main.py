@@ -37,7 +37,7 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
-            init_mock.assert_awaited_once()
+            init_mock.assert_awaited_once_with(raise_on_initializer_error=False)
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
@@ -128,7 +128,8 @@ class TestLifespan:
         registry.register_stored_initializers.side_effect = lambda: call_order.append("custom")
         service = MagicMock(run_additional_initializers_async=AsyncMock())
 
-        async def initialize_async() -> None:
+        async def initialize_async(*, raise_on_initializer_error: bool) -> None:
+            assert raise_on_initializer_error is False
             call_order.append("baseline")
 
         with (

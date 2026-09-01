@@ -35,6 +35,7 @@ import type {
   UpdateEnvironmentFileRequest,
   EnvironmentFileListResponse,
   UpdateConfigurationFileRequest,
+  AuthAccess,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -151,6 +152,13 @@ export const healthApi = {
 export const versionApi = {
   getVersion: async () => {
     const response = await apiClient.get('/version')
+    return response.data
+  },
+}
+
+export const authApi = {
+  getAccess: async (): Promise<AuthAccess> => {
+    const response = await apiClient.get('/auth/access')
     return response.data
   },
 }

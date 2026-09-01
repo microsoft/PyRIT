@@ -30,6 +30,7 @@ interface NavigationProps {
   currentView: ViewName
   onNavigate: (view: ViewName) => void
   onOpenFeedback: () => void
+  canManageConfiguration: boolean
 }
 
 const THEME_MENU_NAME = 'theme'
@@ -41,7 +42,12 @@ const THEME_LABELS: Record<ThemeMode, string> = {
 }
 
 
-export default function Navigation({ currentView, onNavigate, onOpenFeedback }: NavigationProps) {
+export default function Navigation({
+  currentView,
+  onNavigate,
+  onOpenFeedback,
+  canManageConfiguration,
+}: NavigationProps) {
   const styles = useNavigationStyles()
   const { mode, resolved, setMode } = useTheme()
   const feedbackRestoreFocusTarget = useRestoreFocusTarget()
@@ -117,16 +123,18 @@ export default function Navigation({ currentView, onNavigate, onOpenFeedback }: 
           onClick={() => onNavigate('initializers')}
         />
 
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'configuration'}
-          appearance="subtle"
-          icon={<SettingsRegular />}
-          title="Configuration"
-          aria-label="Configuration"
-          aria-current={currentView === 'configuration' ? 'page' : undefined}
-          onClick={() => onNavigate('configuration')}
-        />
+        {canManageConfiguration && (
+          <Button
+            className={styles.navButton}
+            data-active={currentView === 'configuration'}
+            appearance="subtle"
+            icon={<SettingsRegular />}
+            title="Configuration"
+            aria-label="Configuration"
+            aria-current={currentView === 'configuration' ? 'page' : undefined}
+            onClick={() => onNavigate('configuration')}
+          />
+        )}
 
       </nav>
 

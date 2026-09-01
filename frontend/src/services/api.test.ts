@@ -14,6 +14,7 @@ jest.mock("axios", () => ({
 
 import {
   apiClient,
+  authApi,
   healthApi,
   initializersApi,
   versionApi,
@@ -31,6 +32,16 @@ describe("api service", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe("authApi", () => {
+    it("should read current administrator access", async () => {
+      const response = { data: { isAdmin: true } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(authApi.getAccess()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/auth/access");
+    });
   });
 
   describe("apiClient", () => {
@@ -174,7 +185,11 @@ describe("api service", () => {
   describe("configurationApi", () => {
     it("should read configuration content", async () => {
       const response = {
-        data: { content: "operator: alice\n", source: "C:/Users/test/.pyrit/config.yaml" },
+        data: {
+          content: "operator: alice\n",
+          source: "C:/Users/test/.pyrit/config.yaml",
+          version: "config-v1",
+        },
       };
       (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
 
@@ -183,7 +198,7 @@ describe("api service", () => {
     });
 
     it("should update configuration content", async () => {
-      const request = { content: "operator: bob\n" };
+      const request = { content: "operator: bob\n", version: "config-v1" };
       const response = {
         data: { ...request, source: "https://account.blob.core.windows.net/config/config.yaml" },
       };

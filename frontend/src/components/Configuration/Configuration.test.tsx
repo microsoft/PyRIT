@@ -38,6 +38,7 @@ describe('Configuration', () => {
     mockedConfigurationApi.getContent.mockResolvedValue({
       content: 'operator: alice\n',
       source: 'C:/Users/test/.pyrit/config.yaml',
+      version: 'config-v1',
     })
     mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({
       items: [
@@ -83,6 +84,7 @@ describe('Configuration', () => {
     mockedConfigurationApi.updateContent.mockResolvedValue({
       content: 'operator: bob\n',
       source: 'C:/Users/test/.pyrit/config.yaml',
+      version: 'config-v2',
     })
     renderPage()
 
@@ -91,7 +93,10 @@ describe('Configuration', () => {
     await user.type(editor, 'operator: bob\n')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
-    expect(mockedConfigurationApi.updateContent).toHaveBeenCalledWith({ content: 'operator: bob\n' })
+    expect(mockedConfigurationApi.updateContent).toHaveBeenCalledWith({
+      content: 'operator: bob\n',
+      version: 'config-v1',
+    })
     expect(await screen.findByText(/restart PyRIT/i)).toBeInTheDocument()
   })
 

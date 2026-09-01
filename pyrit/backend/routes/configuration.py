@@ -7,7 +7,7 @@ import logging
 import os
 from hashlib import sha256
 
-from azure.core.exceptions import AzureError, ResourceNotFoundError
+from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from pyrit.backend.middleware.auth import AuthenticatedUser, require_admin
@@ -19,7 +19,10 @@ from pyrit.backend.models.configuration import (
     UpdateConfigurationFileRequest,
     UpdateEnvironmentFileRequest,
 )
-from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.configuration_file_service import (
+    ConfigurationFileConflictError,
+    ConfigurationFileService,
+)
 from pyrit.backend.services.environment_file_service import EnvironmentFileConflictError, EnvironmentFileService
 from pyrit.exceptions import KeyVaultInitializationException
 
@@ -108,7 +111,6 @@ def _get_environment_file_service(request: Request) -> EnvironmentFileService:
 @router.get(
     "",
     response_model=ConfigurationFileContent,
-    responses={404: {"model": ProblemDetail, "description": "Configuration file not found"}},
 )
 async def get_configuration_file(  # pyrit-async-suffix-exempt
     request: Request,
@@ -121,10 +123,7 @@ async def get_configuration_file(  # pyrit-async-suffix-exempt
     """
     service = _get_configuration_file_service(request)
     try:
-        content = await service.read_async()
-    except (FileNotFoundError, ResourceNotFoundError) as exc:
-        _audit_configuration_access(request=request, action="read-config", source=service.source, outcome="not-found")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration file not found") from exc
+        content, version = await service.read_with_version_async()
     except AzureError as exc:
         _audit_configuration_access(request=request, action="read-config", source=service.source, outcome="unavailable")
         raise _storage_unavailable() from exc
@@ -133,9 +132,9 @@ async def get_configuration_file(  # pyrit-async-suffix-exempt
         action="read-config",
         source=service.source,
         outcome="success",
-        version=_content_hash(content),
+        version=version,
     )
-    return ConfigurationFileContent(content=content, source=service.source)
+    return ConfigurationFileContent(content=content, source=service.source, version=version)
 
 
 @router.put(
@@ -143,7 +142,7 @@ async def get_configuration_file(  # pyrit-async-suffix-exempt
     response_model=ConfigurationFileContent,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid configuration file"},
-        404: {"model": ProblemDetail, "description": "Configuration file not found"},
+        409: {"model": ProblemDetail, "description": "Configuration file changed"},
     },
 )
 async def update_configuration_file(  # pyrit-async-suffix-exempt
@@ -160,11 +159,7 @@ async def update_configuration_file(  # pyrit-async-suffix-exempt
     """
     service = _get_configuration_file_service(request)
     try:
-        await service.read_async()
-        await service.update_async(body.content)
-    except (FileNotFoundError, ResourceNotFoundError) as exc:
-        _audit_configuration_access(request=request, action="update-config", source=service.source, outcome="not-found")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration file not found") from exc
+        version = await service.update_async(body.content, expected_version=body.version)
     except AzureError as exc:
         _audit_configuration_access(
             request=request,
@@ -176,14 +171,23 @@ async def update_configuration_file(  # pyrit-async-suffix-exempt
     except ValueError as exc:
         _audit_configuration_access(request=request, action="update-config", source=service.source, outcome="invalid")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ConfigurationFileConflictError as exc:
+        _audit_configuration_access(
+            request=request,
+            action="update-config",
+            source=service.source,
+            outcome="conflict",
+            version=body.version,
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     _audit_configuration_access(
         request=request,
         action="update-config",
         source=service.source,
         outcome="success",
-        version=_content_hash(body.content),
+        version=version,
     )
-    return ConfigurationFileContent(content=body.content, source=service.source)
+    return ConfigurationFileContent(content=body.content, source=service.source, version=version)
 
 
 @router.get("/env-files", response_model=EnvironmentFileListResponse)

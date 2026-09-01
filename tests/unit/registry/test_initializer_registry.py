@@ -175,6 +175,7 @@ def test_unregister_and_cleanup_removes_entry_and_file(lazy_registry):
 def test_unregister_and_cleanup_keeps_entry_when_storage_delete_fails(lazy_registry: InitializerRegistry) -> None:
     """Test that failed storage cleanup leaves the runtime registration retryable."""
     storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"custom": _VALID_SCRIPT}
     storage.delete_script.side_effect = OSError("storage unavailable")
     lazy_registry._custom_storage = storage
     lazy_registry._classes["custom"] = _ParamInitializer
@@ -183,6 +184,31 @@ def test_unregister_and_cleanup_keeps_entry_when_storage_delete_fails(lazy_regis
         lazy_registry.unregister_and_cleanup("custom")
 
     assert lazy_registry.get_class("custom") is _ParamInitializer
+
+
+def test_unregister_and_cleanup_removes_invalid_stored_source(lazy_registry: InitializerRegistry) -> None:
+    """Test invalid stored scripts can be removed without a runtime registration."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"invalid": "not Python"}
+    lazy_registry._custom_storage = storage
+
+    lazy_registry.unregister_and_cleanup("invalid")
+
+    storage.delete_script.assert_called_once_with("invalid")
+
+
+def test_unregister_and_cleanup_removes_source_shadowed_by_builtin(lazy_registry: InitializerRegistry) -> None:
+    """Test deleting stored source preserves a built-in registration with the same name."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"builtin": _VALID_SCRIPT}
+    lazy_registry._custom_storage = storage
+    lazy_registry._classes["builtin"] = _ParamInitializer
+    lazy_registry._builtin_names.add("builtin")
+
+    lazy_registry.unregister_and_cleanup("builtin")
+
+    storage.delete_script.assert_called_once_with("builtin")
+    assert lazy_registry.get_class("builtin") is _ParamInitializer
 
 
 def test_register_from_content_uses_configured_storage(lazy_registry: InitializerRegistry, tmp_path: Path) -> None:

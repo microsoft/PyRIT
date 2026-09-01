@@ -54,6 +54,46 @@ async def test_environment_file_service_preserves_explicit_order_and_updates(tmp
     assert next(item.id for item in reordered_items if item.path == str(first)) == first_id
 
 
+async def test_environment_file_service_preserves_valueless_local_binding(tmp_path: Path) -> None:
+    """Test local saves accept syntax supported by the regular dotenv loader."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("FOO\n", encoding="utf-8")
+    service = EnvironmentFileService(resolved_env_files=[env_file])
+    item = await service.read_async(file_id=(await service.list_async())[0].id)
+
+    updated = await service.update_async(
+        file_id=item.id,
+        content="FOO\nBAR=value\n",
+        expected_version=item.version or "",
+    )
+
+    assert updated.content == "FOO\nBAR=value\n"
+    assert env_file.read_text(encoding="utf-8") == "FOO\nBAR=value\n"
+
+
+async def test_environment_file_service_rejects_inline_materialized_source(tmp_path: Path) -> None:
+    """Test deployment-secret materialized files are exposed as read-only."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("VALUE=before\n", encoding="utf-8")
+    reason = "Update the deployment secret instead."
+    service = EnvironmentFileService(
+        resolved_env_files=[env_file],
+        read_only_file_sources={env_file: reason},
+    )
+    item = await service.read_async(file_id=(await service.list_async())[0].id)
+
+    with pytest.raises(ValueError, match="deployment secret"):
+        await service.update_async(
+            file_id=item.id,
+            content="VALUE=after\n",
+            expected_version=item.version or "",
+        )
+
+    assert item.read_only is True
+    assert item.read_only_reason == reason
+    assert env_file.read_text(encoding="utf-8") == "VALUE=before\n"
+
+
 async def test_environment_file_service_deduplicates_sources_in_order(tmp_path: Path) -> None:
     """Test repeated source configuration produces one stable list entry."""
     first = tmp_path / "first.env"

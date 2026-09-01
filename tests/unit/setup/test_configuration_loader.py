@@ -490,6 +490,22 @@ class TestConfigurationLoaderInitialization:
         with pytest.raises(ValueError, match="not found in registry"):
             await config.initialize_pyrit_async()
 
+    @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
+    @mock.patch("pyrit.registry.InitializerRegistry")
+    async def test_initialize_pyrit_async_can_skip_unresolved_initializer(self, mock_registry_cls, mock_init):
+        mock_registry = mock.MagicMock()
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
+        healthy = mock.MagicMock()
+        mock_registry.create_and_configure.side_effect = [KeyError("bad"), healthy]
+        mock_registry.get_class_names.return_value = ["good"]
+        config = ConfigurationLoader(memory_db_type="in_memory", initializers=["bad", "good"])
+
+        await config.initialize_pyrit_async(raise_on_initializer_error=False)
+
+        assert mock_registry.create_and_configure.call_count == 2
+        assert mock_init.call_args.kwargs["initializers"] == [healthy]
+        assert mock_init.call_args.kwargs["raise_on_initializer_error"] is False
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestInitializeFromConfigAsync:

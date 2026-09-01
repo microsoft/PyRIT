@@ -60,4 +60,35 @@ describe('EnvironmentFiles', () => {
 
     expect(await screen.findByText('Environment unavailable')).toBeInTheDocument()
   })
+
+  it('should disable editing for an inline deployment-secret source', async () => {
+    const reason = 'Update the deployment secret instead.'
+    mockedConfigurationApi.listEnvironmentFiles.mockResolvedValue({
+      items: [{
+        id: '0',
+        name: '.env',
+        path: '/home/vscode/.pyrit/.env',
+        content: '',
+        exists: true,
+        read_only: true,
+        read_only_reason: reason,
+      }],
+    })
+    mockedConfigurationApi.getEnvironmentFile.mockResolvedValue({
+      id: '0',
+      name: '.env',
+      path: '/home/vscode/.pyrit/.env',
+      content: 'VALUE=before\n',
+      exists: true,
+      version: 'version-1',
+      read_only: true,
+      read_only_reason: reason,
+    })
+
+    renderFiles()
+
+    expect(await screen.findByText(reason)).toBeInTheDocument()
+    expect(await screen.findByRole('textbox', { name: 'Environment file contents' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
 })

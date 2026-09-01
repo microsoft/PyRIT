@@ -9,6 +9,7 @@ from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from azure.core.exceptions import AzureError
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -977,6 +978,32 @@ class TestCustomInitializerRoutes:
 
         assert response.status_code == status.HTTP_200_OK
         mock_service.list_custom_initializers_async.assert_awaited_once_with()
+
+    @pytest.mark.parametrize("operation", ["list", "register", "delete"])
+    def test_custom_initializer_routes_return_503_for_storage_failure(
+        self,
+        client_with_custom_initializers_enabled: TestClient,
+        operation: str,
+    ) -> None:
+        """Test Blob failures are returned without exposing Azure SDK details."""
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_custom_initializers_async = AsyncMock(side_effect=AzureError("credential details"))
+            mock_service.register_initializer_async = AsyncMock(side_effect=AzureError("credential details"))
+            mock_service.unregister_initializer_async = AsyncMock(side_effect=AzureError("credential details"))
+            mock_get_service.return_value = mock_service
+            if operation == "list":
+                response = client_with_custom_initializers_enabled.get("/api/initializers/custom")
+            elif operation == "register":
+                response = client_with_custom_initializers_enabled.post(
+                    "/api/initializers",
+                    json={"name": "custom", "script_content": _SAMPLE_SCRIPT},
+                )
+            else:
+                response = client_with_custom_initializers_enabled.delete("/api/initializers/custom")
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["detail"] == "Custom initializer storage is temporarily unavailable"
 
     def test_post_root_still_registers_runtime_initializer(
         self, client_with_custom_initializers_enabled: TestClient

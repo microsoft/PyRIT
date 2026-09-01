@@ -546,12 +546,16 @@ class ConfigurationLoader(YamlLoadable):
         """
         return DEFAULT_CONFIG_PATH
 
-    def resolve_initializers(self) -> Sequence["PyRITInitializer"]:
+    def resolve_initializers(self, *, raise_on_initializer_error: bool = True) -> Sequence["PyRITInitializer"]:
         """
         Resolve initializer names to PyRITInitializer instances.
 
         Uses the InitializerRegistry to look up initializer classes by name
         and instantiate them with optional arguments.
+
+        Args:
+            raise_on_initializer_error: Whether to raise when an initializer cannot be resolved. If False,
+                log the failure and continue resolving the remaining initializers.
 
         Returns:
             Sequence of PyRITInitializer instances.
@@ -577,9 +581,18 @@ class ConfigurationLoader(YamlLoadable):
                 instance = registry.create_and_configure(config.name, initializer_params=config.args)
             except KeyError as exc:
                 available = ", ".join(sorted(registry.get_class_names()))
-                raise ValueError(
+                error = ValueError(
                     f"Initializer '{config.name}' not found in registry.\nAvailable initializers: {available}"
-                ) from exc
+                )
+                if raise_on_initializer_error:
+                    raise error from exc
+                logging.getLogger(__name__).exception("Skipping initializer '%s': resolution failed.", config.name)
+                continue
+            except Exception:
+                if raise_on_initializer_error:
+                    raise
+                logging.getLogger(__name__).exception("Skipping initializer '%s': resolution failed.", config.name)
+                continue
 
             resolved.append(instance)
 
@@ -644,7 +657,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         return self.env_akv_ref
 
-    async def initialize_pyrit_async(self) -> None:
+    async def initialize_pyrit_async(self, *, raise_on_initializer_error: bool = True) -> None:
         """
         Initialize PyRIT with the loaded configuration.
 
@@ -653,10 +666,16 @@ class ConfigurationLoader(YamlLoadable):
         persisted additional initializers: consumers such as ``pyrit.backend.main.lifespan``
         run those after the baseline.
 
+        Args:
+            raise_on_initializer_error: Whether initializer resolution, loading, validation, or execution
+                failures should abort initialization. Defaults to True.
+
         Raises:
             ValueError: If configuration is invalid or initializers cannot be resolved.
         """
-        resolved_initializers = self.resolve_initializers()
+        resolved_initializers = self.resolve_initializers(
+            raise_on_initializer_error=raise_on_initializer_error,
+        )
         resolved_scripts = self.resolve_initialization_scripts()
         resolved_env_files = self.resolve_env_files()
 
@@ -672,6 +691,7 @@ class ConfigurationLoader(YamlLoadable):
             env_akv_strict=self.env_akv_strict,
             silent=self.silent,
             seed=self.seed,
+            raise_on_initializer_error=raise_on_initializer_error,
         )
 
 

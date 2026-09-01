@@ -90,10 +90,12 @@ export interface PaginationInfo {
 export interface ConfigurationFileContent {
   content: string
   source: string
+  version: string
 }
 
 export interface UpdateConfigurationFileRequest {
   content: string
+  version: string
 }
 
 export interface UpdateEnvironmentFileRequest {
@@ -108,6 +110,12 @@ export interface EnvironmentFileContent {
   content: string
   exists: boolean
   version?: string | null
+  read_only?: boolean
+  read_only_reason?: string | null
+}
+
+export interface AuthAccess {
+  isAdmin: boolean
 }
 
 export interface EnvironmentFileListResponse {

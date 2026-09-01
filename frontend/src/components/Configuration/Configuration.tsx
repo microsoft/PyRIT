@@ -34,6 +34,7 @@ export default function Configuration() {
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [source, setSource] = useState('')
+  const [version, setVersion] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reloadCount, setReloadCount] = useState(0)
@@ -52,6 +53,7 @@ export default function Configuration() {
           setContent(response.content)
           setSavedContent(response.content)
           setSource(response.source)
+          setVersion(response.version)
         }
       } catch (error) {
         if (!cancelled) {
@@ -78,10 +80,11 @@ export default function Configuration() {
     setSaving(true)
     setStatusMessage(null)
     try {
-      const response = await configurationApi.updateContent({ content })
+      const response = await configurationApi.updateContent({ content, version })
       setContent(response.content)
       setSavedContent(response.content)
       setSource(response.source)
+      setVersion(response.version)
       setStatusMessage({
         intent: 'success',
         text: 'Configuration saved. Restart PyRIT to apply these changes.',

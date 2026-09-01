@@ -65,6 +65,9 @@ jest.mock("./services/api", () => ({
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
   },
+  authApi: {
+    getAccess: jest.fn().mockResolvedValue({ isAdmin: true }),
+  },
   setMsalInstance: jest.fn(),
 }));
 

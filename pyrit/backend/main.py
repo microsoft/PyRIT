@@ -40,6 +40,7 @@ from pyrit.backend.routes import (
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.initializer_service import get_initializer_service
+from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
@@ -64,16 +65,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with configuration_file_service.resolve_async() as config_file:
         config = ConfigurationLoader.load_with_overrides(config_file=config_file)
     resolved_env_files = config.resolve_env_files()
+    read_only_file_sources = {}
+    if os.getenv("PYRIT_ENV_CONTENTS"):
+        read_only_file_sources[CONFIGURATION_DIRECTORY_PATH / ".env"] = (
+            "This file is materialized from the Container App secret and cannot be persisted here. "
+            "Update the deployment secret instead."
+        )
     app.state.environment_file_service = EnvironmentFileService(
         resolved_env_files=list(resolved_env_files) if resolved_env_files is not None else None,
         env_akv_ref=config.resolve_env_akv_ref(),
         env_akv_strict=config.env_akv_strict,
+        read_only_file_sources=read_only_file_sources,
     )
     initializer_registry = InitializerRegistry.get_registry_singleton()
     initializer_registry.configure_custom_scripts_source(config.custom_initializers_source)
     if config.allow_custom_initializers:
         await asyncio.to_thread(initializer_registry.register_stored_initializers)
-    await config.initialize_pyrit_async()
+    await config.initialize_pyrit_async(raise_on_initializer_error=False)
 
     # Persisted additional initializers run after the .pyrit_conf baseline, in stored order.
     app.state.baseline_initializers = [
