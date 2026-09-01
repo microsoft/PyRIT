@@ -117,17 +117,13 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
     whether the response meets a specific criterion. Multiple pieces in a request response
     are aggregated using a TrueFalseAggregatorFunc function (default: TrueFalseScoreAggregator.OR).
 
-    **Default error / blocked behavior**
+    **Default unreadable / blocked behavior**
 
-    When no supported pieces remain after validator filtering (e.g. the response is
-    blocked, has another error type, or no piece matches the scorer's supported data
-    types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
-    single ``Score(False)`` whose rationale distinguishes blocked / error / filtered
-    cases. This mirrors ``MessageFloatScaleScorer``'s ``0.0`` default so that downstream
-    consumers (attack strategies, threshold wrappers) get a consistent, "attack did not
-    succeed" value without each call site needing special-cased error handling.
-    Subclasses that need different semantics (e.g. ``SelfAskRefusalScorer``, which
-    returns ``True`` on blocked) should override ``_build_fallback_score``.
+    A message that has no role supported by this scorer produces no score. For a supported
+    role, an unreadable transport or protocol response produces an undetermined score. A
+    fully blocked response or one with no supported data type produces a completed ``False``
+    score. Subclasses can override ``_build_fallback_score`` when they need different
+    semantics. For example, ``SelfAskRefusalScorer`` returns ``True`` on a blocked response.
     """
 
     def __init__(
@@ -175,9 +171,10 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
         Score the given request response asynchronously.
 
         For TrueFalseScorer, multiple piece scores are aggregated into a single true/false score.
-        When no supported pieces remain (e.g. the response was blocked, had an error, or no piece
-        type matched the validator), returns an empty list; the base ``score_async`` then invokes
-        ``_build_fallback_score`` to produce a single neutral ``Score(False)``.
+        When a supported role has no scoreable pieces, this method returns an empty list. The base
+        ``score_async`` then invokes ``_build_fallback_score``. That fallback is undetermined for
+        an unreadable transport or protocol response and ``False`` for a fully blocked or filtered
+        response.
 
         Args:
             message (Message): The message to score.

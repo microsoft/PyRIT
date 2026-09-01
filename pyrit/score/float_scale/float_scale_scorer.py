@@ -72,17 +72,13 @@ class MessageFloatScaleScorer(FloatScaleScorer, MessageScorer):
     to which a response exhibits certain characteristics. Each piece in a request response
     is scored independently, returning one score per piece.
 
-    **Default error / blocked behavior**
+    **Default unreadable / blocked behavior**
 
-    When no supported pieces remain after validator filtering (e.g. the response is
-    blocked, has another error type, or no piece matches the scorer's supported data
-    types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
-    single ``Score`` with value ``0.0``. The rationale distinguishes blocked / error /
-    filtered cases. This mirrors ``MessageTrueFalseScorer``'s ``False`` default so that
-    downstream consumers (attack strategies, threshold wrappers) get a consistent,
-    "attack did not succeed" value without each call site needing special-cased error
-    handling. Subclasses that need different semantics (e.g. a refusal-style
-    "blocked = True") should override ``_score_piece_async`` or ``_build_fallback_score``.
+    A message that has no role supported by this scorer produces no score. For a supported
+    role, an unreadable transport or protocol response produces an undetermined score. A
+    fully blocked response or one with no supported data type produces a completed ``0.0``
+    score. Subclasses can override ``_build_fallback_score`` when they need different
+    semantics.
     """
 
     def __init__(

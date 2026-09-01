@@ -1224,9 +1224,9 @@ class MessageScorer(Scorer):
         """
         Build the family's neutral result for a message that carries nothing to score.
 
-        Blocked, error, and filtered messages read the same way whatever the score family is,
-        so this message-family policy is stated once here. Each family supplies only its
-        neutral value.
+        This shared message policy returns an undetermined score for an unreadable transport
+        or protocol response. It returns the score family's neutral value for a fully blocked
+        response or one with no supported data type.
 
         Args:
             message (Message): The message that carries no readable pieces.
