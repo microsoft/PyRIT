@@ -2976,6 +2976,9 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
+        Seeds already present in storage are skipped. Duplicates *within* ``seeds`` are all
+        inserted, because the check looks at what storage held when the call started.
+
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
             added_by (str): The user who added the seeds.
@@ -2983,17 +2986,79 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        entries: MutableSequence[SeedEntry] = []
         current_time = datetime.now(tz=timezone.utc)
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
-            if prompt.value_sha256 and not self.get_seeds(
-                value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name
-            ):
-                entries.append(SeedEntry(entry=prompt))
+        existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
+
+        entries: MutableSequence[SeedEntry] = []
+        for prompt in seeds:
+            if not prompt.value_sha256:
+                continue
+            # A seed without a dataset name matches the hash in any dataset, mirroring the
+            # filter that is applied when dataset_name is not supplied.
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name) in existing_pairs:
+                    continue
+            elif prompt.value_sha256 in existing_hashes:
+                continue
+            entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+
+    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed]) -> tuple[set[tuple[str, str]], set[str]]:
+        """
+        Look up which of these seeds' hashes are already stored.
+
+        Queries in chunks rather than once per seed, which otherwise dominates the cost of
+        loading a large dataset. ``get_seeds`` issues the statement directly instead of going
+        through the batching helpers, so the bound has to be applied here.
+
+        The seeds are grouped by dataset name so the name is still compared by the database
+        rather than in Python. Equality here is a property of the column's collation: Azure
+        SQL's default is case-insensitive, T-SQL also ignores trailing blanks, and an
+        accent-insensitive collation folds further still. Comparing the names in Python would
+        silently impose one fixed rule on every backend and insert a duplicate wherever the
+        stored spelling differs from the incoming one.
+
+        Args:
+            seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
+
+        Returns:
+            tuple[set[tuple[str, str]], set[str]]: The stored (value_sha256, dataset_name)
+                pairs keyed by the requested dataset name, and the stored hashes irrespective
+                of dataset.
+        """
+        hashes_by_dataset: dict[str | None, set[str]] = {}
+        for prompt in seeds:
+            if prompt.value_sha256:
+                # An empty name filters nothing, exactly like None, and the caller below
+                # treats both as "match the hash in any dataset". Normalize so the two
+                # cannot disagree.
+                hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
+
+        existing_pairs: set[tuple[str, str]] = set()
+        existing_hashes: set[str] = set()
+        for dataset_name, dataset_hashes in hashes_by_dataset.items():
+            hashes = sorted(dataset_hashes)
+            # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
+            # binds, so the hashes get what is left rather than the full ceiling.
+            chunk_size = self._MAX_BIND_VARS - (1 if dataset_name is not None else 0)
+            for index in range(0, len(hashes), chunk_size):
+                chunk = hashes[index : index + chunk_size]
+                for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
+                    if not existing.value_sha256:
+                        continue
+                    if dataset_name:
+                        # The database decided the name matched, so record the name that was
+                        # asked for; the stored spelling can differ under a case-insensitive
+                        # collation.
+                        existing_pairs.add((existing.value_sha256, dataset_name))
+                    else:
+                        existing_hashes.add(existing.value_sha256)
+
+        return existing_pairs, existing_hashes
 
     async def add_seed_datasets_to_memory_async(self, *, datasets: Sequence[SeedDataset], added_by: str) -> None:
         """
