@@ -59,7 +59,6 @@ function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredSc
     all_techniques: allTechniques,
     technique_summaries: techniqueSummaries,
     default_datasets: ['harmbench'],
-    default_dataset_summaries: [],
     baseline_policy: 'enabled',
     include_baseline_by_default: true,
     supported_parameters: [],
@@ -586,7 +585,7 @@ describe('ScenarioDetail', () => {
 
     const checkbox = screen.getByTestId('baseline-checkbox')
     expect(checkbox).toBeChecked()
-    expect(screen.queryByRole('heading', { name: 'Baseline' })).not.toBeInTheDocument()
+    expect(checkbox).toHaveAccessibleName('baseline')
 
     await user.click(checkbox)
     await confirmRunPreview(user)
@@ -700,38 +699,43 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValueOnce(
       makeScenario({
-        default_dataset_summaries: [
-          {
-            name: 'harmbench',
-            kind: 'dataset',
-            logical_seed_group_count: 400,
-            selected_seed_group_count: 4,
-            configured_caps: [
-              {
-                label: 'per-dataset cap',
-                count: 4,
-                configured_on: 'dataset',
-                dataset_name: 'harmbench',
-              },
-            ],
-            selection_note: 'The default selection uses 4 of 400 logical seed groups.',
-          },
-          {
-            name: 'adv_bench',
-            kind: 'dataset',
-            logical_seed_group_count: 300,
-            selected_seed_group_count: 4,
-            configured_caps: [
-              {
-                label: 'per-dataset cap',
-                count: 4,
-                configured_on: 'dataset',
-                dataset_name: 'adv_bench',
-              },
-            ],
-            selection_note: 'The default selection uses 4 of 300 logical seed groups.',
-          },
-        ],
+        default_run_size: {
+          estimated_attack_count: null,
+          components: [],
+          datasets: [
+            {
+              name: 'harmbench',
+              kind: 'dataset',
+              logical_seed_group_count: 400,
+              selected_seed_group_count: 4,
+              configured_caps: [
+                {
+                  label: 'per-dataset cap',
+                  count: 4,
+                  configured_on: 'dataset',
+                  dataset_name: 'harmbench',
+                },
+              ],
+              selection_note: 'The default selection uses 4 of 400 logical seed groups.',
+            },
+            {
+              name: 'adv_bench',
+              kind: 'dataset',
+              logical_seed_group_count: 300,
+              selected_seed_group_count: 4,
+              configured_caps: [
+                {
+                  label: 'per-dataset cap',
+                  count: 4,
+                  configured_on: 'dataset',
+                  dataset_name: 'adv_bench',
+                },
+              ],
+              selection_note: 'The default selection uses 4 of 300 logical seed groups.',
+            },
+          ],
+          note: null,
+        },
       }),
     )
 

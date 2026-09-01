@@ -35,7 +35,6 @@ def _metadata_to_registered_scenario(
     *,
     metadata: ScenarioMetadata,
     default_run_size: ScenarioRunSizeEstimate | None = None,
-    default_run_size_pending: bool = False,
 ) -> RegisteredScenario:
     """
     Convert a ScenarioMetadata dataclass to a ScenarioSummary Pydantic model.
@@ -43,7 +42,6 @@ def _metadata_to_registered_scenario(
     Args:
         metadata: The registry metadata for a scenario.
         default_run_size: Scenario-owned default-run estimate.
-        default_run_size_pending: Whether the estimate is still being calculated.
 
     Returns:
         RegisteredScenario: Public catalog projection.
@@ -64,12 +62,10 @@ def _metadata_to_registered_scenario(
         all_techniques=list(metadata.all_techniques),
         technique_summaries=list(metadata.technique_summaries),
         default_datasets=list(metadata.default_datasets),
-        default_dataset_summaries=estimate.datasets,
         supported_parameters=list(metadata.supported_parameters),
         baseline_policy=metadata.baseline_policy,
         include_baseline_by_default=metadata.include_baseline_by_default,
         default_run_size=estimate,
-        default_run_size_pending=default_run_size_pending,
     )
 
 
@@ -103,13 +99,7 @@ class ScenarioService:
             ListRegisteredScenariosResponse: The requested catalog page.
         """
         all_metadata = self._registry.get_all_registered_class_metadata()
-        all_summaries = [
-            _metadata_to_registered_scenario(
-                metadata=metadata,
-                default_run_size_pending=not include_estimates,
-            )
-            for metadata in all_metadata
-        ]
+        all_summaries = [_metadata_to_registered_scenario(metadata=metadata) for metadata in all_metadata]
 
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
         if include_estimates:
@@ -124,8 +114,6 @@ class ScenarioService:
                 item.model_copy(
                     update={
                         "default_run_size": estimate,
-                        "default_dataset_summaries": estimate.datasets,
-                        "default_run_size_pending": False,
                     }
                 )
                 for item, estimate in zip(page, estimates, strict=True)

@@ -186,10 +186,6 @@ class RegisteredScenario(BaseModel):
         description="Descriptions and tags for the available concrete techniques",
     )
     default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
-    default_dataset_summaries: list[ScenarioDatasetSummary] = Field(
-        default_factory=list,
-        description="Logical and effectively selected attack-group counts for the default configuration",
-    )
     baseline_policy: Literal["enabled", "disabled", "forbidden"] = Field(
         "enabled", description="Whether baseline execution is enabled, disabled, or forbidden"
     )
@@ -200,10 +196,6 @@ class RegisteredScenario(BaseModel):
     default_run_size: ScenarioRunSizeEstimate = Field(
         default_factory=ScenarioRunSizeEstimate.unavailable,
         description="Scenario-owned structured estimate of the default planned execution units",
-    )
-    default_run_size_pending: bool = Field(
-        False,
-        description="Whether the default run-size estimate is still being calculated",
     )
 
 

@@ -114,8 +114,8 @@ export default function Navigation({
           data-active={currentView === 'scenarios'}
           appearance="subtle"
           icon={<ScriptRegular />}
-          title="Scenarios"
-          aria-label="Scenarios"
+          title="Scanner"
+          aria-label="Scanner"
           aria-current={currentView === 'scenarios' ? 'page' : undefined}
           onClick={() => onNavigate('scenarios')}
         />

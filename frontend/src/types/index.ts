@@ -499,12 +499,10 @@ export interface RegisteredScenario {
   all_techniques: string[]
   technique_summaries: ScenarioTechniqueSummary[]
   default_datasets: string[]
-  default_dataset_summaries: ScenarioDatasetSummary[]
   baseline_policy: 'enabled' | 'disabled' | 'forbidden'
   include_baseline_by_default: boolean
   supported_parameters: Parameter[]
   default_run_size: ScenarioRunSizeEstimateResponse
-  default_run_size_pending?: boolean
 }
 
 export interface ScenarioTechniqueSummary {

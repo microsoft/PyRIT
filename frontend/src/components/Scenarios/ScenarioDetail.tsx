@@ -98,17 +98,18 @@ function targetOptionLabel(target: TargetInstance): string {
 }
 
 function defaultMaxDatasetSize(scenario: RegisteredScenario): string {
-  if (scenario.default_dataset_summaries.length === 0) {
+  const datasets = scenario.default_run_size.datasets
+  if (datasets.length === 0) {
     return ''
   }
 
-  for (const dataset of scenario.default_dataset_summaries) {
+  for (const dataset of datasets) {
     if (dataset.configured_caps.length === 0) {
       return ''
     }
   }
 
-  const selectedGroupCount = scenario.default_dataset_summaries.reduce(
+  const selectedGroupCount = datasets.reduce(
     (total, dataset) => total + dataset.selected_seed_group_count,
     0,
   )
@@ -1003,7 +1004,7 @@ function ScenarioLaunchForm({
                     <div className={styles.techniqueOption} key={technique.name}>
                     <Checkbox
                       className={styles.selectionControl}
-                      label={technique.name === 'baseline' ? 'Baseline' : technique.name}
+                      label={technique.name}
                       checked={selected}
                       disabled={submitting || technique.disabled}
                       onChange={(_, data) => handleTechniqueChange(technique, data.checked === true)}

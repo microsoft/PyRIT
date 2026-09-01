@@ -62,7 +62,6 @@ function makeScenario(overrides: Partial<RegisteredScenario> & { scenario_name: 
       default_count: null,
       override_scope: 'per_dataset',
     },
-    default_dataset_summaries: [],
     baseline_policy: 'enabled',
     include_baseline_by_default: true,
     supported_parameters: [],
@@ -94,7 +93,7 @@ describe('ScenarioCatalog', () => {
   })
 
   it('renders every scenario from a single page', async () => {
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({ scenario_name: 'foundry.red_team_agent', description: 'Red teams a target.' }),
         makeScenario({ scenario_name: 'encoding.base64', description: 'Encodes prompts.' }),
@@ -116,7 +115,7 @@ describe('ScenarioCatalog', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/Browse registered scenarios/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Read the scanner documentation/i)).not.toBeInTheDocument()
-    expect(mockListCatalog).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(2))
   })
 
   it('renders metadata while default estimates are calculated', async () => {
@@ -127,30 +126,27 @@ describe('ScenarioCatalog', () => {
     const pendingScenario = makeScenario({
       scenario_name: 'scenario.pending',
       default_datasets: ['harmbench'],
-      default_run_size_pending: true,
     })
     const estimatedScenario = makeScenario({
       scenario_name: 'scenario.pending',
       default_datasets: ['harmbench'],
-      default_dataset_summaries: [
-        {
-          name: 'harmbench',
-          kind: 'dataset',
-          logical_seed_group_count: 400,
-          selected_seed_group_count: 4,
-          configured_caps: [],
-          selection_note: null,
-        },
-      ],
       default_run_size: {
         estimated_attack_count: 4,
         minimum_attack_count: null,
         maximum_attack_count: null,
         components: [{ label: 'Default', count: 4, is_baseline: false, note: null }],
-        datasets: [],
+        datasets: [
+          {
+            name: 'harmbench',
+            kind: 'dataset',
+            logical_seed_group_count: 400,
+            selected_seed_group_count: 4,
+            configured_caps: [],
+            selection_note: null,
+          },
+        ],
         note: null,
       },
-      default_run_size_pending: false,
     })
     mockListCatalog
       .mockResolvedValueOnce({
@@ -178,11 +174,26 @@ describe('ScenarioCatalog', () => {
     expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
   })
 
+  it('keeps metadata visible when default estimates fail', async () => {
+    mockListCatalog
+      .mockResolvedValueOnce({
+        items: [makeScenario({ scenario_name: 'scenario.unsized' })],
+        pagination: { limit: 200, has_more: false },
+      })
+      .mockRejectedValueOnce(new Error('estimate failed'))
+
+    render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
+
+    expect(await screen.findByText('scenario.unsized')).toBeInTheDocument()
+    expect(await screen.findByText(/Default run sizes could not be calculated/)).toBeInTheDocument()
+    expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
+  })
+
   it('renders Markdown descriptions and lets users expand long previews', async () => {
     const user = userEvent.setup()
     const clientHeight = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60)
     const scrollHeight = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(120)
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({
           scenario_name: 'scenario.markdown',
@@ -220,7 +231,7 @@ describe('ScenarioCatalog', () => {
   it('does not show an expand control for a fully visible description', async () => {
     const clientHeight = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(60)
     const scrollHeight = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(61)
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [makeScenario({ scenario_name: 'scenario.visible' })],
       pagination: { limit: 200, has_more: false },
     })
@@ -270,7 +281,7 @@ describe('ScenarioCatalog', () => {
   })
 
   it('renders the exact launch-index column order and applies spacing to every cell', async () => {
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [makeScenario({ scenario_name: 'foundry.red_team_agent' })],
       pagination: { limit: 200, has_more: false },
     })
@@ -308,13 +319,23 @@ describe('ScenarioCatalog', () => {
         items: [makeScenario({ scenario_name: 'scenario.page2' })],
         pagination: { limit: 1, has_more: false },
       })
+      .mockResolvedValueOnce({
+        items: [makeScenario({ scenario_name: 'scenario.page1' })],
+        pagination: { limit: 1, has_more: true, next_cursor: 'cursor-1' },
+      })
+      .mockResolvedValueOnce({
+        items: [makeScenario({ scenario_name: 'scenario.page2' })],
+        pagination: { limit: 1, has_more: false },
+      })
 
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     expect(await screen.findByText('scenario.page1')).toBeInTheDocument()
     expect(screen.getByText('scenario.page2')).toBeInTheDocument()
-    expect(mockListCatalog).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(4))
     expect(mockListCatalog).toHaveBeenNthCalledWith(2, 200, 'cursor-1', false)
+    expect(mockListCatalog).toHaveBeenNthCalledWith(3, 200, undefined)
+    expect(mockListCatalog).toHaveBeenNthCalledWith(4, 200, 'cursor-1')
   })
 
   it('stops paging if the backend repeats a cursor instead of looping forever', async () => {
@@ -326,10 +347,10 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     expect(await screen.findAllByText('scenario.loop')).toHaveLength(1)
-    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(4))
     // Give any additional (incorrect) fetch a chance to fire before asserting it didn't.
     await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(mockListCatalog).toHaveBeenCalledTimes(2)
+    expect(mockListCatalog).toHaveBeenCalledTimes(4)
   })
 
   it('shows an empty state when no scenarios are registered', async () => {
@@ -354,7 +375,7 @@ describe('ScenarioCatalog', () => {
     const user = userEvent.setup()
     mockListCatalog
       .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce({
+      .mockResolvedValue({
         items: [makeScenario({ scenario_name: 'scenario.recovered' })],
         pagination: { limit: 200, has_more: false },
       })
@@ -365,12 +386,12 @@ describe('ScenarioCatalog', () => {
     await user.click(screen.getByTestId('retry-btn'))
 
     expect(await screen.findByText('scenario.recovered')).toBeInTheDocument()
-    expect(mockListCatalog).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(3))
   })
 
   it('filters scenarios by the search box across name, description, techniques, and datasets', async () => {
     const user = userEvent.setup()
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({ scenario_name: 'foundry.red_team_agent', description: 'Red teams a target.' }),
         makeScenario({
@@ -398,32 +419,42 @@ describe('ScenarioCatalog', () => {
 
   it('searches dataset metadata and renders singular counts with no default techniques', async () => {
     const user = userEvent.setup()
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({
           scenario_name: 'scenario.one',
           default_techniques: [],
           default_datasets: ['dataset-one'],
-          default_dataset_summaries: [{
-            name: 'dataset-one',
-            kind: 'dataset',
-            logical_seed_group_count: 1,
-            selected_seed_group_count: 1,
-            configured_caps: [],
-            selection_note: null,
-          }],
+          default_run_size: {
+            estimated_attack_count: null,
+            components: [],
+            datasets: [{
+              name: 'dataset-one',
+              kind: 'dataset',
+              logical_seed_group_count: 1,
+              selected_seed_group_count: 1,
+              configured_caps: [],
+              selection_note: null,
+            }],
+            note: null,
+          },
         }),
         makeScenario({
           scenario_name: 'scenario.two',
           default_datasets: ['dataset-two'],
-          default_dataset_summaries: [{
-            name: 'dataset-two',
-            kind: 'dataset',
-            logical_seed_group_count: 2,
-            selected_seed_group_count: 2,
-            configured_caps: [],
-            selection_note: 'Dataset metadata is searchable.',
-          }],
+          default_run_size: {
+            estimated_attack_count: null,
+            components: [],
+            datasets: [{
+              name: 'dataset-two',
+              kind: 'dataset',
+              logical_seed_group_count: 2,
+              selected_seed_group_count: 2,
+              configured_caps: [],
+              selection_note: 'Dataset metadata is searchable.',
+            }],
+            note: null,
+          },
         }),
       ],
       pagination: { limit: 200, has_more: false },
@@ -442,7 +473,7 @@ describe('ScenarioCatalog', () => {
 
   it('shows a no-results state when the search matches nothing', async () => {
     const user = userEvent.setup()
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [makeScenario({ scenario_name: 'foundry.red_team_agent' })],
       pagination: { limit: 200, has_more: false },
     })
@@ -456,7 +487,7 @@ describe('ScenarioCatalog', () => {
   })
 
   it('links each card to its encoded scenario detail route', async () => {
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [makeScenario({ scenario_name: 'foundry/red_team_agent' })],
       pagination: { limit: 200, has_more: false },
     })
@@ -468,7 +499,7 @@ describe('ScenarioCatalog', () => {
   })
 
   it('shows the total default objectives followed by the dataset names', async () => {
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({
           scenario_name: 'scenario.compound',
@@ -478,24 +509,29 @@ describe('ScenarioCatalog', () => {
             default_count: null,
             override_scope: 'per_dataset',
           },
-          default_dataset_summaries: [
-            {
-              name: 'population-a',
-              kind: 'dataset',
-              logical_seed_group_count: 100,
-              selected_seed_group_count: 4,
-              configured_caps: [],
-              selection_note: null,
-            },
-            {
-              name: 'population-b',
-              kind: 'synthesized',
-              logical_seed_group_count: 20,
-              selected_seed_group_count: 2,
-              configured_caps: [],
-              selection_note: null,
-            },
-          ],
+          default_run_size: {
+            estimated_attack_count: null,
+            components: [],
+            datasets: [
+              {
+                name: 'population-a',
+                kind: 'dataset',
+                logical_seed_group_count: 100,
+                selected_seed_group_count: 4,
+                configured_caps: [],
+                selection_note: null,
+              },
+              {
+                name: 'population-b',
+                kind: 'synthesized',
+                logical_seed_group_count: 20,
+                selected_seed_group_count: 2,
+                configured_caps: [],
+                selection_note: null,
+              },
+            ],
+            note: null,
+          },
         }),
       ],
       pagination: { limit: 200, has_more: false },
@@ -509,7 +545,7 @@ describe('ScenarioCatalog', () => {
   })
 
   it('shows an adaptive estimate as a plain attack range', async () => {
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({
           scenario_name: 'adaptive.text_adaptive',
@@ -547,7 +583,7 @@ describe('ScenarioCatalog', () => {
   })
 
   it('keeps declared datasets visible when backend population summaries are unavailable', async () => {
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({
           scenario_name: 'scenario.unsized',
@@ -557,7 +593,6 @@ describe('ScenarioCatalog', () => {
             default_count: null,
             override_scope: 'per_dataset',
           },
-          default_dataset_summaries: [],
         }),
       ],
       pagination: { limit: 200, has_more: false },
@@ -570,7 +605,7 @@ describe('ScenarioCatalog', () => {
   })
 
   it('keeps the authoritative default comparison values in the launch row', async () => {
-    mockListCatalog.mockResolvedValueOnce({
+    mockListCatalog.mockResolvedValue({
       items: [
         makeScenario({
           scenario_name: 'airt.jailbreak',
@@ -589,23 +624,6 @@ describe('ScenarioCatalog', () => {
             default_count: null,
             override_scope: 'per_dataset',
           },
-          default_dataset_summaries: [
-            {
-              name: 'harmbench',
-              kind: 'dataset',
-              logical_seed_group_count: 400,
-              selected_seed_group_count: 4,
-              configured_caps: [
-                {
-                  label: 'Jailbreak templates',
-                  count: 2,
-                  configured_on: 'configuration',
-                  dataset_name: null,
-                },
-              ],
-              selection_note: 'One incompatible group is excluded.',
-            },
-          ],
           default_run_size: {
             estimated_attack_count: null,
             minimum_attack_count: 12,

@@ -165,7 +165,7 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].include_baseline_by_default is True
 
     async def test_list_scenarios_can_return_metadata_without_waiting_for_estimates(self) -> None:
-        """Metadata-only catalog pages mark estimates pending without constructing scenarios."""
+        """Metadata-only catalog pages do not construct scenarios."""
         metadata = _make_scenario_metadata()
 
         with patch.object(ScenarioService, "__init__", lambda self: None):
@@ -174,10 +174,9 @@ class TestScenarioServiceListScenarios:
             service._registry.get_all_registered_class_metadata.return_value = [metadata]
 
             result = await service.list_scenarios_async(include_estimates=False)
-
         assert result.items[0].scenario_name == "test.scenario"
-        assert result.items[0].default_run_size_pending is True
-        assert result.items[0].default_dataset_summaries == []
+        assert result.items[0].scenario_name == "test.scenario"
+        assert result.items[0].default_run_size == ScenarioRunSizeEstimate.unavailable()
         service._registry.create_instance.assert_not_called()
 
     async def test_estimate_is_offloaded_and_cached(self) -> None:
@@ -218,8 +217,8 @@ class TestScenarioServiceListScenarios:
         assert second is not None
         assert first.default_run_size == estimate
         assert second.default_run_size == estimate
-        assert first.default_dataset_summaries == estimate.datasets
-        assert second.default_dataset_summaries == estimate.datasets
+        assert first.default_run_size.datasets == estimate.datasets
+        assert second.default_run_size.datasets == estimate.datasets
         service._registry.create_instance.assert_called_once_with("test.scenario")
 
     async def test_concurrent_estimate_reads_share_one_task(self) -> None:
@@ -675,21 +674,23 @@ class TestScenarioRoutes:
             },
             all_techniques=["role_play", "many_shot"],
             default_datasets=["airt_hate"],
-            default_dataset_summaries=[
-                ScenarioDatasetSummary(
-                    name="airt_hate",
-                    logical_seed_group_count=4,
-                    selected_seed_group_count=4,
-                    configured_caps=[
-                        ScenarioDatasetSizeCap(
-                            label="per-dataset cap",
-                            count=4,
-                            configured_on="dataset",
-                            dataset_name="airt_hate",
-                        )
-                    ],
-                )
-            ],
+            default_run_size=ScenarioRunSizeEstimate(
+                datasets=[
+                    ScenarioDatasetSummary(
+                        name="airt_hate",
+                        logical_seed_group_count=4,
+                        selected_seed_group_count=4,
+                        configured_caps=[
+                            ScenarioDatasetSizeCap(
+                                label="per-dataset cap",
+                                count=4,
+                                configured_on="dataset",
+                                dataset_name="airt_hate",
+                            )
+                        ],
+                    )
+                ]
+            ),
         )
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
@@ -716,7 +717,9 @@ class TestScenarioRoutes:
             assert item["aggregate_technique_expansions"]["default"] == ["role_play"]
             assert item["all_techniques"] == ["role_play", "many_shot"]
             assert item["default_datasets"] == ["airt_hate"]
-            assert item["default_dataset_summaries"][0]["configured_caps"][0]["count"] == 4
+            assert item["default_run_size"]["datasets"][0]["configured_caps"][0]["count"] == 4
+            assert "default_dataset_summaries" not in item
+            assert "default_run_size_pending" not in item
 
     def test_list_scenarios_passes_pagination_params(self, client: TestClient) -> None:
         """Test that pagination params are forwarded to service."""

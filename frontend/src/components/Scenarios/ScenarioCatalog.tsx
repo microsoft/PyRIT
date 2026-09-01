@@ -57,7 +57,7 @@ function matchesSearch(scenario: RegisteredScenario, query: string): boolean {
     ...Object.values(scenario.aggregate_technique_expansions).flat(),
     ...scenario.all_techniques,
     ...scenario.default_datasets,
-    ...scenario.default_dataset_summaries.flatMap((dataset) => [
+    ...scenario.default_run_size.datasets.flatMap((dataset) => [
       dataset.name,
       dataset.selection_note ?? '',
       ...dataset.configured_caps.map((cap) => cap.label),
@@ -126,6 +126,7 @@ function DefaultDatasetSummary({
 
 interface ScenarioCatalogRowProps {
   scenario: RegisteredScenario
+  estimatesLoading: boolean
 }
 
 interface CollapsibleContentProps {
@@ -174,7 +175,7 @@ function CollapsibleContent({
   )
 }
 
-function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
+function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowProps) {
   const styles = useScenarioCatalogStyles()
   const descriptionId = useId()
   const techniquesId = useId()
@@ -245,9 +246,9 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
           Default datasets
         </Text>
         <DefaultDatasetSummary
-          datasets={scenario.default_dataset_summaries}
+          datasets={scenario.default_run_size.datasets}
           declaredDatasets={scenario.default_datasets}
-          calculating={scenario.default_run_size_pending === true}
+          calculating={estimatesLoading}
         />
       </TableCell>
       <TableCell
@@ -281,7 +282,7 @@ function ScenarioCatalogRow({ scenario }: ScenarioCatalogRowProps) {
         <Text className={styles.mobileLabel} size={200} weight="semibold">
           Default run size
         </Text>
-        {scenario.default_run_size_pending ? (
+        {estimatesLoading ? (
           <Spinner size="tiny" label="Calculating..." labelPosition="after" />
         ) : (
           <ScenarioRunEstimateSummary state={estimateState} compact />
@@ -295,6 +296,7 @@ export default function ScenarioCatalog() {
   const styles = useScenarioCatalogStyles()
   const [scenarios, setScenarios] = useState<RegisteredScenario[]>([])
   const [loading, setLoading] = useState(true)
+  const [estimatesLoading, setEstimatesLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [estimateError, setEstimateError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -315,7 +317,8 @@ export default function ScenarioCatalog() {
         setError(null)
         setLoading(false)
 
-        if (!items.some((scenario) => scenario.default_run_size_pending)) {
+        if (items.length === 0) {
+          setEstimatesLoading(false)
           return
         }
 
@@ -331,12 +334,17 @@ export default function ScenarioCatalog() {
         } catch (err: unknown) {
           if (cancelled) return
           setEstimateError(toApiError(err).detail)
+        } finally {
+          if (!cancelled) {
+            setEstimatesLoading(false)
+          }
         }
       } catch (err: unknown) {
         if (cancelled) return
         setScenarios([])
         setError(toApiError(err).detail)
         setLoading(false)
+        setEstimatesLoading(false)
       }
     }
 
@@ -349,6 +357,7 @@ export default function ScenarioCatalog() {
 
   const handleRetry = useCallback(() => {
     setLoading(true)
+    setEstimatesLoading(true)
     setError(null)
     setEstimateError(null)
     setRefetchCount((count) => count + 1)
@@ -484,6 +493,7 @@ export default function ScenarioCatalog() {
                 <ScenarioCatalogRow
                   key={scenario.scenario_name}
                   scenario={scenario}
+                  estimatesLoading={estimatesLoading}
                 />
               ))}
             </TableBody>

@@ -119,14 +119,14 @@ describe("Navigation", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the scenarios button", () => {
+  it("renders the Scanner button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     expect(
-      screen.getByRole("button", { name: "Scenarios" })
+      screen.getByRole("button", { name: "Scanner" })
     ).toBeInTheDocument();
   });
 
-  it("places Scenarios immediately after Attack History without a history placeholder", () => {
+  it("places Scanner immediately after Attack History without a history placeholder", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     const navigation = screen.getByRole("navigation", { name: "Primary" });
     const labels = within(navigation)
@@ -137,7 +137,7 @@ describe("Navigation", () => {
       "Home",
       "Chat",
       "Attack History",
-      "Scenarios",
+      "Scanner",
       "Targets",
       "Initializers",
       "Configuration",
@@ -152,7 +152,7 @@ describe("Navigation", () => {
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    await user.click(screen.getByRole("button", { name: "Scenarios" }));
+    await user.click(screen.getByRole("button", { name: "Scanner" }));
     expect(onNavigate).toHaveBeenCalledWith("scenarios");
   });
 
@@ -160,7 +160,7 @@ describe("Navigation", () => {
     renderWithProvider(
       <Navigation {...defaultProps} currentView="scenarios" />
     );
-    expect(screen.getByRole("button", { name: "Scenarios" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Scanner" })).toHaveAttribute(
       "aria-current",
       "page"
     );
