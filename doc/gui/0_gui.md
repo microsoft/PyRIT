@@ -189,14 +189,11 @@ Use **Reload** to discard local edits and fetch the latest source content. Saved
 
 ### Initializers
 
-The **Initializers** page (in the left navigation) lets you review and extend how PyRIT sets itself up at startup — for example, the `target` initializer's `tags` and `auto_group` settings.
+The **Initializers** page (in the left navigation) lets you review how PyRIT sets itself up at startup — for example, the `target` initializer's `tags` and `auto_group` settings.
 
-The page has two sections:
+**Configured initializers** are read-only. They come from your active configuration file (`~/.pyrit/.pyrit_conf`) and run in the order shown. Update the configuration file and restart the backend to change this sequence.
 
-- **Baseline initializers** are read-only. They come from your active configuration file (`~/.pyrit/.pyrit_conf`) and run first, in order.
-- **Additional initializers** are added in the GUI and saved to the memory database. They run after the baseline, in the order shown. You can add more than one initializer of the same type — each is its own invocation.
-
-Use **Apply now** to re-run a single initializer immediately against the running backend — handy for picking up an environment or setting change without a restart. Saved additional initializers and `.pyrit_conf` edits otherwise take effect the next time the backend starts.
+Use **Apply now** to re-run a configured initializer immediately against the running backend — handy for picking up an environment or setting change without a restart.
 
 ---
 

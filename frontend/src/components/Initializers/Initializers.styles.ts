@@ -1,10 +1,6 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-import {
-  MINIMUM_TOUCH_TARGET_SIZE,
-  TOUCH_INPUT_QUERY,
-  mobileTouchTargetHeight,
-} from '@/styles/touchTargets'
+import { mobileTouchTargetHeight } from '@/styles/touchTargets'
 
 export const useInitializersStyles = makeStyles({
   root: {
@@ -50,30 +46,10 @@ export const useInitializersStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalXXS,
   },
-  addInitializerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalM,
-    flexWrap: 'wrap',
-  },
-  addInitializerSelect: {
-    minWidth: '220px',
-    ...mobileTouchTargetHeight,
-    '& > select': {
-      [TOUCH_INPUT_QUERY]: {
-        minHeight: MINIMUM_TOUCH_TARGET_SIZE,
-      },
-    },
-  },
   touchTarget: {
     ...mobileTouchTargetHeight,
   },
-  baselineList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
-  },
-  baselineGroup: {
+  configuredGroup: {
     display: 'flex',
     flexDirection: 'column',
     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -81,7 +57,7 @@ export const useInitializersStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     overflow: 'hidden',
   },
-  baselineGroupItem: {
+  configuredGroupItem: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
@@ -98,7 +74,7 @@ export const useInitializersStyles = makeStyles({
     maxHeight: '60vh',
     overflowY: 'auto',
   },
-  baselineCard: {
+  availableCard: {
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
@@ -107,7 +83,7 @@ export const useInitializersStyles = makeStyles({
     borderRadius: tokens.borderRadiusLarge,
     backgroundColor: tokens.colorNeutralBackground1,
   },
-  baselineHeader: {
+  configuredHeader: {
     display: 'flex',
     alignItems: 'flex-start',
     justifyContent: 'space-between',

@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
-    AdditionalInitializerEntry,
     AtomicAttackIdentifierEntry,
     AttackIdentifierEntry,
     AttackResultEntry,
@@ -58,7 +57,6 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
-    AdditionalInitializer,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackOutcome,
@@ -465,53 +463,6 @@ class MemoryInterface(abc.ABC):
         """
         result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
         return result
-
-    def add_additional_initializer(self, *, initializer: AdditionalInitializer) -> None:
-        """
-        Insert or replace an additional initializer, keyed by its ``id``.
-
-        Args:
-            initializer: The additional initializer to persist.
-        """
-        self._update_entry(AdditionalInitializerEntry.from_domain_model(initializer))
-
-    def get_additional_initializers(self) -> Sequence[AdditionalInitializer]:
-        """
-        Load all additional initializers in run order.
-
-        Returns:
-            Sequence[AdditionalInitializer]: The persisted initializers ordered by
-            ``order_index`` then ``id`` for a stable, deterministic startup sequence.
-        """
-        entries = self._query_entries(
-            AdditionalInitializerEntry,
-            order_by=AdditionalInitializerEntry.order_index.asc(),
-        )
-        return sorted(
-            (entry.to_domain_model() for entry in entries),
-            key=lambda item: (item.order_index is None, item.order_index or 0, item.id),
-        )
-
-    def delete_additional_initializer(self, *, initializer_id: str) -> None:
-        """
-        Delete an additional initializer by id when it exists.
-
-        Args:
-            initializer_id: The additional initializer row id to delete.
-
-        Raises:
-            SQLAlchemyError: If the delete operation fails.
-        """
-        with closing(self.get_session()) as session:
-            try:
-                session.query(AdditionalInitializerEntry).filter(
-                    AdditionalInitializerEntry.id == initializer_id
-                ).delete(synchronize_session=False)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error deleting additional initializer '{initializer_id}': {e}")
-                raise
 
     @abc.abstractmethod
     def _init_storage_io(self) -> None:

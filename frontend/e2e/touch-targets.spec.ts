@@ -171,8 +171,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
     if (apiPath === "/initializers/settings" && method === "GET") {
       await route.fulfill(
         jsonResponse({
-          baseline: [],
-          additional: [],
+          configured: [],
         })
       );
       return;

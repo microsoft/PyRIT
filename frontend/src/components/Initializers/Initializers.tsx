@@ -5,11 +5,10 @@ import { ArrowSyncRegular } from '@fluentui/react-icons'
 
 import { initializersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { InitializerSettingsResponse, RegisteredInitializer, UpdateAdditionalInitializerRequest } from '@/types'
+import type { InitializerSettingsResponse, RegisteredInitializer } from '@/types'
 
-import AdditionalInitializers from './AdditionalInitializers'
 import AvailableInitializersDialog from './AvailableInitializersDialog'
-import BaselineInitializers from './BaselineInitializers'
+import ConfiguredInitializers from './ConfiguredInitializers'
 import { useInitializersStyles } from './Initializers.styles'
 
 interface StatusMessage {
@@ -18,8 +17,7 @@ interface StatusMessage {
 }
 
 const EMPTY_SETTINGS: InitializerSettingsResponse = {
-  baseline: [],
-  additional: [],
+  configured: [],
 }
 
 export default function Initializers() {
@@ -29,11 +27,7 @@ export default function Initializers() {
   const [loading, setLoading] = useState(true)
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
-  const [creating, setCreating] = useState(false)
-  const [savingInitializerId, setSavingInitializerId] = useState<string | null>(null)
-  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
-  const [applyingInitializerId, setApplyingInitializerId] = useState<string | null>(null)
-  const [deletingInitializerId, setDeletingInitializerId] = useState<string | null>(null)
+  const [applyingInitializerKey, setApplyingInitializerKey] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -79,89 +73,19 @@ export default function Initializers() {
     setRefetchCount((currentCount: number) => currentCount + 1)
   }
 
-  const refetchSettingsOnly = async (): Promise<void> => {
-    const response = await initializersApi.getSettings()
-    setSettings(response)
-  }
-
-  const handleAdd = async (
-    initializerName: string,
-    parameters: Record<string, unknown> | null,
-  ): Promise<boolean> => {
-    setCreating(true)
-    try {
-      await initializersApi.createAdditional({ initializer_name: initializerName, parameters })
-      setStatusMessage({ intent: 'success', text: `Added ${initializerName} initializer.` })
-      await refetchSettingsOnly()
-      return true
-    } catch (error) {
-      const detail = toApiError(error).detail
-      setStatusMessage({ intent: 'error', text: detail })
-      throw error
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  const handleSave = async (
-    id: string,
-    request: UpdateAdditionalInitializerRequest,
-  ): Promise<boolean> => {
-    setSavingInitializerId(id)
-    setSaveErrors((currentErrors) => {
-      const remainingErrors = { ...currentErrors }
-      delete remainingErrors[id]
-      return remainingErrors
-    })
-    try {
-      await initializersApi.updateAdditional(id, request)
-      setStatusMessage({ intent: 'success', text: 'Saved additional initializer.' })
-      await refetchSettingsOnly()
-      return true
-    } catch (error) {
-      const detail = toApiError(error).detail
-      setStatusMessage({ intent: 'error', text: detail })
-      setSaveErrors((currentErrors) => ({ ...currentErrors, [id]: detail }))
-      return false
-    } finally {
-      setSavingInitializerId(null)
-    }
-  }
-
-  const clearSaveError = (id: string): void => {
-    setSaveErrors((currentErrors) => {
-      const remainingErrors = { ...currentErrors }
-      delete remainingErrors[id]
-      return remainingErrors
-    })
-  }
-
   const handleApply = async (
-    id: string,
+    key: string,
     initializerName: string,
     parameters?: Record<string, unknown> | null,
   ): Promise<void> => {
-    setApplyingInitializerId(id)
+    setApplyingInitializerKey(key)
     try {
       await initializersApi.applyNow(initializerName, { parameters })
       setStatusMessage({ intent: 'success', text: `Applied ${initializerName}.` })
     } catch (error) {
       setStatusMessage({ intent: 'error', text: toApiError(error).detail })
     } finally {
-      setApplyingInitializerId(null)
-    }
-  }
-
-  const handleRemove = async (id: string): Promise<void> => {
-    setDeletingInitializerId(id)
-    try {
-      await initializersApi.deleteAdditional(id)
-      setStatusMessage({ intent: 'success', text: 'Removed additional initializer.' })
-      await refetchSettingsOnly()
-    } catch (error) {
-      setStatusMessage({ intent: 'error', text: toApiError(error).detail })
-    } finally {
-      setDeletingInitializerId(null)
+      setApplyingInitializerKey(null)
     }
   }
 
@@ -171,8 +95,7 @@ export default function Initializers() {
         <div className={styles.headerText}>
           <Text as="h1" size={600} weight="semibold">Initializers</Text>
           <Text size={300}>
-            Browse every registered initializer, review the read-only baseline that ran at startup, and manage
-            additional initializer invocations that run after it.
+            Browse every registered initializer and review the startup sequence from the active .pyrit_conf.
           </Text>
         </div>
         <div className={styles.headerActions}>
@@ -204,23 +127,11 @@ export default function Initializers() {
         </div>
       ) : (
         <>
-          <BaselineInitializers
-            items={settings.baseline}
+          <ConfiguredInitializers
+            items={settings.configured}
             registeredInitializers={registeredInitializers}
-          />
-          <AdditionalInitializers
-            items={settings.additional}
-            registeredInitializers={registeredInitializers}
-            creating={creating}
-            savingInitializerId={savingInitializerId}
-            saveErrors={saveErrors}
-            applyingInitializerId={applyingInitializerId}
-            deletingInitializerId={deletingInitializerId}
-            onAdd={handleAdd}
-            onSave={handleSave}
-            onClearSaveError={clearSaveError}
+            applyingInitializerKey={applyingInitializerKey}
             onApply={handleApply}
-            onRemove={handleRemove}
           />
         </>
       )}

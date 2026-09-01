@@ -167,7 +167,7 @@ async def initialize_pyrit_async(
     # Combine directly provided initializers with those loaded from scripts.
     all_initializers: list[PyRITInitializer] = list(initializers) if initializers else []
 
-    # Load additional initializers from scripts — the registry owns turning
+    # Load initializers from scripts — the registry owns turning
     # external script files into initializer instances.
     if initialization_scripts:
         from pyrit.registry import InitializerRegistry

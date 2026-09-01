@@ -16,9 +16,6 @@ import type {
   ListRegisteredInitializersResponse,
   CustomInitializerListResponse,
   RegisterInitializerRequest,
-  AdditionalInitializer,
-  CreateAdditionalInitializerRequest,
-  UpdateAdditionalInitializerRequest,
   CreateAttackRequest,
   CreateAttackResponse,
   AttackSummary,
@@ -273,28 +270,6 @@ export const initializersApi = {
 
   unregister: async (initializerName: string): Promise<void> => {
     await apiClient.delete(`/initializers/${encodeURIComponent(initializerName)}`)
-  },
-
-  createAdditional: async (
-    request: CreateAdditionalInitializerRequest,
-  ): Promise<AdditionalInitializer> => {
-    const response = await apiClient.post('/initializers/settings', request)
-    return response.data
-  },
-
-  updateAdditional: async (
-    id: string,
-    request: UpdateAdditionalInitializerRequest,
-  ): Promise<AdditionalInitializer> => {
-    const response = await apiClient.put(
-      `/initializers/settings/${encodeURIComponent(id)}`,
-      request,
-    )
-    return response.data
-  },
-
-  deleteAdditional: async (id: string): Promise<void> => {
-    await apiClient.delete(`/initializers/settings/${encodeURIComponent(id)}`)
   },
 
   applyNow: async (
