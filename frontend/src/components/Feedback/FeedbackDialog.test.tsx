@@ -47,27 +47,17 @@ describe("FeedbackDialog", () => {
   });
 
   describe("shell", () => {
-    it("renders sensitive-info warning and links to the vulnerability process", () => {
+    it("starts without a selected feedback type or form fields", () => {
       renderDialog();
 
       expect(screen.getByText("Send feedback")).toBeInTheDocument();
-      const warning = screen.getByTestId("feedback-sensitive-warning");
-      expect(warning).toHaveTextContent(/Reporting a security vulnerability\?/);
-      expect(warning).toHaveTextContent(/Use the private PyRIT security reporting process\./);
-      expect(warning).toHaveTextContent(/Other feedback is filed as a public GitHub issue\./);
-      expect(warning).toHaveTextContent(/Do not include confidential information\./);
+      expect(screen.getByRole("combobox", { name: /category/i })).toHaveValue("");
       expect(
-        screen.getByRole("link", { name: /PyRIT security reporting process/i }),
-      ).toHaveAttribute(
-        "href",
-        "https://github.com/microsoft/PyRIT/security/policy",
-      );
+        screen.queryByTestId("feedback-bug-describe-input"),
+      ).not.toBeInTheDocument();
       expect(
-        screen.getByRole("link", { name: /microsoft privacy statement/i }),
-      ).toHaveAttribute(
-        "href",
-        "https://privacy.microsoft.com/en-us/privacystatement",
-      );
+        screen.queryByTestId("feedback-submit-button"),
+      ).not.toBeInTheDocument();
     });
 
     it("does not render when closed", () => {
@@ -75,13 +65,21 @@ describe("FeedbackDialog", () => {
       expect(screen.queryByText("Send feedback")).not.toBeInTheDocument();
     });
 
-    it("offers all five template-backed categories in the dropdown", () => {
+    it("offers security and all five template-backed categories in the dropdown", () => {
       renderDialog();
       const select = screen.getByTestId(
         "feedback-category-select",
       ) as HTMLSelectElement;
       const values = Array.from(select.options).map((o) => o.value);
-      expect(values).toEqual(["bug", "feature", "doc", "praise", "other"]);
+      expect(values).toEqual([
+        "",
+        "security",
+        "bug",
+        "feature",
+        "doc",
+        "praise",
+        "other",
+      ]);
     });
 
     it("calls onClose when Cancel is clicked without opening any tab", async () => {
@@ -95,8 +93,9 @@ describe("FeedbackDialog", () => {
   });
 
   describe("category-driven fields", () => {
-    it("defaults to the bug category and renders bug-specific fields", () => {
+    it("renders bug-specific fields and the public issue warning for bug reports", async () => {
       renderDialog();
+      await pickCategory("bug");
       expect(
         screen.getByTestId("feedback-bug-describe-input"),
       ).toBeInTheDocument();
@@ -106,6 +105,42 @@ describe("FeedbackDialog", () => {
       expect(
         screen.getByTestId("feedback-bug-versions-input"),
       ).toBeInTheDocument();
+      expect(screen.getByTestId("feedback-sensitive-warning")).toHaveTextContent(
+        /public GitHub issue/i,
+      );
+      expect(
+        screen.getByRole("link", { name: /microsoft privacy statement/i }),
+      ).toHaveAttribute(
+        "href",
+        "https://privacy.microsoft.com/en-us/privacystatement",
+      );
+    });
+
+    it("shows only the private reporting route for security vulnerabilities", async () => {
+      renderDialog();
+      await pickCategory("security");
+
+      expect(screen.getByTestId("feedback-security-guidance")).toHaveTextContent(
+        /must be reported privately/i,
+      );
+      expect(
+        screen.getByRole("link", { name: /PyRIT security reporting process/i }),
+      ).toHaveAttribute(
+        "href",
+        "https://github.com/microsoft/PyRIT/security/policy",
+      );
+      expect(
+        screen.getByRole("link", { name: /open private reporting process/i }),
+      ).toHaveAttribute(
+        "href",
+        "https://github.com/microsoft/PyRIT/security/policy",
+      );
+      expect(
+        screen.queryByTestId("feedback-submit-button"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("feedback-contact-input"),
+      ).not.toBeInTheDocument();
     });
 
     it("swaps to feature-request fields when feature is selected", async () => {
@@ -154,7 +189,7 @@ describe("FeedbackDialog", () => {
 
     it("clears prior fields when switching categories", async () => {
       renderDialog();
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const describe = screen.getByTestId(
         "feedback-bug-describe-input",
       ) as HTMLTextAreaElement;
@@ -182,6 +217,7 @@ describe("FeedbackDialog", () => {
   describe("submit gate", () => {
     it("disables Continue on GitHub until the primary field reaches the minimum length", async () => {
       renderDialog();
+      await pickCategory("bug");
       const submit = screen.getByTestId("feedback-submit-button");
       expect(submit).toBeDisabled();
 
@@ -208,7 +244,7 @@ describe("FeedbackDialog", () => {
     it("submits a bug to the bug_report template with GUI + Bug: triage labels", async () => {
       const onClose = jest.fn();
       renderDialog({ onClose });
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const describe = screen.getByTestId("feedback-bug-describe-input");
       await user.click(describe);
       await user.paste("Chat window crashes on empty send");
@@ -299,7 +335,7 @@ describe("FeedbackDialog", () => {
 
     it("omits the contact section when the contact field is blank", async () => {
       renderDialog();
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const describe = screen.getByTestId("feedback-bug-describe-input");
       await user.click(describe);
       await user.paste("Some sufficiently long bug description here");
@@ -313,7 +349,7 @@ describe("FeedbackDialog", () => {
 
     it("includes the contact section when one is provided", async () => {
       renderDialog();
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const describe = screen.getByTestId("feedback-bug-describe-input");
       await user.click(describe);
       await user.paste("Some sufficiently long bug description here");
@@ -347,7 +383,7 @@ describe("FeedbackDialog", () => {
   describe("secret detection", () => {
     it("does not show the secret warning for plain prose", async () => {
       renderDialog();
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const describe = screen.getByTestId("feedback-bug-describe-input");
       await user.click(describe);
       await user.paste("Plain feedback with no secrets at all.");
@@ -358,7 +394,7 @@ describe("FeedbackDialog", () => {
 
     it("shows the secret warning when a token-like value appears in any field", async () => {
       renderDialog();
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const repro = screen.getByTestId("feedback-bug-repro-input");
       await user.click(repro);
       await user.paste(
@@ -371,7 +407,7 @@ describe("FeedbackDialog", () => {
 
     it("opens the confirm dialog instead of GitHub when submitting with a detected secret", async () => {
       renderDialog();
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const describe = screen.getByTestId("feedback-bug-describe-input");
       await user.click(describe);
       await user.paste(
@@ -388,7 +424,7 @@ describe("FeedbackDialog", () => {
     it("cancels submission when the user clicks 'Go back and fix'", async () => {
       const onClose = jest.fn();
       renderDialog({ onClose });
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const describe = screen.getByTestId("feedback-bug-describe-input");
       await user.click(describe);
       await user.paste(
@@ -404,7 +440,7 @@ describe("FeedbackDialog", () => {
     it("proceeds to GitHub when the user explicitly clicks 'Submit anyway'", async () => {
       const onClose = jest.fn();
       renderDialog({ onClose });
-      const user = userEvent.setup();
+      const user = await pickCategory("bug");
       const describe = screen.getByTestId("feedback-bug-describe-input");
       await user.click(describe);
       await user.paste(
@@ -420,7 +456,7 @@ describe("FeedbackDialog", () => {
 
   it("resets the form when the dialog is reopened", async () => {
     const { unmount } = renderDialog();
-    const user = userEvent.setup();
+    const user = await pickCategory("bug");
     const describe = screen.getByTestId(
       "feedback-bug-describe-input",
     ) as HTMLTextAreaElement;
@@ -431,9 +467,9 @@ describe("FeedbackDialog", () => {
     unmount();
     renderDialog();
 
-    const describeAfter = screen.getByTestId(
-      "feedback-bug-describe-input",
-    ) as HTMLTextAreaElement;
-    expect(describeAfter.value).toBe("");
+    expect(screen.getByRole("combobox", { name: /category/i })).toHaveValue("");
+    expect(
+      screen.queryByTestId("feedback-bug-describe-input"),
+    ).not.toBeInTheDocument();
   });
 });

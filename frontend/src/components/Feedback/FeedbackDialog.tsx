@@ -40,14 +40,22 @@ interface FeedbackDialogProps {
   context?: FeedbackContext
 }
 
+type FeedbackSelection = FeedbackCategory | 'security'
+
 // The order here is also the order in the dropdown.
-const CATEGORIES: { value: FeedbackCategory; helper: string }[] = [
+const CATEGORIES: { value: FeedbackSelection; helper: string }[] = [
+  {
+    value: 'security',
+    helper: 'Privately report a potential security vulnerability',
+  },
   { value: 'bug', helper: 'Something is broken or producing the wrong result' },
   { value: 'feature', helper: 'An idea or improvement you would like to see' },
   { value: 'doc', helper: 'Documentation is missing, confusing, or out of date' },
   { value: 'praise', helper: 'Something you love about Co-PyRIT — auto-acknowledged' },
   { value: 'other', helper: 'Anything else' },
 ]
+
+const SECURITY_POLICY_URL = 'https://github.com/microsoft/PyRIT/security/policy'
 
 // Keep the assembled body short enough that the URL-encoded GitHub issue URL
 // fits well within browser and intermediate-proxy limits (~8 KB URL is safe).
@@ -84,11 +92,6 @@ const useStyles = makeStyles({
     color: tokens.colorPaletteDarkOrangeForeground1,
     fontWeight: tokens.fontWeightSemibold,
   },
-  warningGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    rowGap: tokens.spacingVerticalXS,
-  },
   helper: {
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
@@ -99,6 +102,10 @@ const useStyles = makeStyles({
     marginTop: tokens.spacingVerticalXS,
   },
 })
+
+function isFeedbackCategory(category: FeedbackSelection | ''): category is FeedbackCategory {
+  return category !== '' && category !== 'security'
+}
 
 /** Returns true iff the user has filled in enough to build a useful issue. */
 function getPrimaryField(
@@ -165,7 +172,7 @@ function buildInput(
 
 export default function FeedbackDialog({ open, onClose, context }: FeedbackDialogProps) {
   const styles = useStyles()
-  const [category, setCategory] = useState<FeedbackCategory>('bug')
+  const [category, setCategory] = useState<FeedbackSelection | ''>('')
   const [fields, setFields] = useState<DialogFields>({})
   const [optionalContact, setOptionalContact] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -173,7 +180,9 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
   const update = (name: keyof DialogFields, value: string) =>
     setFields((prev) => ({ ...prev, [name]: value }))
 
-  const primary = getPrimaryField(category, fields)
+  const primary = isFeedbackCategory(category)
+    ? getPrimaryField(category, fields)
+    : { name: 'body' as const, value: '' }
   const primaryTrimmed = primary.value.trim()
   const primaryTooShort =
     primaryTrimmed.length > 0 && primaryTrimmed.length < MIN_PRIMARY_LENGTH
@@ -222,6 +231,7 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
   }
 
   const fireSubmit = () => {
+    if (!isFeedbackCategory(category)) return
     const input = buildInput(category, fields, optionalContact || undefined, context)
     const url = buildGithubFeedbackUrl(input)
     window.open(url, '_blank', 'noopener,noreferrer')
@@ -251,14 +261,37 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
                   handleSubmit()
                 }}
               >
-                <div
-                  className={styles.warningGroup}
-                  data-testid="feedback-sensitive-warning"
-                >
-                  <Text className={styles.warning}>
-                    Reporting a security vulnerability? Use the private{' '}
+                <Field label="Category" required>
+                  <Select
+                    value={category}
+                    onChange={(_, data) => {
+                      setCategory(data.value as FeedbackSelection)
+                      // Keep contact field; clear the rest so old answers don't
+                      // accidentally end up under a different template.
+                      setFields({})
+                    }}
+                    data-testid="feedback-category-select"
+                  >
+                    <option value="" disabled>
+                      Select feedback type
+                    </option>
+                    {CATEGORIES.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.value === 'security'
+                          ? 'Security vulnerability'
+                          : getCategoryLabel(c.value)}
+                      </option>
+                    ))}
+                  </Select>
+                  <Text className={styles.categoryHelper}>{helperForCategory}</Text>
+                </Field>
+
+                {category === 'security' && (
+                  <Text className={styles.warning} data-testid="feedback-security-guidance">
+                    Security vulnerabilities must be reported privately. Do not enter
+                    vulnerability details in this form. Use the{' '}
                     <Link
-                      href="https://github.com/microsoft/PyRIT/security/policy"
+                      href={SECURITY_POLICY_URL}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -266,84 +299,88 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
                     </Link>
                     .
                   </Text>
-                  <Text className={styles.warning}>
-                    Other feedback is filed as a public GitHub issue. Do not include
-                    confidential information.
-                  </Text>
-                </div>
+                )}
 
-                <Field label="Category" required>
-                  <Select
-                    value={category}
-                    onChange={(_, data) => {
-                      setCategory(data.value as FeedbackCategory)
-                      // Keep contact field; clear the rest so old answers don't
-                      // accidentally end up under a different template.
-                      setFields({})
-                    }}
-                    data-testid="feedback-category-select"
-                  >
-                    {CATEGORIES.map((c) => (
-                      <option key={c.value} value={c.value}>
-                        {getCategoryLabel(c.value)}
-                      </option>
-                    ))}
-                  </Select>
-                  <Text className={styles.categoryHelper}>{helperForCategory}</Text>
-                </Field>
+                {isFeedbackCategory(category) && (
+                  <>
+                    <Text
+                      className={styles.warning}
+                      data-testid="feedback-sensitive-warning"
+                    >
+                      This feedback is filed as a public GitHub issue. Do not include
+                      confidential information.
+                    </Text>
 
-                <CategoryRenderer
-                  category={category}
-                  fields={fields}
-                  update={update}
-                  primaryTooShort={primaryTooShort}
-                />
+                    <CategoryRenderer
+                      category={category}
+                      fields={fields}
+                      update={update}
+                      primaryTooShort={primaryTooShort}
+                    />
 
-                <Field label="Preferred contact (optional)">
-                  <Input
-                    value={optionalContact}
-                    onChange={(_, data) => setOptionalContact(data.value)}
-                    placeholder="GitHub handle, email, alias — if you would like a reply"
-                    data-testid="feedback-contact-input"
-                  />
-                </Field>
+                    <Field label="Preferred contact (optional)">
+                      <Input
+                        value={optionalContact}
+                        onChange={(_, data) => setOptionalContact(data.value)}
+                        placeholder="GitHub handle, email, alias — if you would like a reply"
+                        data-testid="feedback-contact-input"
+                      />
+                    </Field>
 
-                <SecretWarning
-                  matches={secretMatches}
-                  confirmOpen={confirmOpen}
-                  onConfirmOpenChange={setConfirmOpen}
-                  onConfirmSubmit={fireSubmit}
-                />
+                    <SecretWarning
+                      matches={secretMatches}
+                      confirmOpen={confirmOpen}
+                      onConfirmOpenChange={setConfirmOpen}
+                      onConfirmSubmit={fireSubmit}
+                    />
 
-                <Text className={styles.helper}>
-                  Continuing opens a new tab on github.com with this form pre-filled. You
-                  will need a GitHub account to file the issue. Data you submit is
-                  governed by the{' '}
-                  <Link
-                    href="https://privacy.microsoft.com/en-us/privacystatement"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Microsoft Privacy Statement
-                  </Link>
-                  .
-                </Text>
+                    <Text className={styles.helper}>
+                      Continuing opens a new tab on github.com with this form pre-filled.
+                      You will need a GitHub account to file the issue. Data you submit is
+                      governed by the{' '}
+                      <Link
+                        href="https://privacy.microsoft.com/en-us/privacystatement"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Microsoft Privacy Statement
+                      </Link>
+                      .
+                    </Text>
+                  </>
+                )}
               </form>
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={onClose}>
                 Cancel
               </Button>
-              <Button
-                appearance="primary"
-                onClick={handleSubmit}
-                disabled={!canSubmit}
-                icon={<OpenRegular />}
-                iconPosition="after"
-                data-testid="feedback-submit-button"
-              >
-                Continue on GitHub
-              </Button>
+              {category === 'security' && (
+                <Button
+                  as="a"
+                  appearance="primary"
+                  href={SECURITY_POLICY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  icon={<OpenRegular />}
+                  iconPosition="after"
+                  onClick={onClose}
+                >
+                  Open private reporting process
+                </Button>
+              )}
+              {isFeedbackCategory(category) && (
+                <Button
+                  appearance="primary"
+                  onClick={handleSubmit}
+                  disabled={!canSubmit}
+                  icon={<OpenRegular />}
+                  iconPosition="after"
+                  data-testid="feedback-submit-button"
+                >
+                  Continue on GitHub
+                </Button>
+              )}
             </DialogActions>
           </DialogBody>
         </DialogSurface>
