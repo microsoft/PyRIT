@@ -54,21 +54,22 @@ async def test_environment_file_service_preserves_explicit_order_and_updates(tmp
     assert next(item.id for item in reordered_items if item.path == str(first)) == first_id
 
 
-async def test_environment_file_service_preserves_valueless_local_binding(tmp_path: Path) -> None:
-    """Test local saves accept syntax supported by the regular dotenv loader."""
+async def test_environment_file_service_preserves_local_content_without_validation(tmp_path: Path) -> None:
+    """Test local saves preserve content handled permissively by the regular dotenv loader."""
     env_file = tmp_path / ".env"
     env_file.write_text("FOO\n", encoding="utf-8")
     service = EnvironmentFileService(resolved_env_files=[env_file])
     item = await service.read_async(file_id=(await service.list_async())[0].id)
+    content = "FOO\n=MALFORMED\nBAR=value\n"
 
     updated = await service.update_async(
         file_id=item.id,
-        content="FOO\nBAR=value\n",
+        content=content,
         expected_version=item.version or "",
     )
 
-    assert updated.content == "FOO\nBAR=value\n"
-    assert env_file.read_text(encoding="utf-8") == "FOO\nBAR=value\n"
+    assert updated.content == content
+    assert env_file.read_text(encoding="utf-8") == content
 
 
 async def test_environment_file_service_rejects_inline_materialized_source(tmp_path: Path) -> None:
@@ -269,20 +270,3 @@ async def test_environment_file_service_rejects_stale_update(tmp_path: Path) -> 
         )
 
     assert env_file.read_text(encoding="utf-8") == "VALUE=external\n"
-
-
-async def test_environment_file_service_validates_before_replacing_file(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text("VALUE=before\n", encoding="utf-8")
-    service = EnvironmentFileService(resolved_env_files=[env_file])
-    file_id = (await service.list_async())[0].id
-    loaded = await service.read_async(file_id=file_id)
-
-    with pytest.raises(ValueError):
-        await service.update_async(
-            file_id=file_id,
-            content="INVALID ENTRY\n",
-            expected_version=loaded.version or "",
-        )
-
-    assert env_file.read_text(encoding="utf-8") == "VALUE=before\n"

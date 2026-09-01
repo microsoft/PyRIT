@@ -222,23 +222,16 @@ class EnvironmentFileService:
                 silent=True,
             )
             return await self._write_akv_source_async(file_id=file_id, content=validated_content)
-        validated_content = _validate_dotenv_document(
-            content,
-            strict=True,
-            silent=True,
-            allow_valueless=True,
-            source_name="Local environment file",
-        )
         path = self._get_file_path(file_id)
         await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
-        await asyncio.to_thread(_replace_file, path=path, content=validated_content)
+        await asyncio.to_thread(_replace_file, path=path, content=content)
         return EnvironmentFileContent(
             id=file_id,
             name=path.name,
             path=str(path),
-            content=validated_content,
+            content=content,
             exists=True,
-            version=_content_version(content=validated_content),
+            version=_content_version(content=content),
         )
 
     async def _write_akv_source_async(self, *, file_id: str, content: str) -> EnvironmentFileContent:

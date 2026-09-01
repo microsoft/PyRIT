@@ -287,8 +287,6 @@ def _validate_dotenv_document(
     *,
     strict: bool = True,
     silent: bool = False,
-    allow_valueless: bool = False,
-    source_name: str = "AKV environment document",
 ) -> str:
     """
     Validate that every dotenv binding uses ``NAME=VALUE`` syntax.
@@ -298,8 +296,6 @@ def _validate_dotenv_document(
         strict (bool): If True, reject any invalid entry. If False, warn and
             allow python-dotenv to skip invalid entries. Defaults to True.
         silent (bool): If True, suppress the console warning. Defaults to False.
-        allow_valueless (bool): If True, accept bare variable declarations. Defaults to False.
-        source_name (str): Source label used in validation messages.
 
     Returns:
         str: The original document, or a sanitized document when strict is False.
@@ -309,11 +305,7 @@ def _validate_dotenv_document(
     """
     bindings = list(parse_stream(StringIO(document)))
     malformed_lines = [str(binding.original.line) for binding in bindings if binding.error]
-    valueless_names = [
-        binding.key
-        for binding in bindings
-        if not allow_valueless and binding.key is not None and binding.value is None
-    ]
+    valueless_names = [binding.key for binding in bindings if binding.key is not None and binding.value is None]
     issues: list[str] = []
     if malformed_lines:
         issues.append("malformed entries at lines: " + ", ".join(malformed_lines))
@@ -324,16 +316,16 @@ def _validate_dotenv_document(
 
     details = "; ".join(issues)
     if strict:
-        raise ValueError(f"{source_name} contains {details}")
+        raise ValueError("AKV environment document contains " + details)
 
-    message = f"{source_name} contains invalid entries that will be skipped: {details}"
+    message = "AKV environment document contains invalid entries that will be skipped: " + details
     if not silent:
         print(f"WARNING: {message}")
     logger.warning(message)
     return "".join(
         binding.original.string
         for binding in bindings
-        if not binding.error and (allow_valueless or not (binding.key is not None and binding.value is None))
+        if not binding.error and not (binding.key is not None and binding.value is None)
     )
 
 
