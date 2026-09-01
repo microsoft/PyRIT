@@ -65,6 +65,9 @@ jest.mock("./services/api", () => ({
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
   },
+  authApi: {
+    getAccess: jest.fn().mockResolvedValue({ isAdmin: true }),
+  },
   setMsalInstance: jest.fn(),
 }));
 
@@ -100,7 +103,7 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("home")} data-testid="nav-home">
           Home
         </button>
-        <button onClick={() => onNavigate("config")} data-testid="nav-config">
+        <button onClick={() => onNavigate("targets")} data-testid="nav-config">
           Config
         </button>
         <button onClick={() => onNavigate("chat")} data-testid="nav-chat">
@@ -228,6 +231,11 @@ jest.mock("./components/Config/TargetConfig", () => {
   };
 });
 
+jest.mock("./components/Configuration/Configuration", () => ({
+  __esModule: true,
+  default: () => <div data-testid="configuration">Configuration</div>,
+}));
+
 jest.mock("./components/History/AttackHistory", () => {
   const MockAttackHistory = ({
     onOpenAttack,
@@ -251,7 +259,7 @@ jest.mock("./components/History/AttackHistory", () => {
             Start attack
           </button>
         ) : (
-          <button onClick={() => onNavigate("config")} data-testid="history-configure-target">
+          <button onClick={() => onNavigate("targets")} data-testid="history-configure-target">
             Configure target
           </button>
         )}
@@ -299,7 +307,7 @@ jest.mock("./components/Home/Home", () => {
       <div data-testid="home-view">
         <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
-        <button onClick={() => onNavigate("config")} data-testid="home-go-config">
+        <button onClick={() => onNavigate("targets")} data-testid="home-go-config">
           Go to config
         </button>
         <button
@@ -320,7 +328,7 @@ jest.mock("./components/Home/Home", () => {
 
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
-  // initialPath lets a test deep-link straight to a view (e.g. "/config").
+  // initialPath lets a test deep-link straight to a view (e.g. "/targets").
   function renderApp(initialPath = "/") {
     return render(
       <ThemeProvider>
@@ -359,13 +367,23 @@ describe("App", () => {
   });
 
   it("renders the view named by the initial URL", () => {
+    renderApp("/targets");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "targets"
+    );
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+  });
+
+  it("renders configuration at /config", () => {
     renderApp("/config");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "configuration"
     );
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByTestId("configuration")).toBeInTheDocument();
   });
 
   it("renders the history view when deep-linked to /history", () => {
@@ -400,19 +418,19 @@ describe("App", () => {
     expect(screen.getByTestId("chat-window")).toBeInTheDocument();
   });
 
-  it("switches to config view", () => {
+  it("switches to targets view", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "targets"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("switches back to chat from config", () => {
+  it("switches back to chat from targets", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
@@ -488,14 +506,14 @@ describe("App", () => {
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
   });
 
-  it("sets active target from config page and passes to chat", () => {
+  it("sets active target from targets page and passes to chat", () => {
     renderApp();
 
     // Switch to chat and confirm no target initially
     fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("has-target")).toHaveTextContent("no");
 
-    // Switch to config and set target
+    // Switch to targets and set target
     fireEvent.click(screen.getByTestId("nav-config"));
     fireEvent.click(screen.getByTestId("set-target"));
 
@@ -516,13 +534,13 @@ describe("App", () => {
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
   });
 
-  it("navigates from empty history to config when no target is active", () => {
+  it("navigates from empty history to targets when no target is active", () => {
     renderApp("/history");
 
     expect(screen.getByTestId("history-has-target")).toHaveTextContent("no");
     fireEvent.click(screen.getByTestId("history-configure-target"));
 
-    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "config");
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "targets");
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
@@ -573,14 +591,14 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("home-conv-1"));
   });
 
-  it("navigates to config from the home view", () => {
+  it("navigates to targets from the home view", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("home-go-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "targets"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });

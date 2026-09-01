@@ -103,14 +103,14 @@ Community users can deploy `main.bicep` directly using the instructions below. F
 ## Security
 
 - **Authentication**: [MSAL](https://learn.microsoft.com/en-us/entra/msal/) [PKCE](https://oauth.net/2/pkce/) on the frontend (`@azure/msal-browser`) and public-client device-code authentication for the PyRIT CLI, backed by Microsoft Graph middleware on the backend. Both clients send delegated Graph tokens, and the backend authenticates them through Graph `/me`. These public-client flows require no client secrets or certificates.
-- **Authorization**: Entra group check via `allowedGroupObjectIds` param. Requires delegated Graph `User.Read`; the backend calls `/me/checkMemberGroups` and compares the returned transitive memberships with the configured group IDs. Each security group must also be assigned to the enterprise app (see Prerequisites §3). Authenticated deployments require at least one allowed group and fail to start without one. `/api/health`, `/api/auth/config`, and `/api/media` are intentional public exceptions; other `/api` routes require authentication when auth is enabled. Successful identity and membership results are cached in-process for 60 seconds, keyed by a SHA-256 token digest, to reduce Graph latency and throttling. Bearer tokens themselves are not stored in the cache.
+- **Authorization**: Entra group checks use `allowedGroupObjectIds` for application access and `adminGroupObjectId` for backend configuration routes. Requires delegated Graph `User.Read`; the backend calls `/me/checkMemberGroups` and compares the returned transitive memberships with the configured group IDs. Each security group must also be assigned to the enterprise app (see Prerequisites §3). Authenticated deployments require at least one allowed group and fail to start without one. `/api/health`, `/api/auth/config`, and `/api/media` are intentional public exceptions; other `/api` routes require authentication when auth is enabled. Successful identity and membership results are cached in-process for 60 seconds, keyed by a SHA-256 token digest, to reduce Graph latency and throttling. Bearer tokens themselves are not stored in the cache.
 - **Identity**: `deploy_instance.py` creates its user-assigned managed identity (UAMI) and grants AcrPull and Storage Blob Data Contributor before deploying Bicep. A direct Bicep deployment can create `<appName>-identity`, but the template creates no role assignments, so its first revision can remain unhealthy until required roles are granted and the revision is restarted. A healthy one-pass direct deployment uses an existing, pre-authorized UAMI. `AZURE_CLIENT_ID` is set to the UAMI's client ID so `DefaultAzureCredential` selects the correct identity.
 - **Network**: The template always creates a VNet-integrated external Container Apps environment, one delegated ACA infrastructure subnet, a Standard NAT Gateway, and a static outbound IPv4. ACA supplies the generated HTTPS hostname and trusted certificate. In direct-ACA mode, `allowedCidr` optionally restricts public ingress to one IPv4 CIDR; an empty value permits public ingress. Front Door mode requires `allowedCidr` to be empty because ACA sees Front Door backend addresses, not the original client; Bicep and the team pipeline reject the invalid combination. Entra sign-in, enterprise-app assignment, and backend group checks remain mandatory application access controls.
 - **Front Door**: `enableFrontDoor=true` creates a Premium profile, managed `azurefd.net` endpoint, HTTPS ACA origin, `/api/health` probe, uncached catch-all route, and 240-second origin response timeout matching the ACA HTTP ingress limit. `enableFrontDoorPrivateLink=true` targets the ACA managed environment with group ID `managedEnvironments`. The resulting private endpoint connection must be approved before AFD can route privately. `disableContainerAppsPublicAccess=true` disables the ACA environment public endpoint and CORS then permits only the AFD origin. The module does not create a WAF policy; application authentication and authorization remain mandatory.
 - **Routing**: Inbound requests through Front Door do not traverse the NAT Gateway. When ACA public access remains enabled, users can also reach ACA directly. When Private Link is enabled and public access is disabled, all public application traffic enters through Front Door. Outbound connections from the ACA environment that leave the virtual network use the NAT Gateway's static public IPv4.
 - **Response headers**: `SecurityHeadersMiddleware` adds [CSP](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP), HTTP Strict Transport Security (HSTS, production only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, and Cache-Control (`no-store` on API routes). Swagger/OpenAPI disabled in production.
 - **Data**: Azure SQL with managed identity authentication (no passwords)
-- **Secrets**: When `envFileContents` is nonempty, Bicep stores it as an inline ACA secret. Otherwise, Bicep creates a versionless Key Vault reference to `envSecretName` using the app UAMI; that path requires `Key Vault Secrets User` and network access to the vault. `deploy_instance.py` uses the inline path.
+- **Secrets**: When `envFileContents` is nonempty, Bicep stores it as an inline ACA secret. Otherwise, PyRIT reads and updates `envSecretName` directly through the app UAMI; that path requires `Key Vault Secrets Officer` and network access to the vault. `deploy_instance.py` uses the inline path.
 - **Images**: Direct Bicep deployments must supply a unique tag or digest; the template does not reject `:latest`.
 - **Supply chain**: [ACR](https://learn.microsoft.com/en-us/azure/container-registry/) pull uses managed identity RBAC. `deploy_instance.py` grants AcrPull, while direct Bicep callers manage it themselves. `frontend/.npmrc` pins the npm registry. `docker/Dockerfile` declares `ARG BASE_IMAGE` with no default — all callers pass it explicitly to avoid container supply chain security scanner warnings.
 - **Tags**: Bicep applies the supplied `tags` object to every resource it creates; the default object includes Service/Owner/DataClass governance tags.
@@ -138,7 +138,7 @@ Front Door is optional. When enabled, the subscription must have the `Microsoft.
 | --- | --- | --- | --- |
 | 1 | Resource group | `az group create` | `<rg>` name |
 | 2 | Entra app registration | Portal or CLI (Graph API) | `entraClientId`, `entraTenantId` |
-| 3 | Security group + SP assignment | Portal or CLI | `allowedGroupObjectIds` |
+| 3 | User/admin groups + SP assignment | Portal or CLI | `allowedGroupObjectIds`, `adminGroupObjectId` |
 | 4 | SQL server with Entra admin | Existing server | `sqlServerFqdn`, `sqlDatabaseName` |
 | 5 | Container image in ACR | Docker build + push | `containerImage` |
 | 6 | Key Vault | Existing vault | `keyVaultResourceId` |
@@ -226,7 +226,7 @@ az rest --method PATCH \
 
 ### 3. Entra security groups (required for group-based authorization)
 
-Create one or more security groups for authorized users. Multiple groups can be specified as comma-separated IDs in `allowedGroupObjectIds`.
+Create one or more security groups for authorized users and a group for configuration administrators. Multiple user groups can be specified as comma-separated IDs in `allowedGroupObjectIds`; set the admin group ID in `adminGroupObjectId`.
 
 ```bash
 # Create security group for authorized users
@@ -237,6 +237,13 @@ GROUP_ID=$(az ad group create \
   --mail-nickname myapp-users \
   --query id -o tsv)
 echo "allowedGroupObjectIds: $GROUP_ID"
+
+# Create or retrieve the configuration administrator group
+ADMIN_GROUP_ID=$(az ad group create \
+  --display-name "MyApp-Admins" \
+  --mail-nickname myapp-admins \
+  --query id -o tsv)
+echo "adminGroupObjectId: $ADMIN_GROUP_ID"
 
 # Add users to the group
 az ad group member add --group "MyApp-Users" --member-id <user-object-id>
@@ -255,6 +262,11 @@ SP_ID=$(az ad sp show --id $APP_ID --query id -o tsv)
 az rest --method POST \
   --url "https://graph.microsoft.com/v1.0/servicePrincipals/$SP_ID/appRoleAssignedTo" \
   --body "{\"principalId\": \"$GROUP_ID\", \"resourceId\": \"$SP_ID\", \"appRoleId\": \"00000000-0000-0000-0000-000000000000\"}"
+
+# Assign the configuration administrator group
+az rest --method POST \
+  --url "https://graph.microsoft.com/v1.0/servicePrincipals/$SP_ID/appRoleAssignedTo" \
+  --body "{\"principalId\": \"$ADMIN_GROUP_ID\", \"resourceId\": \"$SP_ID\", \"appRoleId\": \"00000000-0000-0000-0000-000000000000\"}"
 
 # Restrict token issuance to assigned users/groups only (recommended).
 # Without this, any tenant user can obtain a token — they'll get a 403 from
@@ -316,7 +328,7 @@ echo "containerImage: $ACR_NAME.azurecr.io/pyrit:$COMMIT_SHA"
 `main.bicep` consumes an existing Key Vault reference; it never creates or deletes a vault. `deploy_instance.py` creates its vault before invoking Bicep. Secret behavior depends on the deployment path:
 
 - `deploy_instance.py` passes `.env` content through `envFileContents`; Key Vault is a locked-down backup/audit copy and runtime does not read it.
-- Direct Bicep deployments with empty `envFileContents` resolve `envSecretName` from Key Vault through the app UAMI. The identity needs `Key Vault Secrets User`, and the vault network policy must permit the Container Apps environment.
+- Direct Bicep deployments with empty `envFileContents` let PyRIT resolve and update `envSecretName` through the app UAMI. The identity needs `Key Vault Secrets Officer`, and the vault network policy must permit the Container Apps environment.
 
 ```bash
 # Create a vault (if your org doesn't provide one)
@@ -349,7 +361,7 @@ The output shows a color-coded diff: green (+) for new resources, orange (~) for
 
 ## Deploy
 
-For a healthy one-pass direct deployment, set `acrName` or `acrResourceId` to an existing registry and set `existingManagedIdentityResourceId` to a UAMI that already has AcrPull and all required data-plane permissions. If `envFileContents` is empty, that identity also needs `Key Vault Secrets User` and a network path to the vault. If Bicep creates the identity instead, expect to grant its roles after resource creation and restart the failed revision.
+For a healthy one-pass direct deployment, set `acrName` or `acrResourceId` to an existing registry and set `existingManagedIdentityResourceId` to a UAMI that already has AcrPull and all required data-plane permissions. If `envFileContents` is empty, that identity also needs `Key Vault Secrets Officer` and a network path to the vault. If Bicep creates the identity instead, expect to grant its roles after resource creation and restart the failed revision.
 
 ```bash
 # Copy and fill in parameters
@@ -423,6 +435,8 @@ Both `copyrit-gui-test` and `copyrit-gui-prod` supply:
 | `managedIdentityResourceId` | Existing UAMI with ACR, Key Vault, SQL, and provider permissions |
 | `entraTenantId`, `entraClientId` | SPA authentication configuration |
 | `allowedGroupObjectIds` | Backend-authorized Entra security groups |
+| `adminGroupObjectId` | Entra group authorized to manage backend configuration |
+| `pyritConfigFileUri` | Optional credential-free Azure Blob URI for `.pyrit_conf` |
 | `sqlServerFqdn`, `sqlDatabaseName` | Existing SQL database |
 | `keyVaultResourceId`, `envSecretName` | Existing runtime configuration secret |
 | `acrResourceId`, `enableOtel` | Registry resource ID and observability setting |
@@ -483,10 +497,10 @@ The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. Its 
    az role assignment create --assignee-object-id $MI_ID \
      --assignee-principal-type ServicePrincipal --role "AcrPull" --scope <acrResourceId>
 
-   # Required whenever envFileContents is empty and a Key Vault reference is used.
-   # deploy_instance.py uses an inline envFileContents secret instead.
+   # Required whenever envFileContents is empty so PyRIT can read and update
+   # the configured Key Vault environment source.
    az role assignment create --assignee-object-id $MI_ID \
-     --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" \
+     --assignee-principal-type ServicePrincipal --role "Key Vault Secrets Officer" \
      --scope <keyVaultResourceId>
 
    # Grant based on which services you use (scope as narrowly as possible)
@@ -517,7 +531,7 @@ The workflow also creates a `CanNotDelete` lock scoped to the reserved PIP. Its 
    ALTER ROLE db_ddladmin ADD MEMBER [<managed-identity-name>];
    ```
 
-4. **Manage access** — Add or remove users via Entra security groups (`allowedGroupObjectIds`). Each group must also be assigned to the enterprise app.
+4. **Manage access** — Add or remove users via `allowedGroupObjectIds` and configuration administrators via `adminGroupObjectId`. Each group must also be assigned to the enterprise app.
 
 ## Access the GUI
 
@@ -531,19 +545,20 @@ Open the public URL and verify unauthenticated users are redirected to Entra and
 
 ## Configuration: .pyrit_conf and .env
 
-The deployment interface replaces local `.pyrit_conf` and `.env` inputs with Bicep parameters, so neither file is baked into the image. For `.env` content, the container entrypoint materializes `~/.pyrit/.env` at runtime.
+The backend can load `.pyrit_conf` directly from Azure Blob Storage. Set `pyritConfigFileUri` to a credential-free blob HTTPS URI; the backend uses the Container App UAMI to read and update it. Leave it empty to generate configuration from `sqlServerFqdn` and `pyritInitializer`. Grant `Storage Blob Data Contributor` on the storage account or blob container. When using `deploy_instance.py`, pass that resource ID through `--pyrit-config-rbac-scope` so the helper grants access before starting the app.
 
 ### .pyrit_conf fields → Bicep params
 
 | .pyrit_conf field | Bicep param | Env var | Notes |
 | --- | --- | --- | --- |
+| Complete file | `pyritConfigFileUri` | `PYRIT_CONFIG_FILE` | Optional Azure Blob URI loaded with managed identity |
 | `initializers` | `pyritInitializer` | `PYRIT_INITIALIZER` | Default `target`: `target` populates the TargetRegistry (read by the GUI); |
 | `operator` | — | Set per-user in the GUI |  |
 | `operation` | — | Set per-user in the GUI |  |
 
 ### .env file → Container App secret
 
-The template injects the `env-file` ACA secret as `PYRIT_ENV_CONTENTS`. The container entrypoint writes it to `~/.pyrit/.env`, which PyRIT loads at startup. `deploy_instance.py` stores the secure `envFileContents` value inline. When `envFileContents` is empty, Bicep instead stores a versionless Key Vault reference to `envSecretName`.
+When `envFileContents` is provided, the template injects it as `PYRIT_ENV_CONTENTS`, and the container entrypoint writes it to `~/.pyrit/.env`. When it is empty, the entrypoint passes the versionless `envSecretName` URL to PyRIT as an editable Key Vault environment source.
 
 To rotate the `.env` after deployment, the rotation path depends on which deploy path you used:
 
@@ -575,9 +590,7 @@ az keyvault secret set --vault-name copyrit-{instance-name}-kv \
 
 **For instances deployed via the Microsoft team `gui-deploy.yml` ADO workflow:**
 
-Update the Key Vault secret named by `envSecretName` (for example, `env-global` or `env-global-prod`) through the approved secret-management path. Do not add plaintext `.env` content to an ADO variable group. Verify the app UAMI retains `Key Vault Secrets User` and that the vault network policy permits runtime resolution.
-
-The Bicep reference is versionless. Azure Container Apps checks for a newer Key Vault version within 30 minutes and automatically restarts active revisions that consume it through an environment variable. Verify the new version and healthy revision after that window; do not rerun the pipeline merely to transport secret content.
+Use the GUI configuration editor or another approved Key Vault secret-management path to update the secret named by `envSecretName`. Do not add plaintext `.env` content to an ADO variable group. Verify the app UAMI retains `Key Vault Secrets Officer` and that the vault network policy permits runtime access.
 
 > ⚠️ **Anti-patterns to avoid:**
 >
@@ -598,7 +611,7 @@ Supported Azure integrations, including OpenAI, Content Safety, and Speech, can 
 - **PIP lock**: `protectEgressPublicIp=true` creates a resource-scoped `CanNotDelete` lock. The internal ADO workflow enables it; community examples leave it disabled unless the operator explicitly opts in.
 - **Log Analytics shared key**: `listKeys()` is the standard ACA pattern. The key is used during deployment only, not exposed to the application.
 - **Workload profiles**: Consumption tier. Defaults to 1 replica (no auto-scale).
-- **Key Vault**: Bicep requires a supplied vault resource ID. The vault is backup/audit-only for `deploy_instance.py`, but it is the runtime source for any deployment using `envSecretName`. Those app identities require `Key Vault Secrets User` and a permitted network path. AcrPull is still granted separately.
+- **Key Vault**: Bicep requires a supplied vault resource ID. The vault is backup/audit-only for `deploy_instance.py`, but it is the editable runtime source for deployments using `envSecretName`. Those app identities require `Key Vault Secrets Officer` and a permitted network path. AcrPull is still granted separately.
 - **OpenTelemetry**: When `enableOtel=true`, configure the agent post-deploy:
   ```bash
   AI_CONN=$(az resource show -g <rg> -n <appName>-ai \

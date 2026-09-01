@@ -5,6 +5,7 @@
 FastAPI application entry point for PyRIT backend.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -25,6 +26,7 @@ from pyrit.backend.models.initializers import BaselineInitializerSetting
 from pyrit.backend.routes import (
     attacks,
     auth,
+    configuration,
     converters,
     datasets,
     health,
@@ -35,7 +37,11 @@ from pyrit.backend.routes import (
     targets,
     version,
 )
+from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.initializer_service import get_initializer_service
+from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
+from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 # Check for development mode from environment variable
@@ -50,15 +56,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Initialize PyRIT on startup using the config file, then yield.
 
     Config resolution order:
-    1. ``PYRIT_CONFIG_FILE`` env var (if set)
-    2. ``~/.pyrit/.pyrit_conf`` (if it exists)
-    3. Built-in defaults (SQLite, no initializers)
+    1. Built-in defaults
+    2. ``~/.pyrit/.pyrit_conf`` when present
+    3. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI when set
     """
-    config_file_env = os.getenv("PYRIT_CONFIG_FILE")
-    config_file = Path(config_file_env) if config_file_env else None
-
-    config = ConfigurationLoader.load_with_overrides(config_file=config_file)
-    await config.initialize_pyrit_async()
+    configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
+    app.state.configuration_file_service = configuration_file_service
+    async with configuration_file_service.resolve_async() as config_file:
+        config = ConfigurationLoader.load_with_overrides(config_file=config_file)
+    resolved_env_files = config.resolve_env_files()
+    read_only_file_sources = {}
+    if os.getenv("PYRIT_ENV_CONTENTS"):
+        read_only_file_sources[CONFIGURATION_DIRECTORY_PATH / ".env"] = (
+            "This file is materialized from the Container App secret and cannot be persisted here. "
+            "Update the deployment secret instead."
+        )
+    app.state.environment_file_service = EnvironmentFileService(
+        resolved_env_files=list(resolved_env_files) if resolved_env_files is not None else None,
+        env_akv_ref=config.resolve_env_akv_ref(),
+        env_akv_strict=config.env_akv_strict,
+        read_only_file_sources=read_only_file_sources,
+    )
+    initializer_registry = InitializerRegistry.get_registry_singleton()
+    initializer_registry.configure_custom_scripts_source(config.custom_initializers_source)
+    if config.allow_custom_initializers:
+        await asyncio.to_thread(initializer_registry.register_stored_initializers)
+    await config.initialize_pyrit_async(raise_on_initializer_error=False)
 
     # Persisted additional initializers run after the .pyrit_conf baseline, in stored order.
     app.state.baseline_initializers = [
@@ -132,6 +155,7 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
+app.include_router(configuration.router, prefix="/api", tags=["config"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])

@@ -18,14 +18,17 @@ Route structure:
     DELETE /api/initializers/{name}         — unregister an initializer
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from azure.core.exceptions import AzureError
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
     ApplyInitializerRequest,
     ApplyInitializerResponse,
     BaselineInitializerSetting,
     CreateAdditionalInitializerRequest,
+    CustomInitializerListResponse,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisterInitializerRequest,
@@ -36,6 +39,19 @@ from pyrit.models import AdditionalInitializer
 from pyrit.models.catalog.initializer import RegisteredInitializer
 
 router = APIRouter(prefix="/initializers", tags=["initializers"])
+
+
+def _custom_storage_unavailable() -> HTTPException:
+    """
+    Create a sanitized response for unavailable custom initializer storage.
+
+    Returns:
+        HTTPException: A service-unavailable response without SDK details.
+    """
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Custom initializer storage is temporarily unavailable",
+    )
 
 
 def _baseline_initializers(request: Request) -> list[BaselineInitializerSetting]:
@@ -124,6 +140,7 @@ async def get_initializer_settings(  # pyrit-async-suffix-exempt
     "/settings",
     response_model=AdditionalInitializer,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
     responses={
         400: {"model": ProblemDetail, "description": "Invalid initializer settings"},
         404: {"model": ProblemDetail, "description": "Initializer not found"},
@@ -160,6 +177,7 @@ async def create_additional_initializer(  # pyrit-async-suffix-exempt
 @router.put(
     "/settings/{additional_initializer_id}",
     response_model=AdditionalInitializer,
+    dependencies=[Depends(require_admin)],
     responses={
         400: {"model": ProblemDetail, "description": "Invalid initializer settings"},
         404: {"model": ProblemDetail, "description": "Additional initializer not found"},
@@ -198,6 +216,7 @@ async def update_additional_initializer(  # pyrit-async-suffix-exempt
 @router.delete(
     "/settings/{additional_initializer_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
 )
 async def delete_additional_initializer(  # pyrit-async-suffix-exempt
     additional_initializer_id: str,
@@ -215,6 +234,7 @@ async def delete_additional_initializer(  # pyrit-async-suffix-exempt
 @router.post(
     "/{initializer_name}/apply",
     response_model=ApplyInitializerResponse,
+    dependencies=[Depends(require_admin)],
     responses={
         400: {"model": ProblemDetail, "description": "Initializer apply failed"},
         404: {"model": ProblemDetail, "description": "Initializer not found"},
@@ -250,6 +270,25 @@ async def apply_initializer(  # pyrit-async-suffix-exempt
 
 
 @router.get(
+    "/custom",
+    response_model=CustomInitializerListResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def list_custom_initializers(request: Request) -> CustomInitializerListResponse:  # pyrit-async-suffix-exempt
+    """
+    List custom initializer scripts from the configured storage source.
+
+    Returns:
+        CustomInitializerListResponse: The configured source and stored scripts.
+    """
+    _check_custom_initializers_allowed(request)
+    try:
+        return await get_initializer_service().list_custom_initializers_async()
+    except AzureError as exc:
+        raise _custom_storage_unavailable() from exc
+
+
+@router.get(
     "/{initializer_name}",
     response_model=RegisteredInitializer,
     responses={
@@ -282,6 +321,7 @@ async def get_initializer(initializer_name: str) -> RegisteredInitializer:  # py
     "",
     response_model=RegisteredInitializer,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
     responses={
         403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
         409: {"model": ProblemDetail, "description": "Initializer name already registered"},
@@ -309,6 +349,8 @@ async def register_initializer(  # pyrit-async-suffix-exempt
 
     try:
         return await service.register_initializer_async(name=body.name, script_content=body.script_content)
+    except AzureError as exc:
+        raise _custom_storage_unavailable() from exc
     except ValueError as e:
         detail = str(e)
         if "already registered" in detail:
@@ -319,6 +361,7 @@ async def register_initializer(  # pyrit-async-suffix-exempt
 @router.delete(
     "/{initializer_name}",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_admin)],
     responses={
         400: {"model": ProblemDetail, "description": "Cannot remove built-in initializer"},
         403: {"model": ProblemDetail, "description": "Custom initializer operations disabled"},
@@ -344,6 +387,8 @@ async def unregister_initializer(  # pyrit-async-suffix-exempt
 
     try:
         await service.unregister_initializer_async(initializer_name=initializer_name)
+    except AzureError as exc:
+        raise _custom_storage_unavailable() from exc
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

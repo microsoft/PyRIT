@@ -87,6 +87,41 @@ export interface PaginationInfo {
   prev_cursor?: string | null
 }
 
+export interface ConfigurationFileContent {
+  content: string
+  source: string
+  version: string
+}
+
+export interface UpdateConfigurationFileRequest {
+  content: string
+  version: string
+}
+
+export interface UpdateEnvironmentFileRequest {
+  content: string
+  version: string
+}
+
+export interface EnvironmentFileContent {
+  id: string
+  name: string
+  path: string
+  content: string
+  exists: boolean
+  version?: string | null
+  read_only?: boolean
+  read_only_reason?: string | null
+}
+
+export interface AuthAccess {
+  isAdmin: boolean
+}
+
+export interface EnvironmentFileListResponse {
+  items: EnvironmentFileContent[]
+}
+
 // --- Targets ---
 
 export interface TargetCapabilities {
@@ -193,6 +228,22 @@ export interface UpdateAdditionalInitializerRequest {
 export interface ListRegisteredInitializersResponse {
   items: RegisteredInitializer[]
   pagination: PaginationInfo
+}
+
+export interface RegisterInitializerRequest {
+  name: string
+  script_content: string
+}
+
+export interface CustomInitializer {
+  initializer_name: string
+  script_content: string
+  source: string
+}
+
+export interface CustomInitializerListResponse {
+  source: string
+  items: CustomInitializer[]
 }
 
 export interface ApplyInitializerRequest {

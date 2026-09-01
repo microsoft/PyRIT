@@ -14,8 +14,11 @@ jest.mock("axios", () => ({
 
 import {
   apiClient,
+  authApi,
   healthApi,
+  initializersApi,
   versionApi,
+  configurationApi,
   targetsApi,
   attacksApi,
 } from "./api";
@@ -29,6 +32,16 @@ describe("api service", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe("authApi", () => {
+    it("should read current administrator access", async () => {
+      const response = { data: { isAdmin: true } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(authApi.getAccess()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/auth/access");
+    });
   });
 
   describe("apiClient", () => {
@@ -144,6 +157,88 @@ describe("api service", () => {
 
       expect(apiClient.get).toHaveBeenCalledWith("/version");
       expect(result).toEqual({ version: "0.10.1" });
+    });
+  });
+
+  describe("initializersApi", () => {
+    it("should list stored custom initializers", async () => {
+      const response = { data: { source: "C:/custom", items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(initializersApi.listCustom()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/initializers/custom");
+    });
+
+    it("should register and unregister through existing endpoints", async () => {
+      const request = { name: "custom", script_content: "class Custom: pass\n" };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ status: 201 });
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ status: 204 });
+
+      await initializersApi.register(request);
+      await initializersApi.unregister("custom/name");
+
+      expect(apiClient.post).toHaveBeenCalledWith("/initializers", request);
+      expect(apiClient.delete).toHaveBeenCalledWith("/initializers/custom%2Fname");
+    });
+  });
+
+  describe("configurationApi", () => {
+    it("should read configuration content", async () => {
+      const response = {
+        data: {
+          content: "operator: alice\n",
+          source: "C:/Users/test/.pyrit/config.yaml",
+          version: "config-v1",
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.getContent()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/config");
+    });
+
+    it("should update configuration content", async () => {
+      const request = { content: "operator: bob\n", version: "config-v1" };
+      const response = {
+        data: { ...request, source: "https://account.blob.core.windows.net/config/config.yaml" },
+      };
+      (apiClient.put as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.updateContent(request)).resolves.toEqual(response.data);
+      expect(apiClient.put).toHaveBeenCalledWith("/config", request);
+    });
+
+    it("should list environment files", async () => {
+      const response = { data: { items: [] } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.listEnvironmentFiles()).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/config/env-files");
+    });
+
+    it("should get an environment file", async () => {
+      const response = { data: { id: "akv:0", content: "KEY=value\n" } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.getEnvironmentFile("akv:0")).resolves.toEqual(response.data);
+      expect(apiClient.get).toHaveBeenCalledWith("/config/env-files/akv%3A0");
+    });
+
+    it("should update an environment file", async () => {
+      const request = { content: "KEY=value\n", version: "version-1" };
+      const response = {
+        data: {
+          id: "akv:0",
+          name: "AKV: bootstrap",
+          path: "https://vault.vault.azure.net/secrets/bootstrap",
+          exists: true,
+          ...request,
+        },
+      };
+      (apiClient.put as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(configurationApi.updateEnvironmentFile("akv:0", request)).resolves.toEqual(response.data);
+      expect(apiClient.put).toHaveBeenCalledWith("/config/env-files/akv%3A0", request);
     });
   });
 

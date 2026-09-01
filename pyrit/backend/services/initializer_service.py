@@ -21,6 +21,8 @@ from pyrit.backend.models.initializers import (
     AdditionalInitializerSetting,
     ApplyInitializerResponse,
     BaselineInitializerSetting,
+    CustomInitializerListResponse,
+    CustomInitializerResponse,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
 )
@@ -298,12 +300,32 @@ class InitializerService:
         Returns:
             RegisteredInitializer: The newly registered initializer summary.
         """
-        self._registry.register_from_content(name=name, script_content=script_content)
+        await asyncio.to_thread(self._registry.register_from_content, name=name, script_content=script_content)
 
         initializer = await self.get_initializer_async(initializer_name=name)
         if not initializer:
             raise ValueError(f"Initializer '{name}' was registered but metadata could not be retrieved.")
         return initializer
+
+    async def list_custom_initializers_async(self) -> CustomInitializerListResponse:
+        """
+        List custom initializer scripts from the registry's configured storage.
+
+        Returns:
+            CustomInitializerListResponse: The configured source and stored scripts.
+        """
+        source, scripts = await asyncio.to_thread(self._registry.list_stored_initializer_sources)
+        return CustomInitializerListResponse(
+            source=source,
+            items=[
+                CustomInitializerResponse(
+                    initializer_name=name,
+                    script_content=script_content,
+                    source=script_source,
+                )
+                for name, script_content, script_source in scripts
+            ],
+        )
 
     async def unregister_initializer_async(self, *, initializer_name: str) -> None:
         """
@@ -312,7 +334,7 @@ class InitializerService:
         Args:
             initializer_name: The registry name to remove.
         """
-        self._registry.unregister_and_cleanup(initializer_name)
+        await asyncio.to_thread(self._registry.unregister_and_cleanup, initializer_name)
         logger.info("Unregistered initializer: %s", initializer_name)
 
     def _build_and_run_initializer(

@@ -143,9 +143,19 @@ initializers:
 
 Full preload can take several minutes and may require network access, provider credentials, or acceptance of gated dataset licenses. When preloading during local backend startup, increase `server.startup_timeout` if the configured timeout is not long enough.
 
+### `custom_initializers_source`
+
+Stores custom initializer Python files in a local directory or Azure Blob container. An Azure URI may include a blob-name prefix, which behaves like a folder:
+
+```yaml
+custom_initializers_source: https://account.blob.core.windows.net/pyrit-storage/custom-initializers
+```
+
+With this configuration, PyRIT reads and writes scripts directly under the `custom-initializers/` prefix in the `pyrit-storage` container. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/custom_initializers`.
+
 ### `initialization_scripts`
 
-Paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.
+Local paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.
 
 | Value             | Behavior                           |
 | ----------------- | ---------------------------------- |

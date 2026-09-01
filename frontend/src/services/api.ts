@@ -14,6 +14,8 @@ import type {
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
+  CustomInitializerListResponse,
+  RegisterInitializerRequest,
   AdditionalInitializer,
   CreateAdditionalInitializerRequest,
   UpdateAdditionalInitializerRequest,
@@ -28,6 +30,12 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   ChangeMainConversationResponse,
+  ConfigurationFileContent,
+  EnvironmentFileContent,
+  UpdateEnvironmentFileRequest,
+  EnvironmentFileListResponse,
+  UpdateConfigurationFileRequest,
+  AuthAccess,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -148,6 +156,43 @@ export const versionApi = {
   },
 }
 
+export const authApi = {
+  getAccess: async (): Promise<AuthAccess> => {
+    const response = await apiClient.get('/auth/access')
+    return response.data
+  },
+}
+
+export const configurationApi = {
+  getContent: async (): Promise<ConfigurationFileContent> => {
+    const response = await apiClient.get('/config')
+    return response.data
+  },
+
+  updateContent: async (request: UpdateConfigurationFileRequest): Promise<ConfigurationFileContent> => {
+    const response = await apiClient.put('/config', request)
+    return response.data
+  },
+
+  listEnvironmentFiles: async (): Promise<EnvironmentFileListResponse> => {
+    const response = await apiClient.get('/config/env-files')
+    return response.data
+  },
+
+  getEnvironmentFile: async (fileId: string): Promise<EnvironmentFileContent> => {
+    const response = await apiClient.get(`/config/env-files/${encodeURIComponent(fileId)}`)
+    return response.data
+  },
+
+  updateEnvironmentFile: async (
+    fileId: string,
+    request: UpdateEnvironmentFileRequest,
+  ): Promise<EnvironmentFileContent> => {
+    const response = await apiClient.put(`/config/env-files/${encodeURIComponent(fileId)}`, request)
+    return response.data
+  },
+}
+
 export const targetsApi = {
   listTargetCatalog: async (): Promise<TargetCatalogResponse> => {
     const response = await apiClient.get('/targets/catalog')
@@ -208,6 +253,19 @@ export const initializersApi = {
   listRegistered: async (): Promise<ListRegisteredInitializersResponse> => {
     const response = await apiClient.get('/initializers', { params: { limit: 200 } })
     return response.data
+  },
+
+  listCustom: async (): Promise<CustomInitializerListResponse> => {
+    const response = await apiClient.get('/initializers/custom')
+    return response.data
+  },
+
+  register: async (request: RegisterInitializerRequest): Promise<void> => {
+    await apiClient.post('/initializers', request)
+  },
+
+  unregister: async (initializerName: string): Promise<void> => {
+    await apiClient.delete(`/initializers/${encodeURIComponent(initializerName)}`)
   },
 
   createAdditional: async (

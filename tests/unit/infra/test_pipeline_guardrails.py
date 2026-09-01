@@ -108,6 +108,10 @@ class TestPipelineGuardrails(unittest.TestCase):
         assert "PYRIT_CONTAINER_IMAGE: $(immutableImage)" in deploy_yaml
         assert "PYRIT_ALLOWED_CLIENT_CIDR: $(deploymentAllowedClientCidr)" in deploy_yaml
         assert "PYRIT_MANAGED_IDENTITY_RESOURCE_ID: $(managedIdentityResourceId)" in deploy_yaml
+        assert "PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)" in deploy_yaml
+        assert "PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)" in deploy_yaml
+        assert '"adminGroupObjectId=$PYRIT_ADMIN_GROUP_OBJECT_ID"' in self.deploy_script
+        assert '"pyritConfigFileUri=${PYRIT_CONFIG_FILE_URI:-}"' in self.deploy_script
         assert '="$(replacement' not in deploy_yaml
         assert "PYRIT_FALLBACK" not in deploy_yaml
 

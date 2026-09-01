@@ -120,8 +120,8 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config, set active, return to chat so input is enabled
-    await page.getByTitle("Configuration").click();
+    // Navigate to targets, set active, return to chat so input is enabled
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
     const setActiveBtn = page.getByRole("button", { name: /set active/i });
     await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
@@ -146,8 +146,8 @@ test.describe("Accessibility", () => {
     const chatBtn = page.getByTitle("Chat");
     await expect(chatBtn).toBeVisible();
 
-    // Configuration button
-    const configBtn = page.getByTitle("Configuration");
+    // Targets button
+    const configBtn = page.getByTitle("Targets");
     await expect(configBtn).toBeVisible();
 
     // Theme toggle button (now a menu trigger with "Theme: <mode>" title)
@@ -219,8 +219,8 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config, set active, return to chat so input is enabled
-    await page.getByTitle("Configuration").click();
+    // Navigate to targets, set active, return to chat so input is enabled
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
     const setActiveBtn = page.getByRole("button", { name: /set active/i });
     await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
@@ -239,7 +239,7 @@ test.describe("Accessibility", () => {
     await expect(input).toBeFocused();
   });
 
-  test("should have accessible target table in config view", async ({ page }) => {
+  test("should have accessible target table in targets view", async ({ page }) => {
     // Mock targets API for consistent test
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill({
@@ -265,8 +265,8 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config
-    await page.getByTitle("Configuration").click();
+    // Navigate to targets
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("Target Configuration")).toBeVisible();
 
     // Table should exist
@@ -289,7 +289,7 @@ test.describe("Accessibility", () => {
 
     const views = [
       { button: "Attack History", heading: "Attack History" },
-      { button: "Configuration", heading: "Target Configuration" },
+      { button: "Targets", heading: "Target Configuration" },
       { button: "Chat", heading: "Chat" },
     ];
 
@@ -334,7 +334,7 @@ test.describe("Accessibility", () => {
         });
       });
 
-      await page.getByRole("button", { name: "Configuration" }).click();
+      await page.getByRole("button", { name: "Targets" }).click();
       await expect(
         page.getByRole("heading", { level: 1, name: "Target Configuration" })
       ).toBeVisible();
