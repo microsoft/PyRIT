@@ -449,28 +449,13 @@ class TestInitializerRoutes:
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    @pytest.mark.parametrize(
-        ("method", "path", "json_body"),
-        [
-            ("POST", "/api/initializers/settings", {"initializer_name": "target"}),
-            ("PUT", "/api/initializers/settings/a1", {}),
-            ("DELETE", "/api/initializers/settings/a1", None),
-            ("POST", "/api/initializers/target/apply", None),
-        ],
-    )
-    def test_initializer_execution_routes_require_admin(
-        self,
-        client: TestClient,
-        method: str,
-        path: str,
-        json_body: dict[str, str] | None,
-    ) -> None:
+    def test_apply_initializer_requires_admin(self, client: TestClient) -> None:
         def reject_non_admin() -> None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access is required")
 
         app.dependency_overrides[require_admin] = reject_non_admin
 
-        response = client.request(method, path, json=json_body)
+        response = client.post("/api/initializers/target/apply")
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 

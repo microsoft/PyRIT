@@ -23,8 +23,8 @@ from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.initializers import (
     ApplyInitializerRequest,
     ApplyInitializerResponse,
-    CustomInitializerListResponse,
     ConfiguredInitializerSetting,
+    CustomInitializerListResponse,
     InitializerSettingsResponse,
     ListRegisteredInitializersResponse,
     RegisterInitializerRequest,

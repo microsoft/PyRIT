@@ -118,7 +118,7 @@ class TestLifespan:
         registry.register_stored_initializers.assert_not_called()
 
     async def test_lifespan_registers_stored_initializers_when_enabled(self) -> None:
-        """Test that enabled custom initializers are registered before baseline initialization."""
+        """Test that enabled custom initializers are registered before configured initialization."""
         fake_config = ConfigurationLoader(allow_custom_initializers=True)
         call_order: list[str] = []
         registry = MagicMock()
