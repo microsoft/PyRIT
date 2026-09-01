@@ -247,17 +247,18 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
                 }}
               >
                 <Text className={styles.warning} data-testid="feedback-sensitive-warning">
-                  GitHub issues are public. Please do not include secrets, credentials,
-                  customer data, model endpoints, or other proprietary information. Your
-                  feedback will be filed at{' '}
+                  Feedback is filed as a public GitHub issue. Do not include secrets,
+                  credentials, customer data, model endpoints, or other confidential or
+                  proprietary information. Do not use this form to report a security
+                  vulnerability. Follow the{' '}
                   <Link
-                    href="https://github.com/microsoft/PyRIT/issues"
+                    href="https://github.com/microsoft/PyRIT/security/policy"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
-                    github.com/microsoft/PyRIT
+                    PyRIT security reporting process
                   </Link>
-                  .
+                  {' '}instead.
                 </Text>
 
                 <Field label="Category" required>

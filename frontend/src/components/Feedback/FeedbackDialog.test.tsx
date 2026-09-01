@@ -47,19 +47,20 @@ describe("FeedbackDialog", () => {
   });
 
   describe("shell", () => {
-    it("renders sensitive-info warning and links to the public repo", () => {
+    it("renders sensitive-info warning and links to the vulnerability process", () => {
       renderDialog();
 
       expect(screen.getByText("Send feedback")).toBeInTheDocument();
       const warning = screen.getByTestId("feedback-sensitive-warning");
-      expect(warning).toHaveTextContent(/public/i);
-      expect(warning).toHaveTextContent(/secrets/i);
-      expect(warning).toHaveTextContent(/credentials/i);
-      expect(warning).toHaveTextContent(/customer data/i);
-      expect(warning).toHaveTextContent(/proprietary/i);
+      expect(warning).toHaveTextContent(
+        "Feedback is filed as a public GitHub issue. Do not include secrets, credentials, customer data, model endpoints, or other confidential or proprietary information. Do not use this form to report a security vulnerability. Follow the PyRIT security reporting process instead.",
+      );
       expect(
-        screen.getByRole("link", { name: /github\.com\/microsoft\/PyRIT/i }),
-      ).toHaveAttribute("href", "https://github.com/microsoft/PyRIT/issues");
+        screen.getByRole("link", { name: /PyRIT security reporting process/i }),
+      ).toHaveAttribute(
+        "href",
+        "https://github.com/microsoft/PyRIT/security/policy",
+      );
       expect(
         screen.getByRole("link", { name: /microsoft privacy statement/i }),
       ).toHaveAttribute(
