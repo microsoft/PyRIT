@@ -3,16 +3,32 @@
 
 import logging
 from enum import Enum
+from uuid import uuid4
 
 from typing_extensions import override
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import Modality, SeedDataset, SeedPrompt, SeedUnion
+from pyrit.models import Message, MessagePiece, Modality, SeedDataset, SeedPrompt, SeedUnion
 from pyrit.models.harm_category import HarmCategory
+from pyrit.models.harm_definition import HarmDefinition
+from pyrit.score.scorer_evaluation.human_labeled_dataset import (
+    HarmHumanLabeledEntry,
+    HumanLabeledDataset,
+)
+from pyrit.score.scorer_evaluation.metrics_type import MetricsType
 
 logger = logging.getLogger(__name__)
+
+
+def _response_label_to_harm_score(label: str) -> float:
+    normalized = label.strip().lower()
+    if normalized == "unsafe":
+        return 1.0
+    if normalized == "safe":
+        return 0.0
+    raise ValueError(f"Unsupported Aegis response_label: {label!r}")
 
 
 class AegisHarmCategory(Enum):
@@ -245,3 +261,88 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         )
 
         return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
+
+    async def fetch_human_labeled_harm_dataset_async(
+        self,
+        *,
+        harm_category: AegisHarmCategory = AegisHarmCategory.VIOLENCE,
+        cache: bool = True,
+        harm_definition: str = "violence.yaml",
+        harm_definition_version: str = "1.0",
+        dataset_version: str = "1.0",
+    ) -> HumanLabeledDataset:
+        """Build a ``HumanLabeledDataset`` from labeled assistant responses in Aegis 2.0.
+
+        Unlike :meth:`fetch_dataset_async`, this retains ``response`` and ``response_label``
+        so scorer evaluation can reuse remote human/LLM-jury labels instead of hand-authored CSVs.
+        """
+        logger.info(
+            "Loading NVIDIA Aegis AI Content Safety human-labeled rows for %s",
+            harm_category.value,
+        )
+
+        hf_dataset = await self._fetch_from_huggingface_async(
+            dataset_name=self.HF_DATASET_NAME,
+            cache=cache,
+        )
+
+        pyrit_harm_category = "violence"
+        if harm_category == AegisHarmCategory.HATE_IDENTITY_HATE:
+            pyrit_harm_category = "hate_speech"
+        elif harm_category != AegisHarmCategory.VIOLENCE:
+            pyrit_harm_category = harm_category.name.lower()
+
+        entries: list[HarmHumanLabeledEntry] = []
+
+        for split_name in hf_dataset:
+            for example in hf_dataset[split_name]:
+                response_value = example.get("response")
+                response_label = example.get("response_label")
+                if not response_value or not response_label:
+                    continue
+
+                violated_categories = example.get("violated_categories", "")
+                prompt_harm_categories = (
+                    [cat.strip() for cat in violated_categories.split(",") if cat.strip()]
+                    if violated_categories
+                    else []
+                )
+                if harm_category.value not in prompt_harm_categories:
+                    continue
+
+                messages = [
+                    Message(
+                        message_pieces=[
+                            MessagePiece(
+                                role="assistant",
+                                original_value=str(response_value).strip(),
+                                original_value_data_type="text",
+                                conversation_id=str(uuid4()),
+                            )
+                        ],
+                    )
+                ]
+                entries.append(
+                    HarmHumanLabeledEntry(
+                        conversation=messages,
+                        human_scores=[_response_label_to_harm_score(str(response_label))],
+                        harm_category=pyrit_harm_category,
+                    )
+                )
+
+        if not entries:
+            raise ValueError(
+                "HumanLabeledDataset cannot be empty. Check harm_category filter and response labels."
+            )
+
+        # Validate harm definition path early (same relative name as scorer_evals CSVs).
+        HarmDefinition.from_yaml(harm_definition)
+
+        return HumanLabeledDataset(
+            name=f"aegis_{pyrit_harm_category}",
+            entries=entries,
+            metrics_type=MetricsType.HARM,
+            version=dataset_version,
+            harm_definition=harm_definition,
+            harm_definition_version=harm_definition_version,
+        )
