@@ -84,6 +84,11 @@ const useStyles = makeStyles({
     color: tokens.colorPaletteDarkOrangeForeground1,
     fontWeight: tokens.fontWeightSemibold,
   },
+  warningGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    rowGap: tokens.spacingVerticalXS,
+  },
   helper: {
     color: tokens.colorNeutralForeground3,
     fontSize: tokens.fontSizeBase200,
@@ -246,20 +251,26 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
                   handleSubmit()
                 }}
               >
-                <Text className={styles.warning} data-testid="feedback-sensitive-warning">
-                  Feedback is filed as a public GitHub issue. Do not include secrets,
-                  credentials, customer data, model endpoints, or other confidential or
-                  proprietary information. Do not use this form to report a security
-                  vulnerability. Follow the{' '}
-                  <Link
-                    href="https://github.com/microsoft/PyRIT/security/policy"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    PyRIT security reporting process
-                  </Link>
-                  {' '}instead.
-                </Text>
+                <div
+                  className={styles.warningGroup}
+                  data-testid="feedback-sensitive-warning"
+                >
+                  <Text className={styles.warning}>
+                    Reporting a security vulnerability? Use the private{' '}
+                    <Link
+                      href="https://github.com/microsoft/PyRIT/security/policy"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      PyRIT security reporting process
+                    </Link>
+                    .
+                  </Text>
+                  <Text className={styles.warning}>
+                    Other feedback is filed as a public GitHub issue. Do not include
+                    confidential information.
+                  </Text>
+                </div>
 
                 <Field label="Category" required>
                   <Select

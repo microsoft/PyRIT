@@ -52,9 +52,10 @@ describe("FeedbackDialog", () => {
 
       expect(screen.getByText("Send feedback")).toBeInTheDocument();
       const warning = screen.getByTestId("feedback-sensitive-warning");
-      expect(warning).toHaveTextContent(
-        "Feedback is filed as a public GitHub issue. Do not include secrets, credentials, customer data, model endpoints, or other confidential or proprietary information. Do not use this form to report a security vulnerability. Follow the PyRIT security reporting process instead.",
-      );
+      expect(warning).toHaveTextContent(/Reporting a security vulnerability\?/);
+      expect(warning).toHaveTextContent(/Use the private PyRIT security reporting process\./);
+      expect(warning).toHaveTextContent(/Other feedback is filed as a public GitHub issue\./);
+      expect(warning).toHaveTextContent(/Do not include confidential information\./);
       expect(
         screen.getByRole("link", { name: /PyRIT security reporting process/i }),
       ).toHaveAttribute(
