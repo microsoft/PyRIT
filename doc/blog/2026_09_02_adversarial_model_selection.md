@@ -25,7 +25,7 @@ To address this ambiguity in determining adversarial model effectiveness, PyRIT 
 
 ### Designing a Fair Comparison
 
-The `AdversarialBenchmark` scenario builds a matrix of attack techniques, adversarial models, and datasets. Users can run one technique, a named aggregate such as `light` to narrow the range of techniques, or a wider registered technique set to observe model performance along that axis. Each cell in this matrix corresponds to a tuple of dataset, technique, and model, such as `harmbench__red_teaming__qwen_mt`, and produces one result per selected objective.
+The `AdversarialBenchmark` scenario builds a matrix of attack techniques, adversarial models, and datasets. Users can evaluate model performance using a single technique, a focused named aggregate such as `light`, or a broader registered set of techniques. Each cell in this matrix corresponds to a tuple of dataset, technique, and model, such as `harmbench__red_teaming__qwen_mt`, and produces one result per selected objective.
 
 ![Diagram showing candidate adversarial models, objectives, objective target, scorer, and attack techniques flowing into AdversarialBenchmark, which expands dataset-technique-model tuples and records outcomes.](2026_09_02_adversarial_model_selection_benchmark_design.png)
 
