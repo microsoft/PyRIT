@@ -138,6 +138,10 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/auth/access") {
+      await route.fulfill(jsonResponse({ isAdmin: true }));
+      return;
+    }
     if (apiPath === "/version") {
       await route.fulfill(
         jsonResponse({
