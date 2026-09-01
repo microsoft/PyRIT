@@ -65,6 +65,21 @@ class AegisHarmCategory(Enum):
     VIOLENCE = "Violence"
 
 
+_HUMAN_LABELED_HARM_PROFILES: dict[AegisHarmCategory, tuple[str, str]] = {
+    AegisHarmCategory.VIOLENCE: ("violence", "violence.yaml"),
+    AegisHarmCategory.HATE_IDENTITY_HATE: ("hate_speech", "hate_speech.yaml"),
+}
+
+
+def _resolve_human_labeled_harm_profile(
+    harm_category: AegisHarmCategory,
+) -> tuple[str, str]:
+    if harm_category in _HUMAN_LABELED_HARM_PROFILES:
+        return _HUMAN_LABELED_HARM_PROFILES[harm_category]
+    pyrit_name = harm_category.name.lower()
+    return pyrit_name, f"{pyrit_name}.yaml"
+
+
 class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     """
     Loader for the NVIDIA Aegis AI Content Safety Dataset 2.0.
@@ -267,7 +282,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         *,
         harm_category: AegisHarmCategory = AegisHarmCategory.VIOLENCE,
         cache: bool = True,
-        harm_definition: str = "violence.yaml",
+        harm_definition: str | None = None,
         harm_definition_version: str = "1.0",
         dataset_version: str = "1.0",
     ) -> HumanLabeledDataset:
@@ -286,11 +301,11 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        pyrit_harm_category = "violence"
-        if harm_category == AegisHarmCategory.HATE_IDENTITY_HATE:
-            pyrit_harm_category = "hate_speech"
-        elif harm_category != AegisHarmCategory.VIOLENCE:
-            pyrit_harm_category = harm_category.name.lower()
+        pyrit_harm_category, default_harm_definition = _resolve_human_labeled_harm_profile(
+            harm_category
+        )
+        if harm_definition is None:
+            harm_definition = default_harm_definition
 
         entries: list[HarmHumanLabeledEntry] = []
 

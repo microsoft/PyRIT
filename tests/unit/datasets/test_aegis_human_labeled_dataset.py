@@ -74,3 +74,53 @@ async def test_fetch_human_labeled_harm_dataset_violence():
     assert dataset.entries[0].human_scores == [1.0]
     assert dataset.entries[1].human_scores == [0.0]
     assert dataset.entries[0].harm_category == "violence"
+
+
+async def test_fetch_human_labeled_harm_dataset_hate_speech():
+    rows = {
+        "train": [
+            {
+                "id": "1",
+                "prompt": "Hateful prompt",
+                "response": "A hateful reply.",
+                "prompt_label": "unsafe",
+                "response_label": "unsafe",
+                "violated_categories": "Hate/Identity Hate",
+                "prompt_label_source": "human",
+                "response_label_source": "llm_jury",
+            },
+            {
+                "id": "2",
+                "prompt": "Inclusive prompt",
+                "response": "A respectful reply.",
+                "prompt_label": "unsafe",
+                "response_label": "safe",
+                "violated_categories": "Hate/Identity Hate",
+                "prompt_label_source": "human",
+                "response_label_source": "human",
+            },
+            {
+                "id": "3",
+                "prompt": "Violence only",
+                "response": "Violent reply.",
+                "prompt_label": "unsafe",
+                "response_label": "unsafe",
+                "violated_categories": "Violence",
+                "prompt_label_source": "human",
+                "response_label_source": "llm_jury",
+            },
+        ]
+    }
+
+    loader = _AegisContentSafetyDataset()
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=rows):
+        dataset = await loader.fetch_human_labeled_harm_dataset_async(
+            harm_category=AegisHarmCategory.HATE_IDENTITY_HATE,
+        )
+
+    assert dataset.metrics_type == MetricsType.HARM
+    assert dataset.name == "aegis_hate_speech"
+    assert dataset.harm_definition == "hate_speech.yaml"
+    assert len(dataset.entries) == 2
+    assert dataset.entries[0].harm_category == "hate_speech"
