@@ -21,6 +21,7 @@ import {
   configurationApi,
   targetsApi,
   attacksApi,
+  scenariosApi,
 } from "./api";
 
 describe("api service", () => {
@@ -560,6 +561,209 @@ describe("api service", () => {
           target_registry_name: "test-target",
         })
       ).rejects.toThrow("Target not found");
+    });
+  });
+
+  describe("scenariosApi", () => {
+    it("lists the scenario catalog with default params", async () => {
+      const mockResponse = {
+        data: {
+          items: [],
+          pagination: { limit: 50, has_more: false },
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listCatalog();
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/catalog", {
+        params: { limit: 50 },
+      });
+    });
+
+    it("lists the scenario catalog with a custom limit and cursor", async () => {
+      const mockResponse = {
+        data: { items: [], pagination: { limit: 10, has_more: true, next_cursor: "next" } },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listCatalog(10, "cursor-abc");
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/catalog", {
+        params: { limit: 10, cursor: "cursor-abc" },
+      });
+    });
+
+    it("can request scenario metadata without estimates", async () => {
+      const mockResponse = {
+        data: { items: [], pagination: { limit: 50, has_more: false } },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listCatalog(50, undefined, false);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/catalog", {
+        params: { limit: 50, include_estimates: false },
+      });
+    });
+
+    it("encodes a dotted scenario registry name as a single path segment", async () => {
+      const mockResponse = {
+        data: {
+          scenario_name: "foundry.red_team_agent",
+          scenario_type: "RedTeamAgentScenario",
+          description: "desc",
+          default_technique: "prompt_injection",
+          aggregate_techniques: [],
+          all_techniques: ["prompt_injection"],
+          technique_summaries: [],
+          default_datasets: [],
+          baseline_policy: "enabled",
+          include_baseline_by_default: true,
+          supported_parameters: [],
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await scenariosApi.getScenario("foundry.red_team_agent");
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/scenarios/catalog/foundry.red_team_agent"
+      );
+      expect(result.scenario_name).toBe("foundry.red_team_agent");
+    });
+
+    it("encodes a slash-bearing scenario registry name as a single %2F-escaped segment", async () => {
+      const mockResponse = { data: { scenario_name: "foundry/red_team_agent" } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.getScenario("foundry/red_team_agent");
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/scenarios/catalog/foundry%2Fred_team_agent"
+      );
+    });
+
+    it("posts the exact estimate request and forwards cancellation", async () => {
+      const mockResponse = {
+        data: {
+          estimated_attack_count: 8,
+          components: [],
+          datasets: [],
+          note: null,
+        },
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce(mockResponse);
+      const controller = new AbortController();
+      const request = {
+        target_name: "my-target",
+        techniques: ["prompt_sending"],
+        dataset_names: ["harmbench"],
+        max_dataset_size: 4,
+        dataset_filters: { harm_categories: ["violence"] },
+        include_baseline: false,
+        scenario_params: { num_jailbreaks: 2, num_attempts_per_template: 1 },
+      };
+
+      const result = await scenariosApi.estimateRun(
+        "airt.jailbreak",
+        request,
+        controller.signal
+      );
+
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/scenarios/catalog/airt.jailbreak/estimate",
+        request,
+        { signal: controller.signal }
+      );
+      expect(result.estimated_attack_count).toBe(8);
+    });
+
+    it("posts the exact RunScenarioRequest payload to start a run", async () => {
+      const mockResponse = {
+        data: {
+          scenario_result_id: "sr-1",
+          scenario_name: "foundry.red_team_agent",
+          scenario_version: 0,
+          status: "CREATED",
+          created_at: "2026-02-15T00:00:00Z",
+          updated_at: "2026-02-15T00:00:00Z",
+          techniques_used: [],
+          total_attacks: 0,
+          completed_attacks: 0,
+          objective_achieved_rate: 0,
+          failed_attacks: [],
+          attack_retries: [],
+          total_retries: 0,
+          labels: {},
+        },
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const request = {
+        scenario_name: "foundry.red_team_agent",
+        target_name: "my-target",
+        techniques: ["prompt_injection"],
+        max_concurrency: 10,
+        max_retries: 0,
+        include_baseline: true,
+        labels: { operator: "roakey" },
+      };
+      const result = await scenariosApi.startRun(request);
+
+      expect(apiClient.post).toHaveBeenCalledWith("/scenarios/runs", request);
+      expect(result.scenario_result_id).toBe("sr-1");
+    });
+
+    it("gets a scenario run by id", async () => {
+      const mockResponse = {
+        data: {
+          scenario_result_id: "sr-1",
+          scenario_name: "foundry.red_team_agent",
+          scenario_version: 0,
+          status: "IN_PROGRESS",
+          created_at: "2026-02-15T00:00:00Z",
+          updated_at: "2026-02-15T00:00:00Z",
+          techniques_used: [],
+          total_attacks: 0,
+          completed_attacks: 0,
+          objective_achieved_rate: 0,
+          failed_attacks: [],
+          attack_retries: [],
+          total_retries: 0,
+          labels: {},
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await scenariosApi.getRun("sr-1");
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr-1");
+      expect(result.status).toBe("IN_PROGRESS");
+    });
+
+    it("gets scenario run progress with since/limit query params", async () => {
+      const mockResponse = {
+        data: {
+          run: {
+            scenario_result_id: "sr-1",
+            scenario_name: "foundry.red_team_agent",
+            scenario_version: 0,
+            status: "IN_PROGRESS",
+            created_at: "2026-02-15T00:00:00Z",
+          },
+          results: [],
+          has_more: false,
+          plan_complete: false,
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.getRunProgress("sr-1", { since: "cursor-1", limit: 50 });
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr-1/progress", {
+        params: { since: "cursor-1", limit: 50 },
+      });
     });
   });
 });

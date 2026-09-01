@@ -282,7 +282,8 @@ export interface Parameter {
   name: string
   type_name: string
   required: boolean
-  default?: string | null
+  /** Scalar default renders as a display string; a list default renders as a list of display strings. */
+  default?: string | string[] | null
   choices?: string[] | null
   is_list?: boolean
   description?: string | null
@@ -481,4 +482,280 @@ export interface CreateConversationResponse {
 export interface ChangeMainConversationResponse {
   attack_result_id: string
   conversation_id: string
+}
+
+// --- Scenarios ---
+
+export interface RegisteredScenario {
+  scenario_name: string
+  scenario_type: string
+  scenario_version: number
+  description: string
+  description_markdown: string
+  default_technique: string
+  default_techniques: string[]
+  aggregate_techniques: string[]
+  aggregate_technique_expansions: Record<string, string[]>
+  all_techniques: string[]
+  technique_summaries: ScenarioTechniqueSummary[]
+  default_datasets: string[]
+  baseline_policy: 'enabled' | 'disabled' | 'forbidden'
+  include_baseline_by_default: boolean
+  supported_parameters: Parameter[]
+  default_run_size: ScenarioRunSizeEstimateResponse
+}
+
+export interface ScenarioTechniqueSummary {
+  name: string
+  description: string | null
+  tags: string[]
+}
+
+export interface ListRegisteredScenariosResponse {
+  items: RegisteredScenario[]
+  pagination: PaginationInfo
+}
+
+export interface RunScenarioRequest {
+  scenario_name: string
+  target_name: string
+  initializers?: string[] | null
+  techniques?: string[] | null
+  dataset_names?: string[] | null
+  max_dataset_size?: number | null
+  dataset_filters?: Record<string, string[]> | null
+  max_concurrency?: number
+  max_retries?: number
+  include_baseline?: boolean | null
+  labels?: Record<string, string> | null
+  scenario_params?: Record<string, unknown> | null
+  initializer_args?: Record<string, Record<string, unknown>> | null
+  scenario_result_id?: string | null
+}
+
+export interface ScenarioRunSizeComponent {
+  label: string
+  count: number
+  is_baseline: boolean
+  note: string | null
+}
+
+export interface ScenarioDatasetSizeCap {
+  label: string
+  count: number
+  configured_on: 'dataset' | 'configuration' | 'compound'
+  dataset_name: string | null
+}
+
+export interface ScenarioDatasetSummary {
+  name: string
+  kind: 'dataset' | 'synthesized'
+  logical_seed_group_count: number
+  selected_seed_group_count: number
+  configured_caps: ScenarioDatasetSizeCap[]
+  selection_note: string | null
+}
+
+export interface ScenarioRunSizeEstimateResponse {
+  estimated_attack_count: number | null
+  minimum_attack_count?: number | null
+  maximum_attack_count?: number | null
+  components: ScenarioRunSizeComponent[]
+  datasets: ScenarioDatasetSummary[]
+  effective_parameters?: Record<string, boolean | number | string | string[]>
+  note: string | null
+}
+
+export interface ScenarioRunSizeEstimateRequest {
+  target_name?: string | null
+  techniques?: string[] | null
+  dataset_names?: string[] | null
+  max_dataset_size?: number | null
+  dataset_filters?: Record<string, string[]> | null
+  include_baseline?: boolean | null
+  scenario_params?: Record<string, unknown> | null
+}
+
+export interface ScenarioRunEstimateComponent {
+  id: string
+  label: string
+  count: number
+  isBaseline: boolean
+  note: string | null
+}
+
+export interface ScenarioRunEstimateDatasetCap {
+  id: string
+  label: string
+  count: number
+  configuredOn: 'dataset' | 'configuration' | 'compound'
+  datasetName: string | null
+}
+
+export interface ScenarioRunEstimateDataset {
+  id: string
+  name: string
+  kind: 'dataset' | 'synthesized'
+  logicalSeedGroupCount: number
+  selectedSeedGroupCount: number
+  configuredCaps: ScenarioRunEstimateDatasetCap[]
+  selectionNote: string | null
+}
+
+export interface ScenarioRunEstimate {
+  scope: 'default' | 'request'
+  total: number | null
+  minimum?: number | null
+  maximum?: number | null
+  components: ScenarioRunEstimateComponent[]
+  datasets: ScenarioRunEstimateDataset[]
+  effectiveParameters: Record<string, boolean | number | string | string[]>
+  note: string | null
+}
+
+export type ScenarioRunEstimateResult =
+  | {
+      status: 'available'
+      estimate: ScenarioRunEstimate
+    }
+  | {
+      status: 'conditional'
+      estimate: ScenarioRunEstimate
+    }
+  | {
+      status: 'unavailable'
+      scope: 'default' | 'request'
+      label: string
+      note?: string
+    }
+
+export type ScenarioRunEstimateState =
+  | {
+      status: 'loading'
+      scope: 'default' | 'request'
+    }
+  | {
+      status: 'refreshing'
+      estimate: ScenarioRunEstimate
+      label: string
+    }
+  | {
+      status: 'stale'
+      estimate: ScenarioRunEstimate
+      label: string
+      error: string
+    }
+  | ScenarioRunEstimateResult
+
+export type ScenarioRunEstimator = (
+  scenarioName: string,
+  request: ScenarioRunSizeEstimateRequest,
+  signal?: AbortSignal,
+) => Promise<ScenarioRunSizeEstimateResponse>
+
+export interface AttackErrorSummary {
+  atomic_attack_name: string
+  objective: string
+  error_type?: string | null
+  error_message?: string | null
+  total_retries: number
+}
+
+export interface RetryEvent {
+  timestamp: string
+  attempt_number: number
+  function_name: string
+  exception_type: string
+  exception_message: string
+  component_role: string
+  component_name?: string | null
+  endpoint?: string | null
+  elapsed_seconds: number
+}
+
+export interface AttackRetrySummary {
+  attack_result_id: string
+  atomic_attack_name: string
+  retries: RetryEvent[]
+}
+
+export type ScenarioRunState = 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+
+export interface ScenarioRunSummary {
+  scenario_result_id: string
+  scenario_name: string
+  scenario_registry_name?: string | null
+  scenario_version: number
+  status: ScenarioRunState
+  created_at: string
+  updated_at: string
+  error?: string | null
+  error_type?: string | null
+  techniques_used: string[]
+  total_attacks: number
+  completed_attacks: number
+  objective_achieved_rate: number
+  failed_attacks: AttackErrorSummary[]
+  attack_retries: AttackRetrySummary[]
+  total_retries: number
+  labels: Record<string, string>
+  completed_at?: string | null
+}
+
+/** Compact persisted run header returned by the progress endpoint. */
+export interface ScenarioProgressHeader {
+  scenario_result_id: string
+  scenario_name: string
+  scenario_registry_name?: string | null
+  scenario_version: number
+  status: ScenarioRunState
+  created_at: string
+  completed_at?: string | null
+}
+
+/** One persisted attack attempt in ascending progress order. */
+export interface ScenarioProgressResult {
+  attack_result_id: string
+  atomic_group_id: string
+  atomic_attack_name: string
+  seed_group_id: string
+  outcome: 'success' | 'failure' | 'error' | 'undetermined'
+  execution_time_ms: number
+  timestamp: string
+  total_retries: number
+  retries: RetryEvent[]
+  error_type?: string | null
+  error_message?: string | null
+}
+
+export interface ScenarioRunPlanSeedGroup {
+  id: string
+  objective_sha256: string
+  objective: string
+}
+
+export interface ScenarioRunPlanAtomicGroup {
+  id: string
+  atomic_attack_name: string
+  display_group: string
+  technique_eval_hash: string
+  seed_group_ids: string[]
+}
+
+export interface ScenarioRunPlan {
+  version: 1
+  scenario_registry_name?: string | null
+  atomic_groups: ScenarioRunPlanAtomicGroup[]
+  seed_groups: ScenarioRunPlanSeedGroup[]
+}
+
+export interface ScenarioRunProgress {
+  run: ScenarioProgressHeader
+  plan: ScenarioRunPlan | null
+  reset: boolean
+  active_atomic_group_ids: string[]
+  results: ScenarioProgressResult[]
+  next_cursor?: string | null
+  has_more: boolean
+  plan_complete: boolean
 }

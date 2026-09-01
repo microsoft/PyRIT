@@ -193,6 +193,10 @@ class TestBuildTechniqueFactories:
         names = [f.name for f in build_technique_factories()]
         assert len(names) == len(set(names))
 
+    def test_factory_descriptions_are_available_for_catalogs(self):
+        factories = build_technique_factories()
+        assert all(factory.description for factory in factories)
+
 
 # ---------------------------------------------------------------------------
 # TechniqueInitializer class metadata

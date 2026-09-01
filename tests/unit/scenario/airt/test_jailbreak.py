@@ -245,11 +245,34 @@ class TestJailbreakInitialization:
 
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
         assert estimate.estimated_attack_count is None
+        assert estimate.minimum_attack_count == 2
+        assert estimate.maximum_attack_count == 4
         assert [component.label for component in estimate.components] == [
             "Inline jailbreak delivery",
             "Native system-prompt jailbreak delivery",
         ]
         assert "native system-prompt delivery is supported" in (estimate.note or "")
+
+    async def test_system_only_run_size_excludes_incompatible_target_outcome(self, mock_objective_scorer) -> None:
+        """The targetless range includes only outcomes that can produce a valid run."""
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
+        technique_class = _build_jailbreak_technique()
+        with _patch_seed_groups(seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "scenario_techniques": [technique_class(_JAILBREAK_SYSTEM_PROMPT)],
+                    "include_baseline": False,
+                    "num_jailbreaks": 2,
+                }
+            )
+
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
+
+        assert estimate.estimated_attack_count is None
+        assert estimate.minimum_attack_count == 2
+        assert estimate.maximum_attack_count == 2
+        assert "incompatible targets cannot run it" in (estimate.note or "")
 
     async def test_mutually_exclusive_selectors_raise(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups

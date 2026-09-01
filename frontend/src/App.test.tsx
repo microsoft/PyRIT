@@ -112,6 +112,9 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("history")} data-testid="nav-history">
           History
         </button>
+        <button onClick={() => onNavigate("scenarios")} data-testid="nav-scenarios">
+          Scenarios
+        </button>
         {children}
       </div>
     );
@@ -326,6 +329,51 @@ jest.mock("./components/Home/Home", () => {
   };
 });
 
+jest.mock("./components/Scenarios/ScenarioCatalog", () => {
+  const MockScenarioCatalog = () => <div data-testid="scenario-catalog" />;
+  MockScenarioCatalog.displayName = "MockScenarioCatalog";
+  return {
+    __esModule: true,
+    default: MockScenarioCatalog,
+  };
+});
+
+jest.mock("./components/Scenarios/ScenarioDetail", () => {
+  const MockScenarioDetail = ({
+    activeTarget,
+    labels,
+    onNavigate,
+  }: {
+    activeTarget: unknown;
+    labels: Record<string, string>;
+    onNavigate: (view: string) => void;
+  }) => {
+    return (
+      <div data-testid="scenario-detail">
+        <span data-testid="scenario-detail-has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="scenario-detail-labels-json">{JSON.stringify(labels)}</span>
+        <button onClick={() => onNavigate("targets")} data-testid="scenario-detail-go-config">
+          Configure target
+        </button>
+      </div>
+    );
+  };
+  MockScenarioDetail.displayName = "MockScenarioDetail";
+  return {
+    __esModule: true,
+    default: MockScenarioDetail,
+  };
+});
+
+jest.mock("./components/Scenarios/ScenarioRunStarted", () => {
+  const MockScenarioRunStarted = () => <div data-testid="scenario-run-started" />;
+  MockScenarioRunStarted.displayName = "MockScenarioRunStarted";
+  return {
+    __esModule: true,
+    default: MockScenarioRunStarted,
+  };
+});
+
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
   // initialPath lets a test deep-link straight to a view (e.g. "/targets").
@@ -394,6 +442,67 @@ describe("App", () => {
       "history"
     );
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+  });
+
+  it("renders the scenario catalog when deep-linked to /scanner", () => {
+    renderApp("/scanner");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
+  });
+
+  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
+  });
+
+  it("renders the scenario run-started shell and marks the sidebar current when deep-linked to /scenario-history/:id", () => {
+    renderApp("/scenario-history/sr-123");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-run-started")).toBeInTheDocument();
+  });
+
+  it("switches to the scenarios view via the sidebar", () => {
+    renderApp();
+
+    fireEvent.click(screen.getByTestId("nav-scenarios"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
+  });
+
+  it("passes the active target and labels to the scenario detail view", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    expect(screen.getByTestId("scenario-detail-has-target")).toHaveTextContent("no");
+    expect(screen.getByTestId("scenario-detail-labels-json")).toHaveTextContent("operator");
+  });
+
+  it("navigates from scenario detail to targets when it requests it", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    fireEvent.click(screen.getByTestId("scenario-detail-go-config"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "targets"
+    );
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
   it("redirects an unknown path back to home", () => {

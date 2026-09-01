@@ -44,6 +44,8 @@ def test_run_size_estimate_serializes_canonical_api_shape() -> None:
 
     assert estimate.model_dump(mode="json") == {
         "estimated_attack_count": 6,
+        "minimum_attack_count": None,
+        "maximum_attack_count": None,
         "components": [
             {
                 "label": "Techniques",
@@ -53,8 +55,15 @@ def test_run_size_estimate_serializes_canonical_api_shape() -> None:
             }
         ],
         "datasets": [],
+        "effective_parameters": {},
         "note": None,
     }
+
+
+def test_run_size_estimate_rejects_inverted_bounds() -> None:
+    """The minimum estimate cannot exceed the maximum estimate."""
+    with pytest.raises(ValidationError, match="Minimum attack count cannot exceed maximum attack count"):
+        ScenarioRunSizeEstimate(minimum_attack_count=8, maximum_attack_count=4)
 
 
 def test_unavailable_run_size_estimate_has_no_count() -> None:

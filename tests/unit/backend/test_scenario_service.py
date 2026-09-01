@@ -30,6 +30,7 @@ from pyrit.models import (
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
+    ScenarioTechniqueSummary,
 )
 from pyrit.models.catalog.scenario import RegisteredScenario
 from pyrit.registry import ScenarioMetadata
@@ -80,6 +81,18 @@ def _make_scenario_metadata(
         ("all", ("role_play", "many_shot")),
         ("default", ("role_play",)),
     ),
+    technique_summaries: tuple[ScenarioTechniqueSummary, ...] = (
+        ScenarioTechniqueSummary(
+            name="role_play",
+            description="Frames the objective as role play.",
+            tags=["default", "single_turn"],
+        ),
+        ScenarioTechniqueSummary(
+            name="many_shot",
+            description="Provides many examples before the objective.",
+            tags=["multi_turn"],
+        ),
+    ),
     default_datasets: tuple[str, ...] = ("test_dataset",),
     baseline_policy: str = "enabled",
     include_baseline_by_default: bool = True,
@@ -97,6 +110,7 @@ def _make_scenario_metadata(
         all_techniques=all_techniques,
         aggregate_techniques=aggregate_techniques,
         aggregate_technique_expansions=aggregate_technique_expansions,
+        technique_summaries=technique_summaries,
         default_datasets=default_datasets,
         baseline_policy=baseline_policy,
         include_baseline_by_default=include_baseline_by_default,
@@ -144,9 +158,26 @@ class TestScenarioServiceListScenarios:
             assert result.items[0].aggregate_techniques == ["all", "default"]
             assert result.items[0].aggregate_technique_expansions["default"] == ["role_play"]
             assert result.items[0].all_techniques == ["role_play", "many_shot"]
+            assert result.items[0].technique_summaries[0].description == "Frames the objective as role play."
+            assert result.items[0].technique_summaries[0].tags == ["default", "single_turn"]
             assert result.items[0].default_datasets == ["test_dataset"]
             assert result.items[0].baseline_policy == "enabled"
             assert result.items[0].include_baseline_by_default is True
+
+    async def test_list_scenarios_can_return_metadata_without_waiting_for_estimates(self) -> None:
+        """Metadata-only catalog pages do not construct scenarios."""
+        metadata = _make_scenario_metadata()
+
+        with patch.object(ScenarioService, "__init__", lambda self: None):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.get_all_registered_class_metadata.return_value = [metadata]
+
+            result = await service.list_scenarios_async(include_estimates=False)
+        assert result.items[0].scenario_name == "test.scenario"
+        assert result.items[0].scenario_name == "test.scenario"
+        assert result.items[0].default_run_size == ScenarioRunSizeEstimate.unavailable()
+        service._registry.create_instance.assert_not_called()
 
     async def test_estimate_is_offloaded_and_cached(self) -> None:
         """Scenario-owned estimates run in a worker once and are reused by subsequent reads."""
@@ -186,8 +217,8 @@ class TestScenarioServiceListScenarios:
         assert second is not None
         assert first.default_run_size == estimate
         assert second.default_run_size == estimate
-        assert first.default_dataset_summaries == estimate.datasets
-        assert second.default_dataset_summaries == estimate.datasets
+        assert first.default_run_size.datasets == estimate.datasets
+        assert second.default_run_size.datasets == estimate.datasets
         service._registry.create_instance.assert_called_once_with("test.scenario")
 
     async def test_concurrent_estimate_reads_share_one_task(self) -> None:
@@ -643,21 +674,23 @@ class TestScenarioRoutes:
             },
             all_techniques=["role_play", "many_shot"],
             default_datasets=["airt_hate"],
-            default_dataset_summaries=[
-                ScenarioDatasetSummary(
-                    name="airt_hate",
-                    logical_seed_group_count=4,
-                    selected_seed_group_count=4,
-                    configured_caps=[
-                        ScenarioDatasetSizeCap(
-                            label="per-dataset cap",
-                            count=4,
-                            configured_on="dataset",
-                            dataset_name="airt_hate",
-                        )
-                    ],
-                )
-            ],
+            default_run_size=ScenarioRunSizeEstimate(
+                datasets=[
+                    ScenarioDatasetSummary(
+                        name="airt_hate",
+                        logical_seed_group_count=4,
+                        selected_seed_group_count=4,
+                        configured_caps=[
+                            ScenarioDatasetSizeCap(
+                                label="per-dataset cap",
+                                count=4,
+                                configured_on="dataset",
+                                dataset_name="airt_hate",
+                            )
+                        ],
+                    )
+                ]
+            ),
         )
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
@@ -684,7 +717,9 @@ class TestScenarioRoutes:
             assert item["aggregate_technique_expansions"]["default"] == ["role_play"]
             assert item["all_techniques"] == ["role_play", "many_shot"]
             assert item["default_datasets"] == ["airt_hate"]
-            assert item["default_dataset_summaries"][0]["configured_caps"][0]["count"] == 4
+            assert item["default_run_size"]["datasets"][0]["configured_caps"][0]["count"] == 4
+            assert "default_dataset_summaries" not in item
+            assert "default_run_size_pending" not in item
 
     def test_list_scenarios_passes_pagination_params(self, client: TestClient) -> None:
         """Test that pagination params are forwarded to service."""
@@ -701,7 +736,32 @@ class TestScenarioRoutes:
             response = client.get("/api/scenarios/catalog?limit=10&cursor=test.scenario_1")
 
             assert response.status_code == status.HTTP_200_OK
-            mock_service.list_scenarios_async.assert_called_once_with(limit=10, cursor="test.scenario_1")
+            mock_service.list_scenarios_async.assert_called_once_with(
+                limit=10,
+                cursor="test.scenario_1",
+                include_estimates=True,
+            )
+
+    def test_list_scenarios_can_skip_estimates(self, client: TestClient) -> None:
+        """The catalog route forwards metadata-only requests to the service."""
+        with patch("pyrit.backend.routes.scenarios.get_scenario_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_scenarios_async = AsyncMock(
+                return_value=ListRegisteredScenariosResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/scenarios/catalog?include_estimates=false")
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_service.list_scenarios_async.assert_awaited_once_with(
+            limit=50,
+            cursor=None,
+            include_estimates=False,
+        )
 
     def test_get_scenario_returns_200(self, client: TestClient) -> None:
         """Test that GET /api/scenarios/catalog/{name} returns 200 when found."""

@@ -30,6 +30,13 @@ import type {
   CreateConversationRequest,
   CreateConversationResponse,
   ChangeMainConversationResponse,
+  ListRegisteredScenariosResponse,
+  RegisteredScenario,
+  RunScenarioRequest,
+  ScenarioRunSizeEstimateResponse,
+  ScenarioRunSizeEstimateRequest,
+  ScenarioRunSummary,
+  ScenarioRunProgress,
   ConfigurationFileContent,
   EnvironmentFileContent,
   UpdateEnvironmentFileRequest,
@@ -393,6 +400,68 @@ export const attacksApi = {
 export const labelsApi = {
   getLabels: async (source: string = 'attacks'): Promise<{ source: string; labels: Record<string, string[]> }> => {
     const response = await apiClient.get('/labels', { params: { source } })
+    return response.data
+  },
+}
+
+export const scenariosApi = {
+  /**
+   * Lists one page of the scenario catalog. Callers that need the full
+   * catalog should follow `pagination.next_cursor` until `has_more` is false.
+   */
+  listCatalog: async (
+    limit = 50,
+    cursor?: string,
+    includeEstimates = true,
+  ): Promise<ListRegisteredScenariosResponse> => {
+    const params: Record<string, string | number | boolean> = { limit }
+    if (cursor) params.cursor = cursor
+    if (!includeEstimates) params.include_estimates = false
+    const response = await apiClient.get('/scenarios/catalog', { params })
+    return response.data
+  },
+
+  getScenario: async (scenarioName: string): Promise<RegisteredScenario> => {
+    // The backend route is a single `{scenario_name:path}` segment, so a dotted
+    // or slash-bearing registry name (e.g. 'foundry/red_team_agent') must stay
+    // a single encoded path segment — encodeURIComponent (not raw interpolation)
+    // keeps '/' as '%2F', which the browser/Axios preserve and FastAPI's path
+    // converter decodes back to the original name server-side.
+    const response = await apiClient.get(`/scenarios/catalog/${encodeURIComponent(scenarioName)}`)
+    return response.data
+  },
+
+  startRun: async (request: RunScenarioRequest): Promise<ScenarioRunSummary> => {
+    const response = await apiClient.post('/scenarios/runs', request)
+    return response.data
+  },
+
+  estimateRun: async (
+    scenarioName: string,
+    request: ScenarioRunSizeEstimateRequest,
+    signal?: AbortSignal,
+  ): Promise<ScenarioRunSizeEstimateResponse> => {
+    const response = await apiClient.post(
+      `/scenarios/catalog/${encodeURIComponent(scenarioName)}/estimate`,
+      request,
+      { signal },
+    )
+    return response.data
+  },
+
+  getRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
+    const response = await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}`)
+    return response.data
+  },
+
+  getRunProgress: async (
+    scenarioResultId: string,
+    params?: { since?: string; limit?: number },
+  ): Promise<ScenarioRunProgress> => {
+    const response = await apiClient.get(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/progress`,
+      { params },
+    )
     return response.data
   },
 }

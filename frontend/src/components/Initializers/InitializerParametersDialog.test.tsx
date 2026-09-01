@@ -75,7 +75,8 @@ describe('InitializerParametersDialog', () => {
 
     expect(screen.getByText('Add kitchen_sink initializer')).toBeInTheDocument()
     expect(screen.getByText(/Required env vars: DEMO_TOKEN/)).toBeInTheDocument()
-    expect(screen.getByTestId('param-flag')).toHaveAttribute('role', 'switch')
+    expect(screen.getByTestId('param-flag').tagName).toBe('SELECT')
+    expect(screen.getByTestId('param-flag')).toHaveValue('')
     expect(screen.getByTestId('param-level').tagName).toBe('SELECT')
     expect(screen.getByTestId('param-tags-a')).toBeInTheDocument()
     expect(screen.getByTestId('param-tags-b')).toBeInTheDocument()
@@ -152,7 +153,7 @@ describe('InitializerParametersDialog', () => {
       </TestWrapper>,
     )
 
-    await user.click(screen.getByTestId('param-flag'))
+    fireEvent.change(screen.getByTestId('param-flag'), { target: { value: 'true' } })
     await user.click(screen.getByTestId('param-tags-a'))
     await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
 
@@ -172,6 +173,22 @@ describe('InitializerParametersDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Add', hidden: true }))
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ tags: ['b'] }))
+  })
+
+  it('leaves an optional boolean unset omitted from the submitted parameters', async () => {
+    const user = userEvent.setup()
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog {...baseProps} onSubmit={onSubmit} initializer={allKindsInitializer} />
+      </TestWrapper>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    // Every other optional field is also left blank, so the whole payload is null;
+    // the key assertion is that the omitted boolean doesn't silently coerce to false.
+    expect(onSubmit).toHaveBeenCalledWith(null)
   })
 
   it('unchecks a multiselect choice and picks a select value', async () => {
@@ -208,6 +225,40 @@ describe('InitializerParametersDialog', () => {
     expect(screen.getByTestId('param-days')).toHaveValue(5)
     expect(screen.getByTestId('param-names')).toHaveValue('alpha, beta')
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+  })
+
+  it('does not pin absent declaration defaults when editing persisted parameters', async () => {
+    const user = userEvent.setup()
+    const onSubmit = jest.fn().mockResolvedValue(undefined)
+    const initializer: RegisteredInitializer = {
+      ...numericInitializer,
+      supported_parameters: [
+        {
+          name: 'days',
+          type_name: 'int',
+          required: false,
+          default: '7',
+          choices: null,
+          is_list: false,
+        },
+      ],
+    }
+
+    render(
+      <TestWrapper>
+        <InitializerParametersDialog
+          {...baseProps}
+          mode="edit"
+          initializer={initializer}
+          initialParameters={{}}
+          onSubmit={onSubmit}
+        />
+      </TestWrapper>,
+    )
+
+    expect(screen.getByTestId('param-days')).toHaveValue(null)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSubmit).toHaveBeenCalledWith(null)
   })
 
   it('calls onOpenChange(false) when cancelled', async () => {
