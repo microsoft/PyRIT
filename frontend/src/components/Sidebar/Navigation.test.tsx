@@ -3,7 +3,7 @@
  * Licensed under the MIT license.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
 import Navigation from "./Navigation";
@@ -119,25 +119,25 @@ describe("Navigation", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the feedback button and forwards clicks to onOpenFeedback", () => {
+  it("renders one feedback button and forwards clicks to onOpenFeedback", async () => {
+    const user = userEvent.setup();
     const onOpenFeedback = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onOpenFeedback={onOpenFeedback} />
     );
 
-    const feedbackButton = screen.getByTitle("Feedback");
-    expect(feedbackButton).toBeInTheDocument();
-    fireEvent.click(feedbackButton);
+    const feedbackButtons = screen.getAllByRole("button", { name: "Feedback" });
+    expect(feedbackButtons).toHaveLength(1);
+    await user.click(feedbackButtons[0]);
     expect(onOpenFeedback).toHaveBeenCalledTimes(1);
   });
 
-  it("links to the public security policy", () => {
+  it("does not render a direct security link", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
 
-    expect(screen.getByRole("link", { name: "Security" })).toHaveAttribute(
-      "href",
-      "https://github.com/microsoft/PyRIT/security/policy"
-    );
+    expect(
+      screen.queryByRole("link", { name: "Security" })
+    ).not.toBeInTheDocument();
   });
 
   it("calls onNavigate with 'history' when history button is clicked", async () => {
