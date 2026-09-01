@@ -168,6 +168,16 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/config" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          content: "initializers: []\n",
+          source: "C:/Users/test/.pyrit/.pyrit_conf",
+          version: "touch-target-config-v1",
+        })
+      );
+      return;
+    }
     if (apiPath === "/initializers/settings" && method === "GET") {
       await route.fulfill(
         jsonResponse({
