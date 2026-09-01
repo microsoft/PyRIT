@@ -188,7 +188,7 @@ describe('Configuration', () => {
       'C:/Users/test/.pyrit/custom_initializers/custom_target.py',
       { selector: 'label' },
     )).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Add initializer' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add initializer' }))
     const dialog = screen.getByRole('dialog', { name: 'Add custom initializer' })
     await user.type(within(dialog).getByRole('textbox', { name: /Initializer name/ }), 'new_custom')
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Python source' }), {
