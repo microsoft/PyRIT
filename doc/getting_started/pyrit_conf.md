@@ -380,8 +380,8 @@ from pyrit.setup import ConfigurationLoader
 # Layer 2 and 3 overrides are optional keyword arguments:
 config = ConfigurationLoader.load_with_overrides(
     config_file=Path("./my_project.yaml"),  # Layer 2: explicit config file (omit to skip)
-    memory_db_type="in_memory",             # Layer 3: override database type
-    initializers=["target", "scorer"],      # Layer 3: override initializers
+    memory_db_type="in_memory",  # Layer 3: override database type
+    initializers=["target", "scorer"],  # Layer 3: override initializers
 )
 
 await config.initialize_pyrit_async()
