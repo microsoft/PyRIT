@@ -1104,3 +1104,5 @@ def test_file_backed_database_is_not_serialized(isolated_memory_factory):
     with tempfile.TemporaryDirectory() as temp_dir:
         memory = isolated_memory_factory(db_path=os.path.join(temp_dir, "locking.db"))
         assert memory._connection_lock is None
+        # Windows cannot remove the temp directory while the engine still holds the file open.
+        memory.dispose_engine()
