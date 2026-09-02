@@ -130,7 +130,7 @@ Per-combination counts for both runs are logged as [ACS run CSV](2026_09_03_adve
 
 The adversarial benchmark is available for you to try as the `AdversarialBenchmark` class. See [Benchmark Scenarios](../scanner/benchmark.ipynb) for its behavior, configuration, and examples.
 
-As we improve the benchmark, this blog post may become out of date, but the general theme will stay the same: PyRIT can show us which models are better at acting as attacker models. The findings are preliminary and are not a substitute for repeated, controlled measurement. The results have limitations:
+As we improve the benchmark, this blog post may become out of date, but the general theme will stay the same: PyRIT can help evaluate which models perform best as attackers. The findings are preliminary and are not a substitute for repeated, controlled measurement. The results have limitations:
 
 - The attacker-training pilot covered three relatively simple techniques, and its two datasets were not repeated identical trials.
 - The separate Grok comparison used one victim, one run, four techniques, and a noisy harm-proxy scorer. Its 50-objective sample also overrepresented copyright extraction, while several harm-category slices were too small to interpret independently.
