@@ -202,6 +202,28 @@ async def test_composite_scorer_with_task(mock_request, true_scorer):
     assert scores[0].objective == task
 
 
+async def test_composite_scorer_is_silent_when_all_children_are_not_applicable(mock_request, true_scorer):
+    true_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+    assert scores == []
+
+
+async def test_composite_scorer_ignores_non_applicable_child(mock_request, true_scorer, false_scorer):
+    false_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.OR,
+        scorers=[false_scorer, true_scorer],
+    )
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
+
+
 async def test_composite_routes_full_expectation_to_matching_and_nonmatching_leaves(mock_request):
     objective_scorer = MockScorer(
         score_value=True,

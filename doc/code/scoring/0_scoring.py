@@ -121,11 +121,24 @@ print(df.to_string(index=False))
 # storage and stores its SHA-256 digest. The score remains resolvable after the source file is
 # removed.
 #
-# A complete score has `status="complete"` and a typed value. An undetermined score has
-# `status="undetermined"` and no value. A fully blocked response is a complete negative result
-# by default: `False` for message true/false scorers and `0.0` for message float-scale scorers.
-# `SelfAskRefusalScorer` is the intentional exception because a content-filter block is a
-# refusal, so it returns `True`. Other response errors remain undetermined.
+# Scoring APIs return `list[Score]`. An empty list means that the scorer does not apply to the
+# evidence, such as a message with no supported role or data type. A non-empty list contains
+# completed or undetermined scores.
+#
+# A complete score has `status="complete"` and a typed domain verdict. An undetermined score
+# has `status="undetermined"` and no value because supported evidence failed to load. A fully
+# blocked response is a complete negative result by default: `False` for message true/false
+# scorers and `0.0` for message float-scale scorers. `SelfAskRefusalScorer` is the intentional
+# exception because a content-filter block is a refusal, so it returns `True`.
+#
+# A scorer declares which evidence it reads; the caller does not filter evidence on its behalf.
+# A message scorer names the conversation roles it reads with `supported_roles` on its
+# `ScorerPromptValidator`. Prepended (`simulated_assistant`) turns are fabricated history, so a
+# scorer must opt in to read them. Every scorer still receives a failed response, because a
+# scorer whose evidence never came from the response must run even when the response failed.
+# Explicit `role_filter` and `skip_on_error_result` values remain supported until removal.
+# Callers that rely on their historical defaults must now pass them explicitly. New code
+# should use `supported_roles` and the scorer's unreadable-evidence fallback instead.
 # %% [markdown]
 # ## Scoring directly
 #

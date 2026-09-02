@@ -312,7 +312,9 @@ class Scorer(Identifiable, abc.ABC):
             expectation (ScoringExpectation | None): What to look for. Defaults to None.
 
         Returns:
-            list[Score]: A list of Score objects representing the results.
+            list[Score]: Zero or more persisted scores. An empty list means that this scorer
+                does not apply to the evidence. A non-empty list contains completed or
+                undetermined verdicts.
 
         Raises:
             TypeError: If this scorer does not support this kind of scorable.
@@ -488,8 +490,9 @@ class Scorer(Identifiable, abc.ABC):
         Subclasses implement this for the scorable kinds they handle and raise
         ``TypeError`` for the rest. ``MessageScorer`` handles the message-shaped kinds.
 
-        An implementation returns an empty list when a filter skipped the scorable without
-        scoring it. An empty list bypasses ``validate_return_scores`` and persistence.
+        An implementation returns ``[]`` when this scorer does not apply to the evidence.
+        Otherwise, it returns one or more completed or undetermined ``Score`` results.
+        An empty list bypasses ``validate_return_scores`` and persistence.
 
         Args:
             scorable (Scorable): What to look at.
@@ -621,14 +624,16 @@ class Scorer(Identifiable, abc.ABC):
         response: Message,
         objective_scorer: Scorer | None = None,
         auxiliary_scorers: list[Scorer] | None = None,
-        role_filter: ChatMessageRole = "assistant",
+        role_filter: ChatMessageRole | None = None,
         objective: str | None = None,
-        skip_on_error_result: bool = True,
+        skip_on_error_result: bool | None = None,
     ) -> dict[str, list[Score]]:
         """
         Score a response through the message family. Deprecated.
 
         Response scoring is message-only policy, so it moved to ``MessageScorer``.
+        ``role_filter`` and ``skip_on_error_result`` are deprecated compatibility filters.
+        New code declares the roles it reads on the scorer.
 
         Returns:
             dict[str, list[Score]]: Auxiliary and objective scores, keyed by
@@ -655,12 +660,14 @@ class Scorer(Identifiable, abc.ABC):
         *,
         response: Message,
         scorers: list[Scorer],
-        role_filter: ChatMessageRole = "assistant",
+        role_filter: ChatMessageRole | None = None,
         objective: str | None = None,
-        skip_on_error_result: bool = True,
+        skip_on_error_result: bool | None = None,
     ) -> list[Score]:
         """
         Score a response with several scorers through the message family. Deprecated.
+
+        ``role_filter`` and ``skip_on_error_result`` are deprecated compatibility filters.
 
         Returns:
             list[Score]: Every score the scorers produced.

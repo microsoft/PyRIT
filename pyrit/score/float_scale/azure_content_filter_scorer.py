@@ -342,67 +342,40 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
-        Build one neutral ``0.0`` fallback score per configured harm category.
+        Build one fallback score per configured harm category.
 
         AzureContentFilterScorer's normal output is one score per category in
-        ``self._harm_categories``. To preserve that shape on blocked / error / filtered
-        input, this override emits one neutral ``0.0`` score per configured category
-        (each tagged with the category name and matching the normal-path metadata),
-        instead of the single category-less score produced by the base
-        ``MessageFloatScaleScorer._build_fallback_score``.
-
-        Inspects the first message piece to tailor the rationale/description for
-        blocked, error, and filtered cases.
+        ``self._harm_categories``. To preserve that shape for blocked and unreadable
+        responses, this override emits one result per configured category. Unsupported
+        evidence returns ``[]``.
 
         Args:
-            message (Message): The message whose first piece is inspected for status.
+            message (Message): The message whose fallback result is expanded.
             objective (str | None): The objective associated with this scoring call.
 
         Returns:
-            list[Score]: One ``0.0`` ``float_scale`` score per configured harm category,
-                each attributed to the first piece.
+            list[Score]: ``[]`` for non-applicable evidence; otherwise, one completed or
+                undetermined result per configured harm category.
 
         Raises:
             ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
         """
-        first_piece = message.message_pieces[0]
-        piece_id = first_piece.id or first_piece.original_prompt_id
-        if piece_id is None:
-            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
-
-        if first_piece.is_blocked():
-            status = "The response was blocked with no content to score"
-            description = "Blocked response; returning 0.0 per configured category."
-        elif first_piece.has_error():
-            # A transport or protocol failure is not the target's answer, so there is no verdict.
-            return [
-                self._build_undetermined_score(
-                    rationale=f"Response had an error: {first_piece.response_error}; no verdict was reachable.",
-                    description="Error response; no verdict was reachable.",
-                    message_piece_id=piece_id,
-                    objective=objective,
-                    score_category=[category.value],
-                    score_metadata={"azure_severity": 0},
-                )
-                for category in self._harm_categories
-            ]
-        else:
-            status = "No supported pieces to score after filtering"
-            description = "No pieces to score after filtering; returning 0.0 per configured category."
-
-        rationale = f"{status}; returning 0.0 for each configured harm category."
-        metadata: dict[str, str | int | float] = {"azure_severity": 0}
+        fallback_scores = super()._build_fallback_score(message=message, objective=objective)
+        if not fallback_scores:
+            return []
+        fallback = fallback_scores[0]
 
         return [
             Score(
-                score_value="0.0",
-                score_value_description=description,
+                score_value=fallback.score_value,
+                status=fallback.status,
+                score_value_description=fallback.score_value_description,
                 score_type="float_scale",
                 score_category=[category.value],
-                score_metadata=metadata,
-                score_rationale=rationale,
+                score_metadata={"azure_severity": 0},
+                score_rationale=fallback.score_rationale,
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=piece_id,
+                message_piece_id=fallback.message_piece_id,
                 objective=objective,
             )
             for category in self._harm_categories
