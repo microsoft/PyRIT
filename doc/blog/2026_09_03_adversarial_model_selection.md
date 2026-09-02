@@ -80,7 +80,7 @@ The aggregate results conceal large intra-model differences. In the very first a
 
 *Figure 2 - Preliminary technique-level results from two separate, non-comparable studies.*
 
-The lesson we learned was that the best model for a simple conversational attack may not be the best model for a technique requiring long reasoning traces, strict JSON, image input, or repeated backtracking, and therefore, a single ASR was insufficient for choosing a "best" adversarial model. The head-to-head benchmarks showed the same interaction; among the clean techniques, Qwen MT led on `red_teaming` at 78.6%, while Qwen ST led `crescendo_simulated` at 64.3%. Among the recovered benchmark combinations, Grok's final outcomes led `role_play_video_game` at 78.6%, and Qwen ST's final outcomes led `role_play_trivia_game` at 28.6%. No model led every technique.
+We could see that the best model for a simple conversational attack may not be the best model for a technique requiring long reasoning traces, strict JSON, image input, or repeated backtracking, and therefore, a single ASR was insufficient for choosing a "best" adversarial model. The head-to-head benchmarks showed the same interaction; among the clean techniques, Qwen MT led on `red_teaming` at 78.6%, while Qwen ST led `crescendo_simulated` at 64.3%. Among the recovered benchmark combinations, Grok's final outcomes led `role_play_video_game` at 78.6%, and Qwen ST's final outcomes led `role_play_trivia_game` at 28.6%. No model led every technique.
 
 ![Grouped bars showing Qwen MT, Qwen ST, and Grok final attack success rates for four techniques, with recovered combinations marked and a strict clean aggregate over red teaming and simulated crescendo.](2026_09_03_adversarial_model_selection_head_to_head.png)
 
