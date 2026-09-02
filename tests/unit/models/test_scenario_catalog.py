@@ -275,7 +275,7 @@ def test_conditional_estimate_exposes_dataset_counts_structurally() -> None:
                 name="harmbench",
                 logical_seed_group_count=100,
                 selected_seed_group_count=4,
-                selection_note="The default selection uses 4 of 100 logical seed groups.",
+                selection_note="The default selection uses 4 of 100 available objectives.",
                 configured_caps=[
                     ScenarioDatasetSizeCap(
                         label="per-dataset cap",
@@ -301,7 +301,7 @@ def test_conditional_estimate_exposes_dataset_counts_structurally() -> None:
             "kind": "dataset",
             "logical_seed_group_count": 100,
             "selected_seed_group_count": 4,
-            "selection_note": "The default selection uses 4 of 100 logical seed groups.",
+            "selection_note": "The default selection uses 4 of 100 available objectives.",
             "configured_caps": [
                 {
                     "label": "per-dataset cap",

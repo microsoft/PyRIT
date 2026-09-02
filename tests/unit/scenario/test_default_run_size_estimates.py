@@ -135,6 +135,7 @@ async def test_ordinary_matrix_estimate_uses_planned_seed_units_and_baseline() -
     assert [component.count for component in estimate.components] == [4, 2]
     assert estimate.datasets[0].logical_seed_group_count == 3
     assert estimate.datasets[0].selected_seed_group_count == 2
+    assert estimate.datasets[0].selection_note == "The default selection uses 2 of 3 available objectives."
 
 
 @pytest.mark.usefixtures("patch_central_database")
