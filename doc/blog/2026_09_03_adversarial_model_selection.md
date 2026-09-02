@@ -78,13 +78,13 @@ The aggregate results conceal large intra-model differences. In the very first a
 
 ![Two heatmaps of preliminary adversarial-model benchmark results. The attacker-training pilot compares four model aliases across red teaming, role play, and context compliance. The separate Grok study compares two model aliases across four techniques. A warning states that the panels use different victims, scorers, objective sets, and designs and should not be compared by absolute ASR.](2026_09_03_adversarial_model_selection_results.png)
 
-*Figure 3 - Preliminary technique-level results from two separate, non-comparable studies.*
+*Figure 2 - Preliminary technique-level results from two separate, non-comparable studies.*
 
 The lesson we learned was that the best model for a simple conversational attack may not be the best model for a technique requiring long reasoning traces, strict JSON, image input, or repeated backtracking, and therefore, a single ASR was insufficient for choosing a "best" adversarial model. The head-to-head benchmarks showed the same interaction; among the clean techniques, Qwen MT led on `red_teaming` at 78.6%, while Qwen ST led `crescendo_simulated` at 64.3%. Among the recovered benchmark combinations, Grok's final outcomes led `role_play_video_game` at 78.6%, and Qwen ST's final outcomes led `role_play_trivia_game` at 28.6%. No model led every technique.
 
 ![Grouped bars showing Qwen MT, Qwen ST, and Grok final attack success rates for four techniques, with recovered combinations marked and a strict clean aggregate over red teaming and simulated crescendo.](2026_09_03_adversarial_model_selection_head_to_head.png)
 
-*Figure 4 - Paired head-to-head across 14 objectives per technique-model pair. Hatched bars required recovery; the strict clean aggregate excludes those techniques.*
+*Figure 3 - Paired head-to-head across 14 objectives per technique-model pair. Hatched bars required recovery; the strict clean aggregate excludes those techniques.*
 
 The sanitized technique-level records behind the preliminary studies are available in [CSV form](2026_09_03_adversarial_model_selection_results.csv).
 
@@ -102,7 +102,7 @@ The head-to-head above scored success with a harm proxy: a `FloatScaleThresholdS
 
 ![Screenshot of PyRIT's scenario-results view for the combined adversarial benchmark, showing its scorer, overall statistics, and per-model breakdown.](2026_09_03_adversarial_model_selection_benchmark_screenshot.png)
 
-*Figure 5 - PyRIT's scenario-results view for the combined task-achievement run, showing 168 attack results across 14 objectives and grouped success rates for the three adversarial models.*
+*Figure 4 - PyRIT's scenario-results view for the combined task-achievement run, showing 168 attack results across 14 objectives and grouped success rates for the three adversarial models.*
 
 The per-group names in the screenshot are the target-registry aliases used for this run: `adversarial_chat_multiturn` is Qwen MT, `adversarial_chat_singleturn` is Qwen ST, and `adversarial_chat` is Grok.
 
@@ -110,7 +110,13 @@ A noteable example from the transcripts is a harmbench instance requesting a SQL
 
 ![A two-by-two comparison of final attacker prompts and objective-target response excerpts for Qwen Singleturn and Grok using simulated Crescendo and video-game role play. Qwen succeeds with Crescendo and fails with role play, while Grok shows the opposite outcomes.](2026_09_03_adversarial_model_selection_prompt_contrast.png)
 
-*Figure 6 - Example transcript for SQLite injection success varying by attack technique.*
+*Figure 5 - Example transcript for SQLite injection success varying by attack technique.*
+
+We observed the same reversal for rootkit-code obfuscation: Qwen MT succeeded with `red_teaming`, while Grok succeeded with `crescendo_simulated`.
+
+![A two-by-two comparison of final attacker prompts and objective-target response excerpts for Qwen Multiturn and Grok using red teaming and simulated Crescendo. Qwen succeeds with red teaming and fails with Crescendo, while Grok shows the opposite outcomes.](2026_09_03_adversarial_model_selection_rootkit_prompt_contrast.png)
+
+*Figure 6 - Example transcript for rootkit-code obfuscation success varying by attack technique.*
 
 Importantly, changing just the scorer completely reorders the models. Under the harm proxy's scoring mechanism, Grok ranked second (46.4%); under the task-achievement judge it ranks last (28.6%), while Qwen ST leads under both scorers. The two scorers even disagree in direction on individual technique-model combinations: the judge credits Grok more on `red_teaming` (42.9% to 71.4%) but much less on `role_play_video_game` (78.6% to 35.7%) and `crescendo_simulated` (57.1% to 7.1%). We theorize the harm proxy content classifier rewarded harmful-sounding but off-objective text. This doesn't mean that a benchmark run is right or wrong for using content classification models for scoring over a judge LLM; just that in terms of benchmarking, the definition of "most adversarial behavior" depends on the scoring mechanism.
 
@@ -128,7 +134,7 @@ As we improve the benchmark, this blog post may become out of date, but the gene
 
 - The attacker-training pilot covered three relatively simple techniques, and its two datasets were not repeated identical trials.
 - The separate Grok comparison used one victim, one run, four techniques, and a noisy harm-proxy scorer. Its 50-objective sample also overrepresented copyright extraction, while several harm-category slices were too small to interpret independently.
-- The two head-to-head studies were run differently. The first harm-proxy head-to-head (Figure 4) executed as twelve isolated single-combination benchmark scenarios. Two combinations required a scenario-level retry and one recovered internally from an HTTP-204 empty response. The task-achievement re-scoring (Figures 5 and 6) was one combined benchmark run in which a single Grok `red_teaming` attack recovered from two consecutive HTTP-204 empty responses through target-level retries. Both runs produced 168 terminal success-or-failure outcomes with no error or undetermined results. Because the two studies differ in scorer, harness (isolated versus combined), and run instance at once, their differences should be read as motivating the scorer question rather than as an isolated measurement of scorer effect. The available artifacts also record registry aliases rather than exact adversarial deployment versions. Per-run, per-combination statistics are provided as CSVs alongside this post.
+- The two head-to-head studies were run differently. The first harm-proxy head-to-head (Figure 3) executed as twelve isolated single-combination benchmark scenarios. Two combinations required a scenario-level retry and one recovered internally from an HTTP-204 empty response. The task-achievement re-scoring (Figures 4-7) was one combined benchmark run in which a single Grok `red_teaming` attack recovered from two consecutive HTTP-204 empty responses through target-level retries. Both runs produced 168 terminal success-or-failure outcomes with no error or undetermined results. Because the two studies differ in scorer, harness (isolated versus combined), and run instance at once, their differences should be read as motivating the scorer question rather than as an isolated measurement of scorer effect. The available artifacts also record registry aliases rather than exact adversarial deployment versions. Per-run, per-combination statistics are provided as CSVs alongside this post.
 
 As a red teaming tool, PyRIT's strength depends on high-quality adversarial models, so we will keep building tooling to identify and integrate them. We intend to gather data across more models, victims, techniques, modalities, and balanced objective sets. Repeated paired trials, scorer calibration against human labels, held-out evaluation, confidence intervals, and explicit latency, reliability, and cost metrics would make model selection more defensible, in addition to usage of more modern, powerful models.
 
