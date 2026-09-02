@@ -161,15 +161,27 @@ class TestListConverterCatalog:
         caesar_param = next(p for p in caesar_entry.parameters if p.name == "caesar_offset")
         assert caesar_param.type_name == "int"
 
-    async def test_catalog_excludes_non_coercible_params(self) -> None:
-        """Catalog only surfaces params that can be set from a string (e.g. not the LLM target)."""
+    async def test_types_include_registry_reference_params(self) -> None:
+        """Type entries surface target references for registry-backed selection."""
         service = ConverterService()
 
-        result = await service.list_converter_catalog_async()
+        result = await service.list_converter_types_async()
 
         persuasion_entry = next(item for item in result.items if item.converter_type == "PersuasionConverter")
         assert persuasion_entry.is_llm_based is True
-        assert all("Target" not in p.type_name for p in persuasion_entry.parameters)
+        target_param = next(param for param in persuasion_entry.parameters if param.name == "converter_target")
+        assert target_param.reference_type == "target"
+
+    async def test_types_include_path_parameters(self) -> None:
+        """Path parameters derived by the registry remain available through REST."""
+        service = ConverterService()
+
+        result = await service.list_converter_types_async()
+
+        transparency_entry = next(item for item in result.items if item.converter_type == "TransparencyAttackConverter")
+        path_param = next(param for param in transparency_entry.parameters if param.name == "benign_image_path")
+        assert path_param.required is True
+        assert path_param.type_name == "Path"
 
 
 class TestGetConverter:
@@ -237,6 +249,7 @@ class TestCreateConverter:
         service = ConverterService()
 
         request = CreateConverterRequest(
+            name="invalid",
             type="NonExistentConverter",
             params={},
         )
@@ -249,22 +262,23 @@ class TestCreateConverter:
         service = ConverterService()
 
         request = CreateConverterRequest(
+            name="my-base64",
             type="Base64Converter",
-            display_name="My Base64",
             params={},
         )
 
         result = await service.create_converter_async(request=request)
 
-        assert result.converter_id is not None
-        assert result.converter_type == "Base64Converter"
-        assert result.display_name == "My Base64"
+        assert result.converter_id == "my-base64"
+        assert result.identifier.class_name == "Base64Converter"
+        assert result.is_llm_based is False
 
     async def test_create_converter_registers_in_registry(self) -> None:
         """Test that create_converter registers object in registry."""
         service = ConverterService()
 
         request = CreateConverterRequest(
+            name="base64",
             type="Base64Converter",
             params={},
         )
@@ -274,6 +288,52 @@ class TestCreateConverter:
         # Object should be retrievable from registry
         converter_obj = service.get_converter_object(converter_id=result.converter_id)
         assert converter_obj is not None
+
+    async def test_create_converter_without_name_preserves_chat_compatibility(self) -> None:
+        service = ConverterService()
+
+        result = await service.create_converter_async(
+            request=CreateConverterRequest(type="Base64Converter", params={}),
+        )
+
+        assert result.converter_id
+        assert service.get_converter_object(converter_id=result.converter_id) is not None
+
+    async def test_create_converter_rejects_duplicate_name(self) -> None:
+        service = ConverterService()
+        original = Base64Converter()
+        service._registry.instances.register(original, name="shared-name")
+        request = CreateConverterRequest(name="shared-name", type="CaesarConverter", params={})
+
+        with pytest.raises(ValueError, match="already exists"):
+            await service.create_converter_async(request=request)
+
+        assert service.get_converter_object(converter_id="shared-name") is original
+
+    @pytest.mark.parametrize("name", ["catalog", "preview", "types"])
+    async def test_create_converter_rejects_reserved_route_name(self, name: str) -> None:
+        service = ConverterService()
+        request = CreateConverterRequest(name=name, type="Base64Converter", params={})
+
+        with pytest.raises(ValueError, match="reserved"):
+            await service.create_converter_async(request=request)
+
+
+class TestDeleteConverter:
+    """Tests for ConverterService.delete_converter_async."""
+
+    async def test_delete_converter_removes_registered_instance(self) -> None:
+        service = ConverterService()
+        converter_obj = Base64Converter()
+        service._registry.instances.register(converter_obj, name="conv-1")
+
+        assert await service.delete_converter_async(converter_id="conv-1") is True
+        assert service.get_converter_object(converter_id="conv-1") is None
+
+    async def test_delete_converter_returns_false_when_missing(self) -> None:
+        service = ConverterService()
+
+        assert await service.delete_converter_async(converter_id="missing") is False
 
 
 class TestPersistDataUriParams:
@@ -345,16 +405,25 @@ class TestPersistDataUriParams:
         mock_factory.assert_not_called()
 
     async def test_persist_data_uri_ignores_non_data_uri_values(self) -> None:
-        """Values that are not data URIs are left unchanged."""
+        """Non-upload values remain unchanged for non-Path parameters."""
         service = ConverterService()
 
-        params = {"existing_pdf": "/already/a/path.pdf", "font_size": 12}
+        params = {"font_size": 12}
 
         with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
             result = await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
 
         assert result == params
         mock_factory.assert_not_called()
+
+    async def test_persist_data_uri_rejects_server_path_for_path_parameter(self) -> None:
+        service = ConverterService()
+
+        with pytest.raises(ValueError, match="must be uploaded as a data URI"):
+            await service._persist_data_uri_params_async(
+                converter_type="PDFConverter",
+                params={"existing_pdf": "C:\\sensitive\\input.pdf"},
+            )
 
 
 class TestPreviewConversion:

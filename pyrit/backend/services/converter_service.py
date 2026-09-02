@@ -24,14 +24,14 @@ from urllib.parse import parse_qs, urlparse
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.models.converters import (
-    ConverterCatalogEntry,
     ConverterCatalogResponse,
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
     ConverterPreviewResponse,
+    ConverterTypeEntry,
+    ConverterTypeResponse,
     CreateConverterRequest,
-    CreateConverterResponse,
     PreviewStep,
 )
 from pyrit.memory import data_serializer_factory
@@ -63,7 +63,14 @@ class ConverterService:
         Returns:
             ConverterInstance with metadata derived from the object's identifier.
         """
-        return converter_object_to_instance(converter_id, converter_obj)
+        metadata = self._registry.get_registered_class_metadata(converter_obj.__class__.__name__)
+        description = metadata.class_description or None if metadata else None
+        return converter_object_to_instance(
+            converter_id=converter_id,
+            converter_obj=converter_obj,
+            is_llm_based=metadata.is_llm_based if metadata else False,
+            description=description,
+        )
 
     # ========================================================================
     # Public API Methods
@@ -82,7 +89,7 @@ class ConverterService:
         ]
         return ConverterInstanceListResponse(items=items)
 
-    async def list_converter_catalog_async(self) -> ConverterCatalogResponse:
+    async def list_converter_types_async(self) -> ConverterTypeResponse:
         """
         List all available converter types from the converter class registry.
 
@@ -91,21 +98,25 @@ class ConverterService:
         frontend), not this service.
 
         Returns:
-            ConverterCatalogResponse containing all available converter classes.
+            ConverterTypeResponse containing all available converter classes.
         """
-        items: list[ConverterCatalogEntry] = [
-            ConverterCatalogEntry(
+        items: list[ConverterTypeEntry] = [
+            ConverterTypeEntry(
                 converter_type=metadata.class_name,
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
-                parameters=[p for p in metadata.parameters if p.is_string_coercible],
+                parameters=[p for p in metadata.parameters if p.is_string_coercible or p.reference is not None],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
             for metadata in self._registry.get_all_registered_class_metadata()
         ]
 
-        return ConverterCatalogResponse(items=items)
+        return ConverterTypeResponse(items=items)
+
+    async def list_converter_catalog_async(self) -> ConverterCatalogResponse:
+        """Return the temporary compatibility projection for ``/catalog``."""
+        return await self.list_converter_types_async()
 
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """
@@ -128,7 +139,16 @@ class ConverterService:
         """
         return self._registry.instances.get(converter_id)
 
-    async def create_converter_async(self, *, request: CreateConverterRequest) -> CreateConverterResponse:
+    async def delete_converter_async(self, *, converter_id: str) -> bool:
+        """
+        Delete a converter instance by registry name.
+
+        Returns:
+            bool: True when an instance was removed, otherwise False.
+        """
+        return self._registry.instances.unregister(converter_id) is not None
+
+    async def create_converter_async(self, *, request: CreateConverterRequest) -> ConverterInstance:
         """
         Create a new converter instance from API request.
 
@@ -139,26 +159,26 @@ class ConverterService:
             request: The create converter request with type and params.
 
         Returns:
-            CreateConverterResponse with the new converter's details.
+            ConverterInstance with the new converter's details.
 
         Raises:
-            ValueError: If the converter type is not found.
+            ValueError: If the converter type is not found or the registry name is
+                unavailable.
         """
-        converter_id = str(uuid.uuid4())
-
-        # Persist data-URI params to disk (frontend concern), then delegate
-        # construction (incl. param coercion and reference resolution) to the
-        # converter registry.
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
+        converter_id = request.name or f"compat_{uuid.uuid4().hex}"
+        self._registry.instances.validate_name_available(converter_id)
         params = await self._persist_data_uri_params_async(converter_type=request.type, params=request.params)
-        converter_obj = self._registry.create_instance(request.type, **params)
-        self._registry.instances.register(converter_obj, name=converter_id)
-
-        return CreateConverterResponse(
-            converter_id=converter_id,
+        converter_obj = self._registry.create_named_instance(
+            name=converter_id,
             converter_type=request.type,
-            display_name=request.display_name,
+            **params,
+        )
+
+        return self._build_instance_from_object(
+            converter_id=converter_id,
+            converter_obj=converter_obj,
         )
 
     async def preview_conversion_async(self, *, request: ConverterPreviewRequest) -> ConverterPreviewResponse:
@@ -283,6 +303,8 @@ class ConverterService:
 
         result = dict(params)
         for name, value in result.items():
+            if param_types.get(name) is Path and isinstance(value, str) and not value.startswith("data:"):
+                raise ValueError(f"Path parameter '{name}' must be uploaded as a data URI")
             if not isinstance(value, str) or not value.startswith("data:"):
                 continue
             if name not in param_types:

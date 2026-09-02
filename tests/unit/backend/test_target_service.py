@@ -357,6 +357,34 @@ class TestCreateTarget:
         assert result.target_registry_name is not None
         assert result.identifier.class_name == "TextTarget"
 
+    async def test_create_target_uses_explicit_registry_name(self, sqlite_instance) -> None:
+        service = TargetService()
+
+        result = await service.create_target_async(
+            request=CreateTargetRequest(name="text-target", type="TextTarget", params={}),
+        )
+
+        assert result.target_registry_name == "text-target"
+        assert service.get_target_object(target_registry_name="text-target") is not None
+
+    async def test_create_target_rejects_duplicate_name(self, sqlite_instance) -> None:
+        service = TargetService()
+        service._registry.instances.register(MockPromptTarget(), name="shared-name")
+
+        with pytest.raises(ValueError, match="already exists"):
+            await service.create_target_async(
+                request=CreateTargetRequest(name="shared-name", type="TextTarget", params={}),
+            )
+
+    @pytest.mark.parametrize("name", ["catalog", "types"])
+    async def test_create_target_rejects_reserved_route_name(self, sqlite_instance, name: str) -> None:
+        service = TargetService()
+
+        with pytest.raises(ValueError, match="reserved"):
+            await service.create_target_async(
+                request=CreateTargetRequest(name=name, type="TextTarget", params={}),
+            )
+
     async def test_create_target_delegates_construction_to_registry(self, sqlite_instance) -> None:
         """Every target construction path is owned by the registry."""
         service = TargetService()

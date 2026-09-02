@@ -172,15 +172,16 @@ class TestScorerRegistryRegisterInstance:
 
         assert len(registry.instances) == 2
 
-    def test_register_instance_duplicate_name_overwrites(self, registry: ScorerRegistry):
+    def test_register_instance_duplicate_name_raises(self, registry: ScorerRegistry):
         first = MockTrueFalseScorer()
         second = MockTrueFalseScorer()
 
         registry.instances.register(first, name="same_name")
-        registry.instances.register(second, name="same_name")
 
-        assert len(registry.instances) == 1
-        assert registry.instances.get("same_name") is second
+        with pytest.raises(ValueError, match="already exists"):
+            registry.instances.register(second, name="same_name")
+
+        assert registry.instances.get("same_name") is first
 
     def test_register_instance_rejects_non_scorer(self, registry: ScorerRegistry):
         class NotAScorer:

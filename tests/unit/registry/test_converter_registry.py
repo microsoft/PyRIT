@@ -161,15 +161,27 @@ class TestConverterRegistryRegisterInstance:
 
         assert len(registry.instances) == 2
 
-    def test_register_instance_duplicate_name_overwrites(self, registry: ConverterRegistry):
+    def test_register_instance_duplicate_name_raises(self, registry: ConverterRegistry):
         converter1 = MockTextConverter()
         converter2 = MockImageConverter()
 
         registry.instances.register(converter1, name="shared_name")
-        registry.instances.register(converter2, name="shared_name")
 
-        assert len(registry.instances) == 1
-        assert registry.instances.get("shared_name") is converter2
+        with pytest.raises(ValueError, match="already exists"):
+            registry.instances.register(converter2, name="shared_name")
+
+        assert registry.instances.get("shared_name") is converter1
+
+    def test_create_named_instance_builds_and_stores_converter(self, registry: ConverterRegistry):
+        converter = registry.create_named_instance(name="base64", converter_type="Base64Converter")
+
+        assert isinstance(converter, Base64Converter)
+        assert registry.instances.get("base64") is converter
+
+    @pytest.mark.parametrize("name", ["catalog", "preview", "types"])
+    def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
+        with pytest.raises(ValueError, match="reserved"):
+            registry.create_named_instance(name=name, converter_type="Base64Converter")
 
     def test_register_instance_rejects_non_converter(self, registry: ConverterRegistry):
         class NotAConverter:

@@ -15,6 +15,7 @@ from pyrit.backend.models.targets import (
     CreateTargetRequest,
     TargetCatalogResponse,
     TargetListResponse,
+    TargetTypeResponse,
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.models.catalog.target import TargetInstance
@@ -46,6 +47,24 @@ async def list_targets(  # pyrit-async-suffix-exempt
 
 
 @router.get(
+    "/types",
+    response_model=TargetTypeResponse,
+    responses={
+        500: {"model": ProblemDetail, "description": "Internal server error"},
+    },
+)
+async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exempt
+    """
+    List target types projected from ``TargetRegistry`` metadata.
+
+    Returns:
+        TargetTypeResponse: Available target types and build parameters.
+    """
+    service = get_target_service()
+    return await service.list_target_types_async()
+
+
+@router.get(
     "/catalog",
     response_model=TargetCatalogResponse,
     responses={
@@ -53,12 +72,7 @@ async def list_targets(  # pyrit-async-suffix-exempt
     },
 )
 async def list_target_catalog() -> TargetCatalogResponse:  # pyrit-async-suffix-exempt
-    """
-    List all available target types from the backend target registry.
-
-    Returns:
-        TargetCatalogResponse: List of available target types.
-    """
+    """Return the temporary compatibility alias for ``/types``."""
     service = get_target_service()
     return await service.list_target_catalog_async()
 
