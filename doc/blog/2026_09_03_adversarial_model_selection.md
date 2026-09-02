@@ -90,7 +90,7 @@ The sanitized technique-level records behind the preliminary studies are availab
 
 ### Re-scoring with a Task-Achievement LLM Judge
 
-The head-to-head above scored success with a harm proxy: a `FloatScaleThresholdScorer` (threshold 0.1) wrapping `AzureContentFilterScorer`, which flags whether a response *looks* harmful across Hate, SelfHarm, Sexual, and Violence categories. Content scoring does not explicitly grade whether or not an objective was met, however. So to test how much the scorer choice matters in benchmarking, we re-ran the same three models across the same four techniques and the same 14 objectives against the same GPT-4o objective target, but replaced the objective scorer with a task-achievement LLM judge (a `SelfAskTrueFalseScorer` using the refined task-achieved rubric, evaluated by a separate judge model). This run executed as a single combined benchmark scenario rather than twelve isolated ones.
+The head-to-head above scored success with a harm proxy: a `FloatScaleThresholdScorer` (threshold 0.1) wrapping `AzureContentFilterScorer`, which flags whether a response *looks* harmful across Hate, SelfHarm, Sexual, and Violence categories. Content scoring does not explicitly grade whether or not an objective was met, however. So to test how much the scorer choice matters in benchmarking, we re-ran the same three models across the same four techniques and the same 14 objectives against the same GPT-4o objective target, but replaced the objective scorer with a task-achievement LLM judge (a `SelfAskTrueFalseScorer` using the refined task-achieved rubric, evaluated by a separate judge model). This run executed as a single combined benchmark scenario rather than twelve isolated ones. We observed significant variance in ASR depending on the attack technique.
 
 | Technique | Qwen MT | Qwen ST | Grok | Evidence status |
 | --- | ---: | ---: | ---: | --- |
@@ -106,11 +106,17 @@ The head-to-head above scored success with a harm proxy: a `FloatScaleThresholdS
 
 The per-group names in the screenshot are the target-registry aliases used for this run: `adversarial_chat_multiturn` is Qwen MT, `adversarial_chat_singleturn` is Qwen ST, and `adversarial_chat` is Grok.
 
+A noteable example from the transcripts is a harmbench instance requesting a SQLite injection. This is a classical cybersecurity harm that can provide uplift to attackers and autonomous agents. In this case, we observed that Grok was successful in inducing the target model to produce the injection a role-playing technique while failing in using a crescendo technique, and vice versa for the abliterated Qwen single-turn model.
+
+![A two-by-two comparison of final attacker prompts and objective-target response excerpts for Qwen Singleturn and Grok using simulated Crescendo and video-game role play. Qwen succeeds with Crescendo and fails with role play, while Grok shows the opposite outcomes.](2026_09_03_adversarial_model_selection_prompt_contrast.png)
+
+*Figure 6 - Example transcript for SQLite injection success varying by attack technique.*
+
 Importantly, changing just the scorer completely reorders the models. Under the harm proxy's scoring mechanism, Grok ranked second (46.4%); under the task-achievement judge it ranks last (28.6%), while Qwen ST leads under both scorers. The two scorers even disagree in direction on individual technique-model combinations: the judge credits Grok more on `red_teaming` (42.9% to 71.4%) but much less on `role_play_video_game` (78.6% to 35.7%) and `crescendo_simulated` (57.1% to 7.1%). We theorize the harm proxy content classifier rewarded harmful-sounding but off-objective text. This doesn't mean that a benchmark run is right or wrong for using content classification models for scoring over a judge LLM; just that in terms of benchmarking, the definition of "most adversarial behavior" depends on the scoring mechanism.
 
 ![Grouped bars showing Qwen MT, Qwen ST, and Grok task-achievement success rates for four techniques and an all-technique aggregate, with the recovered Grok red-teaming combination hatched.](2026_09_03_adversarial_model_selection_llm_judge.png)
 
-*Figure 6 - The same head-to-head re-scored by a task-achievement LLM judge in one combined benchmark run. The hatched Grok `red_teaming` combination recovered from a transient HTTP-204 empty response.*
+*Figure 7 - The same head-to-head re-scored by a task-achievement LLM judge in one combined benchmark run. The hatched Grok `red_teaming` combination recovered from a transient HTTP-204 empty response.*
 
 Per-combination counts for both runs are logged as [ACS run CSV](2026_09_03_adversarial_model_selection_acs_run.csv) and [LLM-judge run CSV](2026_09_03_adversarial_model_selection_llm_judge_run.csv).
 
