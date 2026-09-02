@@ -237,12 +237,12 @@ await output_scenario_async(sysprompt_result)
 # pyrit_scan garak.package_hallucination --target openai_chat
 #
 # # Select another supported language.
-# pyrit_scan garak.package_hallucination --target openai_chat --techniques python
+# pyrit_scan garak.package_hallucination --target openai_chat --techniques dart
 # ```
 #
-# **Available techniques** (4 languages): Python, JavaScript, Ruby, Rust.
+# **Available techniques** (7 languages): Python, JavaScript, Ruby, Rust, Dart, Perl, Raku.
 #
-# **Aggregate techniques:** `DEFAULT` runs Rust. `ALL` runs all four languages.
+# **Aggregate techniques:** `DEFAULT` runs Rust. `ALL` runs all seven languages.
 #
 # > **Note:** Rust and its crates.io registry are the default because this registry is much smaller.
 # > If you select another language, PyRIT downloads its registry on demand. The raw package names
