@@ -548,16 +548,11 @@ class AddMessageRequest(BaseModel):
         Raises:
             ValueError: If converter fields conflict, cannot run, or contain an out-of-range request index.
         """
-        if self.converter_ids is not None and self.request_converter_configurations is not None:
+        if self.converter_ids and self.request_converter_configurations:
             raise ValueError("converter_ids and request_converter_configurations cannot both be provided")
 
-        has_converter_configurations = any(
-            configurations is not None
-            for configurations in (
-                self.converter_ids,
-                self.request_converter_configurations,
-                self.response_converter_configurations,
-            )
+        has_converter_configurations = bool(
+            self.converter_ids or self.request_converter_configurations or self.response_converter_configurations
         )
         if not self.send and has_converter_configurations:
             raise ValueError("Converter configurations require send=True")

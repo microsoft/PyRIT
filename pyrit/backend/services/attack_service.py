@@ -778,20 +778,26 @@ class AttackService:
 
         Bumps the attack's ``timestamp`` column (the single indexed recency key) so the edited
         conversation re-floats to the top of the History view.
+
+        Args:
+            attack_result_id: The attack result to update.
+            ar: The current attack result.
+            request_converter_configurations: Resolved request converter configurations used for this message.
+            response_converter_configurations: Resolved response converter configurations used for this message.
         """
         update_fields: dict[str, Any] = {"timestamp": datetime.now(timezone.utc)}
 
         request_converter_ids = self._get_converter_identifiers(configurations=request_converter_configurations)
         response_converter_ids = self._get_converter_identifiers(configurations=response_converter_configurations)
         if request_converter_ids or response_converter_ids:
-            aid = ar.get_attack_strategy_identifier()
-            if aid and ar.atomic_attack_identifier:
-                attack_id = AttackIdentifier.from_component_identifier(aid)
-                merged_request_converters = self._merge_converter_identifiers(
+            attack_strategy_identifier = ar.get_attack_strategy_identifier()
+            if attack_strategy_identifier and ar.atomic_attack_identifier:
+                attack_id = AttackIdentifier.from_component_identifier(attack_strategy_identifier)
+                merged_request_converters = self._merge_attack_result_converter_identifiers(
                     existing=attack_id.request_converters,
                     additions=request_converter_ids,
                 )
-                merged_response_converters = self._merge_converter_identifiers(
+                merged_response_converters = self._merge_attack_result_converter_identifiers(
                     existing=attack_id.response_converters,
                     additions=response_converter_ids,
                 )
@@ -844,16 +850,24 @@ class AttackService:
         )
 
     @staticmethod
-    def _merge_converter_identifiers(
+    def _merge_attack_result_converter_identifiers(
         *,
         existing: list[ConverterIdentifier],
         additions: list[ConverterIdentifier],
     ) -> list[ConverterIdentifier]:
         """
-        Append converter identifiers once while preserving their order.
+        Merge converter usage into the aggregate attack result metadata.
+
+        Attack result converter lists record which converters the attack used, not
+        the exact converter pipeline for each message. Keep the first occurrence of
+        each identifier across messages while preserving first-use order.
+
+        Args:
+            existing: Converter identifiers already recorded on the attack result.
+            additions: Converter identifiers used by the new message.
 
         Returns:
-            list[ConverterIdentifier]: The merged converter identifiers.
+            list[ConverterIdentifier]: Aggregate converter identifiers in first-use order.
         """
         merged = list(existing)
         existing_hashes = {converter.hash for converter in existing}
@@ -1314,6 +1328,7 @@ class AttackService:
                 new_item="AddMessageRequest.request_converter_configurations",
                 removed_in="1.3.0",
             )
+        if request.converter_ids:
             converters = get_converter_service().get_converter_objects_for_ids(converter_ids=request.converter_ids)
             return ConverterConfiguration.from_converters(converters=converters)
 
