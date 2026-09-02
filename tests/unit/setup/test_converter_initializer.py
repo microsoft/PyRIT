@@ -5,15 +5,14 @@
 
 import logging
 from collections.abc import Iterator
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
-from pyrit.converter import Base64Converter, ROT13Converter, VariationConverter
-from pyrit.models.parameter import ComponentType
+from pyrit.converter import Base64Converter, LeetspeakConverter, ROT13Converter, VariationConverter
 from pyrit.registry import ConverterRegistry, InitializerRegistry, TargetRegistry
-from pyrit.registry.components import ConverterMetadata
 from pyrit.setup.initializers import ConverterInitializer
+from pyrit.setup.initializers.converters import ConverterConfig
 from tests.unit.mocks import MockPromptTarget
 
 
@@ -27,31 +26,34 @@ def reset_registries() -> Iterator[None]:
     TargetRegistry.reset_registry_singleton()
 
 
-def _get_metadata(*, registry: ConverterRegistry, name: str) -> ConverterMetadata:
-    metadata = registry.get_registered_class_metadata(name)
-    assert metadata is not None
-    return metadata
+def _get_configs(*names: str) -> tuple[ConverterConfig, ...]:
+    configs_by_name = {config.registry_name: config for config in ConverterInitializer.CONFIGS}
+    return tuple(configs_by_name[name] for name in names)
 
 
-async def test_initialize_registers_converter_with_default_arguments() -> None:
+async def test_initialize_registers_core_converter_presets() -> None:
     registry = ConverterRegistry.get_registry_singleton()
-    metadata = _get_metadata(registry=registry, name="Base64Converter")
 
-    with patch.object(registry, "get_all_registered_class_metadata", return_value=[metadata]):
+    with patch.object(
+        ConverterInitializer,
+        "CONFIGS",
+        _get_configs("base64", "leetspeak", "rot13"),
+    ):
         await ConverterInitializer().initialize_async()
 
     assert isinstance(registry.instances.get("base64"), Base64Converter)
+    assert isinstance(registry.instances.get("leetspeak"), LeetspeakConverter)
+    assert isinstance(registry.instances.get("rot13"), ROT13Converter)
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_initialize_registers_target_only_converter_with_adversarial_chat() -> None:
+async def test_initialize_registers_variation_with_declared_target() -> None:
     converter_registry = ConverterRegistry.get_registry_singleton()
     target_registry = TargetRegistry.get_registry_singleton()
     adversarial_chat = MockPromptTarget()
     target_registry.instances.register(adversarial_chat, name="adversarial_chat")
-    metadata = _get_metadata(registry=converter_registry, name="VariationConverter")
 
-    with patch.object(converter_registry, "get_all_registered_class_metadata", return_value=[metadata]):
+    with patch.object(ConverterInitializer, "CONFIGS", _get_configs("variation")):
         await ConverterInitializer().initialize_async()
 
     converter = converter_registry.instances.get("variation")
@@ -59,71 +61,138 @@ async def test_initialize_registers_target_only_converter_with_adversarial_chat(
     assert converter._converter_target is adversarial_chat
 
 
-async def test_initialize_skips_target_only_converter_without_adversarial_chat() -> None:
+async def test_initialize_skips_converter_without_declared_target() -> None:
     registry = ConverterRegistry.get_registry_singleton()
-    metadata = _get_metadata(registry=registry, name="VariationConverter")
 
-    with patch.object(registry, "get_all_registered_class_metadata", return_value=[metadata]):
+    with patch.object(ConverterInitializer, "CONFIGS", _get_configs("variation")):
         await ConverterInitializer().initialize_async()
 
     assert "variation" not in registry.instances
 
 
-@pytest.mark.usefixtures("patch_central_database")
-async def test_initialize_skips_converter_with_additional_required_argument() -> None:
+async def test_initialize_uses_explicit_converter_configs() -> None:
     converter_registry = ConverterRegistry.get_registry_singleton()
-    TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="adversarial_chat")
-    metadata = _get_metadata(registry=converter_registry, name="TenseConverter")
-
-    with patch.object(converter_registry, "get_all_registered_class_metadata", return_value=[metadata]):
-        await ConverterInitializer().initialize_async()
-
-    assert "tense" not in converter_registry.instances
-
-
-@pytest.mark.usefixtures("patch_central_database")
-async def test_initialize_attempts_every_eligible_catalog_converter() -> None:
-    converter_registry = ConverterRegistry.get_registry_singleton()
-    TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="adversarial_chat")
-    metadata_items = converter_registry.get_all_registered_class_metadata()
-    expected_classes = {
-        metadata.registry_name
-        for metadata in metadata_items
-        if not (required := [parameter for parameter in metadata.parameters if parameter.required])
-        or all(parameter.is_reference_to(ComponentType.TARGET) for parameter in required)
-    }
 
     with patch.object(converter_registry, "create_instance", return_value=Base64Converter()) as create_instance:
         await ConverterInitializer().initialize_async()
 
-    calls_by_class = {call.args[0]: call.kwargs for call in create_instance.call_args_list}
-    assert set(calls_by_class) == expected_classes
-    assert calls_by_class["Base64Converter"] == {}
-    assert calls_by_class["VariationConverter"] == {"converter_target": "adversarial_chat"}
-    assert "TenseConverter" not in calls_by_class
+    assert converter_registry.instances.get_names() == sorted(
+        {
+            "add_image_text",
+            "add_text_image",
+            "azure_speech_audio_to_text",
+            "base64",
+            "binary",
+            "char_swap",
+            "ecoji",
+            "image_color_saturation",
+            "image_compression",
+            "image_rotation",
+            "insert_punctuation",
+            "leetspeak",
+            "malicious_question_generator",
+            "math_prompt",
+            "noise",
+            "qr_code",
+            "rot13",
+            "search_replace",
+            "string_join",
+            "tense_future",
+            "tense_past",
+            "text_jailbreak",
+            "tone_professional",
+            "tone_sarcastic",
+            "translation_spanish",
+            "transparency_attack",
+            "variation",
+            "zalgo",
+        }
+    )
+    assert create_instance.call_count == len(ConverterInitializer.CONFIGS)
+    assert call("Base64Converter") in create_instance.call_args_list
+    assert (
+        call(
+            "SearchReplaceConverter",
+            pattern=r"\s+",
+            replace="_",
+        )
+        in create_instance.call_args_list
+    )
+    assert (
+        call(
+            "TenseConverter",
+            converter_target="adversarial_chat",
+            tense="future",
+        )
+        in create_instance.call_args_list
+    )
+    assert (
+        call(
+            "ToneConverter",
+            converter_target="adversarial_chat",
+            tone="sarcastic",
+        )
+        in create_instance.call_args_list
+    )
+    assert (
+        call(
+            "TranslationConverter",
+            converter_target="adversarial_chat",
+            language="Spanish",
+        )
+        in create_instance.call_args_list
+    )
+    assert (
+        call(
+            "VariationConverter",
+            converter_target="adversarial_chat",
+        )
+        in create_instance.call_args_list
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_explicit_converter_configs_can_be_constructed() -> None:
+    converter_registry = ConverterRegistry.get_registry_singleton()
+    target_registry = TargetRegistry.get_registry_singleton()
+    target_registry.instances.register(MockPromptTarget(), name="adversarial_chat")
+
+    await ConverterInitializer().initialize_async()
+
+    expected_names = {config.registry_name for config in ConverterInitializer.CONFIGS}
+    expected_names.remove("azure_speech_audio_to_text")
+    assert expected_names <= set(converter_registry.instances.get_names())
+
+
+def test_configs_have_unique_names() -> None:
+    names = [config.registry_name for config in ConverterInitializer.CONFIGS]
+
+    assert len(names) == len(set(names))
 
 
 async def test_initialize_continues_after_expected_construction_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     registry = ConverterRegistry.get_registry_singleton()
-    metadata_items = [
-        _get_metadata(registry=registry, name="Base64Converter"),
-        _get_metadata(registry=registry, name="ROT13Converter"),
-    ]
+    configs = _get_configs("base64", "leetspeak", "rot13")
 
     with (
-        patch.object(registry, "get_all_registered_class_metadata", return_value=metadata_items),
+        patch.object(ConverterInitializer, "CONFIGS", configs),
         patch.object(
             registry,
             "create_instance",
-            side_effect=[ValueError("missing configuration"), ROT13Converter()],
+            side_effect=[
+                ValueError("missing configuration"),
+                LeetspeakConverter(),
+                ROT13Converter(),
+            ],
         ),
         caplog.at_level(logging.WARNING, logger="pyrit.setup.initializers.converters"),
     ):
         await ConverterInitializer().initialize_async()
 
     assert "base64" not in registry.instances
+    assert isinstance(registry.instances.get("leetspeak"), LeetspeakConverter)
     assert isinstance(registry.instances.get("rot13"), ROT13Converter)
     assert "Skipping converter 'base64': missing configuration" in caplog.text
 

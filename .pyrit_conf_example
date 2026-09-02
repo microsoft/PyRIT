@@ -23,7 +23,7 @@ memory_db_type: sqlite
 #
 # Available initializers:
 # - target: Registers available prompt targets into the TargetRegistry
-# - converter: Registers converters that use defaults or the adversarial_chat target
+# - converter: Registers the curated core converter presets
 # - scorer: Registers pre-configured scorers into the ScorerRegistry
 # - technique: Registers attack techniques into the AttackTechniqueRegistry
 # - load_default_datasets: Optionally preloads all registered datasets into memory

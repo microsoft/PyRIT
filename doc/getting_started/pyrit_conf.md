@@ -103,11 +103,18 @@ Most users should enable the following initializers. These are what the `.pyrit_
 | Initializer | What It Registers | When You Need It |
 | --- | --- | --- |
 | `target` | Prompt targets (OpenAI, Azure, AML, etc.) into the `TargetRegistry` | Recommended for `pyrit_scan` and registry-based workflows |
-| `converter` | Converters that use constructor defaults or only the registered `adversarial_chat` target | Recommended when attaching registered converters to techniques |
+| `converter` | Curated core converter presets | Recommended when attaching registered converters to techniques |
 | `scorer` | Scorers (refusal, content safety, harm-category, Likert, etc.) into the `ScorerRegistry` | Recommended for automated scoring and `pyrit_scan` evaluations |
 | `technique` | Attack techniques into the `AttackTechniqueRegistry` | Recommended for scenarios that select registered techniques |
 
-The `converter` initializer removes the `Converter` suffix and uses snake case for instance names. For example, it registers `Base64Converter` as `base64`.
+The `converter` initializer registers a curated set of text, LLM, audio, and image converter presets. The
+LLM-backed presets use the registered `adversarial_chat` target and are skipped when that target is not available.
+The Azure Speech preset uses the standard Azure Speech environment variables and is skipped when they are not set.
+Use `pyrit_scan list-converters` to list the presets that were registered.
+
+Parameterized presets include past and future tense, professional and sarcastic tone, Spanish translation,
+whitespace replacement with underscores, the `jailbreak_1.yaml` text jailbreak template, the packaged blank
+canvas for text-to-image conversion, and the packaged benign cake image for the transparency attack.
 
 ```{note}
 **Execution order follows listing order.** Initializers execute in the order they appear in the config. Ensure dependencies are satisfied — for example, list `target` before `scorer` since scorers need targets to be registered first.
