@@ -689,11 +689,16 @@ async def test_conversation_scorer_errored_trigger_still_reads_the_conversation(
     memory.add_message_pieces_to_memory(message_pieces=[prior_piece, blocked_piece])
 
     wrapped_scorer = MockFloatScaleScorer()
+    wrapped_scorer._score_nested_async = AsyncMock(wraps=wrapped_scorer._score_nested_async)
     scorer = create_conversation_scorer(scorer=wrapped_scorer)
 
     scores = await scorer.score_async(scorable=MessageScorable.from_message(blocked_piece.to_message()))
 
-    assert len(scores) == 1
+    assert scores == []
+    wrapped_scorer._score_nested_async.assert_awaited_once()
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"]
+    assert "an earlier answer" in rendered.value
+    assert "content_filter" in rendered.value
 
 
 async def test_conversation_scorer_excludes_simulated_history_by_default(patch_central_database):
