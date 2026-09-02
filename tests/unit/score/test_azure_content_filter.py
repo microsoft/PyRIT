@@ -33,7 +33,7 @@ def text_message_piece() -> MessagePiece:
     return get_test_message_piece()
 
 
-async def test_score_async_unsupported_data_type_returns_zero(
+async def test_score_async_unsupported_data_type_returns_empty(
     patch_central_database, audio_message_piece: MessagePiece
 ):
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
@@ -41,12 +41,8 @@ async def test_score_async_unsupported_data_type_returns_zero(
         message_pieces=[audio_message_piece],
     )
 
-    # Unified FloatScaleScorer fallback: when all pieces are filtered out, return a single
-    # Score(0.0) instead of an empty list (mirrors TrueFalseScorer's no-pieces fallback).
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
-    assert len(scores) == 1
-    assert scores[0].score_type == "float_scale"
-    assert scores[0].get_value() == 0.0
+    assert scores == []
 
     os.remove(audio_message_piece.converted_value)
 

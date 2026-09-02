@@ -168,11 +168,20 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/config" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          content: "initializers: []\n",
+          source: "C:/Users/test/.pyrit/.pyrit_conf",
+          version: "touch-target-config-v1",
+        })
+      );
+      return;
+    }
     if (apiPath === "/initializers/settings" && method === "GET") {
       await route.fulfill(
         jsonResponse({
-          baseline: [],
-          additional: [],
+          configured: [],
         })
       );
       return;
@@ -455,10 +464,11 @@ test.describe("Mobile touch targets", () => {
   });
 
   test("keeps the Initializer selector at least 44px", async ({ page }) => {
-    await page.goto("/initializers");
+    await page.goto("/config");
+    await page.getByRole("tab", { name: "Initializers", exact: true }).click();
 
     await expectMinimumTouchTarget(
-      page.getByRole("combobox", { name: "Initializer to add" })
+      page.getByRole("button", { name: "Browse available initializers" })
     );
     await expectNoDocumentOverflow(page);
   });
@@ -659,9 +669,10 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
     page.getByRole("button", { name: "Expand inner targets" })
   );
 
-  await page.goto("/initializers");
+  await page.goto("/config");
+  await page.getByRole("tab", { name: "Initializers", exact: true }).click();
   await expectCompactDesktopTarget(
-    page.getByRole("combobox", { name: "Initializer to add" })
+    page.getByRole("button", { name: "Browse available initializers" })
   );
 
   await startChatWithMessages(page);

@@ -15,7 +15,6 @@ import {
   HistoryRegular,
   PersonFeedbackRegular,
   ScriptRegular,
-  WrenchRegular,
   OpenRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
@@ -30,7 +29,6 @@ export type ViewName =
   | 'chat'
   | 'history'
   | 'targets'
-  | 'initializers'
   | 'configuration'
   | 'scenarios'
 
@@ -129,17 +127,6 @@ export default function Navigation({
           aria-label="Targets"
           aria-current={currentView === 'targets' ? 'page' : undefined}
           onClick={() => onNavigate('targets')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'initializers'}
-          appearance="subtle"
-          icon={<WrenchRegular />}
-          title="Initializers"
-          aria-label="Initializers"
-          aria-current={currentView === 'initializers' ? 'page' : undefined}
-          onClick={() => onNavigate('initializers')}
         />
 
         {canManageConfiguration && (

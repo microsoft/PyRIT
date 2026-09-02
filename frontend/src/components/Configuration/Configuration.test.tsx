@@ -15,6 +15,8 @@ jest.mock('@/services/api', () => ({
     updateEnvironmentFile: jest.fn(),
   },
   initializersApi: {
+    getSettings: jest.fn(),
+    listRegistered: jest.fn(),
     listCustom: jest.fn(),
     register: jest.fn(),
     unregister: jest.fn(),
@@ -64,6 +66,19 @@ describe('Configuration', () => {
     })
     mockedInitializersApi.register.mockResolvedValue()
     mockedInitializersApi.unregister.mockResolvedValue()
+    mockedInitializersApi.getSettings.mockResolvedValue({
+      configured: [{ initializer_name: 'target', parameters: { tags: ['default'] }, order_index: 0 }],
+    })
+    mockedInitializersApi.listRegistered.mockResolvedValue({
+      items: [{
+        initializer_name: 'target',
+        initializer_type: 'TargetInitializer',
+        description: 'Registers targets.',
+        required_env_vars: [],
+        supported_parameters: [],
+      }],
+      pagination: { limit: 200, has_more: false },
+    })
   })
 
   it('should load and display configuration content', async () => {
@@ -202,6 +217,16 @@ describe('Configuration', () => {
         script_content: 'class NewCustom: pass',
       })
     })
+  })
+
+  it('should show configured initializers without a runtime apply action', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(screen.getByRole('tab', { name: 'Initializers' }))
+
+    expect(await screen.findByTestId('configured-initializer-row-0')).toHaveTextContent('Registers targets.')
+    expect(screen.queryByRole('button', { name: 'Apply now' })).not.toBeInTheDocument()
   })
 
 })

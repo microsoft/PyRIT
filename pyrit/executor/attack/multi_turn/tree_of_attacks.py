@@ -804,12 +804,11 @@ class _TreeOfAttacksNode:
         and any auxiliary scorers (which provide additional metrics). The scoring results are
         used by the TAP algorithm to decide which branches to explore further.
 
-        Blocked or errored responses are scored via the scorer's unified default behavior:
-        ``TrueFalseScorer`` returns
-        ``Score(False)`` and ``FloatScaleScorer``
-        returns ``Score(0.0)`` whenever no supported pieces remain after validator filtering
-        (the normal outcome for a blocked piece). This keeps blocked branches at the bottom
-        of the priority queue without needing attack-level error mapping.
+        Scorers apply their own unreadable-response policy. A fully blocked response uses the
+        scorer family's neutral fallback unless the scorer overrides it. An unreadable transport
+        or protocol response produces an undetermined score. A response with no supported role
+        or data type makes the scorer return ``[]``, so this method raises ``RuntimeError``. Tree
+        of Attacks does not map these outcomes to ``False`` or ``0.0``.
 
         Args:
             response (Message): The response from the objective target to evaluate.
@@ -841,9 +840,7 @@ class _TreeOfAttacksNode:
                 response=response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                role_filter="assistant",
                 objective=objective,
-                skip_on_error_result=False,
             )
 
         # Extract objective score
