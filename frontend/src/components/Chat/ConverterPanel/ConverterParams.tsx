@@ -11,9 +11,10 @@ interface ParamInputProps {
 }
 
 function ConverterParameterChoiceViewer({ param, value, onChange }: ParamInputProps) {
+  const stringDefault = typeof param.default === 'string' ? param.default : ''
   return (
     <Select
-      value={value ?? param.default ?? ''}
+      value={value ?? stringDefault}
       onChange={(_, data) => onChange(param.name, data.value)}
       data-testid={`param-${param.name}`}
     >
@@ -28,12 +29,13 @@ function ConverterParameterChoiceViewer({ param, value, onChange }: ParamInputPr
 
 function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: ParamInputProps & { onBrowse: (name: string) => void }) {
   const styles = useConverterPanelStyles()
+  const stringDefault = typeof param.default === 'string' ? param.default : 'Select a file...'
 
   return (
     <div className={styles.filePickerRow}>
       <Input
         value={value ?? ''}
-        placeholder={param.default ?? 'Select a file...'}
+        placeholder={stringDefault}
         onChange={(_, data) => onChange(param.name, data.value)}
         className={isMissing ? styles.paramInputError : undefined}
         data-testid={`param-${param.name}`}
@@ -53,11 +55,12 @@ function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: Pa
 
 function ConverterParameterViewer({ param, value, isMissing, onChange }: ParamInputProps) {
   const styles = useConverterPanelStyles()
+  const stringDefault = typeof param.default === 'string' ? param.default : undefined
 
   return (
     <Input
       value={value ?? ''}
-      placeholder={param.default ?? undefined}
+      placeholder={stringDefault}
       onChange={(_, data) => onChange(param.name, data.value)}
       className={isMissing ? styles.paramInputError : undefined}
       data-testid={`param-${param.name}`}
@@ -106,9 +109,9 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
             </span>
             {param.type_name === 'bool' ? (
               <Switch
-                checked={(paramValues[param.name] ?? param.default ?? 'false').toLowerCase() === 'true'}
+                checked={(paramValues[param.name] ?? (typeof param.default === 'string' ? param.default : 'false')).toLowerCase() === 'true'}
                 onChange={(_, data) => onParamChange(param.name, data.checked ? 'true' : 'false')}
-                label={(paramValues[param.name] ?? param.default ?? 'false').toLowerCase() === 'true' ? 'True' : 'False'}
+                label={(paramValues[param.name] ?? (typeof param.default === 'string' ? param.default : 'false')).toLowerCase() === 'true' ? 'True' : 'False'}
                 data-testid={`param-${param.name}`}
               />
             ) : param.choices ? (

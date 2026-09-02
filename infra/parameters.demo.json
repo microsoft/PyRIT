@@ -19,6 +19,9 @@
     "allowedGroupObjectIds": {
       "value": "REPLACE_GROUP_OBJECT_IDS"
     },
+    "adminGroupObjectId": {
+      "value": "REPLACE_ADMIN_GROUP_OBJECT_ID"
+    },
     "allowedCidr": {
       "value": ""
     },
@@ -30,6 +33,9 @@
     },
     "pyritInitializer": {
       "value": "target"
+    },
+    "pyritConfigFileUri": {
+      "value": ""
     },
     "envFileContents": {
       "value": "PYRIT_REPLACE_ME=set-via-secure-channel"

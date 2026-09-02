@@ -231,6 +231,8 @@ class AdaptiveScenario(Scenario):
                 ),
             ]
             return ScenarioRunSizeEstimate(
+                minimum_attack_count=sum(component.count for component in baseline_components),
+                maximum_attack_count=sum(component.count for component in components),
                 components=components,
                 datasets=datasets,
                 note=(
@@ -266,14 +268,25 @@ class AdaptiveScenario(Scenario):
         estimated_attack_count = (
             None if self._estimate_has_binding_size_cap else sum(component.count for component in components)
         )
+        minimum_attack_count = None
+        maximum_attack_count = None
         note = (
             f"Each planned unit is one persisted adaptive envelope. Up to {max_attempts} selected technique "
             "attempts may run inside that unit; inner attempts and retries are excluded."
         )
         if estimated_attack_count is None:
-            note += " A binding randomized dataset cap may select a different compatibility mix at launch."
+            baseline_count = sum(component.count for component in baseline_components)
+            minimum_attack_count = baseline_count
+            maximum_attack_count = baseline_count + selected_count
+            note += (
+                " A binding randomized dataset cap may select a different compatibility mix at launch. "
+                "The range covers the baseline-only minimum through one compatible adaptive envelope per "
+                "selected seed group."
+            )
         return ScenarioRunSizeEstimate(
             estimated_attack_count=estimated_attack_count,
+            minimum_attack_count=minimum_attack_count,
+            maximum_attack_count=maximum_attack_count,
             components=components,
             datasets=datasets,
             note=note,

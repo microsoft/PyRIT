@@ -90,6 +90,14 @@ class ScenarioDatasetSummary(BaseModel):
     selection_note: str | None = None
 
 
+class ScenarioTechniqueSummary(BaseModel):
+    """One concrete attack technique available to a scenario."""
+
+    name: str = Field(..., min_length=1)
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
 class ScenarioRunSizeEstimate(BaseModel):
     """
     Structured estimate of default planned scenario execution units.
@@ -99,8 +107,14 @@ class ScenarioRunSizeEstimate(BaseModel):
     """
 
     estimated_attack_count: int | None = Field(default=None, ge=0)
+    minimum_attack_count: int | None = Field(default=None, ge=0)
+    maximum_attack_count: int | None = Field(default=None, ge=0)
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
+    effective_parameters: dict[str, bool | int | float | str | list[str]] = Field(
+        default_factory=dict,
+        description="Scenario parameter values used by this estimate, including implicit runtime defaults.",
+    )
     note: str | None = None
 
     @model_validator(mode="after")
@@ -114,6 +128,13 @@ class ScenarioRunSizeEstimate(BaseModel):
         Raises:
             ValueError: If an available estimate misstates its total.
         """
+        if (
+            self.minimum_attack_count is not None
+            and self.maximum_attack_count is not None
+            and self.minimum_attack_count > self.maximum_attack_count
+        ):
+            raise ValueError("Minimum attack count cannot exceed maximum attack count")
+
         if self.estimated_attack_count is not None:
             component_total = sum(component.count for component in self.components)
             if component_total != self.estimated_attack_count:
@@ -160,11 +181,11 @@ class RegisteredScenario(BaseModel):
         description="Concrete ordered technique expansion for every aggregate selector",
     )
     all_techniques: list[str] = Field(..., description="All available concrete technique names")
-    default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
-    default_dataset_summaries: list[ScenarioDatasetSummary] = Field(
+    technique_summaries: list[ScenarioTechniqueSummary] = Field(
         default_factory=list,
-        description="Logical and effectively selected attack-group counts for the default configuration",
+        description="Descriptions and tags for the available concrete techniques",
     )
+    default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
     baseline_policy: Literal["enabled", "disabled", "forbidden"] = Field(
         "enabled", description="Whether baseline execution is enabled, disabled, or forbidden"
     )

@@ -367,7 +367,7 @@ test.describe("Attack History empty state", () => {
     await expect(configureTargetButton).toBeFocused();
     await configureTargetButton.press("Enter");
 
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(page.getByRole("heading", { level: 1, name: "Target Configuration" })).toBeVisible();
 
     await page.goBack();

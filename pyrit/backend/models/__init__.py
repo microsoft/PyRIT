@@ -55,7 +55,10 @@ if TYPE_CHECKING:
         PreviewStep,
     )
     from pyrit.backend.models.datasets import DatasetInfo, DatasetListResponse
-    from pyrit.backend.models.initializers import ListRegisteredInitializersResponse, RegisterInitializerRequest
+    from pyrit.backend.models.initializers import (
+        ListRegisteredInitializersResponse,
+        RegisterInitializerRequest,
+    )
     from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, ScenarioRunListResponse
     from pyrit.backend.models.targets import CreateTargetRequest, TargetListResponse
 

@@ -76,11 +76,9 @@ def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
 
 class TextAdaptive(AdaptiveScenario):
     """
-    Adaptive text-attack scenario.
-
-    Selects techniques per-objective via an epsilon-greedy selector over the
-    set of selected techniques. ``prompt_sending`` runs as the baseline
-    comparison and is excluded from the adaptive technique pool.
+    Selects an attack technique for each objective using an epsilon-greedy
+    strategy informed by prior success rates. The scenario stops after a
+    successful attack or after ``max_attempts_per_objective`` attempts.
     """
 
     _cached_technique_class: ClassVar[type[ScenarioTechnique] | None] = None
