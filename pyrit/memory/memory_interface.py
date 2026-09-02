@@ -10,7 +10,7 @@ import logging
 import re
 import uuid
 import weakref
-from collections.abc import Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -3885,6 +3885,66 @@ class MemoryInterface(abc.ABC):
             session.commit()
 
         logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
+
+    def try_update_scenario_run_state(
+        self,
+        *,
+        scenario_result_id: str,
+        expected_states: Collection[ScenarioRunState],
+        scenario_run_state: ScenarioRunState,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> bool:
+        """
+        Update the run state only when the stored state is one of ``expected_states``.
+
+        The compare and the write are a single UPDATE so a run that reached a terminal state
+        on another thread is not overwritten. A read followed by
+        :meth:`update_scenario_run_state` cannot give that guarantee because scenario
+        preparation and cancellation run on different threads.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            expected_states (Collection[ScenarioRunState]): States the row may currently be in.
+            scenario_run_state (ScenarioRunState): The new state for the scenario.
+            error_message (str | None): Optional scenario-level error message.
+            error_type (str | None): Optional exception class name.
+
+        Returns:
+            bool: True if the row was updated, False if it was missing or in another state.
+
+        Raises:
+            ValueError: If ``expected_states`` is empty.
+        """
+        if not expected_states:
+            raise ValueError("expected_states must not be empty")
+
+        values: dict[str, Any] = {
+            "scenario_run_state": scenario_run_state.value,
+            "error_message": error_message,
+            "error_type": error_type,
+        }
+        if scenario_run_state in (
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.CANCELLED,
+        ):
+            values["completion_time"] = datetime.now(tz=timezone.utc)
+
+        with closing(self.get_session()) as session:
+            updated_rows = (
+                session.query(ScenarioResultEntry)
+                .filter(
+                    ScenarioResultEntry.id == scenario_result_id,
+                    ScenarioResultEntry.scenario_run_state.in_([state.value for state in expected_states]),
+                )
+                .update(values, synchronize_session=False)
+            )
+            session.commit()
+
+        if updated_rows:
+            logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
+        return bool(updated_rows)
 
     def update_scenario_metadata(
         self,

@@ -675,7 +675,7 @@ class TestScenarioRunServiceStartRun:
             return scenario_instance
 
         with patch.object(service, "_prepare_run_blocking", _slow_prepare):
-            with patch.object(service._memory, "update_scenario_run_state") as update_state:
+            with patch.object(service._memory, "try_update_scenario_run_state") as update_state:
                 task = asyncio.create_task(service.start_run_async(request=_make_request()))
                 await asyncio.sleep(0.1)
                 task.cancel()
@@ -707,7 +707,7 @@ class TestScenarioRunServiceStartRun:
 
         with patch.object(service, "_prepare_run_blocking", _instant_prepare):
             with patch("asyncio.shield", _complete_then_cancel):
-                with patch.object(service._memory, "update_scenario_run_state") as update_state:
+                with patch.object(service._memory, "try_update_scenario_run_state") as update_state:
                     with pytest.raises(asyncio.CancelledError):
                         await service.start_run_async(request=_make_request())
 
@@ -735,6 +735,68 @@ class TestScenarioRunServiceStartRun:
         execute.assert_not_called()
         assert "cancelled-during-init" not in service._active_tasks
         assert service._run_semaphore._value == _DEFAULT_MAX_CONCURRENT_RUNS
+
+    async def test_start_run_resumes_a_run_that_was_already_cancelled(self, mock_all_registries) -> None:
+        """Resuming a cancelled run is deliberate, so its starting state must not look like a cancel."""
+        service = ScenarioRunService()
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._scenario_result_id = "resumed-cancelled"
+
+        def _prepare(*, request: Any) -> Any:
+            return scenario_instance
+
+        cancelled = _make_db_scenario_result(result_id="resumed-cancelled", run_state=ScenarioRunState.CANCELLED)
+        mock_all_registries["memory"].get_scenario_results.return_value = [cancelled]
+        mock_all_registries["memory"].get_scenario_result_header.return_value = cancelled
+
+        with patch.object(service, "_prepare_run_blocking", _prepare):
+            with patch.object(service, "_execute_run_async") as execute:
+                response = await service.start_run_async(request=_make_request(scenario_result_id="resumed-cancelled"))
+
+        execute.assert_called_once()
+        assert "resumed-cancelled" in service._active_tasks
+        # The stored row is still CANCELLED, but the caller just started this run.
+        assert response.status == ScenarioRunState.CREATED
+
+    async def test_start_run_honours_a_cancel_that_lands_while_a_live_run_initializes(
+        self, mock_all_registries
+    ) -> None:
+        """A run that was not already cancelled must still respect a cancel during preparation."""
+        service = ScenarioRunService()
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._scenario_result_id = "cancelled-mid-init"
+
+        def _prepare(*, request: Any) -> Any:
+            return scenario_instance
+
+        cancelled = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.CANCELLED)
+        in_progress = _make_db_scenario_result(result_id="cancelled-mid-init", run_state=ScenarioRunState.IN_PROGRESS)
+        mock_all_registries["memory"].get_scenario_results.return_value = [cancelled]
+        # The pre-preparation read sees a live run; the cancel lands while the worker prepares.
+        mock_all_registries["memory"].get_scenario_result_header.return_value = in_progress
+
+        with patch.object(service, "_prepare_run_blocking", _prepare):
+            with patch.object(service, "_execute_run_async") as execute:
+                response = await service.start_run_async(request=_make_request(scenario_result_id="cancelled-mid-init"))
+
+        assert response.status == ScenarioRunState.CANCELLED
+        execute.assert_not_called()
+        assert service._run_semaphore._value == _DEFAULT_MAX_CONCURRENT_RUNS
+
+    async def test_start_run_does_not_read_a_header_for_a_fresh_run(self, mock_all_registries) -> None:
+        """A fresh run has no stored state, so it must not pay for an extra query."""
+        service = ScenarioRunService()
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._scenario_result_id = "fresh-id"
+
+        def _prepare(*, request: Any) -> Any:
+            return scenario_instance
+
+        with patch.object(service, "_prepare_run_blocking", _prepare):
+            with patch.object(service, "_execute_run_async"):
+                await service.start_run_async(request=_make_request())
+
+        mock_all_registries["memory"].get_scenario_result_header.assert_not_called()
 
     async def test_start_run_failure_does_not_report_a_cancellation(self, mock_all_registries, caplog) -> None:
         service = ScenarioRunService()
@@ -839,7 +901,7 @@ class TestScenarioRunServiceStartRun:
 
         with patch.object(service, "_prepare_run_async", _leaky_prepare):
             with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.05):
-                with patch.object(service._memory, "update_scenario_run_state") as update_state:
+                with patch.object(service._memory, "try_update_scenario_run_state") as update_state:
                     with pytest.raises(RuntimeError, match="left background tasks"):
                         service._prepare_run_blocking(request=_make_request())
 
@@ -847,6 +909,10 @@ class TestScenarioRunServiceStartRun:
         assert update_state.call_args.kwargs["scenario_result_id"] == "drained-id"
         assert update_state.call_args.kwargs["scenario_run_state"] == ScenarioRunState.FAILED
         assert update_state.call_args.kwargs["error_type"] == "RuntimeError"
+        assert update_state.call_args.kwargs["expected_states"] == {
+            ScenarioRunState.CREATED,
+            ScenarioRunState.IN_PROGRESS,
+        }
 
     def test_prepare_run_blocking_reports_the_drain_error_when_marking_failed_fails(self, mock_all_registries) -> None:
         """A bookkeeping failure must not replace the error that explains the failed start."""
@@ -862,9 +928,72 @@ class TestScenarioRunServiceStartRun:
 
         with patch.object(service, "_prepare_run_async", _leaky_prepare):
             with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.05):
-                with patch.object(service._memory, "update_scenario_run_state", side_effect=ValueError("gone")):
+                with patch.object(service._memory, "try_update_scenario_run_state", side_effect=ValueError("gone")):
                     with pytest.raises(RuntimeError, match="left background tasks"):
                         service._prepare_run_blocking(request=_make_request())
+
+    def test_prepare_run_blocking_waits_for_a_task_spawned_during_the_drain(self, mock_all_registries) -> None:
+        """A draining task can start another one, which the first snapshot never saw."""
+        service = ScenarioRunService()
+        scenario_instance = mock_all_registries["scenario_instance"]
+        child_finished = threading.Event()
+
+        async def _prepare_spawning_a_child(*, request: Any) -> Any:
+            async def _child() -> None:
+                await asyncio.sleep(0.05)
+                child_finished.set()
+
+            async def _parent() -> None:
+                await asyncio.sleep(0.01)
+                asyncio.create_task(_child(), name="child-teardown-task")
+
+            asyncio.create_task(_parent(), name="parent-teardown-task")
+            await asyncio.sleep(0)
+            return scenario_instance
+
+        with patch.object(service, "_prepare_run_async", _prepare_spawning_a_child):
+            assert service._prepare_run_blocking(request=_make_request()) is scenario_instance
+
+        assert child_finished.is_set()
+
+    def test_prepare_run_blocking_fails_when_a_spawned_child_outlives_the_drain(self, mock_all_registries) -> None:
+        """The child is the one that would be cancelled by the closing loop, so it must be named."""
+        service = ScenarioRunService()
+
+        async def _prepare_spawning_a_slow_child(*, request: Any) -> Any:
+            async def _parent() -> None:
+                await asyncio.sleep(0.01)
+                asyncio.create_task(asyncio.sleep(3600), name="child-teardown-task")
+
+            asyncio.create_task(_parent(), name="parent-teardown-task")
+            await asyncio.sleep(0)
+            return mock_all_registries["scenario_instance"]
+
+        with patch.object(service, "_prepare_run_async", _prepare_spawning_a_slow_child):
+            with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.3):
+                with pytest.raises(RuntimeError, match="child-teardown-task"):
+                    service._prepare_run_blocking(request=_make_request())
+
+    def test_prepare_run_blocking_drain_uses_one_deadline_across_generations(self, mock_all_registries) -> None:
+        """Re-scanning must not restart the budget, or a chain of tasks could stall a start forever."""
+        service = ScenarioRunService()
+
+        async def _prepare_spawning_a_chain(*, request: Any) -> Any:
+            async def _link(depth: int) -> None:
+                await asyncio.sleep(0.05)
+                asyncio.create_task(_link(depth + 1), name=f"chain-task-{depth + 1}")
+
+            asyncio.create_task(_link(0), name="chain-task-0")
+            await asyncio.sleep(0)
+            return mock_all_registries["scenario_instance"]
+
+        started = time.monotonic()
+        with patch.object(service, "_prepare_run_async", _prepare_spawning_a_chain):
+            with patch.object(ScenarioRunService, "_INITIALIZATION_DRAIN_TIMEOUT", 0.3):
+                with pytest.raises(RuntimeError, match="chain-task"):
+                    service._prepare_run_blocking(request=_make_request())
+
+        assert time.monotonic() - started < 3
 
     async def test_start_run_releases_semaphore_when_initialization_leaks_a_task(self, mock_all_registries) -> None:
         """Failing the preparation must not strand the permit it was holding."""
