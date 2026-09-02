@@ -9,7 +9,7 @@ from colorama import Back, Fore, Style
 from pyrit.models import AttackOutcome, AttackResult, ConversationType, Message, Score
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.attack_result.base import AttackResultPrinterBase
-from pyrit.output.conversation.pretty import PrettyConversationPrinter
+from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter, PrettyConversationPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.sink import Sink
 
@@ -59,7 +59,7 @@ class PrettyAttackResultPrinter(_PrettyPrinterMixin, AttackResultPrinterBase):
         self._score_printer = score_printer or PrettyScorePrinter(
             sink=sink, width=width, indent_size=indent_size, enable_colors=enable_colors
         )
-        self._conversation_printer = conversation_printer or PrettyConversationPrinter(
+        self._conversation_printer = conversation_printer or PrettyConversationMemoryPrinter(
             sink=sink,
             width=width,
             indent_size=indent_size,

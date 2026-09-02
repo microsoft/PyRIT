@@ -117,6 +117,30 @@ async def output_scenario_async(
     await printer.write_async(result)
 
 
+async def output_scenario_attacks_async(
+    result: ScenarioResult,
+    *,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print a compact per-attack table for a scenario result.
+
+    Complements ``output_scenario_async`` (which prints the aggregate overview) by
+    listing individual attack results: id, technique, objective, outcome, and score.
+
+    Args:
+        result (ScenarioResult): The scenario result whose attacks to list.
+        attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
+        limit (int | None): Maximum number of attacks to show. Defaults to None.
+        sink (Sink | None): Output sink. Defaults to StdoutSink.
+    """
+    resolved_sink = sink or get_default_sink(StdoutSink)
+    printer = PrettyScenarioResultMemoryPrinter(sink=resolved_sink)
+    await printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
+
+
 async def output_scorer_async(
     *,
     scorer_identifier: ComponentIdentifier,
