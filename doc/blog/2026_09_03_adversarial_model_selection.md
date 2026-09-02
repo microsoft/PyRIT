@@ -72,7 +72,7 @@ The first trial was scored by an `AzureContentFilterScorer`. Utlimately, 12 runs
 | **Strict clean aggregate** | **17/28 (60.7%)** | **19/28 (67.9%)** | **14/28 (50.0%)** | `red_teaming` and `crescendo_simulated` |
 | **All terminal outcomes** | **24/56 (42.9%)** | **29/56 (51.8%)** | **26/56 (46.4%)** | Sensitivity view including recovered combinations |
 
-### Performance Depends on Attack Technique
+### Variability Between Attack Techniques
 
 The aggregate results conceal large intra-model differences. In the very first attacker-training pilot, the leading Qwen variant ranged from 60% ASR on `red_teaming` to 0% on `context_compliance`. In the separate Grok study, the observed gap ranged from 34 points on `red_teaming` to 4 points on `role_play_movie_script`.
 
