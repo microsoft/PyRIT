@@ -85,11 +85,9 @@
 #
 # An empty child result means that the scorer did not apply. A composite scorer ignores empty
 # child results and aggregates the remaining results. It returns an empty list if every child
-# result is empty. An inverter passes an empty result through unchanged. A threshold wrapper
-# passes an empty result to its float-scale aggregator. The standard aggregators map it to
-# `0.0`, while the `*_RAISE_ON_EMPTY` variants raise `ValueError`. A conversation wrapper
-# returns an empty result when it finds no applicable conversation evidence or its child
-# returns no score. Any outer wrapper then applies the rules above.
+# result is empty. Inverter and threshold wrappers pass an empty result through unchanged.
+# A conversation wrapper returns an empty result when it finds no applicable conversation
+# evidence or its child returns no score. Any outer wrapper then applies the rules above.
 #
 # Deprecated message-shaped calls remain on `MessageScorer`, but generic wrappers do not
 # project those APIs from their children. Score wrappers through the canonical `Scorable` API.
