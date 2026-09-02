@@ -2,9 +2,9 @@
 
 3 Sep 2026 - Victor Valbuena, AIRT @ Microsoft
 
-PyRIT helped us discover that we could improve the attack success rate of our adversarial chat target by more than 19 percentage points.
+PyRIT helped us discover that we could improve the attack success rate of our adversarial chat target by more than 19 percentage points. This blog discusses methodology, so [jump to the findings](#what-we-observed) if you just want to see the benchmarks.
 
-On Microsoft's AI Red Team, we use PyRIT during our red teaming operations in which many automated attack techniques use adversarial models for attack orchestration. We want to make sure we're using the best adversarial model at our disposal for PyRIT, so we built a tool to automate the process of comparing how adversarial models perform. This became PyRIT's `AdversarialBenchmark` scenario, and on our team it has turned model selection from an intuition-driven choice into an evidence-based, repeatable evaluation. We intend on scaling this evaluation through CI/CD to continuously discover the most effective models for automating red teaming, and since the scenario caches prior benchmarking results, we can assess model performance over generations and across families quickly and reliably. Interestingly, when we ran it against in-house models, we discovered that attack success rate (ASR) for models varies significantly across attack techniques. We'll explore that finding in this post.
+On Microsoft's AI Red Team, we use PyRIT during our red teaming operations in which many automated attack techniques use adversarial models for attack orchestration. We want to make sure we're using the best adversarial model at our disposal for PyRIT, so we built a tool to automate the process of comparing how adversarial models perform. This became PyRIT's `AdversarialBenchmark` scenario, and on our team it has turned model selection from an intuition-driven choice into an evidence-based, repeatable evaluation. We intend on scaling this evaluation through CI/CD to continuously discover the most effective models for automating red teaming, and since the scenario caches prior benchmarking results, we can assess model performance over generations and across families quickly and reliably. Interestingly, when we ran it against in-house models, we discovered that attack success rate (ASR) for models varies significantly across attack techniques. We'll explore that finding in this post. For readers who want to run the benchmark themselves, Grok 4.3 is the only model evaluated here that is publicly available and can be configured as an adversarial target in PyRIT. We present it as an accessible point of comparison, not as a general recommendation, as its performance varied by technique and scorer.
 
 ## Why the Adversarial Model Matters
 
@@ -35,19 +35,13 @@ Reproducibility and experimental fairness depend partially on the operator, sinc
 
 ### Measuring Attack Success
 
-After the benchmark scenario executes, PyRIT calculates the attack success rate (ASR) per adversarial model. Since a scorer produces a normalized `Score`, the attack interprets that score and stores an `AttackResult` whose outcome is `success`, `failure`, `error`, or `undetermined`. A `ScenarioResult` then groups those records by atomic attack.
-
-On PyRIT's current development branch, [`build_scripts/export_adversarial_benchmark_result.py`](https://github.com/microsoft/PyRIT/blob/main/build_scripts/export_adversarial_benchmark_result.py) is a command-line reporting tool for completed or partial adversarial benchmark runs. A scenario can contain more than one `AttackResult` for the same objective and technique-model-dataset tuple; this can happen after a retry. For each combination, the reporting tool keeps only the newest result for each objective based on its timestamp. It counts older records separately as `retry_records`, so retries do not count as additional benchmark attempts. From the retained results, PyRIT then calculates the ASR:
+After the benchmark scenario executes, PyRIT calculates the attack success rate (ASR) per adversarial model. Since a scorer produces a normalized `Score`, the attack interprets that score and stores an `AttackResult` whose outcome is `success`, `failure`, `error`, or `undetermined`. A `ScenarioResult` then groups those records by atomic attack.  A scenario can contain more than one `AttackResult` for the same objective and technique-model-dataset tuple; this can happen after a retry. [This script](<https://github.com/microsoft/PyRIT/blob/main/build_scripts/export_adversarial_benchmark_result.py>) PyRIT runs as part of our build pipeline to produce adversarial model benchmarking. In addition to sharing findings, we're publishing methodology. For each combination, the reporting tool keeps only the newest result for each objective based on its timestamp. It counts older records separately as `retry_records`, so retries do not count as additional benchmark attempts. From the retained results, PyRIT then calculates the ASR:
 
 $$
 \mathrm{ASR}=\frac{\text{success}}{\text{success}+\text{failure}+\text{error}+\text{undetermined}}.
 $$
 
-The exporter output directory contains three views of the run:
-
-- `technique-metrics.json`, `technique-metrics.csv`, and `technique-metrics.txt` contain latest-per-objective counts and `success_rate`, grouped by attack technique and adversarial-model registry name.
-- `attacks.json` and `attacks.txt` list stored attack-result rows. The JSON is a compact table containing the attack-result ID, atomic-attack name, objective, outcome, executed turns, and optional score value; it is not a full serialization of `AttackResult`.
-- `overview.txt` contains PyRIT's standard scenario summary.
+The exporter output directory contains three views of the run, including the ASR grouped by attack technique and adversarial-model registry name, stored attack-result rows, and PyRIT's standard scenario summary.
 
 ## What We Observed
 
