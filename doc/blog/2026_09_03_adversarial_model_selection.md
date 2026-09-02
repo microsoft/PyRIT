@@ -17,11 +17,11 @@ Red teaming operations are increasingly orchestrated by agents built on advanced
 
 If the attacker model underperforms at any of these tasks, it becomes ineffective for the operation. Therefore, the best models for automated red teaming are usually both unaligned and adversarial. In this context, **alignment** means adherence to safety-focused post-training intended to make a model behave like a safe, helpful assistant. An **adversarial model** is a model (like an attacker model) used to generate or adapt attacks against another model. The choice of model therefore acts as a multiplier for successful automated red teaming. In this post, the victim model will often be referred to as the objective target, while the attacker model will be referred to as the adversarial model.
 
-Models with fewer safety restrictions, including abliterated models, may be more willing to comply with requests to probe or bypass another model's defenses, but they may also be less consistent in achieving attack goals. Effectiveness depends on several variables in a simulated operation: the type of objective, the attack technique being used, the objective target itself, and the scoring mechanism are a few of these. Thus the "best" model is not universally the "best", since a model may excel with one combination of these variables (e.g. attack technique or objective target) while underperforming with others.
+Models with fewer safety restrictions, including abliterated models, may be more willing to comply with requests to probe or bypass another model's defenses, but they may also be less consistent in achieving attack goals. Efficacy depends on several variables in a simulated operation: the type of objective, the attack technique being used, the objective target itself, and the scoring mechanism are a few of these. Thus the "best" model is not universally the "best", since a model may excel with one combination of these variables (e.g. attack technique or objective target) while underperforming with others.
 
 ## A Controlled Way to Compare Models
 
-To address this ambiguity in determining adversarial model effectiveness, PyRIT creates a controlled comparison by holding the objective target, objectives, scorer, and attack techniques constant while varying only the adversarial model, then measuring the resulting attack outcomes. This gives us a fair way to compare how models perform in narrow red teaming contexts.
+To address this ambiguity in determining adversarial model performance, PyRIT creates a controlled comparison by holding the objective target, objectives, scorer, and attack techniques constant while varying only the adversarial model, then measuring the resulting attack outcomes. This gives us a fair way to compare how models perform in narrow red teaming contexts.
 
 ### Designing a Fair Comparison
 
@@ -140,6 +140,6 @@ As a red teaming tool, PyRIT's strength depends on high-quality adversarial mode
 
 We also intend to integrate the benchmark into CI/CD so we can continuously evaluate effective adversarial models and help automated operations keep pace with frontier-model improvements. We hope to publish benchmark results continuously by using PyRIT's benchmark scenario, and possibly add other benchmark scenarios to focus on variables other than the adversarial model, like the scorer(s) and objective target(s).
 
-Until then, when using the adversarial benchmark scenario, do not treat the aggregated attack success rates it returns as broad evidence of red team agent effectiveness. Pooled ASRs hide nuances of per-technique success, dataset objectives, and scoring mechanisms. Use the benchmark scenario as an indicator for future investigation.
+Until then, when using the adversarial benchmark scenario, do not treat the aggregated attack success rates it returns as broad evidence of red team agent performance. Pooled ASRs hide nuances of per-technique success, dataset objectives, and scoring mechanisms. Use the benchmark scenario as an indicator for future investigation.
 
 ---
