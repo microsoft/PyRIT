@@ -8,7 +8,7 @@ All initialization (config loading, memory setup, initializer execution) is
 handled by the FastAPI lifespan in ``pyrit.backend.main``.  This CLI simply
 parses host/port/config-file/log-level/reload and starts uvicorn.
 
-The config file path is forwarded to the app via the ``PYRIT_CONFIG_FILE``
+The config file source is forwarded to the app via the ``PYRIT_CONFIG_FILE``
 environment variable.
 """
 
@@ -16,9 +16,13 @@ import logging
 import os
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
-from pathlib import Path
 
 from pyrit.common.cli_helpers import CONFIG_FILE_HELP, validate_log_level_argparse
+
+_BACKEND_CONFIG_FILE_HELP = CONFIG_FILE_HELP.replace(
+    "Path to a YAML configuration file.",
+    "Local path or Azure Blob URI for a YAML configuration file.",
+)
 
 
 def parse_args(*, args: list[str] | None = None) -> Namespace:
@@ -41,6 +45,9 @@ Examples:
 
   # Start with a custom config file
   pyrit_backend --config-file ./my_config.yaml
+
+    # Start with a config file stored in Azure Blob Storage
+    pyrit_backend --config-file https://account.blob.core.windows.net/config/.pyrit_conf
 
   # Start with custom port and host
   pyrit_backend --host 0.0.0.0 --port 8080
@@ -67,8 +74,8 @@ Examples:
 
     parser.add_argument(
         "--config-file",
-        type=Path,
-        help=CONFIG_FILE_HELP,
+        type=str,
+        help=_BACKEND_CONFIG_FILE_HELP,
     )
 
     parser.add_argument(
@@ -85,6 +92,19 @@ Examples:
     )
 
     return parser.parse_args(args)
+
+
+def _run_server(*, host: str, port: int, log_level: str, reload: bool) -> None:
+    """Run the backend with uvicorn."""
+    import uvicorn
+
+    uvicorn.run(
+        "pyrit.backend.main:app",
+        host=host,
+        port=port,
+        log_level=log_level,
+        reload=reload,
+    )
 
 
 def main(*, args: list[str] | None = None) -> int:
@@ -115,10 +135,7 @@ def main(*, args: list[str] | None = None) -> int:
         )
 
     try:
-        import uvicorn
-
-        uvicorn.run(
-            "pyrit.backend.main:app",
+        _run_server(
             host=parsed_args.host,
             port=parsed_args.port,
             log_level=logging.getLevelName(parsed_args.log_level).lower()

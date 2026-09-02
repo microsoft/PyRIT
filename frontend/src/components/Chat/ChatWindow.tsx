@@ -881,7 +881,7 @@ export default function ChatWindow({
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
-          onConfigureTarget={() => onNavigate?.('config')}
+          onConfigureTarget={() => onNavigate?.('targets')}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}

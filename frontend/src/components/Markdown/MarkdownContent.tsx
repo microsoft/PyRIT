@@ -1,4 +1,6 @@
 import { memo } from 'react'
+
+import { mergeClasses } from '@fluentui/react-components'
 import Markdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -10,6 +12,8 @@ interface MarkdownContentProps {
   content: string
   /** Optional test id applied to the wrapper element. */
   testId?: string
+  /** Optional themed class for the surface embedding the shared renderer. */
+  className?: string
 }
 
 // Render every link in a new tab. `rel="noopener noreferrer"` prevents the
@@ -18,7 +22,7 @@ interface MarkdownContentProps {
 // from the parsed source can leak through.
 //
 // Inline images (`![alt](url)`) are rendered as a click-through LINK rather than
-// an auto-loading <img>. Because the content is untrusted (model-generated),
+// an auto-loading image element. Because the content is untrusted (model-generated),
 // auto-loading would fetch a model-controlled URL on render — a tracking-pixel /
 // internal-probe vector that silently leaks the operator's IP, a view timestamp,
 // and any query-encoded data. A link preserves the operator's ability to open
@@ -56,11 +60,11 @@ const REMARK_PLUGINS = [remarkGfm]
  * Memoized because Markdown parsing is comparatively expensive and message
  * content is stable across the frequent re-renders of the message list.
  */
-function MarkdownContent({ content, testId }: MarkdownContentProps) {
+function MarkdownContent({ content, testId, className }: MarkdownContentProps) {
   const styles = useMarkdownContentStyles()
 
   return (
-    <div className={styles.root} data-testid={testId}>
+    <div className={mergeClasses(styles.root, className)} data-testid={testId}>
       <Markdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
         {content}
       </Markdown>

@@ -47,6 +47,7 @@ router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 async def list_scenarios(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: str | None = Query(None, description="Pagination cursor (scenario_name to start after)"),
+    include_estimates: bool = Query(True, description="Wait for default run-size estimates"),
 ) -> ListRegisteredScenariosResponse:
     """
     List all available scenarios.
@@ -58,7 +59,11 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
         ScenarioListResponse: Paginated list of scenario summaries.
     """
     service = get_scenario_service()
-    return await service.list_scenarios_async(limit=limit, cursor=cursor)
+    return await service.list_scenarios_async(
+        limit=limit,
+        cursor=cursor,
+        include_estimates=include_estimates,
+    )
 
 
 @router.get(

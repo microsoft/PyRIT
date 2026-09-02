@@ -7,7 +7,7 @@
 // - MSAL PKCE authentication (frontend) + Microsoft Graph-backed auth (backend)
 // - User-assigned managed identity for Azure SQL, ACR, Azure OpenAI, Key Vault
 // - Azure SQL (existing) via managed identity — no passwords
-// - ACA secret populated inline or backed by a Key Vault reference
+// - Inline ACA secret or backend-managed Key Vault environment source
 // - Centralized logging via Log Analytics (configurable retention)
 // - No storage account keys or secrets embedded in source/container images
 //
@@ -59,6 +59,17 @@ var normalizedAllowedGroupObjectIds = filter(
   map(split(allowedGroupObjectIds, ','), groupId => trim(groupId)),
   groupId => !empty(groupId)
 )
+var validatedAllowedGroupObjectIds = !empty(normalizedAllowedGroupObjectIds)
+  ? normalizedAllowedGroupObjectIds
+  : fail('allowedGroupObjectIds must contain at least one non-empty group ID')
+
+@description('Object ID of the Entra security group allowed to manage backend configuration')
+@minLength(1)
+param adminGroupObjectId string
+var normalizedAdminGroupObjectId = trim(adminGroupObjectId)
+var validatedAdminGroupObjectId = !empty(normalizedAdminGroupObjectId)
+  ? normalizedAdminGroupObjectId
+  : fail('adminGroupObjectId must contain a non-empty group ID')
 
 @description('CIDR range allowed to reach ACA directly. Empty = unrestricted. Must be empty when Front Door is enabled because ACA sees Front Door backend IPs, not client IPs.')
 param allowedCidr string = ''
@@ -79,7 +90,11 @@ param sqlDatabaseName string
 @description('PyRIT initializer to run. Default "target" registers target configs.')
 param pyritInitializer string = 'target'
 
-@description('Key Vault secret name containing the .env file contents (all endpoints, models, and API keys). The secret is mounted as an env var and PyRIT parses it at startup.')
+@secure()
+@description('Optional Azure Blob HTTPS URI for the backend .pyrit_conf. The deployment helper accepts credential-free managed-identity URIs only. When empty, start.sh generates config from the SQL and initializer parameters.')
+param pyritConfigFileUri string = ''
+
+@description('Key Vault secret name containing the .env file contents. Used as env_akv_ref when envFileContents is empty.')
 param envSecretName string = 'env-global'
 
 @secure()
@@ -284,7 +299,7 @@ var keyVaultName = last(split(keyVaultResourceId, '/'))
 // ============================================================================
 // RBAC role assignments are NOT managed by this template.
 // Grant the following roles to the UAMI manually before first deployment:
-//   - Key Vault Secrets User  on the Key Vault
+//   - Key Vault Secrets Officer on the Key Vault when envFileContents is empty
 //   - AcrPull                 on the ACR
 // See Post-Deployment in infra/README.md for commands.
 // ============================================================================
@@ -369,7 +384,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       '${effectiveManagedIdentityId}': {}
     }
   }
-  // RBAC roles (AcrPull, KV Secrets User) must be granted manually before
+  // RBAC roles (AcrPull, Key Vault Secrets Officer) must be granted manually before
   // the first deployment — see infra/README.md Post-Deployment §2.
   dependsOn: []
   properties: {
@@ -402,19 +417,20 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
 
-      // Key Vault secret reference for the .env file contents
-      secrets: [
-        useInlineEnvFile
-          ? {
-              name: 'env-file'
-              value: envFileContents
-            }
-          : {
-              name: 'env-file'
-              keyVaultUrl: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${envSecretName}'
-              identity: effectiveManagedIdentityId
-            }
-      ]
+      secrets: concat(
+        useInlineEnvFile ? [
+          {
+            name: 'env-file'
+            value: envFileContents
+          }
+        ] : [],
+        !empty(pyritConfigFileUri) ? [
+          {
+            name: 'config-file-uri'
+            value: pyritConfigFileUri
+          }
+        ] : []
+      )
     }
 
     template: {
@@ -444,11 +460,25 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'PYRIT_INITIALIZER'
               value: pyritInitializer
             }
-            // .env contents from the inline or Key Vault-backed ACA secret
-            {
-              name: 'PYRIT_ENV_CONTENTS'
-              secretRef: 'env-file'
-            }
+            // Keep the managed-identity config URI out of plain Container App configuration.
+            !empty(pyritConfigFileUri)
+              ? {
+                  name: 'PYRIT_CONFIG_FILE'
+                  secretRef: 'config-file-uri'
+                }
+              : {
+                  name: 'PYRIT_CONFIG_FILE'
+                  value: ''
+                }
+            useInlineEnvFile
+              ? {
+                  name: 'PYRIT_ENV_CONTENTS'
+                  secretRef: 'env-file'
+                }
+              : {
+                  name: 'PYRIT_ENV_AKV_REF'
+                  value: 'https://${keyVaultName}${environment().suffixes.keyvaultDns}/secrets/${envSecretName}'
+                }
             // MSAL PKCE auth config — frontend uses these to authenticate users
             // Easy Auth is NOT used because the tenant blocks client secrets/certs
             // on app registrations. PKCE (public client) needs no secrets.
@@ -462,7 +492,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'ENTRA_ALLOWED_GROUP_IDS'
-              value: join(normalizedAllowedGroupObjectIds, ',')
+              value: join(validatedAllowedGroupObjectIds, ',')
+            }
+            {
+              name: 'ENTRA_ADMIN_GROUP_ID'
+              value: validatedAdminGroupObjectId
             }
             // OTel: point the SDK at the ACA managed agent (localhost sidecar)
             {

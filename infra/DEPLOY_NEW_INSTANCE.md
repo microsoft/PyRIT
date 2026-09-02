@@ -74,6 +74,7 @@ python infra/deploy_instance.py \
     --acr-name <shared-acr-name> \
     --container-image <acr>.azurecr.io/pyrit:<commit-sha> \
     --allowed-groups "group-oid-1,group-oid-2" \
+    --admin-group "admin-group-oid" \
     --owner-tag "<your-alias>" \
     --service-management-reference "<service-tree-id>" \
     --aoai-resource-names "aoai-resource-1,aoai-resource-2"
@@ -88,7 +89,10 @@ python infra/deploy_instance.py \
 | `--acr-name` | Yes | Shared ACR name |
 | `--container-image` | Yes | Image in `--acr-name` using a non-`latest` tag or SHA-256 digest |
 | `--allowed-groups` | Yes | Comma-separated Entra group object IDs (GUIDs) |
+| `--admin-group` | Yes | Entra group object ID allowed to manage backend configuration |
 | `--allowed-cidr` | No | Optional public ingress IPv4 network in canonical CIDR notation; empty permits all source IPs while Entra and backend group authorization remain enabled |
+| `--pyrit-config-file-uri` | No | Credential-free Azure Blob HTTPS URI for a managed-identity-backed `.pyrit_conf` |
+| `--pyrit-config-rbac-scope` | Conditional | Storage account or blob container resource ID containing `--pyrit-config-file-uri`; required when that URI is set |
 | `--owner-tag` | Conditional | `Owner` tag value applied to all per-instance resources. **Required when the target subscription enforces a "Require a tag on resources" Azure Policy** (this is the case for the AI Red Team Tooling subscription — deployments without it fail with `RequestDisallowedByPolicy`). Optional only on subscriptions without such a policy |
 | `--service-management-reference` | No | Service Tree ID (required by some tenants for Entra app creation) |
 | `--aoai-resource-names` | No | Comma-separated Cognitive Services account names for automatic AOAI RBAC. Grants `Cognitive Services OpenAI User` to the MI on each resource. Does **not** cover Content Safety — see step 3 for that. If omitted, all AOAI roles must be granted manually |
