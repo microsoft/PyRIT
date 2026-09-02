@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -20,6 +21,8 @@ from pyrit.models import (
 )
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+
+logger = logging.getLogger(__name__)
 
 
 class TrueFalseCompositeScorer(TrueFalseScorer):
@@ -127,14 +130,21 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             expectation (ScoringExpectation | None): What the child scorers should look for.
 
         Returns:
-            list[Score]: A single-element list with the aggregated true/false score.
+            list[Score]: ``[]`` when every child is non-applicable; otherwise, a list
+                containing one completed or undetermined aggregate score.
         """
         score_list_results = await asyncio.gather(
             *(scorer._score_nested_async(scorable=scorable, expectation=expectation) for scorer in self._scorers)
         )
+        applicable_results = [scores for scores in score_list_results if scores]
+        skipped_count = len(score_list_results) - len(applicable_results)
+        if skipped_count:
+            logger.debug("Ignoring %d non-applicable child scorer result(s) in composite scoring.", skipped_count)
+        if not applicable_results:
+            return []
         return [
             self._build_aggregate_score(
-                score_list_results=list(score_list_results),
+                score_list_results=applicable_results,
                 expectation=expectation,
                 # Score rejects a kind outside the union when it is constructed below.
                 scorable=cast("ScorableUnion | None", scorable),

@@ -661,10 +661,8 @@ class ConfigurationLoader(YamlLoadable):
         """
         Initialize PyRIT with the loaded configuration.
 
-        Resolves the ``.pyrit_conf`` baseline initializers to instances and calls the core
-        ``initialize_pyrit_async`` function. This method is intentionally unaware of any
-        persisted additional initializers: consumers such as ``pyrit.backend.main.lifespan``
-        run those after the baseline.
+        Resolves the ``.pyrit_conf`` initializers to instances and calls the core
+        ``initialize_pyrit_async`` function.
 
         Args:
             raise_on_initializer_error: Whether initializer resolution, loading, validation, or execution

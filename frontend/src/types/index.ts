@@ -184,45 +184,16 @@ export interface RegisteredInitializer {
   supported_parameters: Parameter[]
 }
 
-/** A read-only initializer from the `.pyrit_conf` baseline, referenced by registry name. */
-export interface BaselineInitializerSetting {
+/** A read-only initializer invocation from the active `.pyrit_conf`. */
+export interface ConfiguredInitializerSetting {
   initializer_name: string
   parameters?: Record<string, unknown> | null
   order_index: number
 }
 
-/** A persisted additional initializer, referenced by registry name. */
-export interface AdditionalInitializerSetting {
-  id: string
-  initializer_name: string
-  parameters?: Record<string, unknown> | null
-  order_index?: number | null
-}
-
 export interface InitializerSettingsResponse {
-  /** Read-only initializers from the `.pyrit_conf` baseline, in run order. */
-  baseline: BaselineInitializerSetting[]
-  /** Persisted additional initializers that run after the baseline, in run order. */
-  additional: AdditionalInitializerSetting[]
-}
-
-/** The persisted domain row returned by create/update of an additional initializer. */
-export interface AdditionalInitializer {
-  id: string
-  initializer_name: string
-  parameters?: Record<string, unknown> | null
-  order_index?: number | null
-}
-
-export interface CreateAdditionalInitializerRequest {
-  initializer_name: string
-  parameters?: Record<string, unknown> | null
-  order_index?: number | null
-}
-
-export interface UpdateAdditionalInitializerRequest {
-  parameters?: Record<string, unknown> | null
-  order_index?: number | null
+  /** Read-only initializers from the active `.pyrit_conf`, in run order. */
+  configured: ConfiguredInitializerSetting[]
 }
 
 export interface ListRegisteredInitializersResponse {
@@ -244,16 +215,6 @@ export interface CustomInitializer {
 export interface CustomInitializerListResponse {
   source: string
   items: CustomInitializer[]
-}
-
-export interface ApplyInitializerRequest {
-  parameters?: Record<string, unknown> | null
-}
-
-export interface ApplyInitializerResponse {
-  initializer_name: string
-  status: 'applied'
-  applied_parameters?: Record<string, unknown> | null
 }
 
 // --- Converters ---

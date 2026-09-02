@@ -189,6 +189,23 @@ def test_scenario_progress_migration_adds_composite_index():
             engine.dispose()
 
 
+def test_migration_head_removes_additional_initializers_table():
+    """The migration head removes the obsolete second initializer configuration source."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "additional-initializers-removal.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "4c9a6e1f2b7d")
+                assert "AdditionalInitializers" in set(inspect(connection).get_table_names())
+
+                command.upgrade(config, "head")
+                assert "AdditionalInitializers" not in set(inspect(connection).get_table_names())
+        finally:
+            engine.dispose()
+
+
 def test_migration_online_mode():
     """
     Test that online migration configuration is valid.

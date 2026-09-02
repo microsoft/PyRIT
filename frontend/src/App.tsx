@@ -8,7 +8,6 @@ import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
-import Initializers from './components/Initializers/Initializers'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
@@ -43,7 +42,6 @@ const VIEW_PATHS: Record<ViewName, string> = {
   chat: '/chat',
   history: '/history',
   targets: '/targets',
-  initializers: '/initializers',
   scenarios: '/scanner',
   configuration: '/config',
 }
@@ -491,7 +489,6 @@ function App() {
                   />
                 }
               />
-              <Route path="/initializers" element={<Initializers />} />
               <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
                 path="/scanner/:scenarioName"

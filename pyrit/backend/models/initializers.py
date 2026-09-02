@@ -9,7 +9,7 @@ Canonical initializer catalog types (``RegisteredInitializer``) live in
 Initializer parameters are described by the shared ``pyrit.models.Parameter``.
 """
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,17 +18,12 @@ from pyrit.models import REGISTRY_NAME_PATTERN
 from pyrit.models.catalog.initializer import RegisteredInitializer
 
 __all__ = [
-    "AdditionalInitializerSetting",
-    "ApplyInitializerRequest",
-    "ApplyInitializerResponse",
-    "BaselineInitializerSetting",
-    "CreateAdditionalInitializerRequest",
     "CustomInitializerListResponse",
     "CustomInitializerResponse",
+    "ConfiguredInitializerSetting",
     "InitializerSettingsResponse",
     "ListRegisteredInitializersResponse",
     "RegisterInitializerRequest",
-    "UpdateAdditionalInitializerRequest",
 ]
 
 
@@ -65,82 +60,18 @@ class CustomInitializerListResponse(BaseModel):
     items: list[CustomInitializerResponse] = Field(..., description="Stored custom initializer definitions.")
 
 
-class BaselineInitializerSetting(BaseModel):
-    """A read-only baseline initializer entry, referencing its registry definition by name."""
+class ConfiguredInitializerSetting(BaseModel):
+    """A read-only initializer invocation from ``.pyrit_conf``."""
 
     initializer_name: str = Field(..., description="Registry name of the initializer this entry configures.")
-    parameters: dict[str, Any] | None = Field(default=None, description="Baseline parameters from the config.")
-    order_index: int = Field(..., ge=0, description="Zero-based position in the baseline startup sequence.")
-
-
-class AdditionalInitializerSetting(BaseModel):
-    """A persisted additional initializer entry, referencing its registry definition by name."""
-
-    id: str = Field(..., description="Stable unique row id.")
-    initializer_name: str = Field(..., description="Registry name of the initializer this entry configures.")
-    parameters: dict[str, Any] | None = Field(default=None, description="Persisted parameters for this invocation.")
-    order_index: int | None = Field(
-        default=None,
-        ge=0,
-        description="Optional zero-based position among the additional initializers.",
-    )
+    parameters: dict[str, Any] | None = Field(default=None, description="Parameters from the active config.")
+    order_index: int = Field(..., ge=0, description="Zero-based position in the startup sequence.")
 
 
 class InitializerSettingsResponse(BaseModel):
-    """Response describing the read-only baseline plus the editable additional initializers."""
+    """Response describing the initializers configured in ``.pyrit_conf``."""
 
-    baseline: list[BaselineInitializerSetting] = Field(
+    configured: list[ConfiguredInitializerSetting] = Field(
         ...,
-        description="Read-only initializers from the ``.pyrit_conf`` baseline, in run order.",
-    )
-    additional: list[AdditionalInitializerSetting] = Field(
-        ...,
-        description="Persisted additional initializers that run after the baseline, in run order.",
-    )
-
-
-class CreateAdditionalInitializerRequest(BaseModel):
-    """Request body for adding a new additional initializer."""
-
-    initializer_name: str = Field(
-        ...,
-        pattern=REGISTRY_NAME_PATTERN,
-        description="Registry name of the initializer to add.",
-    )
-    parameters: dict[str, Any] | None = Field(default=None, description="Parameters to persist for this invocation.")
-    order_index: int | None = Field(
-        default=None,
-        ge=0,
-        description="Optional zero-based position among the additional initializers.",
-    )
-
-
-class UpdateAdditionalInitializerRequest(BaseModel):
-    """Request body for updating one existing additional initializer."""
-
-    parameters: dict[str, Any] | None = Field(default=None, description="Parameters to persist for this invocation.")
-    order_index: int | None = Field(
-        default=None,
-        ge=0,
-        description="Optional zero-based position among the additional initializers.",
-    )
-
-
-class ApplyInitializerRequest(BaseModel):
-    """Optional request body for applying an initializer immediately."""
-
-    parameters: dict[str, Any] | None = Field(
-        default=None,
-        description="Optional one-time parameters for this apply-now request.",
-    )
-
-
-class ApplyInitializerResponse(BaseModel):
-    """Response for a successful apply-now initializer run."""
-
-    initializer_name: str = Field(..., description="Initializer registry name that was applied.")
-    status: Literal["applied"] = Field(default="applied", description="Result status.")
-    applied_parameters: dict[str, Any] | None = Field(
-        default=None,
-        description="Parameters used for this apply-now execution.",
+        description="Read-only initializers from the active ``.pyrit_conf``, in run order.",
     )
