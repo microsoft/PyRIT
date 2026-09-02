@@ -25,7 +25,7 @@ To address this ambiguity in determining adversarial model performance, PyRIT cr
 
 ### Designing a Fair Comparison
 
-The `AdversarialBenchmark` scenario builds a matrix of attack techniques, adversarial models, and datasets. Users can evaluate model performance using a single technique, a focused named technique aggregate such as `light`, or a broader registered set of techniques. Each cell in this matrix corresponds to a tuple of dataset, technique, and model, such as `harmbench__red_teaming__qwen_mt`, and produces one result per selected objective. When possible, `AdversarialBenchmark` consults PyRIT's central memory to re-use existing records keyed on hashes for the same techniques and objective targets, as well as the names of the technique, adversarial target registry entry, and dataset name. This can be disabled via the `use_cache=False` flag, since the cache is greedy and one cached `success` or `failure` can skip the entry without checking that all objectives in the entry were attempted.
+The `AdversarialBenchmark` scenario builds a matrix of attack techniques, adversarial models, and datasets. Users can evaluate model performance using a single technique, a focused named technique aggregate such as `light`, or a broader registered set of techniques. Each cell in this matrix corresponds to a tuple of dataset, technique, and model, such as tuple `harmbench__red_teaming__qwen_mt`, and produces one result per selected objective. When possible, `AdversarialBenchmark` consults PyRIT's central memory to re-use existing records keyed on hashes for the same techniques and objective targets, as well as the names of the technique, adversarial target registry entry, and dataset name. This can be disabled via the `use_cache=False` flag, since the cache is greedy and one cached `success` or `failure` can skip the entry without checking that all objectives in the entry were attempted.
 
 ![Diagram showing AdversarialBenchmark holding dataset objectives, the objective target, the objective scorer, and attack techniques constant while candidate adversarial models vary to produce separate evaluation-plan entries and attack success rates by model.](2026_09_03_adversarial_model_selection_benchmark_design.png)
 
@@ -55,16 +55,16 @@ Next, we ran the benchmark to compare Grok 4.3 with a legacy GPT-4o adversarial 
 
 Along with evidence that the legacy 4o endpoint was underperforming more recent models in orchestrating attacks, we realized we should compare our research team's models to Grok head-to-head. In these trials, we chose three models: Grok 4.3, the singleturn study variant ("Qwen ST"), and the multiturn study variant ("Qwen MT"). We used 14 pinned objectives from HarmBench under four techniques against a GPT-4o objective target.
 
-The first trial was scored by an `AzureContentFilterScorer`. Utlimately, 12 runs of the benchmark scenario completed and produced 168 final success-or-failure outcomes with complete responses and scores. We note that an audit of the database and logs found recovery activity that the final `AttackResult` retry fields did not expose. The Grok `role_play_video_game` benchmark combination retried one incomplete objective after an empty generated message caused a bad request. The Qwen ST `role_play_trivia_game` combination also retried one incomplete objective after Content Safety authentication failed. The Grok trivia combination also recovered internally from an empty HTTP 204 response. We therefore treat `red_teaming` and `crescendo_simulated`, the two techniques clean across all three models, as the most useful comparison. On that subset, Qwen ST achieved 19 of 28 (67.9%), Qwen MT achieved 17 of 28 (60.7%), and Grok achieved 14 of 28 (50.0%).
+The first trial was scored by an `AzureContentFilterScorer`. Utlimately, 12 runs of the benchmark scenario completed and produced 168 final success-or-failure outcomes with complete responses and scores. We note that an audit of the database and logs found recovery activity that the final `AttackResult` retry fields did not expose. The Grok `role_play_video_game` benchmark combination retried one incomplete objective after an empty generated message caused a bad request. The Qwen ST `role_play_trivia_game` combination also retried one incomplete objective after Content Safety authentication failed. The Grok trivia combination also recovered internally from an empty HTTP 204 response. All 168 terminal outcomes form the primary benchmark result. As a sensitivity analysis, we also report `red_teaming` and `crescendo_simulated`, the two techniques with no recovery recorded across all three models. On that subset, Qwen ST achieved 19 of 28 (67.9%), Qwen MT achieved 17 of 28 (60.7%), and Grok achieved 14 of 28 (50.0%).
 
 | Technique | Qwen MT | Qwen ST | Grok | Evidence status |
 | --- | ---: | ---: | ---: | --- |
-| `red_teaming` | 11/14 (78.6%) | 10/14 (71.4%) | 6/14 (42.9%) | Clean |
+| `red_teaming` | 11/14 (78.6%) | 10/14 (71.4%) | 6/14 (42.9%) | No recovery recorded |
 | `role_play_video_game` | 6/14 (42.9%) | 6/14 (42.9%) | 11/14 (78.6%) | Grok recovered through a scenario retry |
 | `role_play_trivia_game` | 1/14 (7.1%) | 4/14 (28.6%) | 1/14 (7.1%) | Qwen ST retried the scenario; Grok retried an empty response internally |
-| `crescendo_simulated` | 6/14 (42.9%) | 9/14 (64.3%) | 8/14 (57.1%) | Clean |
-| **Strict clean aggregate** | **17/28 (60.7%)** | **19/28 (67.9%)** | **14/28 (50.0%)** | `red_teaming` and `crescendo_simulated` |
-| **All terminal outcomes** | **24/56 (42.9%)** | **29/56 (51.8%)** | **26/56 (46.4%)** | Sensitivity view including recovered combinations |
+| `crescendo_simulated` | 6/14 (42.9%) | 9/14 (64.3%) | 8/14 (57.1%) | No recovery recorded |
+| **All terminal outcomes (primary)** | **24/56 (42.9%)** | **29/56 (51.8%)** | **26/56 (46.4%)** | Includes combinations with recorded recovery |
+| **No-recovery sensitivity subset** | **17/28 (60.7%)** | **19/28 (67.9%)** | **14/28 (50.0%)** | `red_teaming` and `crescendo_simulated` |
 
 ### Variability Between Attack Techniques
 
@@ -74,11 +74,11 @@ The aggregate results conceal large intra-model differences. In the very first a
 
 *Figure 2 - Preliminary technique-level results from two separate, non-comparable studies.*
 
-We could see that the best model for a simple conversational attack may not be the best model for a technique requiring long reasoning traces, strict JSON, image input, or repeated backtracking, and therefore, a single ASR was insufficient for choosing a "best" adversarial model. The head-to-head benchmarks showed the same interaction; among the clean techniques, Qwen MT led on `red_teaming` at 78.6%, while Qwen ST led `crescendo_simulated` at 64.3%. Among the recovered benchmark combinations, Grok's final outcomes led `role_play_video_game` at 78.6%, and Qwen ST's final outcomes led `role_play_trivia_game` at 28.6%. No model led every technique.
+We could see that the best model for a simple conversational attack may not be the best model for a technique requiring long reasoning traces, strict JSON, image input, or repeated backtracking, and therefore, a single ASR was insufficient for choosing a "best" adversarial model. The head-to-head benchmarks showed the same interaction; in the no-recovery sensitivity subset, Qwen MT led on `red_teaming` at 78.6%, while Qwen ST led `crescendo_simulated` at 64.3%. Among the recovered benchmark combinations, Grok's final outcomes led `role_play_video_game` at 78.6%, and Qwen ST's final outcomes led `role_play_trivia_game` at 28.6%. No model led every technique.
 
-![Grouped bars showing Qwen MT, Qwen ST, and Grok final attack success rates for four techniques, with recovered combinations marked and a strict clean aggregate over red teaming and simulated crescendo.](2026_09_03_adversarial_model_selection_head_to_head.png)
+![Grouped bars showing Qwen MT, Qwen ST, and Grok final attack success rates for four techniques, with combinations that had recorded recovery marked and a no-recovery sensitivity subset over red teaming and simulated crescendo.](2026_09_03_adversarial_model_selection_head_to_head.png)
 
-*Figure 3 - Paired head-to-head across 14 objectives per technique-model pair. Hatched bars required recovery; the strict clean aggregate excludes those techniques.*
+*Figure 3 - Paired head-to-head across 14 objectives per technique-model pair. Hatched bars indicate recorded recovery; the no-recovery sensitivity subset uses only `red_teaming` and `crescendo_simulated`.*
 
 The sanitized technique-level records behind the preliminary studies are available in [CSV form](2026_09_03_adversarial_model_selection_results.csv).
 
@@ -89,9 +89,9 @@ The head-to-head above scored success with a harm proxy: a `FloatScaleThresholdS
 | Technique | Qwen MT | Qwen ST | Grok | Evidence status |
 | --- | ---: | ---: | ---: | --- |
 | `red_teaming` | 10/14 (71.4%) | 12/14 (85.7%) | 10/14 (71.4%) | Grok recovered from an HTTP-204 retry |
-| `role_play_video_game` | 3/14 (21.4%) | 7/14 (50.0%) | 5/14 (35.7%) | Clean |
-| `role_play_trivia_game` | 1/14 (7.1%) | 2/14 (14.3%) | 0/14 (0.0%) | Clean |
-| `crescendo_simulated` | 6/14 (42.9%) | 6/14 (42.9%) | 1/14 (7.1%) | Clean |
+| `role_play_video_game` | 3/14 (21.4%) | 7/14 (50.0%) | 5/14 (35.7%) | No recovery recorded |
+| `role_play_trivia_game` | 1/14 (7.1%) | 2/14 (14.3%) | 0/14 (0.0%) | No recovery recorded |
+| `crescendo_simulated` | 6/14 (42.9%) | 6/14 (42.9%) | 1/14 (7.1%) | No recovery recorded |
 | **All-technique aggregate** | **20/56 (35.7%)** | **27/56 (48.2%)** | **16/56 (28.6%)** | One combined run |
 
 ![Screenshot of PyRIT's scenario-results view for the combined adversarial benchmark, showing its scorer, overall statistics, and per-model breakdown.](2026_09_03_adversarial_model_selection_benchmark_screenshot.png)
