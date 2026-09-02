@@ -84,6 +84,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
     from pyrit.score.true_false.regex.anthrax_keyword_scorer import AnthraxKeywordScorer
     from pyrit.score.true_false.regex.credential_leak_scorer import CredentialLeakScorer
+    from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
     from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
     from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
     from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
@@ -145,6 +146,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ConversationScorer": "pyrit.score.conversation_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",
+    "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
     "FentanylKeywordScorer": "pyrit.score.true_false.regex.fentanyl_keyword_scorer",
     "create_conversation_scorer": "pyrit.score.conversation_scorer",
     "FloatScaleScoreAggregator": "pyrit.score.float_scale.float_scale_score_aggregator",

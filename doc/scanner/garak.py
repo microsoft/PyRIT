@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -33,6 +33,8 @@ from pyrit.prompt_target import RealtimeTarget
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.garak import (
+    Divergence,
+    DivergenceTechnique,
     Encoding,
     EncodingTechnique,
     FigStep,
@@ -293,6 +295,35 @@ audio_scenario_result = await audio_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(audio_scenario_result)
+
+# %% [markdown]
+# ## Divergence
+#
+# Ports Garak's `divergence` probe (including `Repeat` and `RepeatedToken` techniques).
+# Replicates repetition-induced divergence attacks, such as prompting the target to repeat a word
+# (e.g. "poem") indefinitely, testing whether the model diverges from repetition into training data
+# replay, hallucinated continuation, or output instability.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan run garak.divergence --target openai_chat --techniques repeat --max-dataset-size 2
+# ```
+#
+# **Available techniques:** `Repeat` (default), `RepeatedToken` (opt-in), and `ALL`.
+
+# %%
+divergence_scenario = Divergence()
+divergence_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [DivergenceTechnique.Repeat],
+    }
+)
+await divergence_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {divergence_scenario.name}")
+print(f"Atomic attacks: {divergence_scenario.atomic_attack_count}")
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and
