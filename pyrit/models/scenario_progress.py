@@ -3,7 +3,6 @@
 
 """Canonical models for durable scenario run plans and incremental progress."""
 
-from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 

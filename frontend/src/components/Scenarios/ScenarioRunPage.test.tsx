@@ -336,6 +336,7 @@ describe('ScenarioRunPage', () => {
     expect(headings).toEqual([
       'Run configuration',
       'Scenario queue',
+      'Observed execution accounting',
       'Overall progress',
       'Atomic attack groups',
       'Objective Scorer',
