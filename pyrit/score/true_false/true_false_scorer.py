@@ -119,11 +119,12 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
 
     **Default unreadable / blocked behavior**
 
-    A message that has no role supported by this scorer produces no score. For a supported
-    role, an unreadable transport or protocol response produces an undetermined score. A
-    fully blocked response or one with no supported data type produces a completed ``False``
-    score. Subclasses can override ``_build_fallback_score`` when they need different
-    semantics. For example, ``SelfAskRefusalScorer`` returns ``True`` on a blocked response.
+    The return type is ``list[Score]``. Unsupported evidence returns ``[]``. An unreadable
+    transport or protocol response for supported evidence returns a list containing an
+    undetermined score. A fully blocked response returns a list containing a completed
+    ``False`` score. Subclasses can override ``_build_fallback_score`` when they need different
+    domain semantics. For example, ``SelfAskRefusalScorer`` returns ``True`` on a blocked
+    response.
     """
 
     def __init__(
@@ -154,15 +155,16 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
-        Build a single-element list containing a ``false`` score when no pieces could be scored.
+        Build the default result for a blocked, unreadable, or non-applicable response.
 
         Args:
             message (Message): The message whose first piece tells why nothing was scored.
             objective (str | None): The objective associated with this scoring call.
 
         Returns:
-            list[Score]: A single-element list containing a ``false`` ``true_false`` score,
-                or an undetermined score when the response failed with an error.
+            list[Score]: ``[]`` for non-applicable evidence; a list containing a completed
+                ``False`` score for a fully blocked response; or a list containing an
+                undetermined score for another response error.
         """
         return self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="false")
 
@@ -171,18 +173,18 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
         Score the given request response asynchronously.
 
         For TrueFalseScorer, multiple piece scores are aggregated into a single true/false score.
-        When a supported role has no scoreable pieces, this method returns an empty list. The base
-        ``score_async`` then invokes ``_build_fallback_score``. That fallback is undetermined for
-        an unreadable transport or protocol response and ``False`` for a fully blocked or filtered
-        response.
+        When no supported piece produces a score, this method returns an empty list. The
+        message-scoring pipeline preserves that empty result for non-applicable evidence.
+        It handles unreadable transport responses and fully blocked responses before this
+        method runs.
 
         Args:
             message (Message): The message to score.
             objective (str | None): The objective to evaluate against. Defaults to None.
 
         Returns:
-            list[Score]: A list containing a single aggregated true/false Score, or an empty
-                list when no pieces could be scored (the base class will supply a fallback).
+            list[Score]: ``[]`` when no applicable piece produces a score; otherwise, a list
+                containing one completed or undetermined aggregate score.
         """
         # Get individual scores for all supported pieces using base implementation logic
         score_list = await MessageScorer._score_async(self, message, objective=objective)

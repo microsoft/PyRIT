@@ -117,7 +117,9 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             expectation (ScoringExpectation | None): What the wrapped scorer should look for.
 
         Returns:
-            list[Score]: A list containing a single true/false Score based on the threshold comparison.
+            list[Score]: A list containing one completed or undetermined true/false score.
+                If the child returns ``[]``, the configured float aggregator supplies its
+                empty behavior and can return a neutral value or raise ``ValueError``.
         """
         scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
         return self._apply_threshold(
@@ -140,7 +142,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         Turn the aggregated float value into a single true/false verdict.
 
         Returns:
-            list[Score]: A list containing a single true/false Score.
+            list[Score]: A list containing one completed or undetermined true/false score.
         """
         objective = expectation.objective if expectation else None
 

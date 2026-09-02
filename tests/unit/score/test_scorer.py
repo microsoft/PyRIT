@@ -12,6 +12,7 @@ from unit.mocks import get_mock_target_identifier, store_message
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    ChatMessageRole,
     ComponentIdentifier,
     ContentScorable,
     Message,
@@ -1731,13 +1732,8 @@ def test_mock_float_scorer_get_identifier():
     assert hasattr(identifier, "hash")
 
 
-class TestTrueFalseScorerEmptyScoreListRationale:
-    """Tests for TrueFalseScorer rationale when no pieces are scored (empty score_list).
-
-    The empty score_list scenario occurs when _score_piece_async returns empty lists
-    for all pieces, which triggers special handling in TrueFalseScorer._score_async
-    to provide informative rationales based on the message piece status.
-    """
+class TestTrueFalseScorerEmptyResults:
+    """Tests for true/false results when no pieces are scored."""
 
     @pytest.fixture
     def no_valid_pieces_validator(self):
@@ -1814,11 +1810,9 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert "error" in scores[0].score_rationale.lower()
         assert "unknown" in scores[0].score_rationale
 
-    async def test_filtered_pieces_returns_generic_rationale(
+    async def test_supported_piece_with_no_result_returns_empty(
         self, true_false_scorer_returns_empty, patch_central_database
     ):
-        """Test that normal pieces (no error) return a generic filtering rationale."""
-        # A normal text piece with no error - _score_piece_async returns empty
         normal_piece = MessagePiece(
             role="assistant",
             original_value="some text",
@@ -1833,11 +1827,7 @@ class TestTrueFalseScorerEmptyScoreListRationale:
             scorable=MessageScorable.from_message(store_message(response))
         )
 
-        assert len(scores) == 1
-        assert scores[0].score_value == "false"
-        assert "filter" in scores[0].score_rationale.lower()
-        assert "blocked" not in scores[0].score_rationale.lower()
-        assert "error" not in scores[0].score_rationale.lower()
+        assert scores == []
 
     async def test_blocked_takes_precedence_over_generic_error(
         self, true_false_scorer_returns_empty, patch_central_database
@@ -1892,10 +1882,10 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         assert scores[0].status == ScoreStatus.UNDETERMINED
         assert "processing" in scores[0].score_rationale
 
-    async def test_filtered_error_piece_does_not_control_fallback(
+    async def test_error_takes_precedence_over_unsupported_data_type(
         self, true_false_scorer_returns_empty, patch_central_database
     ):
-        """Fallback classification uses only the message view passed to the scorer."""
+        """A transport failure is undetermined when no readable piece applies."""
         response = Message(
             message_pieces=[
                 MessagePiece(
@@ -1919,18 +1909,12 @@ class TestTrueFalseScorerEmptyScoreListRationale:
         )
 
         assert len(scores) == 1
-        assert scores[0].status == ScoreStatus.COMPLETE
-        assert scores[0].get_value() is False
-        assert "processing" not in scores[0].score_rationale
+        assert scores[0].status == ScoreStatus.UNDETERMINED
+        assert "processing" in scores[0].score_rationale
 
 
-class TestFloatScaleScorerEmptyScoreListRationale:
-    """Tests for FloatScaleScorer's unified no-pieces fallback that returns Score(0.0).
-
-    Mirrors TestTrueFalseScorerEmptyScoreListRationale. When no supported pieces remain
-    after validator filtering, FloatScaleScorer returns a single Score with value 0.0
-    and a rationale distinguishing blocked / error / filtered cases.
-    """
+class TestFloatScaleScorerEmptyResults:
+    """Tests for float-scale results when no pieces are scored."""
 
     @pytest.fixture
     def no_valid_pieces_validator(self):
@@ -1943,8 +1927,7 @@ class TestFloatScaleScorerEmptyScoreListRationale:
 
     @pytest.fixture
     def float_scale_scorer_returns_empty(self, no_valid_pieces_validator):
-        """Create a FloatScaleScorer whose _score_piece_async would return empty,
-        but in practice the validator filters all pieces so it's never invoked."""
+        """Create a FloatScaleScorer whose _score_piece_async returns an empty list."""
         from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 
         class _TestFloatScaleScorer(MessageFloatScaleScorer):
@@ -2008,10 +1991,9 @@ class TestFloatScaleScorerEmptyScoreListRationale:
         assert "error" in scores[0].score_rationale.lower()
         assert "unknown" in scores[0].score_rationale
 
-    async def test_filtered_pieces_return_zero_with_generic_rationale(
+    async def test_supported_piece_with_no_result_returns_empty(
         self, float_scale_scorer_returns_empty, patch_central_database
     ):
-        """When pieces are filtered for non-error reasons, the fallback still returns 0.0."""
         normal_piece = MessagePiece(
             role="assistant",
             original_value="some text",
@@ -2026,10 +2008,7 @@ class TestFloatScaleScorerEmptyScoreListRationale:
             scorable=MessageScorable.from_message(store_message(response))
         )
 
-        assert len(scores) == 1
-        assert scores[0].get_value() == 0.0
-        assert "filter" in scores[0].score_rationale.lower()
-        assert "blocked" not in scores[0].score_rationale.lower()
+        assert scores == []
 
     async def test_text_only_scorer_filters_blocked_via_validator(
         self, float_scale_scorer_returns_empty, patch_central_database
@@ -2484,13 +2463,14 @@ def _make_blocked_piece(
     partial_content: str | None = None,
     structured_refusal: str | None = None,
     conversation_id: str = "test-convo",
+    role: ChatMessageRole = "assistant",
 ) -> MessagePiece:
     """Create a blocked MessagePiece, optionally with partial content metadata."""
     metadata: dict = {}
     if partial_content is not None:
         metadata["partial_content"] = partial_content
     piece = MessagePiece(
-        role="assistant",
+        role=role,
         original_value='{"status_code": 200, "message": "content_filter"}',
         converted_value='{"status_code": 200, "message": "content_filter"}',
         original_value_data_type="error",
@@ -2548,6 +2528,12 @@ class TestCreateTextPieceFromBlocked:
         substitute = MessageScorer._create_text_piece_from_blocked(piece)
         assert substitute is not None
         assert substitute.conversation_id == piece.conversation_id
+
+    def test_preserves_simulated_assistant_role(self):
+        piece = _make_blocked_piece(partial_content="partial", role="simulated_assistant")
+        substitute = MessageScorer._create_text_piece_from_blocked(piece)
+        assert substitute is not None
+        assert substitute.role == "simulated_assistant"
 
     def test_response_error_is_none_not_blocked(self):
         """Substitute must have response_error='none' so refusal short-circuits don't fire."""

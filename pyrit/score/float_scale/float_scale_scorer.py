@@ -74,10 +74,10 @@ class MessageFloatScaleScorer(FloatScaleScorer, MessageScorer):
 
     **Default unreadable / blocked behavior**
 
-    A message that has no role supported by this scorer produces no score. For a supported
-    role, an unreadable transport or protocol response produces an undetermined score. A
-    fully blocked response or one with no supported data type produces a completed ``0.0``
-    score. Subclasses can override ``_build_fallback_score`` when they need different
+    The return type is ``list[Score]``. Unsupported evidence returns ``[]``. An unreadable
+    transport or protocol response for supported evidence returns a list containing an
+    undetermined score. A fully blocked response returns a list containing a completed ``0.0``
+    score. Subclasses can override ``_build_fallback_score`` when they need different domain
     semantics.
     """
 
@@ -105,14 +105,15 @@ class MessageFloatScaleScorer(FloatScaleScorer, MessageScorer):
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
-        Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
+        Build the default result for a blocked, unreadable, or non-applicable response.
 
         Args:
             message (Message): The message whose first piece tells why nothing was scored.
             objective (str | None): The objective associated with this scoring call.
 
         Returns:
-            list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score,
-                or an undetermined score when the response failed with an error.
+            list[Score]: ``[]`` for non-applicable evidence; a list containing a completed
+                ``0.0`` score for a fully blocked response; or a list containing an
+                undetermined score for another response error.
         """
         return self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="0.0")

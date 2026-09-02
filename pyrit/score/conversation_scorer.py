@@ -80,10 +80,10 @@ class ConversationScorer(MessageScorer, ABC):
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
-        Preserve silence when the acquired conversation or wrapped scorer has no verdict.
+        Return ``[]`` when the conversation trigger does not yield applicable evidence.
 
         Returns:
-            list[Score]: An empty list.
+            list[Score]: Always ``[]``.
         """
         return []
 
@@ -105,7 +105,7 @@ class ConversationScorer(MessageScorer, ABC):
         error JSON when ``should_score_blocked_content`` is turned off). This ensures the wrapped
         scorer's text-only validator accepts the synthetic message and scores the full
         conversation, even when the triggering turn was blocked or errored; the wrapped
-        scorer's fallback only fires when the rendered conversation is genuinely unscoreable.
+        scorer returns ``[]`` when the rendered conversation is not applicable.
 
         The wrapped scorer is invoked through its non-persisting nested path. The outer
         ``Scorer.score_async`` persists the returned scores exactly once, anchored to the
@@ -117,7 +117,8 @@ class ConversationScorer(MessageScorer, ABC):
             expectation (ScoringExpectation | None): What the wrapped scorer should look for.
 
         Returns:
-            list[Score]: List of Score objects from the underlying scorer
+            list[Score]: The wrapped scorer's completed or undetermined results, or ``[]``
+                when no applicable conversation evidence or child score exists.
 
         Raises:
             ValueError: If conversation with the given ID is not found in memory.

@@ -23,7 +23,7 @@ def image_message_piece() -> MessagePiece:
     return get_image_message_piece()
 
 
-async def test_score_async_unsupported_data_type_inverts_false_to_true(
+async def test_score_async_unsupported_data_type_returns_empty(
     patch_central_database, image_message_piece: MessagePiece
 ):
     sub_scorer = SubStringScorer(substring="test", categories=["new_category"])
@@ -31,12 +31,8 @@ async def test_score_async_unsupported_data_type_inverts_false_to_true(
 
     request = image_message_piece.to_message()
 
-    # With raise_on_no_valid_pieces=False (default), the inner scorer returns False,
-    # and the inverter inverts it to True
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
-    assert len(scores) == 1
-    # Inverter inverts False -> True
-    assert scores[0].get_value() is True
+    assert scores == []
 
     os.remove(image_message_piece.converted_value)
 

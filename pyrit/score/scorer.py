@@ -312,7 +312,9 @@ class Scorer(Identifiable, abc.ABC):
             expectation (ScoringExpectation | None): What to look for. Defaults to None.
 
         Returns:
-            list[Score]: A list of Score objects representing the results.
+            list[Score]: Zero or more persisted scores. An empty list means that this scorer
+                does not apply to the evidence. A non-empty list contains completed or
+                undetermined verdicts.
 
         Raises:
             TypeError: If this scorer does not support this kind of scorable.
@@ -488,8 +490,9 @@ class Scorer(Identifiable, abc.ABC):
         Subclasses implement this for the scorable kinds they handle and raise
         ``TypeError`` for the rest. ``MessageScorer`` handles the message-shaped kinds.
 
-        An implementation returns an empty list when a filter skipped the scorable without
-        scoring it. An empty list bypasses ``validate_return_scores`` and persistence.
+        An implementation returns ``[]`` when this scorer does not apply to the evidence.
+        Otherwise, it returns one or more completed or undetermined ``Score`` results.
+        An empty list bypasses ``validate_return_scores`` and persistence.
 
         Args:
             scorable (Scorable): What to look at.

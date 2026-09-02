@@ -282,7 +282,7 @@ def test_get_chat_target_returns_none_when_wrapped_has_none():
 
 async def test_float_scale_threshold_scorer_with_real_float_scorer_on_blocked(patch_central_database):
     """Integration test: a real MessageFloatScaleScorer subclass returns Score(0.0) on blocked input
-    (via its unified no-pieces fallback), and the threshold wrapper correctly converts that
+    (via its domain fallback), and the threshold wrapper correctly converts that
     to a False true_false score.
 
     This is the end-to-end path that replaced TAP's deleted error_score_map: the inner scorer

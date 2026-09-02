@@ -153,16 +153,20 @@ class RobloxPiiScorer(MessageFloatScaleScorer):
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
-        Spread the neutral fallback across every PII label.
+        Spread an applicable fallback across every PII label.
 
         Args:
             message (Message): The message whose first piece tells why nothing was scored.
             objective (str | None): The objective associated with this scoring call.
 
         Returns:
-            list[Score]: One fallback score per label, each keeping the base verdict.
+            list[Score]: ``[]`` for non-applicable evidence; otherwise, one completed or
+                undetermined fallback score per label.
         """
-        fallback = super()._build_fallback_score(message=message, objective=objective)[0]
+        fallback_scores = super()._build_fallback_score(message=message, objective=objective)
+        if not fallback_scores:
+            return []
+        fallback = fallback_scores[0]
         return [
             Score(
                 score_value=fallback.score_value,

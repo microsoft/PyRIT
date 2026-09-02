@@ -310,8 +310,9 @@ class MessageScorer(Scorer):
             infer_objective_from_request (bool | None): Deprecated inference policy.
 
         Returns:
-            list[Score]: The persisted scores, or an empty list when the scorer does not read
-                this message's role.
+            list[Score]: Zero or more persisted scores. ``[]`` means the evidence has no
+                supported role, data type, or other required capability. A non-empty list
+                contains completed or undetermined verdicts.
         """
         resolved_expectation, infer_objective, legacy_role_filter, legacy_skip_on_error = (
             self._consolidate_message_inputs(
@@ -366,8 +367,9 @@ class MessageScorer(Scorer):
             expectation (ScoringExpectation | None): What to look for. Defaults to None.
 
         Returns:
-            list[Score]: The persisted scores, or an empty list when the scorer does not read
-                this message's role.
+            list[Score]: Zero or more persisted scores. ``[]`` means the evidence has no
+                supported role, data type, or other required capability. A non-empty list
+                contains completed or undetermined verdicts.
         """
         self._validate_expectation(expectation=expectation)
         scores = await self._score_resolved_message_async(
@@ -708,7 +710,8 @@ class MessageScorer(Scorer):
             skip_on_error_result (bool): Deprecated compatibility policy.
 
         Returns:
-            list[Score]: The scores, or an empty list when the scorer does not read this role.
+            list[Score]: Zero or more scores. ``[]`` means the scorer does not apply to the
+                evidence. A non-empty list contains completed or undetermined verdicts.
 
         Raises:
             TypeError: If the scorable is not message-shaped.
@@ -747,7 +750,8 @@ class MessageScorer(Scorer):
             skip_on_error_result (bool): Deprecated compatibility policy.
 
         Returns:
-            list[Score]: The scores, or an empty list when the scorer does not read this role.
+            list[Score]: Zero or more scores. ``[]`` means the scorer does not apply to the
+                evidence. A non-empty list contains completed or undetermined verdicts.
 
         Raises:
             ScorerLLMResponseBlockedException: If the scorer's own LLM response is blocked by
@@ -832,8 +836,8 @@ class MessageScorer(Scorer):
             # Wrap non-PyRIT exceptions for better error tracing
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
-        if not scores and scoring_message.message_pieces:
-            scores = self._build_fallback_score(message=scoring_message, objective=objective)
+        if not scores and scoring_message.message_pieces and not self._get_supported_pieces(scoring_message):
+            scores = self._build_fallback_score(message=message, objective=objective)
 
         self._finalize_message_scores(message=scoring_message, scores=scores, anchor=anchor)
 
@@ -903,7 +907,7 @@ class MessageScorer(Scorer):
             objective (str | None): The objective to evaluate against. Defaults to None.
 
         Returns:
-            list[Score]: A list of Score objects.
+            list[Score]: The piece scores, or ``[]`` when no piece applies or produces a score.
         """
         if not message.message_pieces:
             return []
@@ -967,8 +971,9 @@ class MessageScorer(Scorer):
 
         Role is asked separately from the rest of the validator because the two answer
         different questions. An unread role means the evidence belongs to another scorer, so
-        this one stays silent; an unsupported data type means this scorer was handed evidence
-        it should have judged but cannot read, which its family reports as a fallback score.
+        this one stays silent. An unsupported data type is also non-applicable and produces no
+        score. A supported role with an unreadable transport response is different: the scorer
+        returns an undetermined result because evidence that it should evaluate failed to load.
         ``Message`` validation requires every piece in one message to have the same role, so
         readable evidence from an unsupported role cannot mask an unreadable supported role.
 
@@ -1111,7 +1116,7 @@ class MessageScorer(Scorer):
         """
         return MessagePiece(
             id=piece.id,
-            role=piece.api_role,
+            role=piece.role,
             original_value=piece.original_value,
             converted_value=content,
             original_value_data_type=piece.original_value_data_type,
@@ -1205,14 +1210,15 @@ class MessageScorer(Scorer):
         objective: str | None,
     ) -> list[Score]:
         """
-        Return the scorer family's neutral result when message evidence is unscoreable.
+        Return the scorer family's result for a blocked or unreadable response.
 
         Args:
             message (Message): The message-shaped evidence.
             objective (str | None): The objective associated with this call.
 
         Returns:
-            list[Score]: One or more fallback scores.
+            list[Score]: ``[]`` for non-applicable evidence, or one or more completed or
+                undetermined fallback scores.
         """
         ...
 
@@ -1224,11 +1230,11 @@ class MessageScorer(Scorer):
         neutral_value: str,
     ) -> list[Score]:
         """
-        Build the family's neutral result for a message that carries nothing to score.
+        Build the family's result for blocked, unreadable, or non-applicable evidence.
 
         This shared message policy returns an undetermined score for an unreadable transport
         or protocol response. It returns the score family's neutral value for a fully blocked
-        response or one with no supported data type.
+        response. Unsupported roles, data types, or other validator requirements return ``[]``.
 
         Args:
             message (Message): The message that carries no readable pieces.
@@ -1236,8 +1242,9 @@ class MessageScorer(Scorer):
             neutral_value (str): The family's neutral score value, such as "false" or "0.0".
 
         Returns:
-            list[Score]: One neutral score of this scorer's type, or one undetermined score
-                when the response failed with an error.
+            list[Score]: ``[]`` for non-applicable evidence; a list containing one completed
+                neutral score for a fully blocked response; or a list containing one
+                undetermined score for another response error.
 
         Raises:
             ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
@@ -1245,10 +1252,8 @@ class MessageScorer(Scorer):
         scorer_pieces = [
             piece for piece in message.message_pieces if self._validator.is_role_supported(message_piece=piece)
         ]
-        first_piece = scorer_pieces[0] if scorer_pieces else message.message_pieces[0]
-        piece_id = first_piece.id or first_piece.original_prompt_id
-        if piece_id is None:
-            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
+        if not scorer_pieces:
+            return []
 
         error_piece = next(
             (
@@ -1261,6 +1266,9 @@ class MessageScorer(Scorer):
 
         if error_piece is not None:
             # A transport or protocol failure is not the target's answer, so there is no verdict.
+            piece_id = error_piece.id or error_piece.original_prompt_id
+            if piece_id is None:
+                raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
             return [
                 self._build_undetermined_score(
                     rationale=f"Response had an error: {error_piece.response_error}; no verdict was reachable.",
@@ -1269,13 +1277,15 @@ class MessageScorer(Scorer):
                     objective=objective,
                 )
             ]
-        if scorer_pieces and all(piece.is_blocked() for piece in scorer_pieces):
-            rationale = f"The response was blocked with no content to score; returning {neutral_value}."
-            description = f"Blocked response; returning {neutral_value}."
-        else:
-            # this can happen with multi-modal responses if no supported pieces are present
-            rationale = f"No supported pieces to score after filtering; returning {neutral_value}."
-            description = f"No pieces to score after filtering; returning {neutral_value}."
+        if not all(piece.is_blocked() for piece in scorer_pieces):
+            return []
+
+        first_piece = scorer_pieces[0]
+        piece_id = first_piece.id or first_piece.original_prompt_id
+        if piece_id is None:
+            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
+        rationale = f"The response was blocked with no content to score; returning {neutral_value}."
+        description = f"Blocked response; returning {neutral_value}."
 
         return [
             Score(

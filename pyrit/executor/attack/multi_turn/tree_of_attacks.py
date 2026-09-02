@@ -806,9 +806,9 @@ class _TreeOfAttacksNode:
 
         Scorers apply their own unreadable-response policy. A fully blocked response uses the
         scorer family's neutral fallback unless the scorer overrides it. An unreadable transport
-        or protocol response produces an undetermined score. A response with no role supported
-        by the objective scorer produces no objective score, so this method raises ``RuntimeError``.
-        Tree of Attacks does not map these outcomes to ``False`` or ``0.0``.
+        or protocol response produces an undetermined score. A response with no supported role
+        or data type makes the scorer return ``[]``, so this method raises ``RuntimeError``. Tree
+        of Attacks does not map these outcomes to ``False`` or ``0.0``.
 
         Args:
             response (Message): The response from the objective target to evaluate.

@@ -52,8 +52,8 @@ class ScorerPromptValidator:
             enforce_all_pieces_valid (bool | None): Whether all pieces must be valid or just at least one.
                 Defaults to False.
             raise_on_no_valid_pieces (bool | None): Whether to raise ValueError when no pieces are valid.
-                Defaults to False, allowing scorers to handle empty results gracefully (e.g., returning
-                False for blocked responses). Set to True to raise an exception instead.
+                Defaults to False, allowing scorers to return ``[]`` for non-applicable evidence.
+                Set to True to raise an exception instead.
             is_objective_required (bool): Whether an objective must be provided for scoring. Defaults to False.
         """
         if supported_data_types:

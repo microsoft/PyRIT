@@ -130,7 +130,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             expectation (ScoringExpectation | None): What the child scorers should look for.
 
         Returns:
-            list[Score]: A single-element list with the aggregated true/false score.
+            list[Score]: ``[]`` when every child is non-applicable; otherwise, a list
+                containing one completed or undetermined aggregate score.
         """
         score_list_results = await asyncio.gather(
             *(scorer._score_nested_async(scorable=scorable, expectation=expectation) for scorer in self._scorers)
