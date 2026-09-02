@@ -22,6 +22,23 @@ from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
+def _build_threshold_rationale(*, scorer_type: str, verdict: str, scale_rationale: str | None) -> str:
+    """
+    Join the threshold verdict with the wrapped scorer's rationale.
+
+    The wrapped scorer does not always supply a rationale (``AzureContentFilterScorer``
+    routinely does not). Omitting the label in that case keeps the persisted rationale
+    readable everywhere it is shown instead of ending on a dangling heading.
+
+    Returns:
+        str: The composed rationale.
+    """
+    lines = [f"based on {scorer_type}", verdict]
+    if scale_rationale and scale_rationale.strip():
+        lines.append(f"Rationale for scale score: {scale_rationale.strip()}")
+    return "\n".join(lines)
+
+
 class FloatScaleThresholdScorer(TrueFalseScorer):
     """A scorer that applies a threshold to a float scale score to make it a true/false score."""
 
@@ -161,9 +178,10 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
                     score_value=None,
                     status=ScoreStatus.UNDETERMINED,
                     score_value_description=aggregate_score.description,
-                    score_rationale=(
-                        f"based on {scorer_type}\nNo verdict was reachable, so the threshold "
-                        f"{self._threshold} could not be applied.\n{aggregate_score.rationale}"
+                    score_rationale=_build_threshold_rationale(
+                        scorer_type=scorer_type,
+                        verdict=(f"No verdict was reachable, so the threshold {self._threshold} could not be applied."),
+                        scale_rationale=aggregate_score.rationale,
                     ),
                     score_category=aggregate_score.category,
                     score_metadata=dict(aggregate_score.metadata),
@@ -193,10 +211,10 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         # returns more than one score (e.g. AzureContentFilterScorer, one per harm
         # category): the value would say True while the category, rationale and metadata
         # described a different, possibly zero-valued, category.
-        score.score_rationale = (
-            f"based on {scorer_type}\n"
-            f"Normalized scale score: {aggregate_value} {comparison_symbol} threshold {self._threshold}\n"
-            f"Rationale for scale score: {aggregate_score.rationale}"
+        score.score_rationale = _build_threshold_rationale(
+            scorer_type=scorer_type,
+            verdict=f"Normalized scale score: {aggregate_value} {comparison_symbol} threshold {self._threshold}",
+            scale_rationale=aggregate_score.rationale,
         )
         score.score_value_description = aggregate_score.description
         score.score_category = aggregate_score.category
