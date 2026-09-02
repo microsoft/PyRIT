@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AudioAchillesHeel": "pyrit.scenario.scenarios.garak.audio_achilles_heel",
     "AudioAchillesHeelTechnique": "pyrit.scenario.scenarios.garak.audio_achilles_heel",
+    "Divergence": "pyrit.scenario.scenarios.garak.divergence",
+    "DivergenceTechnique": "pyrit.scenario.scenarios.garak.divergence",
     "Doctor": "pyrit.scenario.scenarios.garak.doctor",
     "DoctorTechnique": "pyrit.scenario.scenarios._dynamic_techniques",
     "Encoding": "pyrit.scenario.scenarios.garak.encoding",
