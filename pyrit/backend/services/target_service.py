@@ -158,8 +158,16 @@ class TargetService:
 
         Remove this method with the ``/catalog`` route after the frontend uses
         ``list_target_types_async``.
+
+        Returns:
+            TargetCatalogResponse: The scalar-only legacy projection.
         """
-        return await self.list_target_types_async()
+        types_response = await self.list_target_types_async()
+        items = [
+            entry.model_copy(update={"parameters": [p for p in entry.parameters if p.is_string_coercible]})
+            for entry in types_response.items
+        ]
+        return TargetCatalogResponse(items=items)
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
         """

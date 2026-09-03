@@ -14,12 +14,16 @@ Converters can be:
 
 import base64
 import binascii
-import mimetypes
 import uuid
+from contextlib import suppress
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
+
+import aiofiles
+import aiofiles.os
 
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
@@ -34,12 +38,34 @@ from pyrit.backend.models.converters import (
     CreateConverterRequest,
     PreviewStep,
 )
+from pyrit.common.path import DB_DATA_PATH
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
 from pyrit.registry.components import ConverterRegistry
 
 if TYPE_CHECKING:
     from pyrit.converter import ConverterResult
+
+
+@dataclass(frozen=True)
+class _UploadFormat:
+    """Server-owned format contract for one constructor upload."""
+
+    extension: str
+    signatures: tuple[bytes, ...]
+
+
+_PATH_UPLOAD_FORMATS: dict[tuple[str, str], dict[str, _UploadFormat]] = {
+    ("PDFConverter", "existing_pdf"): {
+        "application/pdf": _UploadFormat(extension=".pdf", signatures=(b"%PDF-",)),
+    },
+    ("TransparencyAttackConverter", "benign_image_path"): {
+        "image/jpeg": _UploadFormat(extension=".jpg", signatures=(b"\xff\xd8\xff",)),
+    },
+}
+_ACTIVE_CONTENT_TYPES = frozenset({"application/xhtml+xml", "image/svg+xml", "text/html"})
+_OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
+_REGISTRY_UPLOAD_DIRECTORY = DB_DATA_PATH / "registry-uploads"
 
 
 class ConverterService:
@@ -120,8 +146,16 @@ class ConverterService:
 
         Remove this method with the ``/catalog`` route when the chat-migration
         stack layer uses ``list_converter_types_async``.
+
+        Returns:
+            ConverterCatalogResponse: The scalar-only legacy projection.
         """
-        return await self.list_converter_types_async()
+        types_response = await self.list_converter_types_async()
+        items = [
+            entry.model_copy(update={"parameters": [p for p in entry.parameters if p.is_string_coercible]})
+            for entry in types_response.items
+        ]
+        return ConverterCatalogResponse(items=items)
 
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """
@@ -151,6 +185,12 @@ class ConverterService:
         Returns:
             bool: True when an instance was removed, otherwise False.
         """
+        entry = self._registry.instances.get_entry(converter_id)
+        if entry is None:
+            return False
+
+        owned_paths = self._get_owned_artifact_paths(entry.metadata)
+        await self._remove_owned_artifacts_async(paths=owned_paths)
         return self._registry.instances.unregister(converter_id) is not None
 
     async def create_converter_async(self, *, request: CreateConverterRequest) -> ConverterInstance:
@@ -176,12 +216,20 @@ class ConverterService:
         # generated fallback when that UI sends an explicit registry name.
         converter_id = request.name or f"compat_{uuid.uuid4().hex}"
         self._registry.instances.validate_name_available(converter_id)
-        params = await self._persist_data_uri_params_async(converter_type=request.type, params=request.params)
-        converter_obj = self._registry.create_named_instance(
-            name=converter_id,
+        params, owned_paths = await self._persist_data_uri_params_async(
             converter_type=request.type,
-            **params,
+            params=request.params,
         )
+        try:
+            converter_obj = self._registry.create_named_instance(
+                name=converter_id,
+                converter_type=request.type,
+                registry_metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
+                **params,
+            )
+        except Exception:
+            await self._remove_owned_artifacts_async(paths=owned_paths)
+            raise
 
         return self._build_instance_from_object(
             converter_id=converter_id,
@@ -284,15 +332,14 @@ class ConverterService:
         *,
         converter_type: str,
         params: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], list[Path]]:
         """
-        Persist data-URI parameter values to disk.
+        Persist uploaded ``Path`` parameter values to managed local storage.
 
         The frontend file picker sends file contents as data URIs
         (e.g. ``data:image/png;base64,...``). Constructor parameters typed as
-        ``Path`` or ``str`` params whose names suggest a file path receive the
-        decoded file persisted to the results store, with the value replaced
-        by the resulting file path.
+        ``Path`` receive the decoded file in a local working directory that is
+        independent of the configured CentralMemory results store.
 
         The set of constructor parameters (and their types) is sourced from the
         registry's derived ``Parameter`` metadata rather than re-introspecting the
@@ -303,47 +350,128 @@ class ConverterService:
             params (dict[str, Any]): The raw constructor params from the request.
 
         Returns:
-            dict[str, Any]: Params dict with data-URI values replaced by file paths.
+            tuple[dict[str, Any], list[Path]]: Updated parameters and the explicit
+                set of request-created files owned by the future registry entry.
+
+        Raises:
+            ValueError: If a ``Path`` value is not a valid, allowed data URI.
         """
         metadata = self._registry.get_registered_class_metadata(converter_type)
         param_types = {p.name: p.param_type for p in metadata.parameters} if metadata else {}
 
         result = dict(params)
-        for name, value in result.items():
-            if param_types.get(name) is Path and isinstance(value, str) and not value.startswith("data:"):
-                raise ValueError(f"Path parameter '{name}' must be uploaded as a data URI")
-            if not isinstance(value, str) or not value.startswith("data:"):
-                continue
-            if name not in param_types:
-                continue
+        owned_paths: list[Path] = []
+        try:
+            for name, value in result.items():
+                if param_types.get(name) is not Path:
+                    continue
+                if value is None:
+                    continue
+                if not isinstance(value, str) or not value.startswith("data:"):
+                    raise ValueError(f"Path parameter '{name}' must be uploaded as a data URI")
 
-            # Parse data URI: data:[<mediatype>][;base64],<data>
-            header, _, payload = value.partition(",")
-            if not payload:
-                continue
-
-            # Derive extension from the MIME type in the header
-            mime_type = header.split(":")[1].split(";")[0] if ":" in header else ""
-            ext = mimetypes.guess_extension(mime_type, strict=False) if mime_type else None
-            if not ext:
-                ext = ".bin"
-
-            serializer = data_serializer_factory(
-                category="prompt-memory-entries",
-                data_type="binary_path",
-                extension=ext,
-            )
-            await serializer.save_data_async(data=base64.b64decode(payload))
-            file_path = str(serializer.value)
-
-            # The registry already unwraps Optional, so ``param_type`` is ``Path``
-            # for a ``Path | None`` constructor parameter.
-            if param_types[name] is Path:
-                result[name] = Path(file_path)
-            else:
+                content, upload_format = self._validate_path_upload(
+                    converter_type=converter_type,
+                    parameter_name=name,
+                    data_uri=value,
+                )
+                file_path = await self._save_owned_artifact_async(
+                    content=content,
+                    extension=upload_format.extension,
+                )
+                owned_paths.append(file_path)
                 result[name] = file_path
+        except Exception:
+            await self._remove_owned_artifacts_async(paths=owned_paths)
+            raise
 
-        return result
+        return result, owned_paths
+
+    @staticmethod
+    def _validate_path_upload(
+        *,
+        converter_type: str,
+        parameter_name: str,
+        data_uri: str,
+    ) -> tuple[bytes, _UploadFormat]:
+        """
+        Validate a constructor upload against its server-owned format contract.
+
+        Returns:
+            tuple[bytes, _UploadFormat]: The decoded content and its trusted format.
+        """
+        header, separator, payload = data_uri.partition(",")
+        header_parts = header[5:].split(";") if header.startswith("data:") else []
+        if not separator or len(header_parts) != 2 or header_parts[1].lower() != "base64" or not payload:
+            raise ValueError(f"Path parameter '{parameter_name}' must be a base64 data URI")
+
+        mime_type = header_parts[0].lower()
+        if mime_type in _ACTIVE_CONTENT_TYPES:
+            raise ValueError(f"Active content type '{mime_type}' is not allowed for Path parameter '{parameter_name}'")
+
+        allowed_formats = _PATH_UPLOAD_FORMATS.get((converter_type, parameter_name))
+        if not allowed_formats:
+            raise ValueError(
+                f"Path parameter '{parameter_name}' on '{converter_type}' does not have an upload format contract"
+            )
+        upload_format = allowed_formats.get(mime_type)
+        if upload_format is None:
+            allowed_types = ", ".join(sorted(allowed_formats))
+            raise ValueError(
+                f"Content type '{mime_type}' is not allowed for Path parameter '{parameter_name}'; "
+                f"expected one of: {allowed_types}"
+            )
+
+        try:
+            content = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Path parameter '{parameter_name}' contains invalid base64 data") from exc
+        if not any(content.startswith(signature) for signature in upload_format.signatures):
+            raise ValueError(
+                f"Uploaded content for Path parameter '{parameter_name}' does not match declared MIME type "
+                f"'{mime_type}'"
+            )
+        return content, upload_format
+
+    @staticmethod
+    async def _save_owned_artifact_async(*, content: bytes, extension: str) -> Path:
+        """
+        Write one validated upload to the managed local registry directory.
+
+        Returns:
+            Path: The absolute path of the new local artifact.
+        """
+        await aiofiles.os.makedirs(_REGISTRY_UPLOAD_DIRECTORY, exist_ok=True)
+        file_path = (_REGISTRY_UPLOAD_DIRECTORY / f"{uuid.uuid4().hex}{extension}").resolve()
+        async with aiofiles.open(file_path, "xb") as file:
+            await file.write(content)
+        return file_path
+
+    @staticmethod
+    def _get_owned_artifact_paths(metadata: dict[str, Any]) -> list[Path]:
+        """
+        Read explicit artifact ownership from registry-entry metadata.
+
+        Returns:
+            list[Path]: Paths explicitly owned by the registry entry.
+        """
+        raw_paths = metadata.get(_OWNED_ARTIFACT_PATHS_KEY, [])
+        if not isinstance(raw_paths, list) or not all(isinstance(path, str) for path in raw_paths):
+            raise ValueError("Registry entry has invalid owned artifact metadata")
+        return [Path(path) for path in raw_paths]
+
+    @staticmethod
+    async def _remove_owned_artifacts_async(*, paths: list[Path]) -> None:
+        """Remove explicitly owned files, limited to the managed upload directory."""
+        allowed_root = _REGISTRY_UPLOAD_DIRECTORY.resolve()
+        for path in paths:
+            resolved_path = path.resolve()
+            try:
+                resolved_path.relative_to(allowed_root)
+            except ValueError as exc:
+                raise ValueError(f"Owned artifact path is outside the managed upload directory: {path}") from exc
+            with suppress(FileNotFoundError):
+                await aiofiles.os.remove(resolved_path)
 
     def _gather_converters(self, *, converter_ids: list[str]) -> list[tuple[str, str, Any]]:
         """

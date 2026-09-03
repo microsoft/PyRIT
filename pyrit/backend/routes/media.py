@@ -35,7 +35,6 @@ _ALLOWED_EXTENSIONS = {
     ".gif",
     ".bmp",
     ".webp",
-    ".svg",
     ".ico",
     ".tiff",
     # Audio
@@ -56,8 +55,9 @@ _ALLOWED_EXTENSIONS = {
     ".md",
     ".csv",
     ".pdf",
-    ".html",
 }
+
+_ATTACHMENT_EXTENSIONS = {".csv", ".md", ".pdf", ".txt"}
 
 
 def _validate_media_path(*, path: str, allowed_root: Path) -> Path:
@@ -135,7 +135,11 @@ async def serve_media_async(
         raise HTTPException(status_code=404, detail="File not found.")
 
     mime_type, _ = mimetypes.guess_type(validated_path)
+    extension = validated_path.suffix.lower()
     return FileResponse(
         path=validated_path,
         media_type=mime_type or "application/octet-stream",
+        filename=validated_path.name if extension in _ATTACHMENT_EXTENSIONS else None,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
     )

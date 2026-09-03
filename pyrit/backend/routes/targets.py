@@ -76,6 +76,9 @@ async def list_target_catalog() -> TargetCatalogResponse:  # pyrit-async-suffix-
     Return the legacy catalog projection used by the current configuration UI.
 
     Remove this route after the frontend switches to ``/targets/types``.
+
+    Returns:
+        TargetCatalogResponse: The scalar-only legacy catalog projection.
     """
     service = get_target_service()
     return await service.list_target_catalog_async()

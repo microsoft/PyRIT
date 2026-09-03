@@ -253,6 +253,19 @@ class TestListTargetCatalog:
         assert "api_key" in openai_entry.supported_auth_modes
         assert "identity" in openai_entry.supported_auth_modes
 
+    async def test_types_include_references_while_catalog_preserves_scalar_contract(self) -> None:
+        service = TargetService()
+
+        types_result = await service.list_target_types_async()
+        catalog_result = await service.list_target_catalog_async()
+
+        types_entry = next(item for item in types_result.items if item.target_type == "RoundRobinTarget")
+        catalog_entry = next(item for item in catalog_result.items if item.target_type == "RoundRobinTarget")
+        targets_parameter = next(param for param in types_entry.parameters if param.name == "targets")
+        assert targets_parameter.reference_type == "target"
+        assert all(param.name != "targets" for param in catalog_entry.parameters)
+        assert catalog_entry.parameters == [param for param in types_entry.parameters if param.is_string_coercible]
+
     async def test_catalog_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
 

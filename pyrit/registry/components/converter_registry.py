@@ -24,7 +24,7 @@ is the registered converter-class surface. Pre-configured instances live under t
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pyrit.models.identifiers import ConverterIdentifier
 from pyrit.models.parameter import ComponentType
@@ -99,13 +99,22 @@ class ConverterRegistry(Registry["Converter", ConverterMetadata]):
             reserved_names={"catalog", "preview", "types"},
         )
 
-    def create_named_instance(self, *, name: str, converter_type: str, **kwargs: object) -> Converter:
+    def create_named_instance(
+        self,
+        *,
+        name: str,
+        converter_type: str,
+        registry_metadata: dict[str, Any] | None = None,
+        **kwargs: object,
+    ) -> Converter:
         """
         Build and store a converter under an explicit registry name.
 
         Args:
             name (str): The unique registry name.
             converter_type (str): The registered converter class name.
+            registry_metadata (dict[str, Any] | None): Per-entry lifecycle metadata
+                to store with the instance.
             **kwargs (object): Constructor arguments.
 
         Returns:
@@ -113,7 +122,7 @@ class ConverterRegistry(Registry["Converter", ConverterMetadata]):
         """
         self.instances.validate_name_available(name)
         converter = self.create_instance(converter_type, **kwargs)
-        self.instances.register(converter, name=name)
+        self.instances.register(converter, name=name, metadata=registry_metadata)
         return converter
 
     def _base_type(self) -> type[Converter]:

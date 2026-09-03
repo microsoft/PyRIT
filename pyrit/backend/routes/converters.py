@@ -67,6 +67,9 @@ async def list_converter_catalog() -> ConverterCatalogResponse:  # pyrit-async-s
 
     Remove this route when the chat-migration stack layer switches to
     ``/converters/types``.
+
+    Returns:
+        ConverterCatalogResponse: The scalar-only legacy catalog projection.
     """
     service = get_converter_service()
     return await service.list_converter_catalog_async()
