@@ -10,8 +10,8 @@ using the pyrit_scan command. Most scenarios run with the
 declare their full initializer list in ``SCENARIO_INITIALIZERS`` and
 extra CLI args in ``SCENARIO_EXTRA_ARGS``.
 
-Note: e2e tests run in the scheduled end-to-end pipeline and via
-``make end-to-end-test`` on developer machines that have the appropriate env vars set
+Note: e2e tests are not part of CI; they run via ``make end-to-end-test``
+on developer machines that have the appropriate env vars set
 (``ADVERSARIAL_CHAT_*`` for the benchmark scenario, in particular). The
 benchmark scenario reads its adversarial targets from ``--adversarial-targets``,
 which resolves names via ``TargetRegistry`` (populated by
@@ -57,8 +57,14 @@ SCENARIO_EXTRA_ARGS: dict[str, list[str]] = {
     "benchmark.adversarial": ["--adversarial-targets", "adversarial_chat"],
 }
 
+#: Per-scenario objective target overrides. Scenarios absent from this map use
+#: ``openai_chat``.
+SCENARIO_TARGETS: dict[str, str] = {
+    "garak.audio_achilles_heel": "azure_openai_realtime",
+}
 
-def get_all_scenarios() -> list[str]:
+
+def get_all_scenarios():
     """
     Dynamically discover all available scenarios from the scenario registry.
 
@@ -79,6 +85,11 @@ def _extra_args_for(scenario_name: str) -> list[str]:
     return SCENARIO_EXTRA_ARGS.get(scenario_name, [])
 
 
+def _target_for(scenario_name: str) -> str:
+    """Return the objective target for ``scenario_name``, defaulting to ``openai_chat``."""
+    return SCENARIO_TARGETS.get(scenario_name, "openai_chat")
+
+
 @pytest.mark.timeout(7200)  # 2 hour timeout per scenario
 @pytest.mark.flaky(reruns=3, reruns_delay=90)
 @pytest.mark.parametrize("scenario_name", get_all_scenarios())
@@ -91,13 +102,14 @@ def test_scenario_with_pyrit_scan(scenario_name: str, capsys: pytest.CaptureFixt
     """
     initializers = _initializers_for(scenario_name)
     extra_args = _extra_args_for(scenario_name)
+    target = _target_for(scenario_name)
     result = pyrit_scan_main(
         [
             scenario_name,
             "--initializers",
             *initializers,
             "--target",
-            "openai_chat",
+            target,
             "--config-file",
             str(CONFIG_FILE),
             "--request-timeout",
