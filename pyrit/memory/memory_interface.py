@@ -2,17 +2,21 @@
 # Licensed under the MIT license.
 
 import abc
+import asyncio
 import atexit
+import hashlib
+import json
 import logging
 import re
 import uuid
 import weakref
-from collections.abc import Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
+from urllib.parse import urlparse
 
 from sqlalchemy import MetaData, and_, func, not_, or_, select
 from sqlalchemy.engine.base import Engine
@@ -25,7 +29,6 @@ if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
-    AdditionalInitializerEntry,
     AtomicAttackIdentifierEntry,
     AttackIdentifierEntry,
     AttackResultEntry,
@@ -39,6 +42,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
     ScenarioResultEntry,
+    ScorableContentEntry,
     ScoreEntry,
     ScorerIdentifierEntry,
     SeedEntry,
@@ -52,12 +56,15 @@ from pyrit.memory.storage import (
     set_seed_sha256_async,
 )
 from pyrit.models import (
-    AdditionalInitializer,
+    MEDIA_PATH_DATA_TYPES,
     AtomicAttackIdentifier,
     AttackIdentifier,
+    AttackOutcome,
     AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    ContentEntryScorable,
+    ContentScorable,
     Conversation,
     ConversationRetry,
     ConversationRetryReason,
@@ -67,11 +74,16 @@ from pyrit.models import (
     IdentifierType,
     Message,
     MessagePiece,
+    MessageScorable,
+    RetryEvent,
+    ScenarioAttackResultDelta,
     ScenarioIdentifier,
+    ScenarioProgressScore,
     ScenarioResult,
     ScenarioRunState,
     Score,
     ScorerIdentifier,
+    ScoreStatus,
     Seed,
     SeedDataset,
     SeedGroup,
@@ -92,7 +104,16 @@ Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
 
 
-class AttackResultsKeysetCursor(NamedTuple):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _PreparedScorableContent:
+    """A loose-content value prepared for durable database persistence."""
+
+    source: ContentScorable
+    stored: ContentScorable
+    value_sha256: str
+
+
+class AttackResultKeysetCursor(NamedTuple):
     """
     Keyset (seek) anchor identifying the last attack result on a page.
 
@@ -108,12 +129,12 @@ class AttackResultsKeysetCursor(NamedTuple):
     attack_result_id: str
 
     @classmethod
-    def from_attack_result(cls, result: AttackResult) -> "AttackResultsKeysetCursor":
+    def from_attack_result(cls, result: AttackResult) -> "AttackResultKeysetCursor":
         """
         Build the keyset anchor for ``result`` (typically the last row of a page).
 
         Returns:
-            AttackResultsKeysetCursor: Anchor capturing the result's recency sort key.
+            AttackResultKeysetCursor: Anchor capturing the result's recency sort key.
         """
         return cls(
             timestamp=result.timestamp,
@@ -157,7 +178,7 @@ class _AttackResultQuery:
     min_turns: int | None = None
     max_turns: int | None = None
     limit: int | None = None
-    after: AttackResultsKeysetCursor | None = None
+    after: AttackResultKeysetCursor | None = None
 
     def __post_init__(self) -> None:
         """Snapshot mutable sequence and mapping inputs."""
@@ -413,7 +434,7 @@ class MemoryInterface(abc.ABC):
         """
         return [AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()]
 
-    def _attack_results_keyset_seek_condition(self, *, after: AttackResultsKeysetCursor) -> Any:
+    def _attack_results_keyset_seek_condition(self, *, after: AttackResultKeysetCursor) -> Any:
         """
         Build the keyset seek predicate selecting rows strictly after ``after``.
 
@@ -444,53 +465,6 @@ class MemoryInterface(abc.ABC):
         """
         result: Sequence[EmbeddingDataEntry] = self._query_entries(EmbeddingDataEntry)
         return result
-
-    def add_additional_initializer(self, *, initializer: AdditionalInitializer) -> None:
-        """
-        Insert or replace an additional initializer, keyed by its ``id``.
-
-        Args:
-            initializer: The additional initializer to persist.
-        """
-        self._update_entry(AdditionalInitializerEntry.from_domain_model(initializer))
-
-    def get_additional_initializers(self) -> Sequence[AdditionalInitializer]:
-        """
-        Load all additional initializers in run order.
-
-        Returns:
-            Sequence[AdditionalInitializer]: The persisted initializers ordered by
-            ``order_index`` then ``id`` for a stable, deterministic startup sequence.
-        """
-        entries = self._query_entries(
-            AdditionalInitializerEntry,
-            order_by=AdditionalInitializerEntry.order_index.asc(),
-        )
-        return sorted(
-            (entry.to_domain_model() for entry in entries),
-            key=lambda item: (item.order_index is None, item.order_index or 0, item.id),
-        )
-
-    def delete_additional_initializer(self, *, initializer_id: str) -> None:
-        """
-        Delete an additional initializer by id when it exists.
-
-        Args:
-            initializer_id: The additional initializer row id to delete.
-
-        Raises:
-            SQLAlchemyError: If the delete operation fails.
-        """
-        with closing(self.get_session()) as session:
-            try:
-                session.query(AdditionalInitializerEntry).filter(
-                    AdditionalInitializerEntry.id == initializer_id
-                ).delete(synchronize_session=False)
-                session.commit()
-            except SQLAlchemyError as e:
-                session.rollback()
-                logger.exception(f"Error deleting additional initializer '{initializer_id}': {e}")
-                raise
 
     @abc.abstractmethod
     def _init_storage_io(self) -> None:
@@ -1601,6 +1575,95 @@ class MemoryInterface(abc.ABC):
 
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
+        Persist scores whose loose-content anchors need no asynchronous file copy.
+
+        File-backed ``ContentScorable`` values must use ``add_scores_to_memory_async``
+        so the source bytes can be copied into managed results storage.
+        """
+        self._add_scores_to_memory(scores=scores, prepared_content_hashes={})
+
+    async def add_scores_to_memory_async(self, *, scores: Sequence[Score]) -> None:
+        """Prepare file-backed loose content, then persist the scores and their anchors."""
+        media_scorables = list(
+            dict.fromkeys(
+                score.scorable
+                for score in scores
+                if isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
+            )
+        )
+        if not media_scorables:
+            self.add_scores_to_memory(scores=scores)
+            return
+
+        prepared_content = await asyncio.gather(
+            *(self._prepare_scorable_content_async(scorable=scorable) for scorable in media_scorables)
+        )
+        prepared_by_source = {content.source: content for content in prepared_content}
+        prepared_hashes = {content.stored: content.value_sha256 for content in prepared_content}
+
+        copied_scores: list[tuple[Score, Score]] = []
+        scores_to_persist: list[Score] = []
+        for score in scores:
+            scorable = score.scorable
+            prepared = prepared_by_source.get(scorable) if isinstance(scorable, ContentScorable) else None
+            if prepared is None:
+                scores_to_persist.append(score)
+                continue
+            copied_score = score.model_copy(update={"scorable": prepared.stored})
+            copied_scores.append((score, copied_score))
+            scores_to_persist.append(copied_score)
+
+        self._add_scores_to_memory(
+            scores=scores_to_persist,
+            prepared_content_hashes=prepared_hashes,
+        )
+        for original_score, copied_score in copied_scores:
+            original_score.scorable = copied_score.scorable
+
+    async def _prepare_scorable_content_async(
+        self,
+        *,
+        scorable: ContentScorable,
+    ) -> _PreparedScorableContent:
+        """
+        Copy one media value into managed results storage and calculate its digest.
+
+        Returns:
+            _PreparedScorableContent: The managed content reference and its digest.
+        """
+        source_serializer = data_serializer_factory(
+            category="scorable-content-entries",
+            data_type=scorable.data_type,
+            value=scorable.value,
+        )
+        content = await source_serializer.read_data_async()
+        value_sha256 = hashlib.sha256(content).hexdigest()
+        parsed_source = urlparse(scorable.value)
+        extension_source = parsed_source.path if parsed_source.scheme in {"http", "https"} else scorable.value
+        extension = DataTypeSerializer.get_extension(extension_source)
+        destination_serializer = data_serializer_factory(
+            category="scorable-content-entries",
+            data_type=scorable.data_type,
+            extension=extension.removeprefix(".") if extension else None,
+        )
+        await destination_serializer.save_data_async(content, output_filename=value_sha256)
+        stored = ContentScorable(
+            value=destination_serializer.value,
+            data_type=scorable.data_type,
+        )
+        return _PreparedScorableContent(
+            source=scorable,
+            stored=stored,
+            value_sha256=value_sha256,
+        )
+
+    def _add_scores_to_memory(
+        self,
+        *,
+        scores: Sequence[Score],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> None:
+        """
         Insert a list of scores into the memory storage.
 
         Callers that produce scores for pieces flagged via
@@ -1611,22 +1674,58 @@ class MemoryInterface(abc.ABC):
         analytics (e.g. refusal rate over a batch) still want the score row
         even when the scored content was never a real conversation turn.
 
+        A score anchored on loose content has that content written to
+        ``ScorableContentEntries`` and its anchor rewritten to name the stored row, so a
+        score's input can still be recovered when it was never a conversation turn.
+
         Raises:
             SQLAlchemyError: If the score or identifier rows cannot be persisted.
         """
+        referenced_piece_ids = {str(score.message_piece_id) for score in scores if score.message_piece_id}
+        referenced_piece_ids.update(
+            str(piece_id)
+            for score in scores
+            if isinstance(score.scorable, MessageScorable)
+            for piece_id in score.scorable.message_piece_ids
+        )
+        pieces_by_id = {
+            str(piece.id): piece
+            for piece in (
+                self.get_message_pieces(prompt_ids=sorted(referenced_piece_ids)) if referenced_piece_ids else []
+            )
+        }
+        original_ids: dict[str, uuid.UUID] = {
+            piece_id: original_prompt_id
+            for piece_id, piece in pieces_by_id.items()
+            if (original_prompt_id := piece.original_prompt_id) is not None and original_prompt_id != piece.id
+        }
         for score in scores:
-            if score.message_piece_id:
-                message_piece_id = score.message_piece_id
-                pieces = self.get_message_pieces(prompt_ids=[str(message_piece_id)])
-                if not pieces:
-                    logger.error(f"MessagePiece with ID {message_piece_id} not found in memory.")
-                    continue
-                # auto-link score to the original prompt id if the prompt is a duplicate
-                if pieces[0].original_prompt_id != pieces[0].id:
-                    score.message_piece_id = pieces[0].original_prompt_id  # type: ignore[ty:invalid-assignment]
-        entries = [ScoreEntry(entry=score) for score in scores]
+            if score.message_piece_id and str(score.message_piece_id) not in pieces_by_id:
+                logger.error(f"MessagePiece with ID {score.message_piece_id} not found in memory.")
+            if score.message_piece_id and (original_id := original_ids.get(str(score.message_piece_id))):
+                score.message_piece_id = original_id  # type: ignore[ty:invalid-assignment]
+            if isinstance(score.scorable, MessageScorable):
+                mapped_piece_ids: tuple[uuid.UUID, ...] = tuple(
+                    original_ids.get(str(piece_id), uuid.UUID(str(piece_id)))
+                    for piece_id in score.scorable.message_piece_ids
+                )
+                if mapped_piece_ids != score.scorable.message_piece_ids:
+                    score.scorable = MessageScorable(message_piece_ids=mapped_piece_ids)
+        content_entries, anchor_rewrites = self._store_scorable_content(
+            scores=scores,
+            prepared_content_hashes=prepared_content_hashes,
+        )
+        anchors_by_score = {id(score): anchor for score, anchor in anchor_rewrites}
+        persisted_scores = [
+            score.model_copy(update={"scorable": anchors_by_score[id(score)]})
+            if id(score) in anchors_by_score
+            else score
+            for score in scores
+        ]
+        entries = [ScoreEntry(entry=score) for score in persisted_scores]
         with closing(self.get_session()) as session:
             try:
+                session.add_all(content_entries)
                 for entry in entries:
                     if entry.scorer_class_identifier:
                         self._persist_scorer_identifier(
@@ -1635,10 +1734,80 @@ class MemoryInterface(abc.ABC):
                         )
                 session.add_all(entries)
                 session.commit()
+                for score, anchor in anchor_rewrites:
+                    score.scorable = anchor
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error inserting scores: {e}")
                 raise
+
+    @staticmethod
+    def _store_scorable_content(
+        *,
+        scores: Sequence[Score],
+        prepared_content_hashes: Mapping[ContentScorable, str],
+    ) -> tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+        """
+        Turn loose-content anchors into stored references.
+
+        Scores sharing the same content share one row, so a scorer that returns several
+        scores over one input (a category per harm, say) does not duplicate it.
+
+        Returns:
+            tuple[list[ScorableContentEntry], list[tuple[Score, ContentEntryScorable]]]:
+                Content rows to insert and anchor rewrites to publish after commit.
+
+        Raises:
+            ValueError: If file-backed content was not prepared through the async path.
+        """
+        rows: dict[ContentScorable, ScorableContentEntry] = {}
+        anchor_rewrites: list[tuple[Score, ContentEntryScorable]] = []
+        for score in scores:
+            scorable = score.scorable
+            if not isinstance(scorable, ContentScorable):
+                continue
+            row = rows.get(scorable)
+            if row is None:
+                value_sha256 = prepared_content_hashes.get(scorable)
+                if scorable.data_type in MEDIA_PATH_DATA_TYPES and value_sha256 is None:
+                    raise ValueError(
+                        "File-backed ContentScorable values require add_scores_to_memory_async "
+                        "so PyRIT can copy the source bytes into managed storage."
+                    )
+                row = ScorableContentEntry(
+                    id=uuid.uuid4(),
+                    value=scorable.value,
+                    value_sha256=value_sha256 or hashlib.sha256(scorable.value.encode("utf-8")).hexdigest(),
+                    data_type=scorable.data_type,
+                    timestamp=datetime.now(tz=timezone.utc),
+                )
+                rows[scorable] = row
+            anchor_rewrites.append((score, ContentEntryScorable(content_id=row.id, data_type=scorable.data_type)))
+        return list(rows.values()), anchor_rewrites
+
+    def get_scorable_content(self, *, content_ids: Sequence[uuid.UUID | str]) -> dict[uuid.UUID, ContentScorable]:
+        """
+        Load the loose content that stored scores are anchored on.
+
+        Args:
+            content_ids: The ids named by ``ContentEntryScorable`` anchors.
+
+        Returns:
+            dict[uuid.UUID, ContentScorable]: The content by id, omitting ids with no row.
+        """
+        if not content_ids:
+            return {}
+        wanted = [str(content_id) for content_id in content_ids]
+        entries = self._execute_batched_query(
+            ScorableContentEntry,
+            batch_column=ScorableContentEntry.id,
+            batch_values=wanted,
+        )
+        return {
+            entry.id: ContentScorable(value=entry.value, data_type=entry.data_type)
+            for entry in entries
+            if entry.value is not None
+        }
 
     @classmethod
     def _persist_scorer_identifier(cls, *, session: Any, scorer_identifier: ScorerIdentifier) -> None:
@@ -1778,7 +1947,22 @@ class MemoryInterface(abc.ABC):
             batch_values=list(original_ids),
             other_conditions=[],
         )
-        return [entry.get_score() for entry in score_entries]
+        entries_by_id = {entry.id: entry for entry in score_entries}
+
+        original_id_values = [str(original_id) for original_id in original_ids]
+        json_batch_size = max(1, self._MAX_BIND_VARS - 1)
+        for start in range(0, len(original_id_values), json_batch_size):
+            batch = original_id_values[start : start + json_batch_size]
+            scorable_condition = self._get_condition_json_array_match(
+                json_column=ScoreEntry.scorable,
+                property_path="$.message_piece_ids",
+                array_to_match=batch,
+                match_mode="any",
+            )
+            anchored_entries = self._query_entries(ScoreEntry, conditions=scorable_condition)
+            entries_by_id.update({entry.id: entry for entry in anchored_entries})
+
+        return [entry.get_score() for entry in entries_by_id.values()]
 
     def get_conversation_messages(self, *, conversation_id: str) -> MutableSequence[Message]:
         """
@@ -2745,6 +2929,9 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
+        Seeds already present in storage are skipped. Duplicates *within* ``seeds`` are all
+        inserted, because the check looks at what storage held when the call started.
+
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
             added_by (str): The user who added the seeds.
@@ -2752,17 +2939,79 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        entries: MutableSequence[SeedEntry] = []
         current_time = datetime.now(tz=timezone.utc)
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
-            if prompt.value_sha256 and not self.get_seeds(
-                value_sha256=[prompt.value_sha256], dataset_name=prompt.dataset_name
-            ):
-                entries.append(SeedEntry(entry=prompt))
+        existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
+
+        entries: MutableSequence[SeedEntry] = []
+        for prompt in seeds:
+            if not prompt.value_sha256:
+                continue
+            # A seed without a dataset name matches the hash in any dataset, mirroring the
+            # filter that is applied when dataset_name is not supplied.
+            if prompt.dataset_name:
+                if (prompt.value_sha256, prompt.dataset_name) in existing_pairs:
+                    continue
+            elif prompt.value_sha256 in existing_hashes:
+                continue
+            entries.append(SeedEntry(entry=prompt))
 
         self._insert_entries(entries=entries)
+
+    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed]) -> tuple[set[tuple[str, str]], set[str]]:
+        """
+        Look up which of these seeds' hashes are already stored.
+
+        Queries in chunks rather than once per seed, which otherwise dominates the cost of
+        loading a large dataset. ``get_seeds`` issues the statement directly instead of going
+        through the batching helpers, so the bound has to be applied here.
+
+        The seeds are grouped by dataset name so the name is still compared by the database
+        rather than in Python. Equality here is a property of the column's collation: Azure
+        SQL's default is case-insensitive, T-SQL also ignores trailing blanks, and an
+        accent-insensitive collation folds further still. Comparing the names in Python would
+        silently impose one fixed rule on every backend and insert a duplicate wherever the
+        stored spelling differs from the incoming one.
+
+        Args:
+            seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
+
+        Returns:
+            tuple[set[tuple[str, str]], set[str]]: The stored (value_sha256, dataset_name)
+                pairs keyed by the requested dataset name, and the stored hashes irrespective
+                of dataset.
+        """
+        hashes_by_dataset: dict[str | None, set[str]] = {}
+        for prompt in seeds:
+            if prompt.value_sha256:
+                # An empty name filters nothing, exactly like None, and the caller below
+                # treats both as "match the hash in any dataset". Normalize so the two
+                # cannot disagree.
+                hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
+
+        existing_pairs: set[tuple[str, str]] = set()
+        existing_hashes: set[str] = set()
+        for dataset_name, dataset_hashes in hashes_by_dataset.items():
+            hashes = sorted(dataset_hashes)
+            # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
+            # binds, so the hashes get what is left rather than the full ceiling.
+            chunk_size = self._MAX_BIND_VARS - (1 if dataset_name is not None else 0)
+            for index in range(0, len(hashes), chunk_size):
+                chunk = hashes[index : index + chunk_size]
+                for existing in self.get_seeds(value_sha256=chunk, dataset_name=dataset_name):
+                    if not existing.value_sha256:
+                        continue
+                    if dataset_name:
+                        # The database decided the name matched, so record the name that was
+                        # asked for; the stored spelling can differ under a case-insensitive
+                        # collation.
+                        existing_pairs.add((existing.value_sha256, dataset_name))
+                    else:
+                        existing_hashes.add(existing.value_sha256)
+
+        return existing_pairs, existing_hashes
 
     async def add_seed_datasets_to_memory_async(self, *, datasets: Sequence[SeedDataset], added_by: str) -> None:
         """
@@ -3103,7 +3352,7 @@ class MemoryInterface(abc.ABC):
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int | None = None,
-        after: AttackResultsKeysetCursor | None = None,
+        after: AttackResultKeysetCursor | None = None,
     ) -> Sequence[AttackResult]:
         """
         Retrieve a list of AttackResult objects based on the specified filters.
@@ -3169,7 +3418,7 @@ class MemoryInterface(abc.ABC):
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
                 deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
                 instead of loading every row into memory. Defaults to None (return all).
-            after (AttackResultsKeysetCursor | None, optional): Keyset (seek) anchor from a
+            after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
                 under the recency sort are returned, giving insert/delete-stable pagination
                 without a drifting numeric offset. Defaults to None (start at the first page).
@@ -3454,7 +3703,7 @@ class MemoryInterface(abc.ABC):
         min_turns: int | None,
         max_turns: int | None,
         limit: int | None,
-        after: AttackResultsKeysetCursor | None,
+        after: AttackResultKeysetCursor | None,
     ) -> list[AttackResult]:
         """
         Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
@@ -3475,7 +3724,7 @@ class MemoryInterface(abc.ABC):
             min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
             max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
             limit (int | None): Maximum number of results to return.
-            after (AttackResultsKeysetCursor | None): Keyset anchor; only rows ordered strictly
+            after (AttackResultKeysetCursor | None): Keyset anchor; only rows ordered strictly
                 after it are returned. ``None`` starts at the first page.
 
         Returns:
@@ -3644,10 +3893,76 @@ class MemoryInterface(abc.ABC):
             entry.scenario_run_state = scenario_run_state.value
             entry.error_message = error_message
             entry.error_type = error_type
+            if scenario_run_state in (
+                ScenarioRunState.COMPLETED,
+                ScenarioRunState.FAILED,
+                ScenarioRunState.CANCELLED,
+            ):
+                entry.completion_time = datetime.now(tz=timezone.utc)
 
             session.commit()
 
         logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
+
+    def try_update_scenario_run_state(
+        self,
+        *,
+        scenario_result_id: str,
+        expected_states: Collection[ScenarioRunState],
+        scenario_run_state: ScenarioRunState,
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> bool:
+        """
+        Update the run state only when the stored state is one of ``expected_states``.
+
+        The compare and the write are a single UPDATE so a run that reached a terminal state
+        on another thread is not overwritten. A read followed by
+        ``update_scenario_run_state`` cannot give that guarantee because scenario
+        preparation and cancellation run on different threads.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+            expected_states (Collection[ScenarioRunState]): States the row may currently be in.
+            scenario_run_state (ScenarioRunState): The new state for the scenario.
+            error_message (str | None): Optional scenario-level error message.
+            error_type (str | None): Optional exception class name.
+
+        Returns:
+            bool: True if the row was updated, False if it was missing or in another state.
+
+        Raises:
+            ValueError: If ``expected_states`` is empty.
+        """
+        if not expected_states:
+            raise ValueError("expected_states must not be empty")
+
+        values: dict[Any, Any] = {
+            "scenario_run_state": scenario_run_state.value,
+            "error_message": error_message,
+            "error_type": error_type,
+        }
+        if scenario_run_state in (
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.CANCELLED,
+        ):
+            values["completion_time"] = datetime.now(tz=timezone.utc)
+
+        with closing(self.get_session()) as session:
+            updated_rows = (
+                session.query(ScenarioResultEntry)
+                .filter(
+                    ScenarioResultEntry.id == scenario_result_id,
+                    ScenarioResultEntry.scenario_run_state.in_([state.value for state in expected_states]),
+                )
+                .update(values, synchronize_session=False)
+            )
+            session.commit()
+
+        if updated_rows:
+            logger.info(f"Updated scenario {scenario_result_id} state to '{scenario_run_state.value}'")
+        return bool(updated_rows)
 
     def update_scenario_metadata(
         self,
@@ -3676,6 +3991,147 @@ class MemoryInterface(abc.ABC):
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
             entry.scenario_metadata = metadata if metadata else None
             session.commit()
+
+    def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
+        """Return one ScenarioResult header without hydrating linked attack results."""
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            return entry.get_scenario_result() if entry is not None else None
+
+    def get_scenario_result_headers(self, *, limit: int = 100) -> Sequence[ScenarioResult]:
+        """
+        Return recent ScenarioResult headers without hydrating linked attack results.
+
+        Returns:
+            Sequence[ScenarioResult]: Recent scenario metadata ordered newest first.
+
+        Raises:
+            ValueError: If limit is outside the bounded run-history range.
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("Scenario run history limit must be between 1 and 100.")
+        entries = self._query_entries(
+            ScenarioResultEntry,
+            order_by=[
+                ScenarioResultEntry.timestamp.desc(),
+                ScenarioResultEntry.id.desc(),
+            ],
+            limit=limit,
+        )
+        return [entry.get_scenario_result() for entry in entries]
+
+    def get_scenario_attack_result_deltas(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Return bounded scenario-linked result deltas in ascending keyset order.
+
+        This projection selects only progress fields and the linked objective
+        score. It never hydrates ORM relationships, prompt rows, or a full
+        ScenarioResult.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: The page and whether more rows exist.
+
+        Raises:
+            ValueError: If the limit or cursor identifiers are invalid.
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("Scenario progress limit must be between 1 and 500.")
+
+        scenario_uuid = uuid.UUID(scenario_result_id)
+        conditions: list[Any] = [AttackResultEntry.attribution_parent_id == scenario_uuid]
+        if cursor is not None:
+            cursor_uuid = uuid.UUID(cursor.attack_result_id)
+            conditions.append(
+                or_(
+                    AttackResultEntry.timestamp > cursor.timestamp,
+                    and_(
+                        AttackResultEntry.timestamp == cursor.timestamp,
+                        AttackResultEntry.id > cursor_uuid,
+                    ),
+                )
+            )
+
+        statement = (
+            select(
+                AttackResultEntry.id,
+                AttackResultEntry.conversation_id,
+                AttackResultEntry.objective,
+                AttackResultEntry.objective_sha256,
+                AttackResultEntry.atomic_attack_identifier,
+                AttackResultEntry.outcome,
+                AttackResultEntry.execution_time_ms,
+                AttackResultEntry.timestamp,
+                AttackResultEntry.retry_events_json,
+                AttackResultEntry.total_retries,
+                AttackResultEntry.error_type,
+                AttackResultEntry.error_message,
+                AttackResultEntry.attribution_data,
+                ScoreEntry.id.label("score_id"),
+                ScoreEntry.score_value,
+                ScoreEntry.score_type,
+                ScoreEntry.status.label("score_status"),
+                ScoreEntry.score_rationale,
+                ScoreEntry.scorer_class_identifier,
+            )
+            .outerjoin(ScoreEntry, AttackResultEntry.last_score_id == ScoreEntry.id)
+            .where(and_(*conditions))
+            .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
+            .limit(limit + 1)
+        )
+        with closing(self.get_session()) as session:
+            rows = session.execute(statement).all()
+
+        has_more = len(rows) > limit
+        deltas: list[ScenarioAttackResultDelta] = []
+        for row in rows[:limit]:
+            retry_events = [
+                RetryEvent.model_validate(event)
+                for event in (json.loads(row.retry_events_json) if row.retry_events_json else [])
+            ]
+            atomic_identifier = (
+                AtomicAttackIdentifier.model_validate(row.atomic_attack_identifier)
+                if row.atomic_attack_identifier
+                else None
+            )
+            score = None
+            if row.score_id is not None:
+                scorer_identifier = (
+                    ComponentIdentifier.model_validate(row.scorer_class_identifier)
+                    if row.scorer_class_identifier
+                    else None
+                )
+                score = ScenarioProgressScore(
+                    scorer_name=scorer_identifier.class_name if scorer_identifier else "Unknown",
+                    score_type=row.score_type,
+                    status=ScoreStatus(row.score_status),
+                    score_value=row.score_value,
+                    score_rationale=row.score_rationale,
+                )
+            deltas.append(
+                ScenarioAttackResultDelta(
+                    attack_result_id=str(row.id),
+                    conversation_id=row.conversation_id,
+                    objective=row.objective,
+                    objective_sha256=row.objective_sha256,
+                    atomic_attack_identifier=atomic_identifier,
+                    outcome=AttackOutcome(row.outcome),
+                    execution_time_ms=row.execution_time_ms,
+                    timestamp=row.timestamp,
+                    retry_events=retry_events,
+                    total_retries=row.total_retries or 0,
+                    error_type=row.error_type,
+                    error_message=row.error_message,
+                    attribution_data=row.attribution_data or {},
+                    score=score,
+                )
+            )
+        return deltas, has_more
 
     def get_scenario_results(
         self,

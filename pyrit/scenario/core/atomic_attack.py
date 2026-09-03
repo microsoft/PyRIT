@@ -22,7 +22,13 @@ from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import CentralMemory
-from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier, AttackResult, AttackSeedGroup
+from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
+    AttackResult,
+    AttackSeedGroup,
+    config_hash,
+)
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -53,6 +59,7 @@ class AtomicAttack:
         *,
         atomic_attack_name: str,
         display_group: str | None = None,
+        technique_name: str | None = None,
         attack_technique: AttackTechnique,
         seed_groups: list[AttackSeedGroup],
         adversarial_chat: PromptTarget | None = None,
@@ -70,6 +77,8 @@ class AtomicAttack:
             display_group: Optional label for grouping results in user-facing
                 output (console printer, reports).  When ``None``, falls back
                 to ``atomic_attack_name``.
+            technique_name: Optional catalog name for the technique that built
+                this atomic attack.
             attack_technique: An AttackTechnique bundling the attack strategy and optional
                 technique seeds.
             seed_groups: List of seed attack groups. Each must be a
@@ -88,6 +97,7 @@ class AtomicAttack:
         """
         self.atomic_attack_name = atomic_attack_name
         self.display_group = display_group or atomic_attack_name
+        self._technique_name = technique_name
 
         self._attack_technique = attack_technique
 
@@ -173,6 +183,11 @@ class AtomicAttack:
         return self._attack_technique
 
     @property
+    def technique_name(self) -> str | None:
+        """Catalog name of the technique that built this attack."""
+        return self._technique_name
+
+    @property
     def technique_eval_hash(self) -> str:
         """
         Behavioral evaluation hash for this atomic attack's technique configuration.
@@ -190,6 +205,16 @@ class AtomicAttack:
             seed_group=None,
         )
         return AtomicAttackEvaluationIdentifier(composite).eval_hash
+
+    @property
+    def logical_group_id(self) -> str:
+        """The stable identity of this planned atomic-attack group."""
+        return config_hash(
+            {
+                "atomic_attack_name": self.atomic_attack_name,
+                "technique_eval_hash": self.technique_eval_hash,
+            }
+        )
 
     @property
     def objectives(self) -> list[str]:
@@ -324,13 +349,17 @@ class AtomicAttack:
             # a Scenario. The same attribution object is stamped on every
             # per-task AttackContext; per-task identity is reconstructed from
             # the row's own objective_sha256 (no positional state required).
-            attribution: AttackResultAttribution | None = None
+            attributions: list[AttackResultAttribution] | None = None
             if self._scenario_result_id is not None:
-                attribution = AttackResultAttribution(
-                    parent_id=self._scenario_result_id,
-                    parent_collection=self.atomic_attack_name,
-                    parent_eval_hash=self.technique_eval_hash,
-                )
+                attributions = [
+                    AttackResultAttribution(
+                        parent_id=self._scenario_result_id,
+                        parent_collection=self.atomic_attack_name,
+                        parent_eval_hash=self.technique_eval_hash,
+                        seed_group_id=seed_group.logical_id,
+                    )
+                    for seed_group in self._seed_groups
+                ]
 
             untyped_results = await executor.execute_attack_from_seed_groups_async(
                 attack=technique.attack,
@@ -339,7 +368,7 @@ class AtomicAttack:
                 objective_scorer=self._objective_scorer,
                 memory_labels=self._memory_labels,
                 return_partial_on_failure=return_partial_on_failure,
-                attribution=attribution,
+                attributions=attributions,
                 **self._attack_execute_params,
             )
             completed_results: list[AttackResult] = []

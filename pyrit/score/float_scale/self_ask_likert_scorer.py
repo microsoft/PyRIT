@@ -19,7 +19,7 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEvalFiles
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
@@ -250,7 +250,7 @@ class _LikertScaleResponseHandler(ResponseHandler):
         return score
 
 
-class SelfAskLikertScorer(FloatScaleScorer):
+class SelfAskLikertScorer(MessageFloatScaleScorer):
     """
     A class that represents a "self-ask" score for text scoring based on a Likert scale.
     A Likert scale consists of ranked, ordered categories and is often on a 5 or 7 point basis,

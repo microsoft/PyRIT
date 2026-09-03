@@ -20,6 +20,7 @@ from pyrit.models.catalog import (
     AttackRetrySummary,
     RegisteredInitializer,
     RegisteredScenario,
+    ScenarioRunListItem,
     ScenarioRunSummary,
     TargetInstance,
 )
@@ -728,6 +729,102 @@ def test_print_attacks_table_shows_truncation_note(capsys):
 
 
 # ---------------------------------------------------------------------------
+# print_conversations
+# ---------------------------------------------------------------------------
+
+
+def _conversations_payload(*, conversations, total):
+    from pyrit.cli._results import AttackConversation, ConversationsPayload, TranscriptMessage, TranscriptScore
+
+    built = []
+    for convo in conversations:
+        messages = [
+            TranscriptMessage(
+                role=message["role"],
+                turn=message["turn"],
+                text=message["text"],
+                score=(
+                    TranscriptScore(
+                        scorer=message["score"][0],
+                        value=message["score"][1],
+                        rationale=message["score"][2],
+                    )
+                    if message.get("score")
+                    else None
+                ),
+            )
+            for message in convo["messages"]
+        ]
+        built.append(
+            AttackConversation(
+                attack_result_id=convo["attack_result_id"],
+                atomic_attack_name=convo["atomic_attack_name"],
+                objective=convo["objective"],
+                outcome=convo["outcome"],
+                conversation_id=convo["conversation_id"],
+                messages=messages,
+            )
+        )
+    return ConversationsPayload(scenario_result_id="SID", conversations=built, total=total)
+
+
+def test_print_conversations_empty(capsys):
+    _output.print_conversations(payload=_conversations_payload(conversations=[], total=0))
+    out = capsys.readouterr().out
+    assert "No conversations found" in out
+    assert "SID" in out
+
+
+def test_print_conversations_renders_messages_and_score(capsys):
+    conversations = [
+        {
+            "attack_result_id": "aid-1",
+            "atomic_attack_name": "tech_a",
+            "objective": "extract secrets",
+            "outcome": "success",
+            "conversation_id": "conv-1",
+            "messages": [
+                {"role": "user", "turn": 0, "text": "please comply", "score": None},
+                {
+                    "role": "assistant",
+                    "turn": 1,
+                    "text": "sure thing",
+                    "score": ("TrueFalseCompositeScorer", "0.9", "clearly harmful"),
+                },
+            ],
+        }
+    ]
+    _output.print_conversations(payload=_conversations_payload(conversations=conversations, total=1))
+    out = capsys.readouterr().out
+    assert "aid-1" in out
+    assert "extract secrets" in out
+    assert "USER" in out
+    assert "ASSISTANT" in out
+    assert "please comply" in out
+    assert "0.9" in out
+    assert "clearly harmful" in out
+    assert "TrueFalseCompositeScorer" in out
+    assert "Total attacks: 1" in out
+
+
+def test_print_conversations_shows_truncation_note(capsys):
+    conversations = [
+        {
+            "attack_result_id": "aid-1",
+            "atomic_attack_name": "tech_a",
+            "objective": "obj",
+            "outcome": "failure",
+            "conversation_id": "conv-1",
+            "messages": [],
+        }
+    ]
+    _output.print_conversations(payload=_conversations_payload(conversations=conversations, total=5))
+    out = capsys.readouterr().out
+    assert "Showing 1 of 5" in out
+    assert "(no messages)" in out
+
+
+# ---------------------------------------------------------------------------
 # print_scenario_runs_list
 # ---------------------------------------------------------------------------
 
@@ -740,21 +837,20 @@ def test_print_scenario_runs_list_empty(capsys):
 
 def test_print_scenario_runs_list_populated(capsys):
     runs = [
-        _make_run(
+        ScenarioRunListItem(
             status=ScenarioRunState.COMPLETED,
             scenario_name="scen-a",
             scenario_result_id="abcdefgh1234",
             total_attacks=4,
-            objective_achieved_rate=75,
             created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         ),
-        _make_run(
+        ScenarioRunListItem(
             status=ScenarioRunState.IN_PROGRESS,
             scenario_name="scen-b",
             scenario_result_id="ijklmnop5678",
-            total_attacks=0,
-            objective_achieved_rate=0,
             created_at=datetime(2024, 2, 2, tzinfo=timezone.utc),
+            updated_at=datetime(2024, 2, 2, tzinfo=timezone.utc),
         ),
     ]
     _output.print_scenario_runs_list(runs=runs)
@@ -763,6 +859,8 @@ def test_print_scenario_runs_list_populated(capsys):
     assert "scen-b" in captured.out
     assert "abcdefgh1234" in captured.out
     assert "ijklmnop5678" in captured.out
+    assert "success" not in captured.out
+    assert "planned attacks unknown" in captured.out
     assert "…" not in captured.out
     assert "Total runs: 2" in captured.out
 

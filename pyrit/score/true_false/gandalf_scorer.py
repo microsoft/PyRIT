@@ -16,10 +16,10 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class GandalfScorer(TrueFalseScorer):
+class GandalfScorer(MessageTrueFalseScorer):
     """
     A scorer for evaluating responses in Gandalf challenges.
 

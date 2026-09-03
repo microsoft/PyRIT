@@ -2,7 +2,6 @@
 # Licensed under the MIT license.
 
 import logging
-import random
 from pathlib import Path
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
@@ -135,5 +134,5 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
         Returns:
             str: The converted word.
         """
-        language = random.choice(self.languages)
+        language = self._get_random_generator(stream="languages").choice(self.languages)
         return f"{language}: {word}"

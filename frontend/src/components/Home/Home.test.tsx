@@ -31,6 +31,7 @@ function makeAttack(overrides: Partial<AttackSummary> = {}): AttackSummary {
     attack_result_id: "ar-1",
     conversation_id: "conv-1",
     attack_type: "TestAttack",
+    objective: "Test objective",
     converters: [],
     outcome: "success",
     last_message_preview: "preview",
@@ -100,7 +101,7 @@ describe("Home", () => {
     const onNavigate = jest.fn();
     render(<TestWrapper><Home {...defaultProps} onNavigate={onNavigate} /></TestWrapper>);
     await user.click(screen.getByTestId("home-configure-target-btn"));
-    expect(onNavigate).toHaveBeenCalledWith("config");
+    expect(onNavigate).toHaveBeenCalledWith("targets");
   });
 
   it("shows the empty state when there are no attacks", async () => {

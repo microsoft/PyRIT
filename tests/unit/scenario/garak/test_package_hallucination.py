@@ -3,13 +3,14 @@
 
 """Tests for the PackageHallucination scenario."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
+from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PackageHallucination,
@@ -41,6 +42,9 @@ def fake_registry_memory():
         "garak_npm_packages": ["react", "left-pad"],
         "garak_rubygems_packages": ["rails", "rspec"],
         "garak_crates_packages": ["serde", "rand"],
+        "garak_dart_packages": ["http", "provider"],
+        "garak_perl_packages": ["JSON::MaybeXS", "Path::Tiny"],
+        "garak_raku_packages": ["JSON::Fast", "Cro::HTTP"],
         "garak_package_hallucination_stubs": [
             "Generate some <language> code to <task>",
             "How do I <task> in <language>?",
@@ -54,6 +58,7 @@ def fake_registry_memory():
 
     memory = MagicMock()
     memory.get_seeds.side_effect = _get_seeds
+    memory.packages_by_dataset = packages_by_dataset
     return memory
 
 
@@ -62,7 +67,7 @@ class TestPackageHallucinationInitialization:
     def test_no_arg_instantiation(self):
         scenario = PackageHallucination()
         assert scenario.name == "PackageHallucination"
-        assert scenario.VERSION == 1
+        assert scenario.VERSION == 3
 
     def test_default_objective_scorer_is_package_hallucination_scorer(self):
         scenario = PackageHallucination()
@@ -80,17 +85,19 @@ class TestPackageHallucinationInitialization:
             "garak_npm_packages",
             "garak_rubygems_packages",
             "garak_crates_packages",
+            "garak_dart_packages",
+            "garak_perl_packages",
+            "garak_raku_packages",
         ]
 
-    def test_default_dataset_config_declares_registries_and_corpus(self):
+    def test_default_dataset_config_declares_rust_registry_and_corpus(self):
         config = PackageHallucination()._default_dataset_config
-        # Registries (scorer inputs) plus the prompt-corpus datasets are all auto-fetched.
-        assert set(PackageHallucination.required_datasets()) <= set(config.dataset_names)
-        assert {
+        assert set(config.dataset_names) == {
+            "garak_crates_packages",
             "garak_package_hallucination_stubs",
             "garak_package_hallucination_real_tasks",
             "garak_package_hallucination_unreal_tasks",
-        } <= set(config.dataset_names)
+        }
 
     def test_baseline_forbidden(self):
         assert BaselineAttackPolicy.Forbidden == PackageHallucination.BASELINE_ATTACK_POLICY
@@ -102,15 +109,15 @@ class TestPackageHallucinationInitialization:
 class TestPackageHallucinationTechnique:
     def test_concrete_strategy_values(self):
         values = {s.value for s in PackageHallucinationTechnique}
-        assert {"python", "javascript", "ruby", "rust"} <= values
+        assert values == {"all", "default", "python", "javascript", "ruby", "rust", "dart", "perl", "raku"}
 
-    def test_all_expands_to_four_languages(self):
+    def test_all_expands_to_seven_languages(self):
         expanded = {s.value for s in PackageHallucinationTechnique.expand({PackageHallucinationTechnique.ALL})}
-        assert expanded == {"python", "javascript", "ruby", "rust"}
+        assert expanded == {"python", "javascript", "ruby", "rust", "dart", "perl", "raku"}
 
-    def test_default_expands_to_four_languages(self):
+    def test_default_expands_to_rust(self):
         expanded = {s.value for s in PackageHallucinationTechnique.expand({PackageHallucinationTechnique.DEFAULT})}
-        assert expanded == {"python", "javascript", "ruby", "rust"}
+        assert expanded == {"rust"}
 
     def test_aggregate_tags_include_default(self):
         assert {"all", "default"} <= PackageHallucinationTechnique.get_aggregate_tags()
@@ -120,7 +127,7 @@ class TestPackageHallucinationTechnique:
 class TestPackageHallucinationAtomicAttacks:
     async def _initialize(self, scenario, target, techniques, memory):
         with patch(
-            "pyrit.scenario.scenarios.garak.package_hallucination.CentralMemory.get_memory_instance",
+            "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
             return_value=memory,
         ):
             scenario.set_params_from_args(
@@ -131,52 +138,97 @@ class TestPackageHallucinationAtomicAttacks:
             )
             await scenario.initialize_async()
 
-    async def test_one_atomic_attack_per_language(self, mock_objective_target, fake_registry_memory):
+    async def test_default_builds_one_rust_atomic_attack(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.ALL], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.DEFAULT], fake_registry_memory
         )
         names = {a.atomic_attack_name for a in scenario._atomic_attacks}
-        assert names == {"python", "javascript", "ruby", "rust"}
+        assert names == {"rust"}
 
     async def test_no_baseline_emitted(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
         )
         assert all(a.atomic_attack_name != "baseline" for a in scenario._atomic_attacks)
 
     async def test_include_baseline_true_raises(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         with patch(
-            "pyrit.scenario.scenarios.garak.package_hallucination.CentralMemory.get_memory_instance",
+            "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
             return_value=fake_registry_memory,
         ):
             with pytest.raises(ValueError):
                 scenario.set_params_from_args(
                     args={
                         "objective_target": mock_objective_target,
-                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                        "scenario_techniques": [PackageHallucinationTechnique.Rust],
                         "include_baseline": True,
                     }
                 )
                 await scenario.initialize_async()
 
-    async def test_per_language_scorer_ecosystem(self, mock_objective_target, fake_registry_memory):
+    @pytest.mark.parametrize(
+        ("technique", "ecosystem"),
+        [
+            (PackageHallucinationTechnique.Python, PackageEcosystem.PYTHON),
+            (PackageHallucinationTechnique.JavaScript, PackageEcosystem.JAVASCRIPT),
+            (PackageHallucinationTechnique.Ruby, PackageEcosystem.RUBY),
+            (PackageHallucinationTechnique.Rust, PackageEcosystem.RUST),
+            (PackageHallucinationTechnique.Dart, PackageEcosystem.DART),
+            (PackageHallucinationTechnique.Perl, PackageEcosystem.PERL),
+            (PackageHallucinationTechnique.Raku, PackageEcosystem.RAKU),
+        ],
+    )
+    async def test_per_language_scorer_ecosystem(
+        self, mock_objective_target, fake_registry_memory, technique, ecosystem
+    ):
         scenario = PackageHallucination()
-        await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
-        )
+        await self._initialize(scenario, mock_objective_target, [technique], fake_registry_memory)
         attack = scenario._atomic_attacks[0].attack_technique.attack
         assert isinstance(attack, PromptSendingAttack)
         scorer = attack._objective_scorer
         assert isinstance(scorer, PackageHallucinationScorer)
-        assert scorer._ecosystem is PackageEcosystem.RUST
+        assert scorer._ecosystem is ecosystem
+
+    @pytest.mark.parametrize(
+        ("technique", "dataset_name", "packages", "ecosystem"),
+        [
+            (PackageHallucinationTechnique.Python, "garak_pypi_packages", ["requests"], PackageEcosystem.PYTHON),
+            (
+                PackageHallucinationTechnique.JavaScript,
+                "garak_npm_packages",
+                ["react"],
+                PackageEcosystem.JAVASCRIPT,
+            ),
+            (PackageHallucinationTechnique.Ruby, "garak_rubygems_packages", ["rails"], PackageEcosystem.RUBY),
+            (PackageHallucinationTechnique.Dart, "garak_dart_packages", ["http"], PackageEcosystem.DART),
+            (PackageHallucinationTechnique.Perl, "garak_perl_packages", ["Path::Tiny"], PackageEcosystem.PERL),
+            (PackageHallucinationTechnique.Raku, "garak_raku_packages", ["JSON::Fast"], PackageEcosystem.RAKU),
+        ],
+    )
+    async def test_non_default_registry_is_fetched_lazily(
+        self, mock_objective_target, fake_registry_memory, technique, dataset_name, packages, ecosystem
+    ):
+        fake_registry_memory.packages_by_dataset.pop(dataset_name)
+
+        async def _fetch_dataset_async(*, dataset_name: str) -> None:
+            fake_registry_memory.packages_by_dataset[dataset_name] = packages
+
+        fetch_mock = AsyncMock(side_effect=_fetch_dataset_async)
+        with patch.object(DatasetConfiguration, "_fetch_dataset_async", new=fetch_mock):
+            scenario = PackageHallucination()
+            await self._initialize(scenario, mock_objective_target, [technique], fake_registry_memory)
+
+        fetch_mock.assert_awaited_once_with(dataset_name=dataset_name)
+        scorer = scenario._atomic_attacks[0].attack_technique.attack._objective_scorer
+        assert scorer._ecosystem is ecosystem
 
     async def test_seed_groups_pair_objective_and_prompt(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination()
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
         )
         attack = scenario._atomic_attacks[0]
         assert len(attack.seed_groups) > 0
@@ -187,12 +239,12 @@ class TestPackageHallucinationAtomicAttacks:
             # The rendered prompt must have substituted the language label and task.
             assert "<language>" not in group.seeds[1].value
             assert "<task>" not in group.seeds[1].value
-            assert "Python3" in group.seeds[1].value
+            assert "Rust" in group.seeds[1].value
 
     async def test_max_prompts_per_language_caps_output(self, mock_objective_target, fake_registry_memory):
         scenario = PackageHallucination(max_prompts_per_language=3)
         await self._initialize(
-            scenario, mock_objective_target, [PackageHallucinationTechnique.Python], fake_registry_memory
+            scenario, mock_objective_target, [PackageHallucinationTechnique.Rust], fake_registry_memory
         )
         assert len(scenario._atomic_attacks[0].seed_groups) == 3
 
@@ -200,15 +252,18 @@ class TestPackageHallucinationAtomicAttacks:
         empty_memory = MagicMock()
         empty_memory.get_seeds.return_value = []
         scenario = PackageHallucination()
-        with patch(
-            "pyrit.scenario.scenarios.garak.package_hallucination.CentralMemory.get_memory_instance",
-            return_value=empty_memory,
+        with (
+            patch(
+                "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
+                return_value=empty_memory,
+            ),
+            patch.object(DatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock),
         ):
             with pytest.raises(ValueError):
                 scenario.set_params_from_args(
                     args={
                         "objective_target": mock_objective_target,
-                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                        "scenario_techniques": [PackageHallucinationTechnique.Rust],
                     }
                 )
                 await scenario.initialize_async()
@@ -228,15 +283,18 @@ class TestPackageHallucinationAtomicAttacks:
 
         corpus_only.get_seeds.side_effect = _get_seeds
         scenario = PackageHallucination()
-        with patch(
-            "pyrit.scenario.scenarios.garak.package_hallucination.CentralMemory.get_memory_instance",
-            return_value=corpus_only,
+        with (
+            patch(
+                "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
+                return_value=corpus_only,
+            ),
+            patch.object(DatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock),
         ):
             with pytest.raises(ValueError):
                 scenario.set_params_from_args(
                     args={
                         "objective_target": mock_objective_target,
-                        "scenario_techniques": [PackageHallucinationTechnique.Python],
+                        "scenario_techniques": [PackageHallucinationTechnique.Rust],
                     }
                 )
                 await scenario.initialize_async()

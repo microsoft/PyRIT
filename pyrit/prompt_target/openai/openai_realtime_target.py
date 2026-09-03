@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from openai import AsyncOpenAI
 
 from pyrit.common import forward_init_parameters
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -479,21 +480,45 @@ class RealtimeTarget(OpenAITarget):
                 logger.warning(f"Error closing realtime client: {e}")
             self._realtime_client = None
 
-    async def cleanup_conversation_async(self, conversation_id: str) -> None:
+    async def reset_conversation_async(self, *, conversation_id: str) -> None:
         """
         Disconnects from the Realtime API for a specific conversation.
+
+        Closes the cached connection for ``conversation_id`` and drops it from
+        ``_existing_conversation``. Errors while closing are logged and
+        swallowed, and an unknown conversation id is a no-op, so this is safe
+        to call from attack lifecycle cleanup.
 
         Args:
             conversation_id (str): The conversation ID to disconnect from.
         """
-        connection = self._existing_conversation.get(conversation_id)
-        if connection:
-            try:
-                await connection.close()
-                logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
-            except Exception as e:
-                logger.warning(f"Error closing connection for {conversation_id}: {e}")
-            del self._existing_conversation[conversation_id]
+        connection = self._existing_conversation.pop(conversation_id, None)
+        if not connection:
+            return
+
+        try:
+            await connection.close()
+        except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+            logger.warning(f"Error closing connection for {conversation_id}: {error}")
+            return
+
+        logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
+
+    async def cleanup_conversation_async(self, conversation_id: str) -> None:
+        """
+        Disconnect from the Realtime API for a specific conversation.
+
+        Deprecated. Use ``reset_conversation_async`` instead.
+
+        Args:
+            conversation_id (str): The conversation ID to disconnect from.
+        """
+        print_deprecation_message(
+            old_item="RealtimeTarget.cleanup_conversation_async",
+            new_item="RealtimeTarget.reset_conversation_async",
+            removed_in="1.3.0",
+        )
+        await self.reset_conversation_async(conversation_id=conversation_id)
 
     async def _connect_async(self, *, conversation_id: str) -> Any:
         """
@@ -580,9 +605,11 @@ class RealtimeTarget(OpenAITarget):
 
         result = RealtimeTargetResult()
         audio_buffer = bytearray()
-        audio_done_received = False
+        audio_done_deadline: float | None = None
+        current_response_id: str | None = None
         current_turn_event_count = 0
         grace_period_sec = 1.0  # Wait 1 second after audio.done before soft-finishing
+        loop = asyncio.get_running_loop()
 
         try:
             # Create event iterator
@@ -591,13 +618,13 @@ class RealtimeTarget(OpenAITarget):
             while True:
                 # If we've seen audio.done, wait with a short timeout for response.done
                 # Otherwise, wait indefinitely for events
-                timeout = grace_period_sec if audio_done_received else None
+                timeout = max(0.0, audio_done_deadline - loop.time()) if audio_done_deadline is not None else None
 
                 try:
                     event = await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
                 except asyncio.TimeoutError:
                     # Soft-finish: audio.done was received but no response.done after grace period
-                    if audio_done_received:
+                    if audio_done_deadline is not None:
                         logger.warning(
                             f"Soft-finishing: No response.done {grace_period_sec}s after audio.done. "
                             f"Audio bytes: {len(audio_buffer)}"
@@ -622,6 +649,16 @@ class RealtimeTarget(OpenAITarget):
 
                 event_type = event.type
                 event_kind = _OpenAIRealtimeEventRouter.classify_event(event_type)
+                event_response_id = _OpenAIRealtimeEventRouter.get_response_id(event=event)
+                if event_kind is _OpenAIRealtimeEventKind.RESPONSE_CREATED and current_response_id is None:
+                    current_response_id = event_response_id
+                elif event_response_id is not None and event_response_id != current_response_id:
+                    logger.debug(
+                        f"Skipping event '{event_type}' for response {event_response_id}; "
+                        f"current response is {current_response_id}"
+                    )
+                    continue
+
                 current_turn_event_count += 1
                 logger.debug(f"Processing event type: {event_type}")
                 audio_size_before = len(audio_buffer)
@@ -659,7 +696,8 @@ class RealtimeTarget(OpenAITarget):
 
                 elif event_kind is _OpenAIRealtimeEventKind.AUDIO_DONE:
                     logger.debug(f"Received audio.done - will soft-finish in {grace_period_sec}s if no response.done")
-                    audio_done_received = True
+                    if audio_done_deadline is None:
+                        audio_done_deadline = loop.time() + grace_period_sec
 
                 elif event_kind is _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA:
                     if getattr(event, "delta", ""):

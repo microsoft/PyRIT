@@ -8,10 +8,11 @@ All interactions in the UI are modeled as "attacks" - including manual conversat
 This is the attack-centric API design where every user interaction targets a model.
 """
 
+import uuid
 from datetime import datetime, timezone
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, Field, computed_field, field_serializer
+from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import PaginationInfo
@@ -21,6 +22,7 @@ from pyrit.models import (
     ConversationReference,
     Message,
     MessagePiece,
+    PromptDataType,
     Score,
 )
 
@@ -43,6 +45,11 @@ class ScoreView(Score):
     clients don't have to dig into ``scorer_class_identifier``.
     """
 
+    is_objective_score: bool = Field(
+        default=False,
+        description="Whether this is the score referenced by AttackResult.last_score.",
+    )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def scorer_type(self) -> str:
@@ -53,7 +60,7 @@ class ScoreView(Score):
         return "Unknown"
 
     @classmethod
-    def from_domain(cls, score: Score) -> "ScoreView":
+    def from_domain(cls, score: Score, *, is_objective_score: bool = False) -> "ScoreView":
         """
         Build a ``ScoreView`` from a domain ``Score`` without re-validating.
 
@@ -64,7 +71,10 @@ class ScoreView(Score):
         Returns:
             A ``ScoreView`` mirroring the domain score's fields.
         """
-        return cls.model_construct(**{name: getattr(score, name) for name in Score.model_fields})
+        return cls.model_construct(
+            **{name: getattr(score, name) for name in Score.model_fields},
+            is_objective_score=is_objective_score,
+        )
 
 
 class MessagePieceView(MessagePiece):
@@ -117,6 +127,7 @@ class MessagePieceView(MessagePiece):
         piece: MessagePiece,
         *,
         scores: list[Score] | None = None,
+        objective_score_id: uuid.UUID | str | None = None,
         original_value_url: str | None = None,
         converted_value_url: str | None = None,
     ) -> "MessagePieceView":
@@ -132,6 +143,7 @@ class MessagePieceView(MessagePiece):
         Args:
             piece: The domain message piece.
             scores: Domain scores attached to this piece, fetched from memory.
+            objective_score_id: ID of the attack's canonical objective score.
             original_value_url: Client-fetchable URL for ``piece.original_value``
                 when it's media; ``None`` for text.
             converted_value_url: Client-fetchable URL for ``piece.converted_value``
@@ -144,7 +156,13 @@ class MessagePieceView(MessagePiece):
         orig_dtype = piece.original_value_data_type or "text"
         conv_dtype = piece.converted_value_data_type or "text"
         data.update(
-            scores=[ScoreView.from_domain(score) for score in (scores or [])],
+            scores=[
+                ScoreView.from_domain(
+                    score,
+                    is_objective_score=objective_score_id is not None and str(score.id) == str(objective_score_id),
+                )
+                for score in (scores or [])
+            ],
             original_value_url=original_value_url,
             converted_value_url=converted_value_url,
             original_value_mime_type=infer_mime_type(value=piece.original_value, data_type=orig_dtype),
@@ -455,6 +473,26 @@ class UpdateMainConversationResponse(BaseModel):
 # ============================================================================
 
 
+class ConverterConfigurationRequest(BaseModel):
+    """Registry-backed converter configuration for one ordered pipeline."""
+
+    converter_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Converter instance IDs to apply in order.",
+    )
+    indexes_to_apply: list[Annotated[int, Field(ge=0)]] | None = Field(
+        None,
+        min_length=1,
+        description="Zero-based message piece indexes to which this pipeline applies. Defaults to all indexes.",
+    )
+    prompt_data_types_to_apply: list[PromptDataType] | None = Field(
+        None,
+        min_length=1,
+        description="Prompt data types to which this pipeline applies. Defaults to all data types.",
+    )
+
+
 class AddMessageRequest(BaseModel):
     """
     Request to add a message to an attack.
@@ -475,7 +513,18 @@ class AddMessageRequest(BaseModel):
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
     converter_ids: list[str] | None = Field(
-        None, description="Converter instance IDs to apply (overrides attack-level)"
+        None,
+        description="Deprecated global request converter pipeline. Use request_converter_configurations instead.",
+    )
+    request_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
+        None,
+        min_length=1,
+        description="Ordered registry-backed converter pipelines to apply to the request.",
+    )
+    response_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
+        None,
+        min_length=1,
+        description="Ordered registry-backed converter pipelines to apply to the response.",
     )
     target_conversation_id: str = Field(
         ...,
@@ -487,6 +536,38 @@ class AddMessageRequest(BaseModel):
         description="Request labels used for attack-level consistency checks. "
         "When present, the operator must match the attack result's operator.",
     )
+
+    @model_validator(mode="after")
+    def _validate_converter_configurations(self) -> "AddMessageRequest":
+        """
+        Validate converter configuration combinations and request indexes.
+
+        Returns:
+            AddMessageRequest: The validated request.
+
+        Raises:
+            ValueError: If converter fields conflict, cannot run, or contain an out-of-range request index.
+        """
+        if self.converter_ids and self.request_converter_configurations:
+            raise ValueError("converter_ids and request_converter_configurations cannot both be provided")
+
+        has_converter_configurations = bool(
+            self.converter_ids or self.request_converter_configurations or self.response_converter_configurations
+        )
+        if not self.send and has_converter_configurations:
+            raise ValueError("Converter configurations require send=True")
+
+        piece_count = len(self.pieces)
+        for configuration in self.request_converter_configurations or []:
+            if configuration.indexes_to_apply is None:
+                continue
+            invalid_indexes = [index for index in configuration.indexes_to_apply if index >= piece_count]
+            if invalid_indexes:
+                raise ValueError(
+                    f"Request converter indexes {invalid_indexes} are out of range for {piece_count} message pieces"
+                )
+
+        return self
 
 
 class AddMessageResponse(BaseModel):

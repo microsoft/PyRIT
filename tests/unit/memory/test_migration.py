@@ -174,6 +174,38 @@ def test_run_schema_migrations_applies_head_revision():
             engine.dispose()
 
 
+def test_scenario_progress_migration_adds_composite_index():
+    """The migration head contains the parent/timestamp/id keyset index."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "scenario-progress-index.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "head")
+                indexes = {index["name"] for index in inspect(connection).get_indexes("AttackResultEntries")}
+            assert "ix_AttackResultEntries_attribution_parent_timestamp_id" in indexes
+        finally:
+            engine.dispose()
+
+
+def test_migration_head_removes_additional_initializers_table():
+    """The migration head removes the obsolete second initializer configuration source."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "additional-initializers-removal.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "4c9a6e1f2b7d")
+                assert "AdditionalInitializers" in set(inspect(connection).get_table_names())
+
+                command.upgrade(config, "head")
+                assert "AdditionalInitializers" not in set(inspect(connection).get_table_names())
+        finally:
+            engine.dispose()
+
+
 def test_migration_online_mode():
     """
     Test that online migration configuration is valid.
@@ -301,6 +333,24 @@ def _config_for(connection):
     config.attributes["connection"] = connection
     config.attributes["version_table"] = "pyrit_memory_alembic_version"
     return config
+
+
+def test_scorable_content_migration_creates_hash_column():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "scorable-content.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                command.upgrade(_config_for(connection), "5a1d3c7e9f04")
+                columns = {
+                    column["name"]: column for column in inspect(connection).get_columns("ScorableContentEntries")
+                }
+
+            assert columns["value"]["nullable"] is False
+            assert columns["value_sha256"]["nullable"] is False
+            assert columns["value_sha256"]["type"].length == 64
+        finally:
+            engine.dispose()
 
 
 def test_backfill_links_attack_results_via_conversation_id():

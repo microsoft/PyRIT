@@ -4,9 +4,14 @@
 import asyncio
 import logging
 from dataclasses import replace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+try:
+    from builtins import ExceptionGroup  # type: ignore[attr-defined,ty:unresolved-import]
+except ImportError:  # pragma: no cover - exercised only on 3.10
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef,ty:unresolved-import]
 
 from pyrit.exceptions.retry_collector import RetryCollector, get_retry_collector
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
@@ -15,6 +20,8 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
     AttackStrategy,
     _DefaultAttackStrategyEventHandler,
+    _ObjectiveTargetConversationLifecycle,
+    attack_outcome_from_score,
 )
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackContext
@@ -25,6 +32,8 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     Message,
+    Score,
+    ScoreStatus,
     SeedPrompt,
 )
 from pyrit.models.identifiers import (
@@ -41,6 +50,18 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
         class_name=name,
         class_module="test",
     )
+
+
+@pytest.mark.parametrize(
+    "score,expected",
+    [
+        (Score(score_value="true", score_type="true_false"), AttackOutcome.SUCCESS),
+        (Score(score_value="false", score_type="true_false"), AttackOutcome.FAILURE),
+        (Score(status=ScoreStatus.UNDETERMINED, score_type="true_false"), AttackOutcome.UNDETERMINED),
+    ],
+)
+def test_attack_outcome_from_score(score: Score, expected: AttackOutcome):
+    assert attack_outcome_from_score(score) is expected
 
 
 @pytest.fixture
@@ -96,6 +117,70 @@ def mock_logger():
 def event_handler(mock_logger):
     """Create an event handler for testing"""
     return _DefaultAttackStrategyEventHandler(logger=mock_logger)
+
+
+async def test_objective_target_conversation_lifecycle_resets_unique_conversations() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock()
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    async with lifecycle:
+        lifecycle.record_invocation(conversation_id="conversation-1")
+        lifecycle.record_invocation(conversation_id="conversation-1")
+        lifecycle.record_invocation(conversation_id="conversation-2")
+
+    assert target.reset_conversation_async.await_count == 2
+    reset_ids = {call.kwargs["conversation_id"] for call in target.reset_conversation_async.await_args_list}
+    assert reset_ids == {"conversation-1", "conversation-2"}
+
+
+async def test_objective_target_cleanup_error_does_not_replace_attack_error() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    mock_logger = MagicMock(spec=logging.Logger)
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=mock_logger,
+    )
+
+    with pytest.raises(ValueError, match="attack failed"):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-id")
+            raise ValueError("attack failed")
+
+    mock_logger.warning.assert_called_once()
+
+
+async def test_objective_target_cleanup_propagates_cancellation() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=asyncio.CancelledError())
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-id")
+
+
+async def test_objective_target_cleanup_attempts_all_resets_under_cancellation() -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.reset_conversation_async = AsyncMock(side_effect=asyncio.CancelledError())
+    lifecycle = _ObjectiveTargetConversationLifecycle(
+        objective_target=target,
+        logger=logging.getLogger(__name__),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        async with lifecycle:
+            lifecycle.record_invocation(conversation_id="conversation-1")
+            lifecycle.record_invocation(conversation_id="conversation-2")
+
+    assert target.reset_conversation_async.await_count == 2
 
 
 def test_next_message_override_can_clear_parameter_value_and_survive_copy():
@@ -470,8 +555,8 @@ class TestDefaultAttackStrategyEventHandler:
         expected_message = f"{event_handler.__class__.__name__} failed with an error. Reason: Connection timeout"
         mock_logger.info.assert_called_with(expected_message)
 
-    async def test_on_post_execute_adds_results_to_memory(self, mock_memory):
-        """Test that post-execute handler adds results to memory"""
+    async def test_on_post_execute_does_not_persist_result(self, mock_memory):
+        """Completed results are persisted only after the full lifecycle."""
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
             handler = _DefaultAttackStrategyEventHandler()
 
@@ -494,7 +579,7 @@ class TestDefaultAttackStrategyEventHandler:
             with patch("time.perf_counter", return_value=100.1):
                 await handler.on_event_async(event_data)
 
-            mock_memory.add_attack_results_to_memory.assert_called_once_with(attack_results=[sample_result])
+            mock_memory.add_attack_results_to_memory.assert_not_called()
 
     async def test_on_post_execute_raises_on_none_result(self, event_handler, sample_attack_context, mock_logger):
         """Test that post-execute handler raises error for None result"""
@@ -721,6 +806,7 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context._attribution = AttackResultAttribution(
                 parent_id="scenario-1",
                 parent_collection="atomic_a",
+                seed_group_id="seed-a",
             )
 
             event_data = StrategyEventData(
@@ -735,6 +821,7 @@ class TestDefaultAttackStrategyEventHandler:
         assert sample_attack_result.attribution_parent_id == "scenario-1"
         assert sample_attack_result.attribution_data == {
             "parent_collection": "atomic_a",
+            "seed_group_id": "seed-a",
         }
 
     async def test_on_post_execute_no_attribution_leaves_fields_none(
@@ -770,6 +857,7 @@ class TestDefaultAttackStrategyEventHandler:
             sample_attack_context._attribution = AttackResultAttribution(
                 parent_id="scenario-err",
                 parent_collection="atomic_err",
+                seed_group_id="seed-error",
             )
 
             event_data = StrategyEventData(
@@ -788,6 +876,7 @@ class TestDefaultAttackStrategyEventHandler:
         assert persisted.attribution_parent_id == "scenario-err"
         assert persisted.attribution_data == {
             "parent_collection": "atomic_err",
+            "seed_group_id": "seed-error",
         }
 
     async def test_on_post_execute_stamps_targeted_harm_categories(self, sample_attack_result, mock_memory):
@@ -904,6 +993,187 @@ class TestAttackStrategyIntegration:
 
         # Current behavior: execution_time_ms is not modified by event handler
         assert result.execution_time_ms == 500
+
+    async def test_completed_result_persistence_failure_is_propagated_after_teardown(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
+        teardown_calls = 0
+
+        class TestStrategy(AttackStrategy):
+            def _validate_context(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _setup_async(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _perform_async(self, *, context: AttackContext) -> AttackResult:
+                return AttackResult(
+                    conversation_id="test-conversation-id",
+                    objective=context.objective,
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=1,
+                )
+
+            async def _teardown_async(self, *, context: AttackContext) -> None:
+                nonlocal teardown_calls
+                teardown_calls += 1
+
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+
+        with (
+            patch.object(
+                memory,
+                "add_attack_results_to_memory",
+                side_effect=RuntimeError("database unavailable"),
+            ) as persist,
+            pytest.raises(RuntimeError, match="database unavailable"),
+        ):
+            await strategy.execute_async(objective="Test objective")
+
+        assert teardown_calls == 1
+        persist.assert_called_once()
+        assert memory.get_attack_results(objective="Test objective") == []
+
+    async def test_partial_persistence_failure_does_not_create_error_result(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
+        class TestStrategy(AttackStrategy):
+            def _validate_context(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _setup_async(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _perform_async(self, *, context: AttackContext) -> AttackResult:
+                return AttackResult(
+                    conversation_id="test-conversation-id",
+                    objective=context.objective,
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=1,
+                )
+
+            async def _teardown_async(self, *, context: AttackContext) -> None:
+                pass
+
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+        persist = memory.add_attack_results_to_memory
+
+        def persist_then_fail(*, attack_results: list[AttackResult]) -> None:
+            persist(attack_results=attack_results)
+            raise RuntimeError("commit acknowledgement lost")
+
+        with (
+            patch.object(memory, "add_attack_results_to_memory", side_effect=persist_then_fail) as persist_mock,
+            pytest.raises(RuntimeError, match="commit acknowledgement lost"),
+        ):
+            await strategy.execute_async(objective="Test objective")
+
+        persist_mock.assert_called_once()
+        [stored_result] = memory.get_attack_results(objective="Test objective")
+        assert stored_result.outcome is AttackOutcome.SUCCESS
+
+    async def test_teardown_failure_persists_only_error_result(self, mock_objective_target: PromptTarget) -> None:
+        class TestStrategy(AttackStrategy):
+            def _validate_context(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _setup_async(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _perform_async(self, *, context: AttackContext) -> AttackResult:
+                return AttackResult(
+                    conversation_id="test-conversation-id",
+                    objective=context.objective,
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=1,
+                )
+
+            async def _teardown_async(self, *, context: AttackContext) -> None:
+                raise RuntimeError("teardown failed")
+
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+
+        with pytest.raises(RuntimeError, match="Strategy execution failed") as exc_info:
+            await strategy.execute_async(objective="Test objective")
+
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert str(exc_info.value.__cause__) == "teardown failed"
+        [stored_result] = memory.get_attack_results(objective="Test objective")
+        assert stored_result.outcome is AttackOutcome.ERROR
+        assert stored_result.error_message == "teardown failed"
+
+    async def test_attack_and_error_result_persistence_failures_are_both_propagated(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
+        attack_cause = ValueError("attack failed")
+        persistence_error = RuntimeError("database unavailable")
+
+        class TestStrategy(AttackStrategy):
+            def _validate_context(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _setup_async(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _perform_async(self, *, context: AttackContext) -> AttackResult:
+                raise attack_cause
+
+            async def _teardown_async(self, *, context: AttackContext) -> None:
+                pass
+
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+
+        with (
+            patch.object(memory, "add_attack_results_to_memory", side_effect=persistence_error) as persist,
+            pytest.raises(ExceptionGroup, match="Attack execution and error result persistence failed") as exc_info,
+        ):
+            await strategy.execute_async(objective="Test objective")
+
+        persist.assert_called_once()
+        attack_error, recorded_persistence_error = exc_info.value.exceptions
+        assert attack_error.__cause__ is attack_cause
+        assert recorded_persistence_error is persistence_error
+        assert memory.get_attack_results(objective="Test objective") == []
+
+    async def test_partial_error_result_persistence_failure_does_not_retry(
+        self, mock_objective_target: PromptTarget
+    ) -> None:
+        class TestStrategy(AttackStrategy):
+            def _validate_context(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _setup_async(self, *, context: AttackContext) -> None:
+                pass
+
+            async def _perform_async(self, *, context: AttackContext) -> AttackResult:
+                raise ValueError("attack failed")
+
+            async def _teardown_async(self, *, context: AttackContext) -> None:
+                pass
+
+        strategy = TestStrategy(context_type=AttackContext, objective_target=mock_objective_target)
+        memory = CentralMemory.get_memory_instance()
+        persist = memory.add_attack_results_to_memory
+
+        def persist_then_fail(*, attack_results: list[AttackResult]) -> None:
+            persist(attack_results=attack_results)
+            raise RuntimeError("commit acknowledgement lost")
+
+        with (
+            patch.object(memory, "add_attack_results_to_memory", side_effect=persist_then_fail) as persist_mock,
+            pytest.raises(ExceptionGroup) as exc_info,
+        ):
+            await strategy.execute_async(objective="Test objective")
+
+        persist_mock.assert_called_once()
+        assert str(exc_info.value.exceptions[1]) == "commit acknowledgement lost"
+        [stored_result] = memory.get_attack_results(objective="Test objective")
+        assert stored_result.outcome is AttackOutcome.ERROR
+        assert stored_result.error_message == "attack failed"
 
     async def test_cancellation_clears_retry_collector(self, mock_objective_target):
         teardown_calls = 0

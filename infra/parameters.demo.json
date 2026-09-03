@@ -19,6 +19,9 @@
     "allowedGroupObjectIds": {
       "value": "REPLACE_GROUP_OBJECT_IDS"
     },
+    "adminGroupObjectId": {
+      "value": "REPLACE_ADMIN_GROUP_OBJECT_ID"
+    },
     "allowedCidr": {
       "value": ""
     },
@@ -31,6 +34,9 @@
     "pyritInitializer": {
       "value": "target"
     },
+    "pyritConfigFileUri": {
+      "value": ""
+    },
     "envFileContents": {
       "value": "PYRIT_REPLACE_ME=set-via-secure-channel"
     },
@@ -40,7 +46,25 @@
     "enableOtel": {
       "value": false
     },
-    "enablePrivateEndpoint": {
+    "enableFrontDoor": {
+      "value": false
+    },
+    "enableFrontDoorPrivateLink": {
+      "value": false
+    },
+    "frontDoorPrivateLinkRequestMessage": {
+      "value": "Azure Front Door private access to copyrit-INSTANCE_NAME"
+    },
+    "disableContainerAppsPublicAccess": {
+      "value": false
+    },
+    "vnetAddressPrefix": {
+      "value": "10.0.0.0/16"
+    },
+    "infrastructureSubnetAddressPrefix": {
+      "value": "10.0.1.0/26"
+    },
+    "protectEgressPublicIp": {
       "value": false
     },
     "tags": {
@@ -54,11 +78,11 @@
     "acrName": {
       "value": "REPLACE_ACR_NAME"
     },
+    "existingManagedIdentityResourceId": {
+      "value": "REPLACE_MANAGED_IDENTITY_RESOURCE_ID"
+    },
     "keyVaultResourceId": {
       "value": "REPLACE_KEY_VAULT_RESOURCE_ID"
-    },
-    "infrastructureSubnetId": {
-      "value": ""
     },
     "logAnalyticsWorkspaceId": {
       "value": ""

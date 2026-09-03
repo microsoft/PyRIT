@@ -187,6 +187,14 @@ class TestParseArgs:
         args = pyrit_scan.parse_args(["list-scenarios", "--server-url", "http://remote:9000"])
         assert args.server_url == "http://remote:9000"
 
+    def test_list_with_auth_mode(self):
+        args = pyrit_scan.parse_args(["list-scenarios", "--auth-mode", "device_code"])
+        assert args.auth_mode == "device_code"
+
+    def test_list_rejects_invalid_auth_mode(self):
+        with pytest.raises(SystemExit):
+            pyrit_scan.parse_args(["list-scenarios", "--auth-mode", "interactive"])
+
     def test_global_flag_before_verb(self):
         args = pyrit_scan.parse_args(["--server-url", "http://remote:9000", "list-scenarios"])
         assert args.command == "list-scenarios"
@@ -440,6 +448,21 @@ class TestMain:
         return_value=True,
     )
     @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_passes_auth_mode_to_client(self, mock_client_class, mock_probe):
+        mock_client = _mock_api_client()
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["list-scenarios", "--auth-mode", "azure_cli"])
+
+        assert result == 0
+        assert mock_client_class.call_args.kwargs["auth_mode"] == "azure_cli"
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_list_initializers(self, mock_client_class, mock_probe):
         """Test main with --list-initializers flag."""
         mock_client = _mock_api_client()
@@ -627,6 +650,16 @@ class TestMain:
 # ---------------------------------------------------------------------------
 # Internal helper coverage
 # ---------------------------------------------------------------------------
+
+
+def test_resolve_auth_mode_rejects_unsupported_programmatic_value() -> None:
+    parsed_args = Namespace(config_file=None, auth_mode="invalid")
+
+    with (
+        patch("pyrit.cli._config_reader.read_server_settings", return_value=MagicMock(auth_mode="auto")),
+        pytest.raises(ValueError, match="Unsupported authentication mode"),
+    ):
+        pyrit_scan._resolve_auth_mode(parsed_args=parsed_args)
 
 
 class TestStopServerOnPort:
@@ -1235,6 +1268,31 @@ class TestMainExtraPaths:
         return_value=True,
     )
     @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_start_scenario_read_timeout_reports_type_and_hint(self, mock_client_class, _mock_probe, capsys):
+        """A ReadTimeout stringifies to '', so the type and a hint have to carry the message."""
+        import httpx
+
+        mock_client = _mock_api_client()
+        mock_client.start_scenario_run_async.side_effect = httpx.ReadTimeout("")
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "--request-timeout" in captured.out
+        # The server keeps initializing after the client gives up, so the outcome is unknown
+        # and must not be reported as a definite failure to start.
+        assert "unknown whether the run started" in captured.out
+        assert "could not be started" not in captured.out
+        assert "scenario-history" in captured.out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_run_results_failure_is_hard_error(self, mock_client_class, _mock_probe, capsys):
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_results_async.side_effect = RuntimeError("nope")
@@ -1249,6 +1307,38 @@ class TestMainExtraPaths:
         assert "nope" in captured.out
         # The summary printer should still be used as a fallback for context.
         assert "test_scenario" in captured.out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_run_results_read_timeout_points_at_scenario_results(self, mock_client_class, _mock_probe, capsys):
+        """Results are fetched with the request timeout, unlike polling, so they can time out."""
+        import httpx
+
+        mock_client = _mock_api_client()
+        mock_client.get_scenario_run_results_async.side_effect = httpx.ReadTimeout("")
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "scenario-results" in captured.out
+        assert "--request-timeout" in captured.out
+
+    def test_print_cli_exception_surfaces_empty_read_timeout(self, capsys):
+        """A bare ReadTimeout stringifies to '', so the helper has to carry the message."""
+        import httpx
+
+        pyrit_scan._print_cli_exception(exc=httpx.ReadTimeout(""))
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "did not respond in time" in captured.out
+        # Only pyrit_scan verbs reach the helper with a timeout, and they all take the flag.
+        assert "--request-timeout" in captured.out
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -1432,6 +1522,49 @@ class TestScenarioResults:
         rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
         assert rc == 0
         assert "extract data" in capsys.readouterr().out
+
+    def test_handle_results_conversations_fetches_and_prints(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {
+            "messages": [
+                {"role": "user", "turn_number": 0, "message_pieces": [{"converted_value": "give me data"}]},
+            ]
+        }
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "conversations"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        client.get_conversation_messages_async.assert_awaited_once()
+        assert client.get_conversation_messages_async.await_args.kwargs["conversation_id"] == "conv-1"
+        out = capsys.readouterr().out
+        assert "give me data" in out
+        assert "Conversations" in out
+
+    def test_handle_results_full_prints_table_then_transcripts(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.return_value = {"messages": []}
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "full"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Attack Results" in out
+        assert "Conversations" in out
+
+    def test_handle_results_conversations_reports_fetch_error(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        client.get_conversation_messages_async.side_effect = RuntimeError("boom")
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID", "--view", "conversations"])
+        rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "boom" in capsys.readouterr().out
 
     def test_handle_results_reports_fetch_error(self, capsys):
         import asyncio

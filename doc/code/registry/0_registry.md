@@ -34,6 +34,7 @@ This makes it easy to write code that inspects any registry:
 ```python
 from pyrit.registry import ScenarioRegistry
 
+
 def show_registry_contents(registry) -> None:
     for name in registry.get_names():
         print(name)

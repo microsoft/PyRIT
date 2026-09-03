@@ -14,7 +14,7 @@ test.describe("Onboarding tour", () => {
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
     await expect(dialog).toContainText(
-      "target selection happens in Configuration"
+      "target selection happens in Targets"
     );
     await expect(dialog).toContainText("choose Configure a target");
     await expect(dialog).toContainText("use Set Active there");
@@ -23,13 +23,13 @@ test.describe("Onboarding tour", () => {
     await page
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(
       page.getByRole("heading", { name: "Target Configuration" })
     ).toBeVisible();
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText(
-      "target selection happens in Configuration"
+      "target selection happens in Targets"
     );
 
     await dialog.getByRole("button", { name: "Back", exact: true }).click();
@@ -42,7 +42,7 @@ test.describe("Onboarding tour", () => {
     await page
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(dialog).toBeVisible();
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
@@ -91,7 +91,7 @@ test.describe("Onboarding tour", () => {
 
     await page.goto("/");
     await page
-      .getByRole("button", { name: "Configuration", exact: true })
+      .getByRole("button", { name: "Targets", exact: true })
       .click();
     await expect(
       page.getByRole("heading", { name: "Target Configuration" })
@@ -106,13 +106,13 @@ test.describe("Onboarding tour", () => {
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
     await expect(dialog).toContainText("target currently active for Chat");
-    await expect(dialog).toContainText("use Set Active in Configuration");
+    await expect(dialog).toContainText("use Set Active in Targets");
     await expect(page.locator('[data-tour="target-card"]')).toBeVisible();
 
     await page
       .getByRole("button", { name: "Manage targets", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(
       page.getByRole("heading", { name: "Target Configuration" })
     ).toBeVisible();
@@ -168,7 +168,7 @@ test.describe("Onboarding tour", () => {
       .getByRole("button", { name: "Configure a target", exact: true })
       .click();
 
-    await expect(page).toHaveURL(/\/config$/);
+    await expect(page).toHaveURL(/\/targets$/);
     await expect(dialog).toBeVisible();
     await page.getByRole("button", { name: "Set Active", exact: true }).click();
     await expect(page.getByText("Active", { exact: true }).first()).toBeVisible();

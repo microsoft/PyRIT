@@ -4,37 +4,40 @@
 import dataclasses
 import inspect
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.memory.memory_models import ScorableContentEntry
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
     Condition,
+    ContentEntryScorable,
     MatchesObjective,
     Message,
     MessagePiece,
     PromptResponseError,
     Score,
+    ScoreStatus,
     ScoringExpectation,
 )
 from pyrit.score import (
     ContentScorable,
     MessageScorable,
     MessageScorer,
+    MessageTrueFalseScorer,
     Scorable,
     Scorer,
     ScorerPromptValidator,
-    TrueFalseScorer,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
-from pyrit.score.message_scorer import MessageScoringOptions, extract_objective_from_previous_turn
+from pyrit.score.message_scorer import extract_objective_from_previous_turn
 
 
-@dataclasses.dataclass(frozen=True)
 class UnsupportedScorable(Scorable):
     """A scorable kind no message scorer handles."""
 
@@ -42,8 +45,8 @@ class UnsupportedScorable(Scorable):
 
 
 class PermissiveValidator(ScorerPromptValidator):
-    def __init__(self, *, is_objective_required: bool = False) -> None:
-        super().__init__(is_objective_required=is_objective_required)
+    def __init__(self, *, is_objective_required: bool = False, supported_roles=None) -> None:
+        super().__init__(is_objective_required=is_objective_required, supported_roles=supported_roles)
 
     def validate(self, message, objective=None):
         pass
@@ -52,7 +55,7 @@ class PermissiveValidator(ScorerPromptValidator):
         return True
 
 
-class RecordingScorer(TrueFalseScorer):
+class RecordingScorer(MessageTrueFalseScorer):
     """A message scorer that remembers what it was asked to score."""
 
     def __init__(
@@ -60,9 +63,13 @@ class RecordingScorer(TrueFalseScorer):
         *,
         message_resolver: MessageScorableResolver | None = None,
         is_objective_required: bool = False,
+        supported_roles=None,
     ) -> None:
         super().__init__(
-            validator=PermissiveValidator(is_objective_required=is_objective_required),
+            validator=PermissiveValidator(
+                is_objective_required=is_objective_required,
+                supported_roles=supported_roles,
+            ),
             message_resolver=message_resolver,
         )
         self.scored_messages: list[Message] = []
@@ -178,7 +185,7 @@ class TestScorableResolution:
                 )
             )
 
-    async def test_content_scorable_is_never_persisted(self):
+    async def test_content_scorable_does_not_persist_a_message_piece(self):
         scorer = RecordingScorer()
 
         scores = await scorer.score_async(scorable=ContentScorable(value="loose text"))
@@ -189,6 +196,41 @@ class TestScorableResolution:
         assert scored_piece.not_in_memory is True
         # Memory cannot link a score to a piece it never stored.
         assert scores[0].message_piece_id is None
+
+    async def test_score_image_copies_source_before_persisting_anchor(
+        self,
+        sqlite_instance: MemoryInterface,
+        tmp_path: Path,
+    ):
+        source = tmp_path / "source.png"
+        image_bytes = b"\x89PNG scorer evidence"
+        source.write_bytes(image_bytes)
+        scorer = RecordingScorer()
+
+        score = (await scorer.score_image_async(str(source)))[0]
+
+        assert isinstance(score.scorable, ContentEntryScorable)
+        stored_content = sqlite_instance.get_scorable_content(content_ids=[score.scorable.content_id])[
+            score.scorable.content_id
+        ]
+        assert stored_content.value != str(source)
+        source.unlink()
+        assert Path(stored_content.value).read_bytes() == image_bytes
+
+        rescored = await scorer.score_async(scorable=score.scorable)
+        assert rescored[0].scorable == score.scorable
+
+    async def test_rescoring_stored_content_keeps_its_anchor(self, sqlite_instance: MemoryInterface):
+        """Re-scoring must point at the row the content already has, not copy it into a new one."""
+        scorer = RecordingScorer()
+        first = (await scorer.score_async(scorable=ContentScorable(value="loose text")))[0]
+        anchor = first.scorable
+        assert isinstance(anchor, ContentEntryScorable)
+
+        second = (await scorer.score_async(scorable=anchor))[0]
+
+        assert second.scorable == anchor
+        assert len(sqlite_instance._query_entries(ScorableContentEntry)) == 1
 
     async def test_message_scorer_uses_injected_resolver(self):
         message = _assistant_message()
@@ -205,6 +247,18 @@ class TestScorableResolution:
 
         with pytest.raises(TypeError, match="cannot score UnsupportedScorable"):
             await scorer.score_async(scorable=UnsupportedScorable(uri="/tmp/out.txt"))  # type: ignore[arg-type]
+
+    def test_stamping_an_unknown_anchor_raises_type_error(self):
+        score = MagicMock(spec=Score)
+        score.scorable = None
+
+        with pytest.raises(TypeError, match="cannot anchor a score"):
+            MessageScorer._stamp_scorable(
+                message=_assistant_message(),
+                scores=[score],
+                anchor=UnsupportedScorable(uri="/tmp/out.txt"),
+                persisted_piece_ids=None,
+            )
 
 
 class TestScorerBaseIsScorableAgnostic:
@@ -240,50 +294,115 @@ class TestScorerBaseIsScorableAgnostic:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScorableFilters:
-    """Message policy is separate from the scorable's evidence identity."""
+    """Role policy is a scorer capability, applied after the scorer acquires its evidence."""
 
-    async def test_role_filter_mismatch_skips_scoring(self):
-        scorer = RecordingScorer()
+    async def test_unread_role_produces_no_score(self):
+        scorer = RecordingScorer(supported_roles=["user"])
         message = _assistant_message()
 
-        scores = await scorer.score_async(
-            scorable=MessageScorable.from_message(message),
-            message_options=MessageScoringOptions(role_filter="user"),
-        )
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert scores == []
         assert scorer.scored_messages == []
 
-    async def test_role_filter_match_scores(self):
-        scorer = RecordingScorer()
+    async def test_read_role_scores(self):
+        scorer = RecordingScorer(supported_roles=["assistant"])
         message = _assistant_message()
 
-        scores = await scorer.score_async(
-            scorable=MessageScorable.from_message(message),
-            message_options=MessageScoringOptions(role_filter="assistant"),
-        )
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert len(scores) == 1
 
-    async def test_skip_on_error_result_skips_error_message(self):
+    async def test_simulated_assistant_is_unread_by_default(self):
+        """A prepended turn is fabricated history, so a scorer must opt in to read it."""
         scorer = RecordingScorer()
-        message = _error_message()
+        message = MessagePiece(
+            role="simulated_assistant",
+            original_value="prepended text",
+            conversation_id=str(uuid.uuid4()),
+        ).to_message()
+        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
 
-        scores = await scorer.score_async(
-            scorable=MessageScorable.from_message(message),
-            message_options=MessageScoringOptions(skip_on_error_result=True),
-        )
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert scores == []
         assert scorer.scored_messages == []
 
-    async def test_error_message_is_scored_when_not_skipping(self):
+    async def test_transport_error_message_produces_undetermined_score(self):
+        """An error is not the target's answer, so no verdict was reachable."""
+        scorer = RecordingScorer()
+        message = MessagePiece(
+            role="assistant",
+            original_value="connection reset",
+            original_value_data_type="error",
+            response_error="processing",
+            conversation_id=str(uuid.uuid4()),
+        ).to_message()
+        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
+
+        assert len(scores) == 1
+        assert scores[0].status == ScoreStatus.UNDETERMINED
+        assert scorer.scored_messages == []
+
+    async def test_blocked_message_stays_false_safe(self):
+        """A fully blocked response reaches the scorer's family and keeps its neutral verdict."""
         scorer = RecordingScorer()
         message = _error_message()
 
         scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert scorer.scored_messages == []
+
+    async def test_partly_errored_message_scores_only_readable_pieces(self):
+        """One bad piece must neither discard nor reach the scorer beside readable content."""
+        scorer = RecordingScorer()
+        conversation_id = str(uuid.uuid4())
+        message = Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value="blocked",
+                    original_value_data_type="error",
+                    response_error="blocked",
+                    conversation_id=conversation_id,
+                ),
+                MessagePiece(role="assistant", original_value="usable text", conversation_id=conversation_id),
+            ]
+        )
+        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
+
+        assert len(scores) == 1
+        assert len(scorer.scored_messages) == 1
+        assert [piece.original_value for piece in scorer.scored_messages[0].message_pieces] == ["usable text"]
+
+    async def test_explicit_legacy_role_filter_still_applies(self):
+        scorer = RecordingScorer()
+        message = _assistant_message()
+
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(message),
+                role_filter="user",
+            )
+
+        assert scores == []
+
+    async def test_explicit_legacy_skip_on_error_still_applies(self):
+        scorer = RecordingScorer()
+
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(_error_message()),
+                skip_on_error_result=True,
+            )
+
+        assert scores == []
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -315,64 +434,95 @@ class TestMessageScoringPolicyMatrix:
     @pytest.mark.parametrize(
         (
             "role_filter",
+            "supported_roles",
             "skip_on_error_result",
             "structured_refusal",
             "partial_content",
-            "score_blocked_content",
+            "should_score_blocked_content",
             "input_response_error",
             "expected_skip",
             "expected_value",
             "expected_response_error",
         ),
         [
-            (None, False, None, None, False, "none", False, "response", "none"),
-            ("user", False, None, None, False, "none", True, "response", "none"),
-            (None, True, None, None, False, "blocked", True, "blocked", "blocked"),
-            (None, True, "I cannot assist.", None, False, "blocked", False, "I cannot assist.", "blocked"),
-            (None, True, None, "partial response", True, "blocked", False, "partial response", "none"),
-            (None, True, None, None, True, "blocked", True, "blocked", "blocked"),
+            (None, ["assistant"], False, None, None, False, "none", False, "response", "none"),
+            ("user", ["assistant"], False, None, None, False, "none", True, None, None),
+            (None, ["user"], False, None, None, False, "none", True, None, None),
+            (None, ["assistant"], True, None, None, False, "blocked", True, None, None),
+            (
+                None,
+                ["assistant"],
+                True,
+                "I cannot assist.",
+                None,
+                False,
+                "blocked",
+                False,
+                "I cannot assist.",
+                "blocked",
+            ),
+            (
+                None,
+                ["assistant"],
+                True,
+                None,
+                "partial response",
+                True,
+                "blocked",
+                False,
+                "partial response",
+                "none",
+            ),
+            (None, ["assistant"], False, None, None, True, "blocked", False, None, None),
+            (None, ["assistant"], False, None, None, True, "processing", False, None, None),
         ],
     )
     def test_prepared_input_policy_matrix(
         self,
         role_filter: ChatMessageRole | None,
+        supported_roles: list[ChatMessageRole],
         skip_on_error_result: bool,
         structured_refusal: str | None,
         partial_content: str | None,
-        score_blocked_content: bool,
+        should_score_blocked_content: bool,
         input_response_error: PromptResponseError,
         expected_skip: bool,
-        expected_value: str,
-        expected_response_error: PromptResponseError,
+        expected_value: str | None,
+        expected_response_error: PromptResponseError | None,
     ) -> None:
-        is_blocked = input_response_error == "blocked"
+        has_error = input_response_error != "none"
         piece = MessagePiece(
             role="assistant",
-            original_value="blocked" if is_blocked else "response",
-            original_value_data_type="error" if is_blocked else "text",
-            converted_value_data_type="error" if is_blocked else "text",
+            original_value="error" if has_error else "response",
+            original_value_data_type="error" if has_error else "text",
+            converted_value_data_type="error" if has_error else "text",
             response_error=input_response_error,
             prompt_metadata={"partial_content": partial_content} if partial_content is not None else {},
         )
         if structured_refusal is not None:
             piece.mark_as_structured_refusal(refusal=structured_refusal)
-        scorer = RecordingScorer()
-        scorer.score_blocked_content = score_blocked_content
+        message = piece.to_message()
+        scorer = RecordingScorer(supported_roles=supported_roles)
+        scorer.should_score_blocked_content = should_score_blocked_content
 
         scoring_input = scorer._prepare_message_scoring_input(
-            message=piece.to_message(),
+            message=message,
             expectation=ScoringExpectation(objective="objective"),
-            options=MessageScoringOptions(
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            ),
             infer_objective_from_request=False,
+            anchor=None,
+            role_filter=role_filter,
+            skip_on_error_result=skip_on_error_result,
         )
 
+        assert scoring_input.source_message is message
         assert scoring_input.should_skip is expected_skip
         assert scoring_input.objective == "objective"
-        assert scoring_input.message.get_value() == expected_value
-        assert scoring_input.message.get_piece().response_error == expected_response_error
+        if expected_value is None:
+            assert scoring_input.scoring_message is None
+        else:
+            assert scoring_input.scoring_message is not None
+            assert scoring_input.scoring_message.get_value() == expected_value
+            assert scoring_input.scoring_message.get_piece().response_error == expected_response_error
 
     def test_inferred_objective_is_part_of_the_prepared_input(self, sqlite_instance: MemoryInterface) -> None:
         conversation_id = str(uuid.uuid4())
@@ -390,8 +540,10 @@ class TestMessageScoringPolicyMatrix:
         scoring_input = scorer._prepare_message_scoring_input(
             message=message,
             expectation=None,
-            options=MessageScoringOptions(),
             infer_objective_from_request=True,
+            anchor=None,
+            role_filter=None,
+            skip_on_error_result=False,
         )
 
         assert scoring_input.objective == "the inferred objective"
@@ -400,7 +552,7 @@ class TestMessageScoringPolicyMatrix:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestMessageScoringExecutionAndFinalization:
-    """Execution policy and outer score persistence retain their exact contracts."""
+    """Execution policy and outer validation/persistence retain their exact contracts."""
 
     async def test_pyrit_exception_keeps_type_and_gains_scorer_context(self) -> None:
         scorer = RecordingScorer()
@@ -443,15 +595,12 @@ class TestMessageScoringExecutionAndFinalization:
         persist.assert_called_once_with(scores=scores)
 
     async def test_skipped_input_is_not_validated_or_persisted(self) -> None:
-        scorer = RecordingScorer()
+        scorer = RecordingScorer(supported_roles=["user"])
         with (
             patch.object(scorer, "validate_return_scores", wraps=scorer.validate_return_scores) as validate,
             patch.object(scorer._memory, "add_scores_to_memory") as persist,
         ):
-            scores = await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
-                message_options=MessageScoringOptions(role_filter="user"),
-            )
+            scores = await scorer.score_async(scorable=MessageScorable.from_message(_assistant_message()))
 
         assert scores == []
         validate.assert_not_called()
@@ -488,7 +637,6 @@ class TestDeprecatedParameters:
             role="assistant",
             original_value="original",
             converted_value="converted",
-            response_error="blocked",
         ).to_message()
         message.set_response_not_in_memory()
 
@@ -498,7 +646,7 @@ class TestDeprecatedParameters:
         scored = scorer.scored_messages[0]
         assert scored.get_value() == "converted"
         assert scored.get_piece().role == "assistant"
-        assert scored.is_error()
+        assert not scored.is_error()
 
     async def test_message_does_not_widen_to_the_stored_conversation(self, sqlite_instance: MemoryInterface):
         """The shim scores the supplied message, never the whole conversation behind it."""
@@ -527,37 +675,35 @@ class TestDeprecatedParameters:
 
         assert scorer.scored_objectives == ["legacy objective"]
 
-    async def test_legacy_role_filter_maps_to_message_options(self):
+    async def test_retired_role_filter_is_preserved(self):
         scorer = RecordingScorer()
 
-        with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
-            scores = await scorer.score_async(_assistant_message(), role_filter="user")
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(_assistant_message()),
+                role_filter="user",
+            )
 
         assert scores == []
 
-    async def test_legacy_skip_on_error_result_maps_to_message_options(self):
+    async def test_retired_skip_on_error_result_is_preserved(self):
         scorer = RecordingScorer()
-        message = _error_message()
 
-        with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
-            scores = await scorer.score_async(message, skip_on_error_result=True)
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(_error_message()),
+                skip_on_error_result=True,
+            )
 
         assert scores == []
 
-    @pytest.mark.parametrize(
-        "kwargs",
-        [
-            {"skip_on_error_result": False},
-            {"infer_objective_from_request": False},
-        ],
-    )
-    async def test_explicit_false_legacy_boolean_emits_warning(self, kwargs):
+    async def test_explicit_false_legacy_boolean_emits_warning(self):
         scorer = RecordingScorer()
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
             await scorer.score_async(
                 scorable=MessageScorable.from_message(_assistant_message()),
-                **kwargs,
+                infer_objective_from_request=False,
             )
 
     async def test_infer_objective_from_request_reads_the_previous_turn(self, sqlite_instance: MemoryInterface):
@@ -614,17 +760,6 @@ class TestConflictingInputs:
                 scorable=MessageScorable.from_message(_assistant_message()),
                 objective="one",
                 expectation=ScoringExpectation(objective="two"),
-            )
-
-    @pytest.mark.parametrize("kwargs", [{"role_filter": "assistant"}, {"skip_on_error_result": True}])
-    async def test_message_options_and_legacy_policy_raise(self, kwargs):
-        scorer = RecordingScorer()
-
-        with pytest.raises(ValueError, match="either 'message_options' or legacy"):
-            await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
-                message_options=MessageScoringOptions(),
-                **kwargs,
             )
 
 
@@ -691,27 +826,49 @@ class TestInHandMessages:
         resolver.resolve.assert_not_called()
         assert scorer.scored_messages == [message]
 
-    async def test_score_message_async_preserves_ephemeral_error_state(self):
+    async def test_score_message_async_does_not_dispatch_ephemeral_unreadable_error(self):
         scorer = RecordingScorer()
         message = MessagePiece(
             role="assistant",
             original_value="",
             original_value_data_type="error",
-            response_error="blocked",
+            response_error="unknown",
         ).to_message()
         message.set_response_not_in_memory()
 
-        await scorer.score_message_async(message=message)
+        scores = await scorer.score_message_async(message=message)
 
-        assert scorer.scored_messages[0].is_error()
+        assert len(scores) == 1
+        assert scores[0].is_undetermined
+        assert scorer.scored_messages == []
 
-    async def test_score_message_async_applies_message_options(self):
+    async def test_score_message_async_detects_unmarked_ephemeral_message(self):
         scorer = RecordingScorer()
+        message = MessagePiece(role="assistant", original_value="not stored").to_message()
 
-        scores = await scorer.score_message_async(
-            message=_assistant_message(),
-            message_options=MessageScoringOptions(role_filter="user"),
+        score = (await scorer.score_message_async(message=message))[0]
+
+        assert score.message_piece_id is None
+        assert isinstance(score.scorable, ContentEntryScorable)
+
+    async def test_score_message_async_does_not_anchor_unmarked_ephemeral_multipart_message(self):
+        scorer = RecordingScorer()
+        message = Message(
+            message_pieces=[
+                MessagePiece(role="assistant", original_value="first"),
+                MessagePiece(role="assistant", original_value="second"),
+            ]
         )
+
+        score = (await scorer.score_message_async(message=message))[0]
+
+        assert score.message_piece_id is None
+        assert score.scorable is None
+
+    async def test_score_message_async_applies_declared_roles(self):
+        scorer = RecordingScorer(supported_roles=["user"])
+
+        scores = await scorer.score_message_async(message=_assistant_message())
 
         assert scores == []
 

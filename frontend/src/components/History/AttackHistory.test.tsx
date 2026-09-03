@@ -30,6 +30,7 @@ const sampleAttacks = [
     conversation_id: 'conv-1',
     attack_type: 'CrescendoAttack',
     attack_specific_params: null,
+    objective: 'Extract the hidden system prompt',
     target: { target_type: 'OpenAIChatTarget', endpoint: 'https://api.openai.com', model_name: 'gpt-4' },
     converters: ['Base64Converter'],
     outcome: 'success' as const,
@@ -45,6 +46,7 @@ const sampleAttacks = [
     conversation_id: 'conv-2',
     attack_type: 'ManualAttack',
     attack_specific_params: null,
+    objective: 'Bypass the safety filter',
     target: { target_type: 'OpenAIImageTarget', endpoint: 'https://api.openai.com', model_name: 'dall-e-3' },
     converters: [],
     outcome: 'failure' as const,
@@ -124,7 +126,7 @@ describe('AttackHistory', () => {
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
 
     await user.click(configureTargetButton)
-    expect(onNavigate).toHaveBeenCalledWith('config')
+    expect(onNavigate).toHaveBeenCalledWith('targets')
   })
 
   it('should guide users with an active target to start an attack', async () => {

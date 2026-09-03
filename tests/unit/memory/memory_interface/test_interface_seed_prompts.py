@@ -8,9 +8,11 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import String
 from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_models import SeedEntry
 from pyrit.models import MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedPrompt
 
 
@@ -427,6 +429,185 @@ async def test_add_seed_prompts_duplicate_entries_same_dataset(sqlite_instance: 
     # Validate that only new prompt is added and the total prompt count is 3
     stored_prompts = sqlite_instance.get_seeds(dataset_name="test_dataset")
     assert len(stored_prompts) == 3
+
+
+async def test_add_seed_prompts_duplicates_within_one_call_are_all_stored(sqlite_instance: MemoryInterface):
+    """Existing behaviour: the dedupe check looks at storage, not at the batch being added."""
+    prompts: Sequence[SeedPrompt] = [
+        SeedPrompt(value="prompt1", dataset_name="test_dataset", data_type="text"),
+        SeedPrompt(value="prompt1", dataset_name="test_dataset", data_type="text"),
+        SeedPrompt(value="prompt1", dataset_name="test_dataset", data_type="text"),
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=prompts, added_by="tester")
+
+    assert len(sqlite_instance.get_seeds(dataset_name="test_dataset")) == 3
+
+
+async def test_add_seed_prompts_without_dataset_name_matches_any_dataset(sqlite_instance: MemoryInterface):
+    """Without a dataset name the lookup is unfiltered, so the hash matches in any dataset."""
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="prompt1", dataset_name="test_dataset", data_type="text")],
+        added_by="tester",
+    )
+
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="prompt1", data_type="text")],
+        added_by="tester",
+    )
+
+    assert len(sqlite_instance.get_seeds()) == 1
+
+
+async def test_add_seed_prompts_dedupes_across_chunk_boundaries(sqlite_instance: MemoryInterface):
+    """The lookup is chunked, so duplicates have to be caught across chunk boundaries."""
+    count = sqlite_instance._MAX_BIND_VARS * 2 + 25
+    first: Sequence[SeedPrompt] = [
+        SeedPrompt(value=f"prompt{index}", dataset_name="test_dataset", data_type="text") for index in range(count)
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=first, added_by="tester")
+    assert len(sqlite_instance.get_seeds(dataset_name="test_dataset")) == count
+
+    # Re-adding the same seeds plus one new one must only store the new one.
+    second: Sequence[SeedPrompt] = [
+        SeedPrompt(value=f"prompt{index}", dataset_name="test_dataset", data_type="text") for index in range(count)
+    ] + [SeedPrompt(value="brand_new", dataset_name="test_dataset", data_type="text")]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=second, added_by="tester")
+
+    assert len(sqlite_instance.get_seeds(dataset_name="test_dataset")) == count + 1
+
+
+async def test_add_seed_prompts_queries_are_batched(sqlite_instance: MemoryInterface):
+    """Regression guard: the dedupe lookup must not run one query per seed."""
+    prompts: Sequence[SeedPrompt] = [
+        SeedPrompt(value=f"prompt{index}", dataset_name="test_dataset", data_type="text") for index in range(50)
+    ]
+
+    with patch.object(sqlite_instance, "get_seeds", wraps=sqlite_instance.get_seeds) as spied:
+        await sqlite_instance.add_seeds_to_memory_async(seeds=prompts, added_by="tester")
+
+    assert spied.call_count == 1
+
+
+async def test_add_seed_prompts_dedupe_honors_backend_bind_var_limit(sqlite_instance: MemoryInterface):
+    """The whole statement has to fit the backend's ceiling, and the dataset name takes a bind."""
+    prompts: Sequence[SeedPrompt] = [
+        SeedPrompt(value=f"prompt{index}", dataset_name="test_dataset", data_type="text") for index in range(120)
+    ]
+
+    with patch.object(type(sqlite_instance), "_MAX_BIND_VARS", 50):
+        with patch.object(sqlite_instance, "get_seeds", wraps=sqlite_instance.get_seeds) as spied:
+            await sqlite_instance.add_seeds_to_memory_async(seeds=prompts, added_by="tester")
+
+    assert spied.call_count == 3
+    # 49 hashes plus the name is 50 binds; a full 50 hashes would exceed the ceiling by one.
+    assert [len(call.kwargs["value_sha256"]) for call in spied.call_args_list] == [49, 49, 22]
+    assert all(len(call.kwargs["value_sha256"]) + 1 <= 50 for call in spied.call_args_list)
+    assert len(sqlite_instance.get_seeds(dataset_name="test_dataset")) == 120
+
+
+async def test_add_seed_prompts_dedupe_uses_the_full_budget_without_a_dataset_name(
+    sqlite_instance: MemoryInterface,
+):
+    """With no name to bind there is nothing to reserve, so the whole ceiling goes to hashes."""
+    prompts: Sequence[SeedPrompt] = [SeedPrompt(value=f"prompt{index}", data_type="text") for index in range(120)]
+
+    with patch.object(type(sqlite_instance), "_MAX_BIND_VARS", 50):
+        with patch.object(sqlite_instance, "get_seeds", wraps=sqlite_instance.get_seeds) as spied:
+            await sqlite_instance.add_seeds_to_memory_async(seeds=prompts, added_by="tester")
+
+    assert [len(call.kwargs["value_sha256"]) for call in spied.call_args_list] == [50, 50, 20]
+
+
+async def test_add_seed_prompts_dedupe_delegates_dataset_name_to_the_database(sqlite_instance: MemoryInterface):
+    """Case sensitivity belongs to the column's collation, so the name must be compared in SQL."""
+    prompts: Sequence[SeedPrompt] = [
+        SeedPrompt(value=f"prompt{index}", dataset_name="test_dataset", data_type="text") for index in range(3)
+    ]
+
+    with patch.object(sqlite_instance, "get_seeds", wraps=sqlite_instance.get_seeds) as spied:
+        await sqlite_instance.add_seeds_to_memory_async(seeds=prompts, added_by="tester")
+
+    assert all(call.kwargs["dataset_name"] == "test_dataset" for call in spied.call_args_list)
+
+
+async def test_add_seed_prompts_dedupe_follows_a_case_insensitive_collation(sqlite_instance: MemoryInterface):
+    """Azure SQL's default collation is case-insensitive, so a differently cased name is a duplicate.
+
+    Rebuilds the real column with COLLATE NOCASE so the comparison is made by SQL rather than a
+    stubbed lookup; a Python-side comparison would pass a stub but still insert a duplicate here.
+    """
+    table = SeedEntry.__table__
+    original_type = table.c.dataset_name.type
+    table.drop(sqlite_instance.engine)
+    table.c.dataset_name.type = String(collation="NOCASE")
+    try:
+        table.create(sqlite_instance.engine)
+
+        await sqlite_instance.add_seeds_to_memory_async(
+            seeds=[SeedPrompt(value="prompt1", dataset_name="Dataset", data_type="text")], added_by="tester"
+        )
+        await sqlite_instance.add_seeds_to_memory_async(
+            seeds=[SeedPrompt(value="prompt1", dataset_name="dataset", data_type="text")], added_by="tester"
+        )
+
+        assert len(sqlite_instance.get_seeds()) == 1
+    finally:
+        table.c.dataset_name.type = original_type
+
+
+async def test_add_seed_prompts_dedupe_follows_a_trailing_blank_insensitive_collation(
+    sqlite_instance: MemoryInterface,
+):
+    """T-SQL ignores trailing blanks too, so normalizing case in Python would not have been enough."""
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="prompt1", dataset_name="alpha", data_type="text")], added_by="tester"
+    )
+
+    real_get_seeds = sqlite_instance.get_seeds
+
+    def blank_insensitive_get_seeds(*, dataset_name=None, **kwargs):
+        rows = real_get_seeds(**kwargs)
+        if not dataset_name:
+            return rows
+        return [row for row in rows if (row.dataset_name or "").rstrip() == dataset_name.rstrip()]
+
+    with patch.object(sqlite_instance, "get_seeds", side_effect=blank_insensitive_get_seeds):
+        await sqlite_instance.add_seeds_to_memory_async(
+            seeds=[SeedPrompt(value="prompt1", dataset_name="alpha   ", data_type="text")], added_by="tester"
+        )
+
+    assert len(sqlite_instance.get_seeds()) == 1
+
+
+async def test_add_seed_prompts_dedupe_groups_each_dataset_name_separately(sqlite_instance: MemoryInterface):
+    """Seeds arriving for several datasets at once still get one query per dataset name."""
+    prompts: Sequence[SeedPrompt] = [
+        SeedPrompt(value="shared", dataset_name="alpha", data_type="text"),
+        SeedPrompt(value="shared", dataset_name="beta", data_type="text"),
+        SeedPrompt(value="loose", data_type="text"),
+    ]
+
+    with patch.object(sqlite_instance, "get_seeds", wraps=sqlite_instance.get_seeds) as spied:
+        await sqlite_instance.add_seeds_to_memory_async(seeds=prompts, added_by="tester")
+
+    queried = [call.kwargs["dataset_name"] for call in spied.call_args_list]
+    assert sorted(queried, key=lambda name: (name is None, name or "")) == ["alpha", "beta", None]
+    assert len(sqlite_instance.get_seeds()) == 3
+
+
+async def test_add_seed_prompts_dedupe_treats_an_empty_dataset_name_as_unfiltered(
+    sqlite_instance: MemoryInterface,
+):
+    """An empty name filters nothing in SQL, so it must match a hash stored under any dataset."""
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="prompt1", dataset_name="alpha", data_type="text")], added_by="tester"
+    )
+
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="prompt1", dataset_name="", data_type="text")], added_by="tester"
+    )
+
+    assert len(sqlite_instance.get_seeds()) == 1
 
 
 async def test_add_seed_prompts_duplicate_entries_different_datasets(sqlite_instance: MemoryInterface):

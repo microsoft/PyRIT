@@ -27,6 +27,28 @@ export const useChatWindowStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     overflow: 'hidden',
   },
+  breadcrumbBar: {
+    display: 'flex',
+    alignItems: 'center',
+    flexShrink: 0,
+    minHeight: '36px',
+    paddingInline: tokens.spacingHorizontalL,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground3,
+    overflowX: 'auto',
+  },
+  breadcrumbLink: {
+    color: tokens.colorBrandForegroundLink,
+    textDecorationLine: 'none',
+    whiteSpace: 'nowrap',
+    ':hover': {
+      textDecorationLine: 'underline',
+    },
+    ':focus-visible': {
+      outline: `2px solid ${tokens.colorStrokeFocus2}`,
+      outlineOffset: '2px',
+    },
+  },
   conversationDrawer: {
     width: '280px',
     minWidth: '280px',

@@ -123,11 +123,12 @@ await output_scenario_async(scenario_result)
 # pyrit_scan run airt.cyber \
 #   --initializers target \
 #   --target openai_chat \
-#   --techniques multi_turn \
+#   --techniques role_play_movie_script \
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, DEFAULT, MULTI_TURN, red_teaming
+# **Available techniques:** Use `pyrit_scan run airt.cyber --list-scenario-parameters` to inspect
+# the current registry-backed technique catalog and its aggregate selectors.
 
 # %%
 from pyrit.scenario.airt import Cyber, CyberTechnique
@@ -138,7 +139,7 @@ scenario = Cyber()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [CyberTechnique.MULTI_TURN],
+        "scenario_techniques": [CyberTechnique.role_play_movie_script],
         "dataset_config": dataset_config,
     }
 )
@@ -158,9 +159,11 @@ await output_scenario_async(scenario_result)
 # objective inline into the template as a request converter (target-agnostic), and
 # `jailbreak_system_prompt` sets the template as a native system prompt with the objective sent as
 # the user turn (only for targets that natively support editable history + system prompts — it is
-# skipped for incapable targets). Registry techniques like `role_play_*`, `many_shot`, and `tap` are
-# opt-in. Results are grouped by jailbreak template, and a baseline (the un-jailbroken objective) is
-# included by default so complying with the bare objective is itself visible.
+# skipped for incapable targets). These are the only delivery techniques exposed by Jailbreak.
+# Generic simulated, multi-turn, or non-composable registry techniques are intentionally excluded
+# because they cannot preserve Jailbreak's per-template delivery semantics. Results are grouped by
+# jailbreak template, and a baseline (the un-jailbroken objective) is included by default so
+# complying with the bare objective is itself visible.
 #
 # ```bash
 # pyrit_scan run airt.jailbreak \
@@ -170,10 +173,10 @@ await output_scenario_async(scenario_result)
 #   --max-dataset-size 1
 # ```
 #
-# **Available techniques:** ALL, DEFAULT (`prompt_sending` + `jailbreak_system_prompt`), plus registry
-# techniques (`role_play_*`, `many_shot`, `tap`, …). By default a small random sample of jailbreak
-# templates runs; pass `num_jailbreaks` (random count) or `jailbreak_names` (explicit) to widen or
-# pin the selection.
+# **Available technique selectors:** ALL, DEFAULT, and SINGLE_TURN currently select both
+# `prompt_sending` and `jailbreak_system_prompt`; either concrete technique can also be selected
+# directly. By default a small random sample of jailbreak templates runs; pass `num_jailbreaks`
+# (random count) or `jailbreak_names` (explicit) to widen or pin the selection.
 
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
@@ -184,9 +187,10 @@ scenario = Jailbreak()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "scenario_techniques": [JailbreakTechnique.DEFAULT],
+        "scenario_techniques": [JailbreakTechnique.prompt_sending],
         "jailbreak_names": ["aim.yaml"],
         "dataset_config": dataset_config,
+        "include_baseline": False,
     }
 )
 await scenario.initialize_async()  # type: ignore
@@ -230,9 +234,10 @@ scenario = Multilingual()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
-        "languages": ["French", "Spanish", "German"],
-        "translation_strategies": ["translation", "random_translation"],
+        "languages": ["French"],
+        "translation_strategies": ["translation"],
         "dataset_config": dataset_config,
+        "include_baseline": False,
     }
 )
 await scenario.initialize_async()  # type: ignore
