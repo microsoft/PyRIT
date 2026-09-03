@@ -37,16 +37,17 @@ describe('ConverterParams accessibility', () => {
   it('associates visible parameter names with every control variant', () => {
     renderParams()
 
-    expect(screen.getByRole('textbox', { name: 'key *' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'key' })).toBeInTheDocument()
     expect(screen.getByRole('switch', { name: 'append_description' })).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'mode' })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'image_path' })).toBeInTheDocument()
   })
 
-  it('connects required validation text to the input', () => {
+  it('connects required validation text and state to the input', () => {
     renderParams(true)
 
-    const keyInput = screen.getByRole('textbox', { name: 'key *' })
+    const keyInput = screen.getByRole('textbox', { name: 'key' })
+    expect(keyInput).toHaveAttribute('aria-required', 'true')
     expect(keyInput).toHaveAttribute('aria-invalid', 'true')
     expect(keyInput).toHaveAccessibleDescription(/Required/)
   })
