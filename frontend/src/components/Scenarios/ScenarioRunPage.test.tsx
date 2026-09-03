@@ -514,7 +514,7 @@ describe('ScenarioRunPage', () => {
     expect(within(dialog).queryByText('Errors')).not.toBeInTheDocument()
   })
 
-  it('opens attempt details from the whole execution row', async () => {
+  it('navigates to attempt details from the whole execution row', async () => {
     const user = userEvent.setup()
     renderPage()
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
@@ -525,11 +525,10 @@ describe('ScenarioRunPage', () => {
     const firstBodyRow = within(executionsTable).getAllByRole('row')[1]
     expect(within(firstBodyRow).queryByRole('link')).not.toBeInTheDocument()
     await user.click(firstBodyRow)
-    expect(await screen.findByRole('dialog', { name: 'attack-technique' })).toBeInTheDocument()
-    expect(screen.getByTestId('scanner-route')).toHaveAttribute(
+    await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
       'data-location',
       `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
-    )
+    ))
   })
 
   it('renders one expandable parent for attacks that share a display group', async () => {
@@ -614,7 +613,7 @@ describe('ScenarioRunPage', () => {
       .getAllByRole('row')).toHaveLength(101)
   })
 
-  it('opens attempt details from the keyboard-accessible execution row', async () => {
+  it('navigates to attempt details from the keyboard-accessible execution row', async () => {
     const user = userEvent.setup()
     renderPage()
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
@@ -622,7 +621,10 @@ describe('ScenarioRunPage', () => {
 
     executionRow.focus()
     await user.keyboard('{Enter}')
-    expect(await screen.findByRole('dialog', { name: 'attack-technique' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
+      'data-location',
+      `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
+    ))
   })
 
   it('opens attempt details from a direct link and returns to the scanner on close', async () => {
