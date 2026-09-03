@@ -209,6 +209,7 @@ project:
         - file: api/pyrit_show_versions.md
     - file: blog/README.md
       children:
+        - file: blog/2026_09_03_adversarial_model_selection.md
         - file: blog/2026_07_09_scenarios.md
         - file: blog/2026_04_14_scoring_scorers.md
         - file: blog/2025_06_06.md

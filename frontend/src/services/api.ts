@@ -420,10 +420,20 @@ export const scenariosApi = {
   getRunProgress: async (
     scenarioResultId: string,
     params?: { since?: string; limit?: number },
+    signal?: AbortSignal,
   ): Promise<ScenarioRunProgress> => {
     const response = await apiClient.get(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/progress`,
-      { params },
+      { params, signal },
+    )
+    return response.data
+  },
+
+  cancelRun: async (scenarioResultId: string, signal?: AbortSignal): Promise<ScenarioRunSummary> => {
+    const response = await apiClient.post(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/cancel`,
+      undefined,
+      { signal },
     )
     return response.data
   },

@@ -20,7 +20,12 @@ from pyrit.models import (
     SeedSimulatedConversation,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core import BaselineAttackPolicy, DatasetAttackConfiguration, Scenario, ScenarioTechnique
+from pyrit.scenario.core import (
+    BaselineAttackPolicy,
+    DatasetAttackConfiguration,
+    Scenario,
+    ScenarioTechnique,
+)
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial

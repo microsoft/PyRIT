@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { MemoryRouter, Route, Routes } from "react-router";
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import { Message, MessageAttachment, TargetCapabilities, TargetInfo, TargetInstance } from "../../types";
@@ -59,7 +60,11 @@ const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
-}) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
+}) => (
+  <FluentProvider theme={webLightTheme}>
+    <MemoryRouter>{children}</MemoryRouter>
+  </FluentProvider>
+);
 
 function mockMatchMedia(matchesNarrowScreen: boolean): void {
   (window.matchMedia as jest.Mock).mockImplementation((query: string) => ({
@@ -317,6 +322,57 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByTestId("target-badge")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /new attack/i })).toBeInTheDocument();
     expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
+
+  it("shows a safe scenario-run breadcrumb only when provenance is present", () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    const { rerender } = render(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("navigation", { name: "Attack provenance" })).toBeInTheDocument();
+    expect(screen.getByRole("link", {
+      name: `Return to scenario run ${scenarioResultId}`,
+    })).toHaveAttribute("href", `/scanner-history/${scenarioResultId}`);
+
+    rerender(
+      <TestWrapper>
+        <ChatWindow {...defaultProps} scenarioResultId={null} />
+      </TestWrapper>
+    );
+    expect(screen.queryByRole("navigation", { name: "Attack provenance" })).not.toBeInTheDocument();
+  });
+
+  it("returns to the originating scenario run from the breadcrumb", async () => {
+    const user = userEvent.setup();
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={["/attacks/attack-1"]}>
+          <Routes>
+            <Route
+              path="/attacks/:attackResultId"
+              element={<ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />}
+            />
+            <Route
+              path="/scanner-history/:scenarioResultId"
+              element={<h1>Originating scenario run</h1>}
+            />
+          </Routes>
+        </MemoryRouter>
+      </FluentProvider>
+    );
+
+    await user.click(screen.getByRole("link", {
+      name: `Return to scenario run ${scenarioResultId}`,
+    }));
+
+    expect(screen.getByRole("heading", {
+      level: 1,
+      name: "Originating scenario run",
+    })).toBeInTheDocument();
   });
 
   it("defaults to raw mode when no Markdown preference is stored", () => {
