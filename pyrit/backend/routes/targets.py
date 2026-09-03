@@ -75,7 +75,9 @@ async def list_target_catalog() -> TargetCatalogResponse:  # pyrit-async-suffix-
     """
     Return the legacy catalog projection used by the current configuration UI.
 
-    Remove this route after the frontend switches to ``/targets/types``.
+    LEGACY COMPATIBILITY: pre-registry alias for ``/targets/types`` that hides
+    registry-reference parameters. Deleted with the rest of the ``catalog`` concept
+    when the configuration UI switches to ``/targets/types``.
 
     Returns:
         TargetCatalogResponse: The scalar-only legacy catalog projection.

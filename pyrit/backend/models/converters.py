@@ -57,8 +57,9 @@ class ConverterTypeResponse(BaseModel):
     items: list[ConverterTypeEntry] = Field(..., description="List of available converter types")
 
 
-# LEGACY COMPATIBILITY: The current chat UI imports the catalog names. Remove
-# these aliases when the chat-migration stack layer switches to the /types API.
+# LEGACY COMPATIBILITY: ``Catalog`` is the pre-registry name for ``Type``. These
+# aliases exist only so the un-migrated chat UI keeps working; delete them with the
+# /catalog route when that UI switches to the /types API.
 ConverterCatalogEntry = ConverterTypeEntry
 ConverterCatalogResponse = ConverterTypeResponse
 

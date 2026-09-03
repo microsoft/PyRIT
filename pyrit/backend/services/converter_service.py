@@ -14,9 +14,9 @@ Converters can be:
 
 import base64
 import binascii
+import mimetypes
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,25 +47,9 @@ if TYPE_CHECKING:
     from pyrit.converter import ConverterResult
 
 
-@dataclass(frozen=True)
-class _UploadFormat:
-    """Server-owned format contract for one constructor upload."""
-
-    extension: str
-    signatures: tuple[bytes, ...]
-
-
-_PATH_UPLOAD_FORMATS: dict[tuple[str, str], dict[str, _UploadFormat]] = {
-    ("PDFConverter", "existing_pdf"): {
-        "application/pdf": _UploadFormat(extension=".pdf", signatures=(b"%PDF-",)),
-    },
-    ("TransparencyAttackConverter", "benign_image_path"): {
-        "image/jpeg": _UploadFormat(extension=".jpg", signatures=(b"\xff\xd8\xff",)),
-    },
-}
-_ACTIVE_CONTENT_TYPES = frozenset({"application/xhtml+xml", "image/svg+xml", "text/html"})
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
 _REGISTRY_UPLOAD_DIRECTORY = DB_DATA_PATH / "registry-uploads"
+_DEFAULT_UPLOAD_EXTENSION = ".bin"
 
 
 class ConverterService:
@@ -144,8 +128,13 @@ class ConverterService:
         """
         Return the legacy projection used by the current chat UI.
 
-        Remove this method with the ``/catalog`` route when the chat-migration
-        stack layer uses ``list_converter_types_async``.
+        LEGACY COMPATIBILITY: ``catalog`` is the pre-registry name for ``types``, and
+        the whole concept goes away -- there is no ``ConverterCatalog`` class and
+        nothing new should use this. It differs from ``list_converter_types_async`` in
+        exactly one way: it drops registry-reference parameters, which the un-migrated
+        chat UI cannot render. Delete this method, the ``/catalog`` route, and the
+        ``ConverterCatalog*`` aliases together when the chat-migration layer of this
+        stack switches to ``/converters/types``.
 
         Returns:
             ConverterCatalogResponse: The scalar-only legacy projection.
@@ -337,9 +326,11 @@ class ConverterService:
         Persist uploaded ``Path`` parameter values to managed local storage.
 
         The frontend file picker sends file contents as data URIs
-        (e.g. ``data:image/png;base64,...``). Constructor parameters typed as
-        ``Path`` receive the decoded file in a local working directory that is
-        independent of the configured CentralMemory results store.
+        (e.g. ``data:image/png;base64,...``). A constructor parameter typed as ``Path``
+        is therefore an *upload*: the decoded file is written to a local working
+        directory this service owns, and the client never names a server path. Every
+        ``Path`` parameter is handled the same way, so a converter opts in simply by
+        declaring the type; there is no per-converter or per-parameter table.
 
         The set of constructor parameters (and their types) is sourced from the
         registry's derived ``Parameter`` metadata rather than re-introspecting the
@@ -354,7 +345,7 @@ class ConverterService:
                 set of request-created files owned by the future registry entry.
 
         Raises:
-            ValueError: If a ``Path`` value is not a valid, allowed data URI.
+            ValueError: If a ``Path`` value is not a valid data URI.
         """
         metadata = self._registry.get_registered_class_metadata(converter_type)
         param_types = {p.name: p.param_type for p in metadata.parameters} if metadata else {}
@@ -370,15 +361,8 @@ class ConverterService:
                 if not isinstance(value, str) or not value.startswith("data:"):
                     raise ValueError(f"Path parameter '{name}' must be uploaded as a data URI")
 
-                content, upload_format = self._validate_path_upload(
-                    converter_type=converter_type,
-                    parameter_name=name,
-                    data_uri=value,
-                )
-                file_path = await self._save_owned_artifact_async(
-                    content=content,
-                    extension=upload_format.extension,
-                )
+                content, extension = self._decode_data_uri(parameter_name=name, data_uri=value)
+                file_path = await self._save_owned_artifact_async(content=content, extension=extension)
                 owned_paths.append(file_path)
                 result[name] = file_path
         except Exception:
@@ -388,50 +372,37 @@ class ConverterService:
         return result, owned_paths
 
     @staticmethod
-    def _validate_path_upload(
-        *,
-        converter_type: str,
-        parameter_name: str,
-        data_uri: str,
-    ) -> tuple[bytes, _UploadFormat]:
+    def _decode_data_uri(*, parameter_name: str, data_uri: str) -> tuple[bytes, str]:
         """
-        Validate a constructor upload against its server-owned format contract.
+        Decode one base64 data URI into raw content and the extension to store it under.
+
+        Uploaded content is stored verbatim, whatever its type. PyRIT operators are
+        trusted and every file type is a legitimate payload: uploading an HTML file so
+        an attack can push it to a blob target is a valid operation. The only thing the
+        server decides here is the file *name*, which is generated, so a declared MIME
+        type can never influence where the upload lands. Restrictions on rendering
+        untrusted content belong to the media route that serves it back, not to storage.
 
         Returns:
-            tuple[bytes, _UploadFormat]: The decoded content and its trusted format.
+            tuple[bytes, str]: The decoded content and its file extension.
+
+        Raises:
+            ValueError: If the value is not a base64 data URI or its payload is not
+                valid base64.
         """
         header, separator, payload = data_uri.partition(",")
-        header_parts = header[5:].split(";") if header.startswith("data:") else []
-        if not separator or len(header_parts) != 2 or header_parts[1].lower() != "base64" or not payload:
+        media_type, _, encoding = header.removeprefix("data:").partition(";")
+        if not separator or not payload or not header.startswith("data:") or encoding.lower() != "base64":
             raise ValueError(f"Path parameter '{parameter_name}' must be a base64 data URI")
-
-        mime_type = header_parts[0].lower()
-        if mime_type in _ACTIVE_CONTENT_TYPES:
-            raise ValueError(f"Active content type '{mime_type}' is not allowed for Path parameter '{parameter_name}'")
-
-        allowed_formats = _PATH_UPLOAD_FORMATS.get((converter_type, parameter_name))
-        if not allowed_formats:
-            raise ValueError(
-                f"Path parameter '{parameter_name}' on '{converter_type}' does not have an upload format contract"
-            )
-        upload_format = allowed_formats.get(mime_type)
-        if upload_format is None:
-            allowed_types = ", ".join(sorted(allowed_formats))
-            raise ValueError(
-                f"Content type '{mime_type}' is not allowed for Path parameter '{parameter_name}'; "
-                f"expected one of: {allowed_types}"
-            )
 
         try:
             content = base64.b64decode(payload, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ValueError(f"Path parameter '{parameter_name}' contains invalid base64 data") from exc
-        if not any(content.startswith(signature) for signature in upload_format.signatures):
-            raise ValueError(
-                f"Uploaded content for Path parameter '{parameter_name}' does not match declared MIME type "
-                f"'{mime_type}'"
-            )
-        return content, upload_format
+
+        media_type = media_type.strip().lower()
+        extension = mimetypes.guess_extension(media_type) if media_type else None
+        return content, extension or _DEFAULT_UPLOAD_EXTENSION
 
     @staticmethod
     async def _save_owned_artifact_async(*, content: bytes, extension: str) -> Path:

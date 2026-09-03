@@ -51,8 +51,9 @@ class TargetTypeResponse(BaseModel):
     items: list[TargetTypeEntry] = Field(..., description="List of available target types")
 
 
-# LEGACY COMPATIBILITY: The current target configuration UI imports the catalog
-# names. Remove these aliases when the frontend switches to the /types API.
+# LEGACY COMPATIBILITY: ``Catalog`` is the pre-registry name for ``Type``. These
+# aliases exist only so the un-migrated configuration UI keeps working; delete them
+# with the /catalog route when that UI switches to the /types API.
 TargetCatalogEntry = TargetTypeEntry
 TargetCatalogResponse = TargetTypeResponse
 

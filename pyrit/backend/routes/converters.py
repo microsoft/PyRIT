@@ -65,8 +65,9 @@ async def list_converter_catalog() -> ConverterCatalogResponse:  # pyrit-async-s
     """
     Return the legacy catalog projection used by the current chat UI.
 
-    Remove this route when the chat-migration stack layer switches to
-    ``/converters/types``.
+    LEGACY COMPATIBILITY: pre-registry alias for ``/converters/types`` that hides
+    registry-reference parameters. Deleted with the rest of the ``catalog`` concept
+    when the chat-migration layer of this stack switches to ``/converters/types``.
 
     Returns:
         ConverterCatalogResponse: The scalar-only legacy catalog projection.

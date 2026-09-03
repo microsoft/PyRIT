@@ -17,7 +17,6 @@ from pyrit.backend.models.converters import (
     CreateConverterRequest,
 )
 from pyrit.backend.services.converter_service import (
-    _PATH_UPLOAD_FORMATS,
     ConverterService,
     get_converter_service,
 )
@@ -202,19 +201,15 @@ class TestListConverterCatalog:
         assert path_param.required is True
         assert path_param.type_name == "Path"
 
-    async def test_every_advertised_path_parameter_has_upload_contract(self) -> None:
-        """Every REST-visible ``Path`` parameter has a fail-closed server format policy."""
+    async def test_every_advertised_file_input_is_a_path_parameter(self) -> None:
+        """Converter file inputs are declared as ``Path`` so REST treats them as uploads."""
         service = ConverterService()
 
         result = await service.list_converter_types_async()
 
-        advertised_path_params = {
-            (entry.converter_type, parameter.name)
-            for entry in result.items
-            for parameter in entry.parameters
-            if parameter.param_type is Path
-        }
-        assert advertised_path_params == set(_PATH_UPLOAD_FORMATS)
+        video_entry = next(item for item in result.items if item.converter_type == "AddImageVideoConverter")
+        video_param = next(param for param in video_entry.parameters if param.name == "video_path")
+        assert video_param.param_type is Path
 
 
 class TestGetConverter:
@@ -499,26 +494,45 @@ class TestPersistDataUriParams:
                 params={"existing_pdf": "C:\\sensitive\\input.pdf"},
             )
 
-    @pytest.mark.parametrize("mime_type", ["image/svg+xml", "text/html"])
-    async def test_persist_data_uri_rejects_active_content(self, mime_type: str, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("mime_type", "expected_suffix"),
+        [("text/html", ".html"), ("image/svg+xml", ".svg"), ("application/x-not-real", ".bin")],
+    )
+    async def test_persist_data_uri_stores_any_content_type(
+        self, mime_type: str, expected_suffix: str, tmp_path: Path
+    ) -> None:
+        """Uploads are stored verbatim; restricting content is the media route's job."""
         service = ConverterService()
-        params = {"existing_pdf": _make_data_uri(mime_type=mime_type, content=b"<svg></svg>")}
+        params = {"existing_pdf": _make_data_uri(mime_type=mime_type, content=b"<script>alert(1)</script>")}
+
+        with patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path):
+            result, owned_paths = await service._persist_data_uri_params_async(
+                converter_type="PDFConverter", params=params
+            )
+
+        assert result["existing_pdf"].suffix == expected_suffix
+        assert result["existing_pdf"].read_bytes() == b"<script>alert(1)</script>"
+        assert owned_paths == [result["existing_pdf"]]
+
+    async def test_persist_data_uri_rejects_invalid_base64(self, tmp_path: Path) -> None:
+        service = ConverterService()
+        params = {"existing_pdf": "data:application/pdf;base64,not-base64!!"}
 
         with (
             patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path),
-            pytest.raises(ValueError, match="Active content type"),
+            pytest.raises(ValueError, match="invalid base64 data"),
         ):
             await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
 
         assert list(tmp_path.iterdir()) == []
 
-    async def test_persist_data_uri_rejects_content_that_does_not_match_mime(self, tmp_path: Path) -> None:
+    async def test_persist_data_uri_rejects_non_base64_data_uri(self, tmp_path: Path) -> None:
         service = ConverterService()
-        params = {"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"\x89PNG\r\n\x1a\n")}
+        params = {"existing_pdf": "data:text/plain,hello"}
 
         with (
             patch("pyrit.backend.services.converter_service._REGISTRY_UPLOAD_DIRECTORY", tmp_path),
-            pytest.raises(ValueError, match="does not match declared MIME type"),
+            pytest.raises(ValueError, match="must be a base64 data URI"),
         ):
             await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
 

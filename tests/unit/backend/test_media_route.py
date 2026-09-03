@@ -164,19 +164,24 @@ class TestServeMedia:
         assert response.status_code == 403
 
     @pytest.mark.parametrize("extension", [".html", ".svg"])
-    def test_rejects_active_document_types(
+    def test_serves_active_documents_as_neutralized_downloads(
         self,
         client: TestClient,
         _mock_memory: Path,
         extension: str,
     ) -> None:
-        """Active same-origin documents are not in the media allowlist."""
+        """Active documents are stored and served, but never rendered in this origin."""
         file_path = _mock_memory / "prompt-memory-entries" / f"active{extension}"
         file_path.write_text("<script>alert(1)</script>")
 
         response = client.get("/api/media", params={"path": str(file_path)})
 
-        assert response.status_code == 403
+        assert response.status_code == 200
+        assert response.text == "<script>alert(1)</script>"
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["content-disposition"].startswith("attachment;")
+        assert f"active{extension}" in response.headers["content-disposition"]
+        assert response.headers["x-content-type-options"] == "nosniff"
 
     def test_serves_documents_as_attachments(self, client: TestClient, _mock_memory: Path) -> None:
         """Allowed documents download instead of rendering in the application origin."""

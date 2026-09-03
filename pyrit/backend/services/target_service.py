@@ -156,8 +156,13 @@ class TargetService:
         """
         Return the legacy projection used by the current configuration UI.
 
-        Remove this method with the ``/catalog`` route after the frontend uses
-        ``list_target_types_async``.
+        LEGACY COMPATIBILITY: ``catalog`` is the pre-registry name for ``types``, and
+        the whole concept goes away -- there is no ``TargetCatalog`` class and nothing
+        new should use this. It differs from ``list_target_types_async`` in exactly one
+        way: it drops registry-reference parameters, which the un-migrated
+        configuration UI cannot render. Delete this method, the ``/catalog`` route, and
+        the ``TargetCatalog*`` aliases together when that UI switches to
+        ``/targets/types``.
 
         Returns:
             TargetCatalogResponse: The scalar-only legacy projection.
