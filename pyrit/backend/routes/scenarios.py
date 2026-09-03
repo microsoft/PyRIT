@@ -235,10 +235,10 @@ async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
     limit: int = Query(100, ge=1, le=500),
 ) -> ScenarioRunProgress:
     """
-    Get a compact, refresh-safe page of scenario progress deltas.
+    Get canonical progress rollups and a refresh-safe page of result deltas.
 
     Returns:
-        ScenarioRunProgress: The run plan and ascending result deltas.
+        ScenarioRunProgress: Backend-owned rollups, the run plan, and ascending result deltas.
     """
     service = get_scenario_run_service()
     active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)

@@ -206,6 +206,7 @@ class TestMatrixCustomCallbacks:
         )
         assert result[0].atomic_attack_name == "advA:tech"
         assert result[0].display_group == "advA"
+        assert result[0].technique_name == "tech"
 
     def test_callbacks_receive_full_combo(self):
         builder = _builder()
