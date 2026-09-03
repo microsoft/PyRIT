@@ -44,6 +44,7 @@ import {
   objectivePreview,
 } from '@/components/AttackResults/attackAttemptFormatting'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
+import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
@@ -69,6 +70,7 @@ import {
 import AttackExecutionTable from './AttackExecutionTable'
 import { ObjectiveDetailsDialog, TechniqueDetailsDialog } from './ScenarioRunDialogs'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
+import ScenarioQueue from './ScenarioQueue'
 
 const CLOCK_REFRESH_INTERVAL_MS = 1_000
 const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
@@ -106,6 +108,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const location = useLocation()
   const navigate = useNavigate()
   const { state, retry, applyRunSummary } = useScenarioRunProgress(scenarioResultId)
+  const queue = useScenarioQueue()
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<string | null>(null)
@@ -279,8 +282,11 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   } = state.summary
   const displayGroups = summarizedDisplayGroups ?? techniques
   const unattributedAttempts = state.summary.unattributed_attempts ?? 0
-  const canCancel = run.status === 'CREATED' || run.status === 'IN_PROGRESS'
-  const progressText = overall.planned === null
+  const queued = run.status === 'QUEUED'
+  const canCancel = run.status === 'CREATED' || queued || run.status === 'IN_PROGRESS'
+  const progressText = queued
+    ? `Queued${run.queue_position ? ` · Position ${run.queue_position}` : ''}`
+    : overall.planned === null
     ? `${overall.completed} known completed units; planned total unavailable`
     : `${overall.completed} of ${overall.planned} executable units completed`
 
@@ -317,7 +323,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
             <div className={styles.headerActions}>
               <Button
                 appearance="secondary"
-                className={mergeClasses(styles.touchTarget, styles.wideButton)}
+                className={mergeClasses(styles.touchTarget, styles.cancelButton, styles.wideButton)}
                 icon={<StopRegular />}
                 onClick={() => {
                   setCancelError(null)
@@ -354,6 +360,12 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
             <div className={styles.metadataItem}>
               <Text size={200} className={styles.metadataLabel}>PyRIT version</Text>
               <Text weight="semibold">{run.pyrit_version}</Text>
+            </div>
+          )}
+          {queued && (
+            <div className={styles.metadataItem}>
+              <Text size={200} className={styles.metadataLabel}>Waiting position</Text>
+              <Text weight="semibold">{run.queue_position ?? 'Updating'}</Text>
             </div>
           )}
         </div>
@@ -402,6 +414,23 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           </MessageBar>
         )}
 
+        <ScenarioQueue
+          snapshot={queue.snapshot}
+          loading={queue.loading}
+          stale={queue.stale}
+          error={queue.error}
+          currentScenarioResultId={scenarioResultId}
+        />
+
+        {(state.overloadSummaries?.length ?? 0) > 0 && (
+          <MessageBar intent="warning" data-testid="scenario-overload-warning">
+            <MessageBarBody>
+              Recent target overload detected: {formatOverloadSummaries(state.overloadSummaries ?? [])}.
+              {' '}PyRIT is retrying these requests without adaptive throttling; concurrency is not automatically reduced yet.
+            </MessageBarBody>
+          </MessageBar>
+        )}
+
         {run.status === 'FAILED' && (
           <MessageBar intent="error">
             <MessageBarBody>
@@ -433,6 +462,28 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
             </Text>
             <Text className={styles.sectionHint}>{progressText}</Text>
           </div>
+          {queued ? (
+            <div className={styles.progressSurface} data-testid="queued-run-progress">
+              <div className={styles.progressPrimary}>
+                <Text size={500} weight="semibold">
+                  Queued{run.queue_position ? ` · Position ${run.queue_position}` : ''}
+                </Text>
+                <Text className={styles.sectionHint}>
+                  {run.active_scenario_result_id
+                    ? `Waiting for active run ${run.active_scenario_result_id} to finish.`
+                    : 'Waiting for the scheduler to start this run.'}
+                </Text>
+              </div>
+              <div className={styles.metric}>
+                <Text size={200} className={styles.metricLabel}>Execution progress</Text>
+                <Text weight="semibold">Not started</Text>
+              </div>
+              <div className={styles.metric}>
+                <Text size={200} className={styles.metricLabel}>Estimated remaining</Text>
+                <Text weight="semibold">Available after start</Text>
+              </div>
+            </div>
+          ) : (
           <div className={styles.progressSurface}>
             <div className={styles.progressPrimary}>
               <div className={styles.progressText}>
@@ -455,8 +506,9 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
             </div>
             <RunTiming run={run} overall={overall} />
           </div>
+          )}
           <span className={styles.liveStatus} aria-live="polite">
-            {isTerminalRunState(run.status) ? `Run ${formatRunState(run.status)}` : ''}
+            {queued ? progressText : isTerminalRunState(run.status) ? `Run ${formatRunState(run.status)}` : ''}
           </span>
         </section>
 
@@ -641,7 +693,9 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
             <DialogTitle>Cancel this scenario run?</DialogTitle>
             <DialogContent className={styles.dialogContent}>
               <Text>
-                In-flight work will be stopped. Finished executions will remain available in this dashboard.
+                {queued
+                  ? 'This run will be removed from the queue and will never execute.'
+                  : 'In-flight work will be stopped. Attempts already persisted will remain available in this dashboard.'}
               </Text>
               {cancelError && (
                 <MessageBar intent="error">
@@ -653,6 +707,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
               <Button disabled={cancelling} onClick={() => setCancelDialogOpen(false)}>Keep running</Button>
               <Button
                 appearance="primary"
+                className={styles.cancelButton}
                 disabled={cancelling}
                 icon={<StopRegular />}
                 onClick={() => void handleCancel()}
@@ -821,4 +876,17 @@ function formatSuccess(succeeded: number, evaluated: number, percent: number | n
 
 function formatCompletion(completed: number, planned: number | null): string {
   return planned === null ? `${completed}/total unavailable` : `${completed}/${planned}`
+}
+
+function formatOverloadSummaries(
+  summaries: import('@/types').ScenarioOverloadSummary[],
+): string {
+  return summaries.map((summary) => {
+    const codes = summary.status_codes.join('/')
+    return `${formatRole(summary.component_role)} (${summary.count} × HTTP ${codes}, latest ${formatTimestamp(summary.latest_timestamp)})`
+  }).join('; ')
+}
+
+function formatRole(role: string): string {
+  return role.replace(/_/g, ' ').replace(/^\w/, (letter: string) => letter.toUpperCase())
 }

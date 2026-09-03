@@ -5,14 +5,17 @@
 
 import json
 import uuid
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import and_, select, text
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
-from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor
-from pyrit.memory.memory_models import ScenarioResultEntry
+from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
+from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
@@ -22,6 +25,23 @@ from pyrit.models import (
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
 )
+
+
+class _LegacyScenarioLabelMemory(SQLiteMemory):
+    """Concrete backend retaining the pre-history single-value label hook."""
+
+    _get_scenario_result_labels_condition = MemoryInterface._get_scenario_result_labels_condition
+
+    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+        conditions = []
+        for key, value in labels.items():
+            conditions.append(
+                text("json_extract(labels, :scenario_label_path_0) = :scenario_label_value_0").bindparams(
+                    scenario_label_path_0=f'$."{key}"',
+                    scenario_label_value_0=value,
+                )
+            )
+        return and_(*conditions)
 
 
 @pytest.mark.parametrize(
@@ -139,6 +159,11 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
         labels={"operator": "bob", "operation": "nightly", "team.name": "safety"},
     )
     sqlite_instance.add_scenario_results_to_memory(scenario_results=[included, excluded])
+    started_at = timestamp + timedelta(seconds=30)
+    sqlite_instance.update_scenario_metadata_fields(
+        scenario_result_id=str(included.id),
+        fields={"started_at": started_at.isoformat()},
+    )
     attacks = [
         AttackResult(
             attack_result_id=str(uuid.UUID(int=12)),
@@ -155,6 +180,7 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
             },
             error_type="RuntimeError",
             error_message="failed",
+            total_retries=-3,
         ),
         AttackResult(
             attack_result_id=str(uuid.UUID(int=13)),
@@ -190,6 +216,7 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
     )
 
     assert [row.scenario_result_id for row in rows] == [str(included.id)]
+    assert rows[0].started_at == started_at
     assert rows[0].scenario_identifier["class_name"] == "ImplementationClass"
     assert rows[0].scenario_registry_name == "registered.scenario"
     compact_groups = (
@@ -215,6 +242,86 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
     assert units[str(included.id)][0].error_count == 1
     assert units[str(included.id)][0].total_retries == 3
     assert has_more is False
+
+
+def test_legacy_label_hook_is_constructible_and_composes_multi_value_semantics(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    included = _make_scenario(
+        result_id=uuid.UUID(int=30),
+        timestamp=timestamp,
+        name="Included",
+        state=ScenarioRunState.COMPLETED,
+        labels={"operator": "alice", "operation": "nightly"},
+    )
+    excluded = _make_scenario(
+        result_id=uuid.UUID(int=31),
+        timestamp=timestamp,
+        name="Excluded",
+        state=ScenarioRunState.COMPLETED,
+        labels={"operator": "carol", "operation": "nightly"},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[included, excluded])
+    legacy = object.__new__(_LegacyScenarioLabelMemory)
+    condition = legacy._get_scenario_result_labels_condition(
+        labels={"operator": ["alice", "bob"], "operation": "nightly"}
+    )
+
+    with closing(sqlite_instance.get_session()) as session:
+        ids = session.execute(select(ScenarioResultEntry.id).where(condition)).scalars().all()
+
+    assert "_get_scenario_result_label_condition" not in _LegacyScenarioLabelMemory.__abstractmethods__
+    assert ids == [included.id]
+
+
+def test_nonterminal_state_projection_is_bounded_and_never_hydrates_results(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    queued = _make_scenario(
+        result_id=uuid.UUID(int=40),
+        timestamp=timestamp,
+        name="Queued",
+        state=ScenarioRunState.QUEUED,
+        labels={},
+    )
+    running = _make_scenario(
+        result_id=uuid.UUID(int=41),
+        timestamp=timestamp,
+        name="Running",
+        state=ScenarioRunState.IN_PROGRESS,
+        labels={},
+    )
+    completed = _make_scenario(
+        result_id=uuid.UUID(int=42),
+        timestamp=timestamp,
+        name="Completed",
+        state=ScenarioRunState.COMPLETED,
+        labels={},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[queued, running, completed])
+
+    with (
+        patch.object(ScenarioResultEntry, "get_scenario_result", side_effect=AssertionError("hydrated ScenarioResult")),
+        patch.object(AttackResultEntry, "get_attack_result", side_effect=AssertionError("hydrated AttackResult")),
+    ):
+        first, has_more = sqlite_instance.get_scenario_run_state_page(
+            states=[ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS],
+            limit=1,
+        )
+        second, second_has_more = sqlite_instance.get_scenario_run_state_page(
+            states=[ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS],
+            after_id=first[-1].scenario_result_id,
+            limit=1,
+        )
+
+    assert [record.state for record in [*first, *second]] == [
+        ScenarioRunState.QUEUED,
+        ScenarioRunState.IN_PROGRESS,
+    ]
+    assert has_more is True
+    assert second_has_more is False
 
 
 def test_unique_scenario_labels_are_grouped_for_filter_options(sqlite_instance: MemoryInterface) -> None:

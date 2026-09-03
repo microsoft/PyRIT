@@ -595,7 +595,25 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         return result
 
-    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+        """
+        Filter ScenarioResults by legacy single-value labels.
+
+        Returns:
+            Any: SQLAlchemy condition for all supplied labels.
+        """
+        conditions = []
+        for key_index, (key, value) in enumerate(labels.items()):
+            path_param = f"scenario_label_path_{key_index}"
+            value_param = f"scenario_label_value_{key_index}"
+            conditions.append(
+                text(f"ISJSON(labels) = 1 AND JSON_VALUE(labels, :{path_param}) = :{value_param}").bindparams(
+                    **{path_param: f'$."{key}"', value_param: value}
+                )
+            )
+        return and_(*conditions)
+
+    def _get_scenario_result_labels_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
         """
         Get the SQL Azure implementation for filtering ScenarioResults by labels.
 
@@ -671,6 +689,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                 """
             ),
         )
+
+    def _get_scenario_started_at_expression(self) -> Any:
+        """Return the persisted execution start without loading full scenario metadata."""
+        return func.json_value(ScenarioResultEntry.scenario_metadata, "$.started_at")
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
         """Return SQL Server JSON expressions for persisted scenario attempt attribution."""

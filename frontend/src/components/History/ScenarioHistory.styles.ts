@@ -46,6 +46,9 @@ export const useScenarioHistoryStyles = makeStyles({
     flex: 1,
     overflow: 'auto',
   },
+  queue: {
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalXXL} 0`,
+  },
   table: {
     minWidth: '1120px',
   },

@@ -479,9 +479,20 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         return result
 
-    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
         """
-        SQLite implementation for filtering ScenarioResults by labels.
+        Filter ScenarioResults by legacy single-value labels.
+
+        Returns:
+            Any: SQLAlchemy condition for all supplied labels.
+        """
+        return and_(
+            *(func.json_extract(ScenarioResultEntry.labels, f'$."{key}"') == value for key, value in labels.items())
+        )
+
+    def _get_scenario_result_labels_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+        """
+        SQLite implementation for filtering ScenarioResults by multi-value labels.
         Uses json_extract() function specific to SQLite.
 
         Returns:
@@ -538,6 +549,10 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             ),
             compact_seed_map,
         )
+
+    def _get_scenario_started_at_expression(self) -> Any:
+        """Return the persisted execution start without loading full scenario metadata."""
+        return func.json_extract(ScenarioResultEntry.scenario_metadata, "$.started_at")
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
         """Return SQLite JSON expressions for persisted scenario attempt attribution."""

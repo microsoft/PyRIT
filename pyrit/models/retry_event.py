@@ -28,4 +28,5 @@ class RetryEvent(BaseModel):
     component_role: str = ""
     component_name: str | None = None
     endpoint: str | None = None
+    status_code: int | None = None
     elapsed_seconds: float = 0.0

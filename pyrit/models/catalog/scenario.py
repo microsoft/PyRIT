@@ -310,6 +310,17 @@ class AttackRetrySummary(BaseModel):
     )
 
 
+class ScenarioOverloadSummary(BaseModel):
+    """Recent structured overload signals grouped by component role."""
+
+    component_role: str = Field(..., description="Role of the component that observed overload")
+    count: int = Field(..., ge=1, description="Recent HTTP 429 and 5xx retry signals")
+    rate_limit_count: int = Field(0, ge=0, description="Recent HTTP 429 retry signals")
+    server_error_count: int = Field(0, ge=0, description="Recent HTTP 5xx retry signals")
+    status_codes: list[int] = Field(default_factory=list, description="Observed overload status codes")
+    latest_timestamp: datetime = Field(..., description="Latest overload signal timestamp")
+
+
 class ScenarioRunSummary(BaseModel):
     """Response for a scenario run (status + result details)."""
 
@@ -319,6 +330,7 @@ class ScenarioRunSummary(BaseModel):
     scenario_version: int = Field(0, ge=0, description="Version of the scenario")
     status: ScenarioRunState = Field(..., description="Current run status")
     created_at: datetime = Field(..., description="When the run was created")
+    started_at: datetime | None = Field(None, description="When active scenario execution started")
     updated_at: datetime = Field(..., description="When the run status last changed")
     error: str | None = Field(None, description="Error message if status is FAILED")
     error_type: str | None = Field(None, description="Exception class name if status is FAILED")
@@ -335,7 +347,10 @@ class ScenarioRunSummary(BaseModel):
         description="Per-attack retry events, surfaced as each attack result lands so the CLI can stream warnings",
     )
     total_retries: int = Field(
-        0, ge=0, description="Total retry attempts recorded across all attack results (endpoint-stress signal)"
+        0,
+        ge=0,
+        description="Total retry work beyond each logical unit's initial attempt, including inner retries "
+        "and additional scenario attempts",
     )
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     completed_at: datetime | None = Field(None, description="When the scenario finished")
@@ -356,6 +371,12 @@ class ScenarioRunSummary(BaseModel):
         True,
         description="Whether failed_attacks and attack_retries contain per-attempt details",
     )
+    queue_position: int | None = Field(None, ge=1, description="Current 1-based waiting position")
+    active_scenario_result_id: str | None = Field(None, description="Currently executing scenario result ID")
+    overload_summaries: list[ScenarioOverloadSummary] = Field(
+        default_factory=list,
+        description="Bounded recent HTTP 429 and 5xx retry evidence grouped by component role",
+    )
 
 
 class ScenarioRunListItem(BaseModel):
@@ -367,6 +388,7 @@ class ScenarioRunListItem(BaseModel):
     scenario_version: int = Field(0, ge=0, description="Version of the scenario")
     status: ScenarioRunState = Field(..., description="Current run status")
     created_at: datetime = Field(..., description="When the run was created")
+    started_at: datetime | None = Field(None, description="When active scenario execution started")
     updated_at: datetime = Field(..., description="When the run status last changed")
     error: str | None = Field(None, description="Persisted run-level error message")
     error_type: str | None = Field(None, description="Persisted run-level exception class")

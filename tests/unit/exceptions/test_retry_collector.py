@@ -66,6 +66,25 @@ class TestRetryCollector:
         assert evt.exception_type == "ValueError"
         assert evt.exception_message == "test error"
 
+    def test_record_extracts_direct_or_response_status_code(self) -> None:
+        """record() preserves structured HTTP status codes without parsing messages."""
+        from unittest.mock import MagicMock
+
+        class DirectStatusError(Exception):
+            status_code = 429
+
+        class ResponseStatusError(Exception):
+            response = MagicMock(status_code=503)
+
+        collector = RetryCollector()
+        for exception in (DirectStatusError("limited"), ResponseStatusError("unavailable")):
+            retry_state = MagicMock(start_time=0.0, fn=None)
+            retry_state.outcome.failed = True
+            retry_state.outcome.exception.return_value = exception
+            collector.record(retry_state=retry_state)
+
+        assert [event.status_code for event in collector.events] == [429, 503]
+
     def test_record_multiple_events(self) -> None:
         """record() accumulates events."""
         from unittest.mock import MagicMock

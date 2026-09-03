@@ -22,15 +22,14 @@ from pyrit.backend.models.scenarios import (
 )
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.backend.services.scenario_service import get_scenario_service
-from pyrit.models import ScenarioResult, ScenarioRunState
-from pyrit.models.catalog.scenario import (
+from pyrit.models import ScenarioQueueSnapshot, ScenarioResult, ScenarioRunProgress, ScenarioRunState
+from pyrit.models.catalog import (
     RegisteredScenario,
     RunScenarioRequest,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
     ScenarioRunSummary,
 )
-from pyrit.models.scenario_progress import ScenarioRunProgress
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -236,6 +235,20 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
 
 
 @router.get(
+    "/runs/queue",
+    response_model=ScenarioQueueSnapshot,
+)
+async def get_scenario_run_queue() -> ScenarioQueueSnapshot:  # pyrit-async-suffix-exempt
+    """
+    Get the active scenario and ordered FIFO waiting queue.
+
+    Returns:
+        ScenarioQueueSnapshot: Current in-process scheduler state.
+    """
+    return get_scenario_run_service().get_queue_snapshot()
+
+
+@router.get(
     "/runs/{scenario_result_id}",
     response_model=ScenarioRunSummary,
     responses={
@@ -258,6 +271,8 @@ async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # py
         service.get_run_from_storage,
         scenario_result_id=scenario_result_id,
         active_error=active_snapshot.error,
+        queue_position=active_snapshot.queue_position,
+        active_scenario_result_id=active_snapshot.active_scenario_result_id,
     )
     if run is None:
         raise HTTPException(
@@ -296,6 +311,8 @@ async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
             since=since,
             limit=limit,
             active_group_ids=active_snapshot.active_group_ids,
+            queue_position=active_snapshot.queue_position,
+            active_scenario_result_id=active_snapshot.active_scenario_result_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None

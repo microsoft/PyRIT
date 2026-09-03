@@ -2,6 +2,7 @@ import type {
   ScenarioProgressCounts,
   ScenarioProgressHeader,
   ScenarioProgressResult,
+  ScenarioOverloadSummary,
   ScenarioProgressSummary,
   ScenarioRunPlan,
   ScenarioRunState,
@@ -19,6 +20,7 @@ export interface ScenarioRunProgressState {
   readonly results: ScenarioProgressResult[]
   readonly error: string | null
   readonly stale: boolean
+  readonly overloadSummaries: ScenarioOverloadSummary[]
 }
 
 export type ScenarioRunProgressAction =
@@ -38,6 +40,7 @@ export const INITIAL_SCENARIO_RUN_PROGRESS_STATE: ScenarioRunProgressState = {
   results: [],
   error: null,
   stale: false,
+  overloadSummaries: [],
 }
 
 export function isTerminalRunState(status: ScenarioRunState): boolean {
@@ -78,6 +81,7 @@ export function scenarioRunProgressReducer(
         scenario_version: action.run.scenario_version,
         status: action.run.status,
         created_at: action.run.created_at,
+        started_at: action.run.started_at,
         completed_at: action.run.completed_at,
         pyrit_version: action.run.pyrit_version,
         target: action.run.target,
@@ -85,9 +89,13 @@ export function scenarioRunProgressReducer(
         datasets_used: action.run.datasets_used ?? [],
         scenario_parameters: action.run.scenario_parameters ?? {},
         labels: action.run.labels,
+        queue_position: action.run.queue_position,
+        active_scenario_result_id: action.run.active_scenario_result_id,
+        overload_summaries: action.run.overload_summaries ?? [],
       },
       error: null,
       stale: false,
+      overloadSummaries: state.overloadSummaries,
     }
   }
 
@@ -103,6 +111,10 @@ export function scenarioRunProgressReducer(
   }
 
   const results = [...resultsById.values()].sort(compareAttempts)
+  const overloadSummaries = mergeOverloadSummaries(
+    shouldReset ? [] : state.overloadSummaries,
+    action.page.run.overload_summaries ?? [],
+  )
   return {
     loadStatus: 'ready',
     run: action.page.run,
@@ -112,22 +124,49 @@ export function scenarioRunProgressReducer(
     results,
     error: null,
     stale: false,
+    overloadSummaries,
   }
+}
+
+function mergeOverloadSummaries(
+  existing: ScenarioOverloadSummary[],
+  incoming: ScenarioOverloadSummary[],
+): ScenarioOverloadSummary[] {
+  const byRole = new Map(existing.map((summary) => [summary.component_role, summary]))
+  for (const summary of incoming) {
+    const previous = byRole.get(summary.component_role)
+    byRole.set(summary.component_role, previous ? {
+      component_role: summary.component_role,
+      count: previous.count + summary.count,
+      rate_limit_count: previous.rate_limit_count + summary.rate_limit_count,
+      server_error_count: previous.server_error_count + summary.server_error_count,
+      status_codes: [...new Set([...previous.status_codes, ...summary.status_codes])].sort((left, right) => left - right),
+      latest_timestamp: Date.parse(summary.latest_timestamp) >= Date.parse(previous.latest_timestamp)
+        ? summary.latest_timestamp
+        : previous.latest_timestamp,
+    } : summary)
+  }
+  return [...byRole.values()].sort(
+    (left, right) => Date.parse(right.latest_timestamp) - Date.parse(left.latest_timestamp),
+  )
 }
 
 export function getElapsedMilliseconds(
   run: ScenarioProgressHeader,
   nowMilliseconds: number,
 ): number {
-  const created = Date.parse(run.created_at)
+  if (!run.started_at) {
+    return 0
+  }
+  const started = Date.parse(run.started_at)
   const terminalEnd = run.completed_at ? Date.parse(run.completed_at) : Number.NaN
   const end = isTerminalRunState(run.status) && Number.isFinite(terminalEnd)
     ? terminalEnd
     : nowMilliseconds
-  if (!Number.isFinite(created) || !Number.isFinite(end)) {
+  if (!Number.isFinite(started) || !Number.isFinite(end)) {
     return 0
   }
-  return Math.max(0, end - created)
+  return Math.max(0, end - started)
 }
 
 export function getEtaMilliseconds(

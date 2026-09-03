@@ -18,13 +18,26 @@ from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
+from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.memory import AzureSQLMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
+
+
+@pytest.fixture
+def mock_scenario_run_lifecycle():
+    """Mock scenario scheduling lifecycle hooks."""
+    service = MagicMock(
+        reconcile_interrupted_runs_async=AsyncMock(return_value=0),
+        shutdown_async=AsyncMock(),
+    )
+    with patch("pyrit.backend.main.get_scenario_run_service", return_value=service):
+        yield service
 
 
 class TestLifespan:
     """Tests for the application lifespan context manager."""
 
-    async def test_lifespan_yields(self) -> None:
+    async def test_lifespan_yields(self, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan delegates to ConfigurationLoader and yields."""
         fake_config = ConfigurationLoader()
         with (
@@ -39,8 +52,10 @@ class TestLifespan:
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
+            mock_scenario_run_lifecycle.reconcile_interrupted_runs_async.assert_awaited_once()
+            mock_scenario_run_lifecycle.shutdown_async.assert_awaited_once()
 
-    async def test_lifespan_warns_when_custom_initializers_allowed(self) -> None:
+    async def test_lifespan_warns_when_custom_initializers_allowed(self, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan logs a warning when allow_custom_initializers is enabled."""
         fake_config = ConfigurationLoader(allow_custom_initializers=True)
         with (
@@ -54,7 +69,30 @@ class TestLifespan:
 
             mock_warning.assert_called_once()
 
-    async def test_lifespan_populates_default_labels_from_operator_and_operation(self) -> None:
+    async def test_lifespan_shared_memory_reconciliation_is_non_destructive(self) -> None:
+        shared_memory = MagicMock(spec=AzureSQLMemory)
+        fake_config = ConfigurationLoader()
+        with patch(
+            "pyrit.backend.services.scenario_run_service.CentralMemory.get_memory_instance",
+            return_value=shared_memory,
+        ):
+            service = ScenarioRunService()
+
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.get_scenario_run_service", return_value=service),
+            patch("pyrit.backend.main.setup_frontend"),
+        ):
+            async with lifespan(app):
+                pass
+
+        shared_memory.get_scenario_run_state_page.assert_not_called()
+        shared_memory.update_scenario_run_state.assert_not_called()
+
+    async def test_lifespan_populates_default_labels_from_operator_and_operation(
+        self, mock_scenario_run_lifecycle
+    ) -> None:
         """Test that operator and operation are exposed as default_labels."""
         fake_config = ConfigurationLoader(operator="alice", operation="op-42")
         with (
@@ -67,7 +105,7 @@ class TestLifespan:
 
             assert app.state.default_labels == {"operator": "alice", "operation": "op-42"}
 
-    async def test_lifespan_exposes_configured_initializers(self) -> None:
+    async def test_lifespan_exposes_configured_initializers(self, mock_scenario_run_lifecycle) -> None:
         """Test that the active config initializer sequence is exposed to API routes."""
         fake_config = ConfigurationLoader(
             initializers=[
@@ -87,7 +125,7 @@ class TestLifespan:
         assert app.state.configured_initializers[0].parameters == {"tags": ["default"]}
         assert [item.order_index for item in app.state.configured_initializers] == [0, 1]
 
-    async def test_lifespan_loads_explicit_config_as_override(self) -> None:
+    async def test_lifespan_loads_explicit_config_as_override(self, mock_scenario_run_lifecycle) -> None:
         """Test that PYRIT_CONFIG_FILE overlays the default configuration."""
         fake_config = ConfigurationLoader()
         with (
@@ -101,7 +139,7 @@ class TestLifespan:
 
             assert str(load_mock.call_args.kwargs["config_file"]).endswith("foo.yaml")
 
-    async def test_lifespan_configures_custom_initializer_source_from_config(self) -> None:
+    async def test_lifespan_configures_custom_initializer_source_from_config(self, mock_scenario_run_lifecycle) -> None:
         """Test that YAML config determines the custom script source."""
         fake_config = ConfigurationLoader(custom_initializers_source="C:/yaml/initializers")
         registry = MagicMock()
@@ -117,7 +155,7 @@ class TestLifespan:
         registry.configure_custom_scripts_source.assert_called_once_with("C:/yaml/initializers")
         registry.register_stored_initializers.assert_not_called()
 
-    async def test_lifespan_registers_stored_initializers_when_enabled(self) -> None:
+    async def test_lifespan_registers_stored_initializers_when_enabled(self, mock_scenario_run_lifecycle) -> None:
         """Test that enabled custom initializers are registered before configured initialization."""
         fake_config = ConfigurationLoader(allow_custom_initializers=True)
         call_order: list[str] = []
@@ -140,7 +178,7 @@ class TestLifespan:
         registry.register_stored_initializers.assert_called_once_with()
         assert call_order == ["custom", "configured"]
 
-    async def test_lifespan_downloads_blob_config_to_temporary_file(self) -> None:
+    async def test_lifespan_downloads_blob_config_to_temporary_file(self, mock_scenario_run_lifecycle) -> None:
         """Test that an Azure Blob config URI is materialized and removed after loading."""
         fake_config = ConfigurationLoader()
         config_content = b"operator: blob-user\n"

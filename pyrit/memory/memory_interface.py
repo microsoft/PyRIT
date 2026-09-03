@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, func, not_, or_, select
+from sqlalchemy import MetaData, and_, case, func, literal, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -168,11 +168,17 @@ class ScenarioHistoryRunRecord:
     scenario_registry_name: str | None
     plan_atomic_groups: str | list[dict[str, Any]] | None
     plan_seed_id_map: str | list[dict[str, str]] | None
+    started_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ScenarioHistoryUnitRecord:
-    """One logical scenario work unit aggregated from all persisted attempts."""
+    """
+    One logical scenario work unit aggregated from all persisted attempts.
+
+    ``total_retries`` is all work beyond the initial logical attempt: inner
+    retries plus additional scenario-level attempts.
+    """
 
     scenario_result_id: str
     atomic_attack_name: str
@@ -183,6 +189,15 @@ class ScenarioHistoryUnitRecord:
     latest_timestamp: datetime
     total_retries: int
     error_count: int
+    attempt_count: int = 1
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioRunStateRecord:
+    """Lightweight persisted ID/state projection used for startup reconciliation."""
+
+    scenario_result_id: str
+    state: ScenarioRunState
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1605,16 +1620,37 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
         """
         Return a database-specific condition for filtering ScenarioResults by labels.
 
         Args:
-            labels: Labels with OR-within-key and AND-across-key semantics.
+            labels: Legacy single-value labels with AND-across-key semantics.
 
         Returns:
             Database-specific SQLAlchemy condition.
         """
+
+    def _get_scenario_result_labels_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
+        """
+        Compose multi-value label filters through the legacy single-value hook.
+
+        Returns:
+            Any: OR-within-key and AND-across-key SQLAlchemy condition.
+        """
+        conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if values:
+                conditions.append(
+                    or_(
+                        *(
+                            self._get_scenario_result_label_condition(labels={key: str(value)}).unique_params()
+                            for value in values
+                        )
+                    )
+                )
+        return and_(*conditions)
 
     def _get_scenario_registry_name_condition(self, *, scenario_names: Sequence[str]) -> Any:
         """
@@ -1639,6 +1675,10 @@ class MemoryInterface(abc.ABC):
             f"{type(self).__name__} must implement _get_scenario_history_plan_expressions "
             "to support Scenario history queries."
         )
+
+    def _get_scenario_started_at_expression(self) -> Any:
+        """Return a compact persisted start-time expression when the backend supports one."""
+        return literal(None)
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
         """
@@ -3963,6 +4003,29 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the scenario result is not found.
         """
+        self.update_scenario_run_state_and_metadata_fields(
+            scenario_result_id=scenario_result_id,
+            scenario_run_state=scenario_run_state,
+            error_message=error_message,
+            error_type=error_type,
+            metadata_fields={},
+        )
+
+    def update_scenario_run_state_and_metadata_fields(
+        self,
+        *,
+        scenario_result_id: str,
+        scenario_run_state: ScenarioRunState,
+        metadata_fields: Mapping[str, Any],
+        error_message: str | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """
+        Update run state and merge scenario metadata in one transaction.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
         with closing(self.get_session()) as session:
             entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
 
@@ -3972,6 +4035,9 @@ class MemoryInterface(abc.ABC):
             entry.scenario_run_state = scenario_run_state.value
             entry.error_message = error_message
             entry.error_type = error_type
+            if metadata_fields:
+                entry.scenario_metadata = {**(entry.scenario_metadata or {}), **metadata_fields}
+                flag_modified(entry, "scenario_metadata")
             if scenario_run_state in (
                 ScenarioRunState.COMPLETED,
                 ScenarioRunState.FAILED,
@@ -4071,6 +4137,26 @@ class MemoryInterface(abc.ABC):
             entry.scenario_metadata = metadata if metadata else None
             session.commit()
 
+    def update_scenario_metadata_fields(
+        self,
+        *,
+        scenario_result_id: str,
+        fields: Mapping[str, Any],
+    ) -> None:
+        """
+        Merge selected fields into persisted scenario metadata in one transaction.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        with closing(self.get_session()) as session:
+            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
+            if not entry:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            entry.scenario_metadata = {**(entry.scenario_metadata or {}), **fields}
+            flag_modified(entry, "scenario_metadata")
+            session.commit()
+
     def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
         with closing(self.get_session()) as session:
@@ -4098,6 +4184,46 @@ class MemoryInterface(abc.ABC):
             limit=limit,
         )
         return [entry.get_scenario_result() for entry in entries]
+
+    def get_scenario_run_state_page(
+        self,
+        *,
+        states: Sequence[ScenarioRunState],
+        after_id: str | None = None,
+        limit: int = 500,
+    ) -> tuple[list[ScenarioRunStateRecord], bool]:
+        """
+        Return one bounded ID/state page without hydrating ScenarioResults or AttackResults.
+
+        Returns:
+            tuple[list[ScenarioRunStateRecord], bool]: State records and whether another page exists.
+
+        Raises:
+            ValueError: If the limit or cursor ID is invalid.
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("Scenario run state projection limit must be between 1 and 500.")
+        conditions = [ScenarioResultEntry.scenario_run_state.in_([state.value for state in states])]
+        if after_id is not None:
+            conditions.append(ScenarioResultEntry.id > uuid.UUID(after_id))
+        statement = (
+            select(ScenarioResultEntry.id, ScenarioResultEntry.scenario_run_state)
+            .where(and_(*conditions))
+            .order_by(ScenarioResultEntry.id.asc())
+            .limit(limit + 1)
+        )
+        with closing(self.get_session()) as session:
+            rows = session.execute(statement).all()
+        return (
+            [
+                ScenarioRunStateRecord(
+                    scenario_result_id=str(row.id),
+                    state=ScenarioRunState(row.scenario_run_state),
+                )
+                for row in rows[:limit]
+            ],
+            len(rows) > limit,
+        )
 
     def get_scenario_run_history_page(
         self,
@@ -4149,7 +4275,7 @@ class MemoryInterface(abc.ABC):
                 f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
             )
         if effective_labels:
-            conditions.append(self._get_scenario_result_label_condition(labels=effective_labels))
+            conditions.append(self._get_scenario_result_labels_condition(labels=effective_labels))
         if cursor is not None:
             cursor_id = uuid.UUID(cursor.scenario_result_id)
             conditions.append(
@@ -4172,6 +4298,7 @@ class MemoryInterface(abc.ABC):
             ScenarioResultEntry.scenario_run_state,
             ScenarioResultEntry.labels,
             ScenarioResultEntry.timestamp,
+            self._get_scenario_started_at_expression().label("started_at"),
             ScenarioResultEntry.completion_time,
             ScenarioResultEntry.error_message,
             ScenarioResultEntry.error_type,
@@ -4211,11 +4338,18 @@ class MemoryInterface(abc.ABC):
                     AttackResultEntry.objective_sha256.label("objective_sha256"),
                     AttackResultEntry.outcome.label("latest_outcome"),
                     func.max(AttackResultEntry.timestamp).over(partition_by=unit_partition).label("latest_timestamp"),
-                    (
-                        func.sum(func.coalesce(AttackResultEntry.total_retries, 0)).over(partition_by=unit_partition)
-                        + func.count().over(partition_by=unit_partition)
-                        - 1
-                    ).label("total_retries"),
+                    func.sum(
+                        case(
+                            (
+                                func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                                func.coalesce(AttackResultEntry.total_retries, 0),
+                            ),
+                            else_=0,
+                        )
+                    )
+                    .over(partition_by=unit_partition)
+                    .label("inner_retries"),
+                    func.count().over(partition_by=unit_partition).label("attempt_count"),
                     func.sum(case((AttackResultEntry.outcome == AttackOutcome.ERROR.value, 1), else_=0))
                     .over(partition_by=unit_partition)
                     .label("error_count"),
@@ -4244,6 +4378,7 @@ class MemoryInterface(abc.ABC):
                 status=row.scenario_run_state,
                 labels=row.labels or {},
                 created_at=row.timestamp,
+                started_at=self._parse_scenario_started_at(raw_value=row.started_at),
                 completed_at=row.completion_time,
                 error_message=row.error_message,
                 error_type=row.error_type,
@@ -4267,11 +4402,28 @@ class MemoryInterface(abc.ABC):
                     objective_sha256=row.objective_sha256,
                     latest_outcome=row.latest_outcome,
                     latest_timestamp=row.latest_timestamp,
-                    total_retries=row.total_retries or 0,
+                    total_retries=(row.inner_retries or 0) + max(0, (row.attempt_count or 0) - 1),
                     error_count=row.error_count or 0,
+                    attempt_count=row.attempt_count or 0,
                 )
             )
         return records, units_by_run, len(rows) > limit
+
+    @staticmethod
+    def _parse_scenario_started_at(*, raw_value: Any) -> datetime | None:
+        """
+        Parse a persisted aware scenario start timestamp.
+
+        Returns:
+            datetime | None: Aware start timestamp, or None for legacy or malformed values.
+        """
+        if not isinstance(raw_value, str):
+            return None
+        try:
+            value = datetime.fromisoformat(raw_value)
+        except ValueError:
+            return None
+        return value if value.tzinfo is not None else None
 
     def get_unique_scenario_labels(self) -> dict[str, list[str]]:
         """Return all unique label values across scenario results."""
