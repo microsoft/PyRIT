@@ -151,7 +151,9 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
     """
     Start a new scenario run as a background task.
 
-    Returns immediately with a scenario_result_id that can be polled for status.
+    Initialization runs eagerly so configuration errors surface here, then the run
+    itself continues in the background. Returns a scenario_result_id that can be
+    polled for status.
 
     Args:
         request: Scenario run configuration.
