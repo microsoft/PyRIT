@@ -118,9 +118,7 @@ def test_validate_rejects_unknown_schema_version():
 @pytest.mark.parametrize("schema_version", ["1", 1.0, True])
 def test_validate_rejects_coerced_schema_version(schema_version):
     with pytest.raises(ValidationError, match="Unsupported ScoringExpectation schema_version"):
-        ScoringExpectation.model_validate(
-            {"schema_version": schema_version, "objective": None, "conditions": []}
-        )
+        ScoringExpectation.model_validate({"schema_version": schema_version, "objective": None, "conditions": []})
 
 
 def test_persisted_validation_requires_schema_version():
@@ -160,9 +158,7 @@ def test_json_schema_describes_registered_condition_subtypes():
 
     assert condition_items["discriminator"] == {"propertyName": "condition_type"}
     condition_schemas = condition_items["oneOf"]
-    condition_types = {
-        schema["properties"]["condition_type"]["const"]: schema for schema in condition_schemas
-    }
+    condition_types = {schema["properties"]["condition_type"]["const"]: schema for schema in condition_schemas}
     assert "matches_objective" in condition_types
     assert "test_expectation_beta" in condition_types
     assert condition_types["test_expectation_beta"]["properties"]["label"]["type"] == "string"

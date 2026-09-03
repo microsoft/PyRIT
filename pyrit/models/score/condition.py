@@ -49,9 +49,7 @@ class Condition(BaseModel):
         super().__pydantic_init_subclass__(**kwargs)
         field = cls.model_fields.get("condition_type")
         literal_values = (
-            get_args(field.annotation)
-            if field is not None and get_origin(field.annotation) is Literal
-            else ()
+            get_args(field.annotation) if field is not None and get_origin(field.annotation) is Literal else ()
         )
         if len(literal_values) != 1 or not isinstance(literal_values[0], str) or not literal_values[0]:
             raise TypeError(
@@ -59,9 +57,7 @@ class Condition(BaseModel):
             )
         discriminator = literal_values[0]
         if field.default != discriminator:
-            raise TypeError(
-                f"{cls.__name__}.condition_type must default to its Literal value {discriminator!r}."
-            )
+            raise TypeError(f"{cls.__name__}.condition_type must default to its Literal value {discriminator!r}.")
         registered = _CONDITION_TYPES.get(discriminator)
         if registered is not None and registered is not cls:
             raise ValueError(

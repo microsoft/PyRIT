@@ -137,8 +137,7 @@ class ScoringExpectation(BaseModel):
         schema = handler(core_schema)
         resolved_schema = handler.resolve_ref_schema(schema)
         condition_schemas = [
-            handler(TypeAdapter(condition_class).core_schema)
-            for _, condition_class in sorted(_CONDITION_TYPES.items())
+            handler(TypeAdapter(condition_class).core_schema) for _, condition_class in sorted(_CONDITION_TYPES.items())
         ]
         resolved_schema["properties"]["conditions"]["items"] = {
             "discriminator": {"propertyName": "condition_type"},
