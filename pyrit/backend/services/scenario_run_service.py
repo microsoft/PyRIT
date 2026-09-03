@@ -280,12 +280,6 @@ class ScenarioRunService:
                 logger.info(f"Scenario run {scenario_result_id} was cancelled while it was being initialized.")
                 return response
 
-            # The stored row is still CANCELLED from the run being resumed, which would look
-            # terminal to a caller that just asked to start it. Report it the way a fresh run
-            # is reported; the scenario moves it to IN_PROGRESS once it starts.
-            if resumed_from_cancelled:
-                response = response.model_copy(update={"status": ScenarioRunState.CREATED})
-
             # Spawn background task (only runs scenario.run_async). It releases the permit in
             # its own finally, so ownership transfers here and this frame must not release it.
             task = asyncio.create_task(self._execute_run_async(scenario_result_id=scenario_result_id))
@@ -586,9 +580,11 @@ class ScenarioRunService:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(active.task, timeout=5.0)
 
-        # Persist cancelled state to DB
-        self._memory.update_scenario_run_state(
+        # The run can reach a terminal state during the await above, so only cancel a run that
+        # is still going. The re-read below reports whichever state actually won.
+        self._memory.try_update_scenario_run_state(
             scenario_result_id=scenario_result_id,
+            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
             scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",

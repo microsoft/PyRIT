@@ -725,7 +725,7 @@ class TestScenarioRunServiceStartRun:
         assert service._run_semaphore._value == _DEFAULT_MAX_CONCURRENT_RUNS
 
     async def test_start_run_does_not_run_a_scenario_cancelled_during_initialization(self, mock_all_registries) -> None:
-        """A resumed run can be cancelled through its known id before initialization finishes."""
+        """A run appears in the run list as soon as it is stored, so it can be cancelled mid-init."""
         service = ScenarioRunService()
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._scenario_result_id = "cancelled-during-init"
@@ -763,8 +763,9 @@ class TestScenarioRunServiceStartRun:
 
         execute.assert_called_once()
         assert "resumed-cancelled" in service._active_tasks
-        # The stored row is still CANCELLED, but the caller just started this run.
-        assert response.status == ScenarioRunState.CREATED
+        # The stored row is still CANCELLED until the scenario moves it on; what matters is
+        # that the resume was not mistaken for a cancellation and actually started.
+        assert response.scenario_result_id == "resumed-cancelled"
 
     async def test_start_run_honours_a_cancel_that_lands_while_a_live_run_initializes(
         self, mock_all_registries
@@ -1250,8 +1251,9 @@ class TestScenarioRunServiceCancelRun:
 
         result = await service.cancel_run_async(scenario_result_id=response.scenario_result_id)
 
-        mock_memory.update_scenario_run_state.assert_called_once_with(
+        mock_memory.try_update_scenario_run_state.assert_called_once_with(
             scenario_result_id=response.scenario_result_id,
+            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
             scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",
