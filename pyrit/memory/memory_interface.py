@@ -3900,7 +3900,7 @@ class MemoryInterface(abc.ABC):
 
         The compare and the write are a single UPDATE so a run that reached a terminal state
         on another thread is not overwritten. A read followed by
-        :meth:`update_scenario_run_state` cannot give that guarantee because scenario
+        ``update_scenario_run_state`` cannot give that guarantee because scenario
         preparation and cancellation run on different threads.
 
         Args:
@@ -3919,7 +3919,7 @@ class MemoryInterface(abc.ABC):
         if not expected_states:
             raise ValueError("expected_states must not be empty")
 
-        values: dict[str, Any] = {
+        values: dict[Any, Any] = {
             "scenario_run_state": scenario_run_state.value,
             "error_message": error_message,
             "error_type": error_type,

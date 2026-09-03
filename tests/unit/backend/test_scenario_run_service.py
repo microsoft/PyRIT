@@ -687,6 +687,10 @@ class TestScenarioRunServiceStartRun:
                 update_state.assert_called_once()
                 assert update_state.call_args.kwargs["scenario_result_id"] == "abandoned-id"
                 assert update_state.call_args.kwargs["scenario_run_state"] == ScenarioRunState.CANCELLED
+                assert update_state.call_args.kwargs["expected_states"] == {
+                    ScenarioRunState.CREATED,
+                    ScenarioRunState.IN_PROGRESS,
+                }
 
     async def test_start_run_marks_prepare_cancelled_when_it_finishes_before_cancellation_lands(
         self, mock_all_registries
@@ -714,6 +718,10 @@ class TestScenarioRunServiceStartRun:
         update_state.assert_called_once()
         assert update_state.call_args.kwargs["scenario_result_id"] == "raced-id"
         assert update_state.call_args.kwargs["scenario_run_state"] == ScenarioRunState.CANCELLED
+        assert update_state.call_args.kwargs["expected_states"] == {
+            ScenarioRunState.CREATED,
+            ScenarioRunState.IN_PROGRESS,
+        }
         assert service._run_semaphore._value == _DEFAULT_MAX_CONCURRENT_RUNS
 
     async def test_start_run_does_not_run_a_scenario_cancelled_during_initialization(self, mock_all_registries) -> None:
