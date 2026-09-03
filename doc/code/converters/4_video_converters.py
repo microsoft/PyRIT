@@ -36,7 +36,7 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-input_video = str(pathlib.Path(".") / ".." / ".." / ".." / "assets" / "sample_video.mp4")
+input_video = pathlib.Path(".") / ".." / ".." / ".." / "assets" / "sample_video.mp4"
 input_image = str(pathlib.Path(".") / ".." / ".." / ".." / "assets" / "pyrit_architecture.png")
 
 video = AddImageVideoConverter(video_path=input_video)

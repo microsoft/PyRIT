@@ -9,14 +9,15 @@ import copy
 import types
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, model_validator
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE
 
-_SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool)
-_SCALAR_NAME_TO_TYPE: dict[str, type] = {"int": int, "float": float, "bool": bool, "str": str}
+_SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool, Path)
+_SCALAR_NAME_TO_TYPE: dict[str, type] = {"int": int, "float": float, "bool": bool, "str": str, "Path": Path}
 
 
 class ComponentType(str, Enum):
@@ -191,7 +192,7 @@ class Parameter(BaseModel):
         Whether a single string token can be coerced to this parameter's value.
 
         True for a non-reference plain scalar (``str`` / ``int`` / ``float`` /
-        ``bool``), ``Literal[...]``, or ``Enum`` parameter — exactly the forms a
+        ``bool`` / ``Path``), ``Literal[...]``, or ``Enum`` parameter — exactly the forms a
         text field or CLI token can supply. References and structured types (lists
         and arbitrary objects) are False and are surfaced/handled elsewhere.
 
@@ -261,7 +262,7 @@ class Parameter(BaseModel):
         Reject a declaration with an unsupported ``param_type``.
 
         Supported forms are a plain scalar, a constrained scalar
-        (``Literal``/``Enum``), a ``list`` of any of those, a registry reference,
+        (``Literal``/``Enum``), ``Path``, a ``list`` of any of those, a registry reference,
         an opaque passthrough, or ``None``. An otherwise-unsupported type is
         tolerated only when the parameter declares a default (the builder simply
         does not supply it, and the value passes through unchanged).
@@ -284,7 +285,7 @@ class Parameter(BaseModel):
 
         raise ValueError(
             f"Parameter '{self.name}' has unsupported param_type {param_type!r}. "
-            f"Supported types: str, int, float, bool, Literal[...], Enum, a list of those, "
+            f"Supported types: str, int, float, bool, Path, Literal[...], Enum, a list of those, "
             f"or None (or provide a default)."
         )
 
@@ -314,7 +315,7 @@ def _is_scalar_param_type(annotation: Any) -> bool:
     """
     Return True when ``annotation`` is a coercible scalar form.
 
-    A scalar form is a plain scalar (``str`` / ``int`` / ``float`` / ``bool``) or a
+    A scalar form is a plain scalar (``str`` / ``int`` / ``float`` / ``bool`` / ``Path``) or a
     constrained scalar (``Literal[...]`` or an ``Enum`` subclass) that carries its
     own allowed set.
 
@@ -333,12 +334,12 @@ def _coerce_simple_value(*, param_name: str, annotation: Any, raw_value: Any) ->
     Coerce ``raw_value`` to a scalar ``annotation`` — the shared coercion core.
 
     Handles ``Optional[X]`` unwrap, ``Literal``/``Enum`` membership, and
-    int/float/bool/str. Anything else passes through unchanged. Both the
+    int/float/bool/str/Path. Anything else passes through unchanged. Both the
     ``Parameter`` path (``coerce_value``) and the resolver's annotation path route
     through this function so they cannot diverge on coerced values.
 
     Returns:
-        Any: The coerced value (a ``Literal``/``Enum`` member, an int/float/bool/str, or
+        Any: The coerced value (a ``Literal``/``Enum`` member, an int/float/bool/str/Path, or
             the raw value unchanged for unsupported annotations).
 
     Raises:
@@ -358,6 +359,8 @@ def _coerce_simple_value(*, param_name: str, annotation: Any, raw_value: Any) ->
         return _coerce_scalar(param_name=param_name, scalar_type=float, raw_value=raw_value)
     if annotation is str:
         return str(raw_value)
+    if annotation is Path:
+        return Path(raw_value)
     return raw_value
 
 
@@ -466,7 +469,7 @@ def _coerce_list(*, param_name: str, param_type: Any, raw_value: Any) -> list[An
         ]
     raise ValueError(
         f"Parameter '{param_name}' has unsupported list element type {element_type!r}. "
-        f"Supported list element types: str, int, float, bool, or Literal[...]."
+        f"Supported list element types: str, int, float, bool, Path, or Literal[...]."
     )
 
 
