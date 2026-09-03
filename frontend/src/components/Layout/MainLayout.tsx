@@ -15,6 +15,7 @@ interface MainLayoutProps {
   currentView: ViewName
   onNavigate: (view: ViewName) => void
   onOpenFeedback: () => void
+  canManageConfiguration: boolean
   onStartTour?: () => void
 }
 
@@ -23,6 +24,7 @@ export default function MainLayout({
   currentView,
   onNavigate,
   onOpenFeedback,
+  canManageConfiguration,
   onStartTour,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
@@ -81,6 +83,7 @@ export default function MainLayout({
             currentView={currentView}
             onNavigate={onNavigate}
             onOpenFeedback={onOpenFeedback}
+            canManageConfiguration={canManageConfiguration}
           />
         </aside>
         <main className={styles.main}>{children}</main>

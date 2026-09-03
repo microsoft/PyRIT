@@ -153,10 +153,10 @@ async function expectWithin(
   );
 }
 
-/** Navigate to the config view. */
-async function goToConfig(page: Page) {
+/** Navigate to the targets view. */
+async function goToTargets(page: Page) {
   await page.goto("/");
-  await page.getByTitle("Configuration").click();
+  await page.getByTitle("Targets").click();
   await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
 }
 
@@ -185,7 +185,7 @@ test.describe("Target Configuration Page", () => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
 
     // Table should appear with both targets
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
@@ -199,7 +199,7 @@ test.describe("Target Configuration Page", () => {
       await route.fulfill(mockTargetsList([]));
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
 
     await expect(page.getByText("No Targets Configured")).toBeVisible();
     await expect(page.getByRole("button", { name: /create first target/i })).toBeVisible();
@@ -210,7 +210,7 @@ test.describe("Target Configuration Page", () => {
       await route.fulfill({ status: 500, body: "Internal Server Error" });
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
 
     await expect(page.getByText(/error/i)).toBeVisible({ timeout: 10000 });
   });
@@ -220,7 +220,7 @@ test.describe("Target Configuration Page", () => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
 
     // Both rows should have a "Set Active" button initially
@@ -237,7 +237,7 @@ test.describe("Target Configuration Page", () => {
       await route.fulfill(mockTargetsList([]));
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
 
     // Click the "New Target" button in the header
     await page.getByRole("button", { name: /new target/i }).click();
@@ -257,7 +257,7 @@ test.describe("Target Configuration Page", () => {
       await route.fulfill(mockTargetsList(items));
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
     // First load shows one target
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("dall-e-3")).not.toBeVisible();
@@ -294,7 +294,7 @@ test.describe("Create Target Dialog", () => {
       await route.fulfill(mockTargetsList([]));
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
     await page.getByRole("button", { name: /new target/i }).click();
 
     const dialog = page.getByRole("dialog");
@@ -356,7 +356,7 @@ test.describe("Create Target Dialog", () => {
       }
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
 
     // Click "New Target" button
     await page.getByRole("button", { name: /new target/i }).click();
@@ -393,7 +393,7 @@ test.describe("Create Target Dialog", () => {
       await route.fulfill(mockTargetsList([]));
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
 
     // Open dialog
     await page.getByRole("button", { name: /new target/i }).click();
@@ -432,7 +432,7 @@ test.describe("Responsive Target Configuration", () => {
         height: viewport.height,
       });
       await routeResponsiveTargetData(page, LONG_NAME_TARGETS);
-      await goToConfig(page);
+      await goToTargets(page);
       await expect(page.getByText("gpt-4o-responsive").first()).toBeVisible();
 
       const config = page.getByTestId("target-config");
@@ -460,7 +460,7 @@ test.describe("Responsive Target Configuration", () => {
         height: viewport.height,
       });
       await routeResponsiveTargetData(page, LONG_NAME_TARGETS);
-      await goToConfig(page);
+      await goToTargets(page);
       await expect(page.getByText("gpt-4o-responsive").first()).toBeVisible();
 
       await page.getByRole("button", { name: /new target/i }).click();
@@ -523,7 +523,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
       await route.fulfill(mockTargetsList(SAMPLE_TARGETS));
     });
 
-    await goToConfig(page);
+    await goToTargets(page);
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
 
     // Set first target active
@@ -551,8 +551,8 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await page.getByTitle("Chat").click();
     await expect(page.getByTestId("no-target-banner")).toBeVisible();
 
-    // Go to config, set a target
-    await page.getByTitle("Configuration").click();
+    // Go to targets, set a target
+    await page.getByTitle("Targets").click();
     await expect(page.getByText("gpt-4o")).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: /set active/i }).first().click();
 

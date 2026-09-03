@@ -1268,6 +1268,31 @@ class TestMainExtraPaths:
         return_value=True,
     )
     @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_start_scenario_read_timeout_reports_type_and_hint(self, mock_client_class, _mock_probe, capsys):
+        """A ReadTimeout stringifies to '', so the type and a hint have to carry the message."""
+        import httpx
+
+        mock_client = _mock_api_client()
+        mock_client.start_scenario_run_async.side_effect = httpx.ReadTimeout("")
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "--request-timeout" in captured.out
+        # The server keeps initializing after the client gives up, so the outcome is unknown
+        # and must not be reported as a definite failure to start.
+        assert "unknown whether the run started" in captured.out
+        assert "could not be started" not in captured.out
+        assert "scenario-history" in captured.out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_run_results_failure_is_hard_error(self, mock_client_class, _mock_probe, capsys):
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_results_async.side_effect = RuntimeError("nope")
@@ -1282,6 +1307,38 @@ class TestMainExtraPaths:
         assert "nope" in captured.out
         # The summary printer should still be used as a fallback for context.
         assert "test_scenario" in captured.out
+
+    @patch(
+        "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    @patch("pyrit.cli.api_client.PyRITApiClient")
+    def test_main_run_results_read_timeout_points_at_scenario_results(self, mock_client_class, _mock_probe, capsys):
+        """Results are fetched with the request timeout, unlike polling, so they can time out."""
+        import httpx
+
+        mock_client = _mock_api_client()
+        mock_client.get_scenario_run_results_async.side_effect = httpx.ReadTimeout("")
+        mock_client_class.return_value = mock_client
+
+        result = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "scenario-results" in captured.out
+        assert "--request-timeout" in captured.out
+
+    def test_print_cli_exception_surfaces_empty_read_timeout(self, capsys):
+        """A bare ReadTimeout stringifies to '', so the helper has to carry the message."""
+        import httpx
+
+        pyrit_scan._print_cli_exception(exc=httpx.ReadTimeout(""))
+        captured = capsys.readouterr()
+        assert "ReadTimeout" in captured.out
+        assert "did not respond in time" in captured.out
+        # Only pyrit_scan verbs reach the helper with a timeout, and they all take the flag.
+        assert "--request-timeout" in captured.out
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",

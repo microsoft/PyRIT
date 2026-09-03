@@ -368,6 +368,9 @@ class Jailbreak(Scenario):
             component.count for component in components if component.label != "Native system-prompt jailbreak delivery"
         )
         planned_count = sum(component.count for component in components)
+        minimum_planned_count = (
+            planned_count if system_delivery_selected and converter_count == 0 else target_agnostic_count
+        )
         baseline_explanation = (
             f" Baseline adds one unit per selected seed group ({seed_group_count} units)."
             if self._include_baseline
@@ -383,8 +386,12 @@ class Jailbreak(Scenario):
         )
         if estimated_attack_count is None:
             capability_note = (
-                f" {target_agnostic_count} total planned units for target-agnostic delivery; "
-                f"{planned_count} when native system-prompt delivery is supported."
+                " The selected technique requires native system-prompt delivery; incompatible targets cannot run it."
+                if converter_count == 0
+                else (
+                    f" {target_agnostic_count} total planned units for target-agnostic delivery; "
+                    f"{planned_count} when native system-prompt delivery is supported."
+                )
             )
         elif system_delivery_selected and system_delivery_supported is True:
             capability_note = " The selected target supports the native system-prompt component."
@@ -392,10 +399,21 @@ class Jailbreak(Scenario):
             capability_note = " The selected target does not support native system-prompt delivery, so it is omitted."
         else:
             capability_note = ""
+        jailbreak_names = self.params.get("jailbreak_names") or []
+        effective_parameters: dict[str, int | list[str]] = {
+            "num_jailbreak_attempts": attempt_count,
+        }
+        if jailbreak_names:
+            effective_parameters["jailbreak_names"] = list(jailbreak_names)
+        else:
+            effective_parameters["num_jailbreaks"] = template_count
         return ScenarioRunSizeEstimate(
             estimated_attack_count=estimated_attack_count,
+            minimum_attack_count=minimum_planned_count if estimated_attack_count is None else None,
+            maximum_attack_count=planned_count if estimated_attack_count is None else None,
             components=components,
             datasets=datasets,
+            effective_parameters=effective_parameters,
             note=f"{formula}{baseline_explanation}{capability_note}",
         )
 

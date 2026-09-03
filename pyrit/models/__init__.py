@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
-    from pyrit.models.additional_initializer import AdditionalInitializer
     from pyrit.models.catalog import (
         ScenarioDatasetSizeCap,
         ScenarioDatasetSummary,
@@ -30,6 +29,7 @@ if TYPE_CHECKING:
         ScenarioRunSizeComponent,
         ScenarioRunSizeEstimate,
         ScenarioRunSizeEstimateRequest,
+        ScenarioTechniqueSummary,
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
@@ -164,7 +164,6 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str] = {
     "ALLOWED_CHAT_MESSAGE_ROLES": "pyrit.models.messages.chat_message",
-    "AdditionalInitializer": "pyrit.models.additional_initializer",
     "AtomicAttackEvaluationIdentifier": "pyrit.models.identifiers",
     "AtomicAttackIdentifier": "pyrit.models.identifiers",
     "AttackIdentifier": "pyrit.models.identifiers",
@@ -254,6 +253,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunSizeComponent": "pyrit.models.catalog",
     "ScenarioRunSizeEstimate": "pyrit.models.catalog",
     "ScenarioRunSizeEstimateRequest": "pyrit.models.catalog",
+    "ScenarioTechniqueSummary": "pyrit.models.catalog",
     "ScenarioResult": "pyrit.models.results.scenario_result",
     "ScenarioRunState": "pyrit.models.results.scenario_result",
     "SCENARIO_RUN_PLAN_METADATA_KEY": "pyrit.models.scenario_progress",

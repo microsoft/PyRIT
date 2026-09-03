@@ -12,6 +12,7 @@ from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import MessagePiece
 from pyrit.score import (
     MessageScorable,
+    ScorerPromptValidator,
     SubStringScorer,
     TrueFalseInverterScorer,
 )
@@ -22,7 +23,7 @@ def image_message_piece() -> MessagePiece:
     return get_image_message_piece()
 
 
-async def test_score_async_unsupported_data_type_inverts_false_to_true(
+async def test_score_async_unsupported_data_type_returns_empty(
     patch_central_database, image_message_piece: MessagePiece
 ):
     sub_scorer = SubStringScorer(substring="test", categories=["new_category"])
@@ -30,12 +31,8 @@ async def test_score_async_unsupported_data_type_inverts_false_to_true(
 
     request = image_message_piece.to_message()
 
-    # With raise_on_no_valid_pieces=False (default), the inner scorer returns False,
-    # and the inverter inverts it to True
     scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
-    assert len(scores) == 1
-    # Inverter inverts False -> True
-    assert scores[0].get_value() is True
+    assert scores == []
 
     os.remove(image_message_piece.converted_value)
 
@@ -65,3 +62,15 @@ async def test_substring_scorer_adds_to_memory():
         await scorer.score_text_async(text="string")
 
         memory.add_scores_to_memory.assert_called_once()
+
+
+async def test_inverter_propagates_silent_child(patch_central_database):
+    """An inverter cannot invert a verdict that its child did not make."""
+    sub_scorer = SubStringScorer(substring="test", categories=["new_category"])
+    sub_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseInverterScorer(scorer=sub_scorer)
+    message = MessagePiece(role="user", original_value="test").to_message()
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
+
+    assert scores == []

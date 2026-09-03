@@ -92,6 +92,10 @@ class TestBicepTopology(unittest.TestCase):
         assert template["parameters"]["enableFrontDoorPrivateLink"]["defaultValue"] is False
         assert "appName" in template["parameters"]["frontDoorPrivateLinkRequestMessage"]["defaultValue"]
         assert template["parameters"]["disableContainerAppsPublicAccess"]["defaultValue"] is False
+        assert "adminGroupObjectId" in template["parameters"]
+        assert template["parameters"]["pyritConfigFileUri"]["defaultValue"] == ""
+        assert "fail(" in template["variables"]["validatedAllowedGroupObjectIds"]
+        assert "fail(" in template["variables"]["validatedAdminGroupObjectId"]
 
         existing_identity = template["parameters"]["existingManagedIdentityResourceId"]
         assert existing_identity["defaultValue"] == ""
@@ -157,6 +161,11 @@ class TestBicepTopology(unittest.TestCase):
         assert container_app["properties"]["configuration"]["registries"][0]["identity"] == (
             "[variables('effectiveManagedIdentityId')]"
         )
+        container_env = container_app["properties"]["template"]["containers"][0]["env"]
+        serialized_container_env = json.dumps(container_env)
+        assert "ENTRA_ADMIN_GROUP_ID" in serialized_container_env
+        assert "PYRIT_CONFIG_FILE" in serialized_container_env
+        assert "PYRIT_ENV_AKV_REF" in serialized_container_env
         ingress_restrictions = container_app["properties"]["configuration"]["ingress"]["ipSecurityRestrictions"]
         assert "variables('effectiveAllowedCidr')" in ingress_restrictions
         effective_allowed_cidr = template["variables"]["effectiveAllowedCidr"]
@@ -168,7 +177,7 @@ class TestBicepTopology(unittest.TestCase):
         cors_value = next(
             value["value"]
             for value in container_app["properties"]["template"]["containers"][0]["env"]
-            if value["name"] == "PYRIT_CORS_ORIGINS"
+            if isinstance(value, dict) and value.get("name") == "PYRIT_CORS_ORIGINS"
         )
         assert "aca-front-door" in cors_value
         assert "outputs.endpointHostName.value" in cors_value

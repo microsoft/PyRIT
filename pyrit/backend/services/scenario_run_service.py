@@ -11,10 +11,12 @@ retrieving results, and cancellation.
 import asyncio
 import base64
 import contextlib
+import functools
 import json
 import logging
 import uuid
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -162,6 +164,11 @@ class ScenarioRunService:
     Keeps an in-memory dict only for active asyncio tasks (cancellation support).
     """
 
+    #: Seconds to let initialization's own background tasks (for example HTTP client teardown
+    #: scheduled from ``__del__``) finish before the initialization loop is torn down. This is
+    #: headroom for incidental teardown, not a waiter for real long-running work.
+    _INITIALIZATION_DRAIN_TIMEOUT = 5.0
+
     def __init__(self, *, max_concurrent_runs: int = _DEFAULT_MAX_CONCURRENT_RUNS) -> None:
         """Initialize the scenario run service."""
         self._max_concurrent_runs = max_concurrent_runs
@@ -169,6 +176,13 @@ class ScenarioRunService:
         self._active_tasks: dict[str, _ActiveTask] = {}
         self._run_semaphore = asyncio.Semaphore(max_concurrent_runs)
         self._configuration_resolver = ScenarioConfigurationResolver()
+
+        # Initialization writes to CentralMemory, and the in-memory SQLite backend shares one
+        # DBAPI connection across every thread (StaticPool, sqlite_memory.py). Two preparations
+        # running at once would use that connection concurrently and lose or corrupt writes, so
+        # they are serialized onto a single worker. The event loop is still free while they run,
+        # which is the point of the offload.
+        self._prepare_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyrit-scenario-prep")
 
     async def start_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
@@ -197,46 +211,259 @@ class ScenarioRunService:
 
         await self._run_semaphore.acquire()
 
-        # Perform all initialization eagerly — errors propagate to caller
+        # This frame owns the permit until the background task is created; every exit path
+        # before that hand-off has to release it, including cancellation, which is a
+        # BaseException and so is not caught by ``except Exception``.
+        release_on_exit = True
+        registered_run_id: str | None = None
         try:
-            scenario_class = self._configuration_resolver.resolve_scenario_class(scenario_name=request.scenario_name)
-            await self._run_initializers_async(request=request)
-            objective_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
-            init_kwargs = self._configuration_resolver.resolve_configuration(
-                scenario_name=request.scenario_name,
-                scenario_class=scenario_class,
-                objective_target=objective_target,
-                techniques=request.techniques,
-                dataset_names=request.dataset_names,
-                max_dataset_size=request.max_dataset_size,
-                dataset_filters=request.dataset_filters,
-                include_baseline=request.include_baseline,
-                max_concurrency=request.max_concurrency,
-                max_retries=request.max_retries,
-                memory_labels=request.labels,
+            # A resumed run keeps the state its previous run left behind, so one that was
+            # cancelled and is now being resumed on purpose is still CANCELLED while it
+            # initializes. Read that before preparation: the check afterwards otherwise
+            # cannot tell an intentional resume from a cancellation that landed while the
+            # worker thread was still initializing, and would refuse to restart it.
+            resumed_from_cancelled = self._is_run_cancelled(scenario_result_id=request.scenario_result_id)
+
+            # Initialization loads the default datasets, which takes minutes, and is mostly
+            # synchronous work. Run it on a worker thread so the event loop stays free to
+            # answer health checks and status polls while a run is starting.
+            prepare_task = asyncio.get_running_loop().run_in_executor(
+                self._prepare_executor, functools.partial(self._prepare_run_blocking, request=request)
             )
-            scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
-        except Exception:
-            self._run_semaphore.release()
-            raise
+            try:
+                scenario = await asyncio.shield(prepare_task)
+            except BaseException as exc:
+                # A worker thread cannot be killed, so it keeps initializing after this frame
+                # unwinds. Keep holding the permit until it actually finishes, otherwise the
+                # next caller is admitted while this run is still loading datasets and
+                # ``max_concurrent_runs`` stops bounding the work that is really running.
+                if not prepare_task.done():
+                    prepare_task.add_done_callback(self._release_abandoned_prepare)
+                    release_on_exit = False
+                elif isinstance(exc, asyncio.CancelledError):
+                    # The thread can finish just as the cancellation lands. A done future never
+                    # calls back, so cleaning up here is the only chance to release the permit
+                    # and terminalize the run that initialization already stored.
+                    release_on_exit = False
+                    try:
+                        self._release_abandoned_prepare(prepare_task)
+                    except Exception as cleanup_error:
+                        # The permit is released first, so it is already back even if the rest
+                        # failed. Never let cleanup replace the cancellation being propagated.
+                        logger.warning(f"Could not clean up after a cancelled scenario preparation: {cleanup_error}")
+                raise
 
-        # scenario_result_id is set during initialize_async
-        scenario_result_id = scenario._scenario_result_id
-        if scenario_result_id is None:
-            raise ValueError("Scenario did not produce a scenario_result_id during initialization.")
+            # scenario_result_id is set during initialize_async
+            scenario_result_id = scenario._scenario_result_id
+            if scenario_result_id is None:
+                raise ValueError("Scenario did not produce a scenario_result_id during initialization.")
 
-        # Track active task
-        active = _ActiveTask(scenario_result_id=scenario_result_id, scenario=scenario)
-        self._active_tasks[scenario_result_id] = active
+            # Track active task
+            active = _ActiveTask(scenario_result_id=scenario_result_id, scenario=scenario)
+            self._active_tasks[scenario_result_id] = active
+            registered_run_id = scenario_result_id
 
-        # Spawn background task (only runs scenario.run_async)
-        task = asyncio.create_task(self._execute_run_async(scenario_result_id=scenario_result_id))
-        active.task = task
+            # Build the response before spawning the task so that a failure here cannot leave
+            # a run executing that the caller never received an id for.
+            response = self.get_run(scenario_result_id=scenario_result_id)
+            if response is None:
+                raise RuntimeError(
+                    f"Scenario run {scenario_result_id} was not found in the database after initialization."
+                )
 
-        response = self.get_run(scenario_result_id=scenario_result_id)
-        if response is None:
-            raise RuntimeError(f"Scenario run {scenario_result_id} was not found in the database after initialization.")
+            # A run can be cancelled through its id while initialization is still on the worker
+            # thread: a resume already knows the id, and a fresh run appears in the run list as
+            # soon as initialization stores it. Nothing has run yet, so honour that instead of
+            # starting a scenario the caller gave up on. The finally block returns the permit
+            # and drops the tracking entry.
+            if response.status == ScenarioRunState.CANCELLED and not resumed_from_cancelled:
+                logger.info(f"Scenario run {scenario_result_id} was cancelled while it was being initialized.")
+                return response
+
+            # Spawn background task (only runs scenario.run_async). It releases the permit in
+            # its own finally, so ownership transfers here and this frame must not release it.
+            task = asyncio.create_task(self._execute_run_async(scenario_result_id=scenario_result_id))
+            active.task = task
+            release_on_exit = False
+            registered_run_id = None
+        finally:
+            if registered_run_id is not None:
+                self._active_tasks.pop(registered_run_id, None)
+            if release_on_exit:
+                self._run_semaphore.release()
+
         return response
+
+    def _is_run_cancelled(self, *, scenario_result_id: str | None) -> bool:
+        """
+        Report whether a stored run is already in the CANCELLED state.
+
+        Reads the header only. A resumed run can have thousands of linked attack results and
+        this runs on the event loop, which the rest of this path works to keep free.
+
+        Args:
+            scenario_result_id: The run being resumed, or None for a fresh run.
+
+        Returns:
+            bool: True when a stored run with this id is CANCELLED.
+        """
+        if not scenario_result_id:
+            return False
+        stored = self._memory.get_scenario_result_header(scenario_result_id=scenario_result_id)
+        return stored is not None and stored.scenario_run_state == ScenarioRunState.CANCELLED
+
+    def _release_abandoned_prepare(self, prepare_task: "asyncio.Future[Scenario]") -> None:
+        """
+        Clean up after an abandoned preparation thread has finished.
+
+        ``start_run_async`` hands ownership of the permit to this callback when it is
+        cancelled while the worker thread is still initializing, so the permit is only
+        released after the thread has genuinely stopped using the slot. A preparation that
+        succeeds anyway leaves behind a scenario result nobody will run, which is marked
+        cancelled here rather than left waiting in ``CREATED``.
+
+        Args:
+            prepare_task: The future wrapping the abandoned ``_prepare_run_blocking`` call.
+        """
+        self._run_semaphore.release()
+
+        if prepare_task.cancelled():
+            return
+        error = prepare_task.exception()
+        if error is not None:
+            logger.warning(f"Abandoned scenario preparation failed after the request was cancelled: {error}")
+            return
+
+        # Initialization already stored a CREATED scenario result, and nothing is going to run
+        # it now, so terminalize it rather than leaving a run that never starts. A run that
+        # already reached a terminal state keeps it, so a real failure is not relabelled.
+        scenario_result_id = prepare_task.result()._scenario_result_id
+        if scenario_result_id:
+            try:
+                self._memory.try_update_scenario_run_state(
+                    scenario_result_id=scenario_result_id,
+                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+                    scenario_run_state=ScenarioRunState.CANCELLED,
+                    error_message="The start request was cancelled while the scenario was being initialized.",
+                )
+            except Exception as update_error:
+                logger.warning(
+                    f"Could not mark abandoned scenario run {scenario_result_id} as cancelled: {update_error}"
+                )
+        logger.warning("Abandoned scenario preparation completed after the request was cancelled.")
+
+    def _prepare_run_blocking(self, *, request: RunScenarioRequest) -> Scenario:
+        """
+        Run the eager initialization for a scenario run on the calling thread.
+
+        Exists so ``start_run_async`` can offload initialization onto a worker thread.
+        The scenario is executed later on the caller's event loop, so initialization must not
+        leave anything bound to the throwaway loop used here. Clients that schedule their own
+        teardown are given a moment to finish; anything still running after that would be
+        cancelled when the loop closes, so the start fails rather than handing back a scenario
+        that holds dead async resources.
+
+        Args:
+            request: The run request with scenario name, target, and options.
+
+        Returns:
+            Scenario: The initialized scenario.
+
+        Raises:
+            RuntimeError: If tasks are still running on the initialization loop after the drain.
+        """
+
+        async def prepare_async() -> Scenario:
+            scenario = await self._prepare_run_async(request=request)
+            try:
+                await self._drain_initialization_tasks_async()
+            except RuntimeError as drain_error:
+                # Initialization already stored a CREATED row and this start is over, so
+                # terminalize it here rather than leaving a run that never begins. A cancel
+                # can land while the drain is running, so keep whatever terminal state won.
+                scenario_result_id = scenario._scenario_result_id
+                if scenario_result_id:
+                    try:
+                        self._memory.try_update_scenario_run_state(
+                            scenario_result_id=scenario_result_id,
+                            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+                            scenario_run_state=ScenarioRunState.FAILED,
+                            error_message=str(drain_error),
+                            error_type=type(drain_error).__name__,
+                        )
+                    except Exception as update_error:
+                        logger.warning(f"Could not mark scenario run {scenario_result_id} as failed: {update_error}")
+                raise
+            return scenario
+
+        return asyncio.run(prepare_async())
+
+    async def _drain_initialization_tasks_async(self) -> None:
+        """
+        Let initialization's background tasks finish before the initialization loop closes.
+
+        Initialization builds throwaway async clients, and some of them schedule their own
+        teardown from ``__del__``, so a task can appear purely because a garbage collection
+        landed late. Waiting for those is the difference between a scenario that starts and
+        one that fails at random. A draining task can also start another one, so the set is
+        rebuilt after every wait and the whole drain shares a single deadline.
+
+        Raises:
+            RuntimeError: If any task is still running after the drain timeout.
+        """
+        loop = asyncio.get_running_loop()
+        current_task = asyncio.current_task()
+        deadline = loop.time() + self._INITIALIZATION_DRAIN_TIMEOUT
+
+        while True:
+            pending = [task for task in asyncio.all_tasks() if task is not current_task]
+            if not pending:
+                return
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Scenario initialization left background tasks on the initialization loop, which is "
+                    "about to close. They would be cancelled and the scenario would hold dead async "
+                    f"resources: {', '.join(sorted(task.get_name() for task in pending))}"
+                )
+
+            done, _ = await asyncio.wait(pending, timeout=remaining)
+            for task in done:
+                # Retrieve outcomes so a failed teardown task does not log "never retrieved" noise.
+                if not task.cancelled() and task.exception() is not None:
+                    logger.debug(f"A scenario initialization task failed during teardown: {task.exception()}")
+
+    async def _prepare_run_async(self, *, request: RunScenarioRequest) -> Scenario:
+        """
+        Resolve and initialize the scenario for a run request.
+
+        Args:
+            request: The run request with scenario name, target, and options.
+
+        Returns:
+            Scenario: The initialized scenario.
+
+        Raises:
+            ValueError: If scenario, target, initializer, or technique cannot be found.
+        """
+        scenario_class = self._configuration_resolver.resolve_scenario_class(scenario_name=request.scenario_name)
+        await self._run_initializers_async(request=request)
+        objective_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
+        init_kwargs = self._configuration_resolver.resolve_configuration(
+            scenario_name=request.scenario_name,
+            scenario_class=scenario_class,
+            objective_target=objective_target,
+            techniques=request.techniques,
+            dataset_names=request.dataset_names,
+            max_dataset_size=request.max_dataset_size,
+            dataset_filters=request.dataset_filters,
+            include_baseline=request.include_baseline,
+            max_concurrency=request.max_concurrency,
+            max_retries=request.max_retries,
+            memory_labels=request.labels,
+        )
+        return await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
 
     def get_run(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
@@ -353,9 +580,11 @@ class ScenarioRunService:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(active.task, timeout=5.0)
 
-        # Persist cancelled state to DB
-        self._memory.update_scenario_run_state(
+        # The run can reach a terminal state during the await above, so only cancel a run that
+        # is still going. The re-read below reports whichever state actually won.
+        self._memory.try_update_scenario_run_state(
             scenario_result_id=scenario_result_id,
+            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
             scenario_run_state=ScenarioRunState.CANCELLED,
             error_message="Run was cancelled by user",
             error_type="CancelledError",

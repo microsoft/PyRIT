@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 import logging
+import threading
+import weakref
 from collections.abc import Sequence
 from contextlib import closing
 from datetime import datetime
@@ -71,6 +73,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         else:
             self.db_path = Path(db_path or Path(DB_DATA_PATH, self.DEFAULT_DB_FILE_NAME)).resolve()
         self.results_path = str(DB_DATA_PATH)
+
+        # An in-memory database shares a single DBAPI connection across every thread (see
+        # ``_create_engine``), so concurrent sessions would interleave on it. Serialize session
+        # lifetimes for that backend only; file-backed databases get a connection per checkout.
+        self._connection_lock: threading.RLock | None = threading.RLock() if self.db_path == ":memory:" else None
 
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine)
@@ -285,10 +292,43 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         Provide a SQLAlchemy session for transactional operations.
 
+        For an in-memory database every session borrows the same DBAPI connection, so the
+        session is handed out under a lock that is only released when it is closed. That keeps
+        a whole transaction, not just a single statement, isolated from the other threads.
+
         Returns:
             Session: A SQLAlchemy session bound to the engine.
         """
-        return self.SessionFactory()
+        session = self.SessionFactory()
+        connection_lock = self._connection_lock
+        if connection_lock is None:
+            return session
+
+        connection_lock.acquire()
+        close_session = session.close
+        released = False
+
+        def release_once() -> None:
+            # Also runs if the session is discarded without being closed, so one caller that
+            # forgets cannot leave the lock held and stall every other thread forever.
+            nonlocal released
+            if released:
+                return
+            released = True
+            try:
+                connection_lock.release()
+            except RuntimeError:
+                logger.warning("An in-memory session was discarded by a thread that did not open it.")
+
+        def close_and_release() -> None:
+            try:
+                close_session()
+            finally:
+                release_once()
+
+        session.close = close_and_release  # type: ignore[ty:invalid-assignment]
+        weakref.finalize(session, release_once)
+        return session
 
     def print_schema(self) -> None:
         """
