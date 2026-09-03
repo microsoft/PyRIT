@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, final
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, final
 
 try:
     # Built-in on Python 3.11+. Fall back to the ``exceptiongroup`` backport on 3.10
@@ -47,9 +47,13 @@ from pyrit.models import (
     ScenarioRunPlanSeedGroup,
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimate,
     ScenarioRunState,
     config_hash,
+)
+from pyrit.models.catalog import (
+    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
 )
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 from pyrit.prompt_target import PromptTarget
@@ -57,7 +61,11 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, read_only_dataset_resolution
+from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    read_only_dataset_resolution,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -136,6 +144,10 @@ class Scenario(ABC):
 
     #: Whether the default estimator must mirror matrix-builder seed compatibility.
     RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = False
+
+    #: How a generic dataset-size run override is interpreted. ``None`` derives the
+    #: standard behavior from the default configuration.
+    DATASET_SIZE_LIMIT_OVERRIDE_SCOPE: ClassVar[Literal["per_dataset", "combined", "unsupported"] | None] = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -259,6 +271,19 @@ class Scenario(ABC):
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
         # before _build_atomic_attacks_async is awaited so overrides can read it.
         self._include_baseline: bool = False
+
+    def get_dataset_size_limit_override_scope(self) -> Literal["per_dataset", "combined", "unsupported"]:
+        """
+        Return how this scenario interprets a generic dataset-size run override.
+
+        Returns:
+            Literal: The explicit override scope exposed through the scenario catalog.
+        """
+        if self.DATASET_SIZE_LIMIT_OVERRIDE_SCOPE is not None:
+            return self.DATASET_SIZE_LIMIT_OVERRIDE_SCOPE
+        if isinstance(self._default_dataset_config, CompoundDatasetAttackConfiguration):
+            return "per_dataset"
+        return "per_dataset" if len(self._default_dataset_config.dataset_names) <= 1 else "combined"
 
     @property
     def name(self) -> str:
@@ -564,7 +589,7 @@ class Scenario(ABC):
         return self._technique_class.resolve(scenario_techniques, default=self._default_technique)
 
     @final
-    async def get_default_run_size_estimate_async(self) -> ScenarioRunSizeEstimate:
+    async def get_default_run_size_estimate_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate the scenario's default planned execution units without starting a run.
 
@@ -578,7 +603,9 @@ class Scenario(ABC):
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
     @final
-    async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+    async def get_run_size_estimate_async(
+        self, *, target_is_configured: bool = False
+    ) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate the currently configured run without creating or persisting it.
 
@@ -598,7 +625,7 @@ class Scenario(ABC):
         self._estimate_target_is_configured = self._objective_target is not None
         return await self._estimate_run_size_async()
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate a standard technique-by-seed-group scenario.
 
@@ -619,6 +646,7 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=seed_group_count,
+                    factors=[ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count)],
                     is_baseline=True,
                     note="One unmodified prompt-sending unit per selected seed group.",
                 )
@@ -644,8 +672,14 @@ class Scenario(ABC):
                 else:
                     estimated_attack_count = None
                     note += " The range covers every compatibility mix that the randomized per-dataset caps can select."
-        return ScenarioRunSizeEstimate(
-            estimated_attack_count=estimated_attack_count,
+        status = (
+            ScenarioRunSizeEstimateStatus.Exact
+            if estimated_attack_count is not None
+            else ScenarioRunSizeEstimateStatus.Conditional
+        )
+        return ScenarioDefaultRunSizeEstimate(
+            status=status,
+            total_attack_count=estimated_attack_count,
             minimum_attack_count=minimum_attack_count,
             maximum_attack_count=maximum_attack_count,
             components=components,
@@ -671,6 +705,10 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label="Default technique sweep",
                     count=seed_group_count * technique_count,
+                    factors=[
+                        ScenarioRunSizeFactor(label="selected logical seed groups", count=seed_group_count),
+                        ScenarioRunSizeFactor(label="default concrete techniques", count=technique_count),
+                    ],
                 )
             ]
 
@@ -696,6 +734,10 @@ class Scenario(ABC):
                 ScenarioRunSizeComponent(
                     label=technique.value,
                     count=compatible_count,
+                    factors=[
+                        ScenarioRunSizeFactor(label="selected concrete techniques", count=1),
+                        ScenarioRunSizeFactor(label="compatible logical seed groups", count=compatible_count),
+                    ],
                 )
             )
         return components
@@ -796,10 +838,13 @@ class Scenario(ABC):
         configured_dataset = self._dataset_config
         with read_only_dataset_resolution():
             self._dataset_config = configured_dataset
-            full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+            if type(self)._resolve_seed_groups_by_dataset_async is Scenario._resolve_seed_groups_by_dataset_async:
+                full_groups, selected_groups = await configured_dataset.resolve_attack_groups_for_estimate_async()
+            else:
+                full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+                self._dataset_config = configured_dataset
+                selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
             self._estimate_full_groups_by_dataset = full_groups
-            self._dataset_config = configured_dataset
-            selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
 
         configured_caps = self._dataset_config.size_caps_by_dataset()
         datasets: list[ScenarioDatasetSummary] = []

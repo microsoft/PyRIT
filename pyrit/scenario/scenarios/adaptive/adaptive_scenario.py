@@ -23,10 +23,16 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
+    ScenarioAdaptiveRunSizeDetails,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimate,
 )
-from pyrit.models.identifiers import compute_inner_attack_eval_hash
+from pyrit.models.catalog import (
+    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
@@ -34,6 +40,7 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher, TechniqueBundle
 from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector, TechniqueSelector
+from pyrit.scenario.scenarios.adaptive.technique_identity import AdaptiveTechniqueIdentifier
 
 if TYPE_CHECKING:
     from pyrit.models import AttackSeedGroup
@@ -201,21 +208,30 @@ class AdaptiveScenario(Scenario):
 
         return atomic_attacks
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate compatible persisted envelopes, excluding adaptive inner attempts.
 
         Returns:
-            ScenarioRunSizeEstimate: The adaptive outer-envelope estimate.
+            ScenarioDefaultRunSizeEstimate: The adaptive outer-envelope estimate.
+
+        Raises:
+            ValueError: If ``max_attempts_per_objective`` is less than one.
         """
         selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
         selected_count = sum(len(groups) for groups in selected_groups.values())
         max_attempts = int(self.params.get("max_attempts_per_objective", 3))
+        if max_attempts < 1:
+            raise ValueError(f"max_attempts_per_objective must be >= 1, got {max_attempts}")
+        selected_candidate_count = len(self._scenario_techniques)
+        selected_attempt_bound = min(selected_candidate_count, max_attempts)
+        baseline_count = selected_count if self._include_baseline else 0
         baseline_components = (
             [
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=selected_count,
+                    factors=[ScenarioRunSizeFactor(label="objectives", count=selected_count)],
                     is_baseline=True,
                 )
             ]
@@ -226,24 +242,35 @@ class AdaptiveScenario(Scenario):
             components = [
                 *baseline_components,
                 ScenarioRunSizeComponent(
-                    label="Adaptive attack-envelope candidates",
+                    label="Adaptive objectives",
                     count=selected_count,
+                    factors=[ScenarioRunSizeFactor(label="objectives", count=selected_count)],
                 ),
             ]
-            return ScenarioRunSizeEstimate(
-                minimum_attack_count=sum(component.count for component in baseline_components),
-                maximum_attack_count=sum(component.count for component in components),
+            return ScenarioDefaultRunSizeEstimate(
+                status=ScenarioRunSizeEstimateStatus.Conditional,
+                minimum_attack_count=baseline_count,
+                maximum_attack_count=baseline_count + selected_count,
                 components=components,
                 datasets=datasets,
+                adaptive_details=ScenarioAdaptiveRunSizeDetails(
+                    objective_count=selected_count,
+                    selected_candidate_technique_count=selected_candidate_count,
+                    candidate_technique_count=selected_candidate_count,
+                    max_attempts_per_objective=max_attempts,
+                    techniques_per_objective_upper_bound=selected_attempt_bound,
+                    technique_attempt_count_upper_bound=selected_count * selected_attempt_bound,
+                ),
                 note=(
-                    "The authoritative total depends on which selected techniques are compatible with the "
-                    f"configured objective target and each seed group. Up to {max_attempts} inner attempts per "
-                    "envelope and retries are excluded."
+                    "The planned-attack total depends on which selected techniques are compatible with the "
+                    f"configured objective target. Up to {selected_attempt_bound} selected technique attempts "
+                    "may run per adaptive objective; retries are excluded."
                 ),
             )
 
         assert self._objective_target is not None
         techniques = self._build_techniques_dict(objective_target=self._objective_target)
+        candidate_count = len(techniques)
         dispatcher = AdaptiveTechniqueDispatcher(
             objective_target=self._objective_target,
             techniques=techniques,
@@ -261,34 +288,52 @@ class AdaptiveScenario(Scenario):
         components = [
             *baseline_components,
             ScenarioRunSizeComponent(
-                label="Adaptive attack envelopes",
+                label="Adaptive objectives",
                 count=compatible_group_count,
+                factors=[ScenarioRunSizeFactor(label="compatible objectives", count=compatible_group_count)],
             ),
         ]
-        estimated_attack_count = (
-            None if self._estimate_has_binding_size_cap else sum(component.count for component in components)
+        status = (
+            ScenarioRunSizeEstimateStatus.Conditional
+            if self._estimate_has_binding_size_cap
+            else ScenarioRunSizeEstimateStatus.Exact
         )
-        minimum_attack_count = None
-        maximum_attack_count = None
+        adaptive_objective_bound = (
+            selected_count if status is ScenarioRunSizeEstimateStatus.Conditional else compatible_group_count
+        )
+        total_attack_count = (
+            None
+            if status is ScenarioRunSizeEstimateStatus.Conditional
+            else sum(component.count for component in components)
+        )
+        minimum_attack_count = (
+            baseline_count if status is ScenarioRunSizeEstimateStatus.Conditional and baseline_count > 0 else None
+        )
+        maximum_attack_count = (
+            baseline_count + selected_count if status is ScenarioRunSizeEstimateStatus.Conditional else None
+        )
+        technique_attempt_bound = min(candidate_count, max_attempts)
         note = (
-            f"Each planned unit is one persisted adaptive envelope. Up to {max_attempts} selected technique "
-            "attempts may run inside that unit; inner attempts and retries are excluded."
+            f"Each compatible adaptive objective is one planned attack. Up to {technique_attempt_bound} selected "
+            "technique attempts may run for that objective; retries are excluded."
         )
-        if estimated_attack_count is None:
-            baseline_count = sum(component.count for component in baseline_components)
-            minimum_attack_count = baseline_count
-            maximum_attack_count = baseline_count + selected_count
-            note += (
-                " A binding randomized dataset cap may select a different compatibility mix at launch. "
-                "The range covers the baseline-only minimum through one compatible adaptive envelope per "
-                "selected seed group."
-            )
-        return ScenarioRunSizeEstimate(
-            estimated_attack_count=estimated_attack_count,
+        if status is ScenarioRunSizeEstimateStatus.Conditional:
+            note += " A binding randomized dataset cap may select a different compatibility mix at launch."
+        return ScenarioDefaultRunSizeEstimate(
+            status=status,
+            total_attack_count=total_attack_count,
             minimum_attack_count=minimum_attack_count,
             maximum_attack_count=maximum_attack_count,
             components=components,
             datasets=datasets,
+            adaptive_details=ScenarioAdaptiveRunSizeDetails(
+                objective_count=adaptive_objective_bound,
+                selected_candidate_technique_count=selected_candidate_count,
+                candidate_technique_count=candidate_count,
+                max_attempts_per_objective=max_attempts,
+                techniques_per_objective_upper_bound=technique_attempt_bound,
+                technique_attempt_count_upper_bound=adaptive_objective_bound * technique_attempt_bound,
+            ),
             note=note,
         )
 
@@ -298,19 +343,17 @@ class AdaptiveScenario(Scenario):
         objective_target: PromptTarget,
     ) -> dict[str, TechniqueBundle]:
         """
-        Resolve selected techniques into a ``{eval_hash: TechniqueBundle}`` map.
+        Resolve selected techniques into a ``{adaptive_id: TechniqueBundle}`` map.
 
         Each bundle carries the inner attack technique along with the factory's
         ``seed_technique`` and ``adversarial_chat`` so the dispatcher can
         reproduce the static ``AtomicAttack`` execution path per attempt.
 
-        Technique keys are eval hashes derived from the inner attack technique's
-        identifier (run through ``AtomicAttackEvaluationIdentifier`` so seeds,
-        scorers, and operational target params are excluded). The same hash is
-        auto-stamped on every persisted ``AttackResultEntry.atomic_attack_identifier``
-        by the executor, which lets the selector aggregate historical success
-        rates by behavioral configuration via
-        ``MemoryInterface.get_attack_results(atomic_attack_eval_hashes=...)``.
+        Technique keys join the canonical factory identifier hash with the full
+        ``AttackTechnique`` eval hash. Factory identity keeps distinct registered
+        configurations as separate arms even when they share an inner attack;
+        technique eval identity links those arms to normal-scenario history.
+        The dispatcher persists this joined identity on each child result.
 
         For factories whose attack class narrows ``attack_scoring_config`` to a
         specific subtype (e.g. ``TAPAttackScoringConfig`` for TAP), this method
@@ -320,7 +363,7 @@ class AdaptiveScenario(Scenario):
         are dropped with a warning so the rest of the pool continues to run.
 
         Returns:
-            dict[str, TechniqueBundle]: Mapping from technique eval hash to its
+            dict[str, TechniqueBundle]: Mapping from joined Adaptive identity to its
                 bundle, in the order selected techniques were resolved.
 
         Raises:
@@ -356,11 +399,17 @@ class AdaptiveScenario(Scenario):
                 skipped_incompatible[technique_name] = str(exc)
                 logger.warning(f"Skipping technique '{technique_name}': {type(exc).__name__}: {exc}")
                 continue
-            eval_hash = compute_inner_attack_eval_hash(attack=technique.attack)
+            technique_eval_hash = AtomicAttackEvaluationIdentifier(
+                AtomicAttackIdentifier.build(technique_identifier=technique.get_identifier())
+            ).eval_hash
+            technique_identifier = AdaptiveTechniqueIdentifier(
+                factory_hash=factory.get_identifier().hash,
+                technique_eval_hash=technique_eval_hash,
+            ).serialize()
             adversarial_chat = factory.adversarial_chat
             if adversarial_chat is None and factory.uses_adversarial:
                 adversarial_chat = get_default_adversarial_target()
-            techniques[eval_hash] = TechniqueBundle(
+            techniques[technique_identifier] = TechniqueBundle(
                 attack=technique.attack,
                 name=technique_name,
                 seed_technique=technique.seed_technique,

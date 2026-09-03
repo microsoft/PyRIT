@@ -52,7 +52,11 @@ from pyrit.models import (
     config_hash,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest
-from pyrit.scenario.core import DatasetAttackConfiguration, DatasetConfiguration
+from pyrit.scenario.core import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    DatasetConfiguration,
+)
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.mocks import make_scenario_result
@@ -593,6 +597,81 @@ class TestScenarioRunServiceStartRun:
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["only_this"]
         assert built_config.max_dataset_size is None
+
+    async def test_start_run_dataset_names_rebuilds_homogeneous_compound(self, mock_all_registries) -> None:
+        """Compound per-dataset defaults support exact selected-name overrides."""
+        default_config = CompoundDatasetAttackConfiguration.per_dataset(
+            dataset_names=["airt_hate", "airt_fairness"],
+            max_dataset_size=4,
+        )
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = default_config
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(dataset_names=["airt_fairness"]))
+
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+        assert isinstance(built_config, CompoundDatasetAttackConfiguration)
+        assert built_config.dataset_names == ["airt_fairness"]
+        assert [child.max_dataset_size for child in built_config._configurations] == [4]
+        assert default_config.dataset_names == ["airt_hate", "airt_fairness"]
+
+    async def test_start_run_max_dataset_size_updates_each_default_compound_child(self, mock_all_registries) -> None:
+        """An unchanged default selection keeps compound caps per dataset."""
+        default_config = CompoundDatasetAttackConfiguration.per_dataset(
+            dataset_names=["airt_hate", "airt_fairness"],
+            max_dataset_size=4,
+        )
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = default_config
+
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request(max_dataset_size=2))
+
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+        assert isinstance(built_config, CompoundDatasetAttackConfiguration)
+        assert built_config is default_config
+        assert built_config.dataset_names == ["airt_hate", "airt_fairness"]
+        assert [child.max_dataset_size for child in built_config._configurations] == [2, 2]
+
+    async def test_start_run_non_name_overrides_preserve_shaped_compound_children(self, mock_all_registries) -> None:
+        """Size and filter overrides do not rebuild scenario-specific child configurations."""
+
+        class _ShapedDatasetConfiguration(DatasetAttackConfiguration):
+            pass
+
+        default_config = CompoundDatasetAttackConfiguration(
+            configurations=[
+                _ShapedDatasetConfiguration(dataset_names=["d1"], max_dataset_size=4),
+                _ShapedDatasetConfiguration(dataset_names=["d2"], max_dataset_size=4),
+            ],
+        )
+        scenario_instance = mock_all_registries["scenario_instance"]
+        scenario_instance._default_dataset_config = default_config
+
+        service = ScenarioRunService()
+        await service.start_run_async(
+            request=_make_request(
+                dataset_names=["d1", "d2"],
+                max_dataset_size=2,
+                dataset_filters={"harm_categories": ["cyber"]},
+            )
+        )
+
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        built_config = init_call.kwargs["dataset_config"]
+        assert built_config is default_config
+        assert [type(child) for child in built_config._configurations] == [
+            _ShapedDatasetConfiguration,
+            _ShapedDatasetConfiguration,
+        ]
+        assert [child.max_dataset_size for child in built_config._configurations] == [2, 2]
+        assert [child.filters for child in built_config._configurations] == [
+            {"harm_categories": ["cyber"]},
+            {"harm_categories": ["cyber"]},
+        ]
 
     async def test_start_run_dataset_names_rejects_incompatible_subclass_constructor(self, mock_all_registries) -> None:
         """Reject overrides that cannot preserve scenario-specific dataset configuration."""

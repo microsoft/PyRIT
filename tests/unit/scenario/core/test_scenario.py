@@ -28,6 +28,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import (
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetConfiguration,
     ScenarioIdentifier,
@@ -218,6 +219,30 @@ def test_subclass_without_build_atomic_attacks_async_is_abstract():
 def test_subclass_implementing_build_atomic_attacks_async_is_concrete():
     """Implementing ``_build_atomic_attacks_async`` clears the abstract marker so the subclass is instantiable."""
     assert not ConcreteScenario.__abstractmethods__
+
+
+@pytest.mark.parametrize(
+    ("default_dataset_config", "expected_scope"),
+    [
+        (DatasetAttackConfiguration(dataset_names=["one"]), "per_dataset"),
+        (DatasetAttackConfiguration(dataset_names=["one", "two"]), "combined"),
+        (
+            CompoundDatasetAttackConfiguration.per_dataset(
+                dataset_names=["one", "two"],
+                max_dataset_size=4,
+            ),
+            "per_dataset",
+        ),
+    ],
+)
+def test_dataset_size_limit_override_scope_follows_default_configuration(
+    default_dataset_config: DatasetAttackConfiguration,
+    expected_scope: str,
+) -> None:
+    """Dataset-size overrides preserve the scenario's default configuration semantics."""
+    scenario = ConcreteScenario(version=1, default_dataset_config=default_dataset_config)
+
+    assert scenario.get_dataset_size_limit_override_scope() == expected_scope
 
 
 @pytest.mark.usefixtures("patch_central_database")

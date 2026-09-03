@@ -6,14 +6,15 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.analytics.result_analysis import AttackStats
-from pyrit.scenario.scenarios.adaptive.selectors import (
+from pyrit.scenario.scenarios.adaptive import (
+    AdaptiveTechniqueIdentifier,
     EpsilonGreedyTechniqueSelector,
     SelectorScope,
 )
 
 TECHNIQUES = ["a", "b", "c", "d"]
 
-_COMPUTE_PATH = "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats"
+_COMPUTE_PATH = "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_labeled_technique_stats"
 
 
 def _seeded_selector(*, epsilon: float = 0.0, random_seed: int = 0) -> EpsilonGreedyTechniqueSelector:
@@ -66,7 +67,7 @@ class TestEpsilonGreedyTechniqueSelectorInit:
 
 class TestEpsilonGreedyTechniqueSelectorSelect:
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_labeled_technique_stats",
         side_effect=_empty_rates,
     )
     async def test_select_empty_techniques_raises(self, _mock):
@@ -75,7 +76,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
             await selector.select_async(technique_identifiers=[], objective="obj")
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_labeled_technique_stats",
         side_effect=_empty_rates,
     )
     async def test_select_all_unseen_ties_resolved_randomly(self, _mock):
@@ -88,7 +89,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
         assert winners.issubset(set(TECHNIQUES))
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_labeled_technique_stats",
         side_effect=_rates_with_winner("b"),
     )
     async def test_select_exploits_clear_winner(self, _mock):
@@ -98,7 +99,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
             assert result[0] == "b"
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_labeled_technique_stats",
         side_effect=_empty_rates,
     )
     async def test_select_epsilon_one_is_pure_random(self, _mock):
@@ -110,7 +111,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
         assert picks == set(TECHNIQUES)
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_labeled_technique_stats",
         side_effect=_empty_rates,
     )
     async def test_select_returns_multiple_techniques(self, _mock):
@@ -120,7 +121,7 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
         assert len(set(result)) == 3  # no duplicates
 
     @patch(
-        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_technique_stats",
+        "pyrit.scenario.scenarios.adaptive.selectors.epsilon_greedy.compute_labeled_technique_stats",
         side_effect=_empty_rates,
     )
     async def test_select_caps_at_available_techniques(self, _mock):
@@ -130,6 +131,18 @@ class TestEpsilonGreedyTechniqueSelectorSelect:
 
 
 class TestEpsilonGreedySelectorScope:
+    @patch(_COMPUTE_PATH, side_effect=_empty_rates)
+    async def test_forwards_full_technique_eval_hash_for_cross_scenario_history(self, mock_compute):
+        arm = AdaptiveTechniqueIdentifier(
+            factory_hash="factory-hash",
+            technique_eval_hash="full-technique-eval-hash",
+        ).serialize()
+        selector = _seeded_selector()
+
+        await selector.select_async(technique_identifiers=[arm], objective="obj")
+
+        assert mock_compute.call_args.kwargs["technique_eval_hashes_by_identifier"] == {arm: "full-technique-eval-hash"}
+
     @patch(_COMPUTE_PATH, side_effect=_empty_rates)
     async def test_default_scope_passes_none_scenario_result_id(self, mock_compute):
         selector = _seeded_selector()

@@ -126,7 +126,10 @@ class TextAdaptive(AdaptiveScenario):
         return [
             Parameter(
                 name="max_attempts_per_objective",
-                description="Max techniques tried per objective. Defaults to 3.",
+                description=(
+                    "Maximum different compatible techniques Adaptive may try for one objective, stopping after "
+                    "the first success. This is separate from retries."
+                ),
                 param_type=int,
                 default=3,
             ),

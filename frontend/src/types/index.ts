@@ -445,6 +445,16 @@ export interface ChangeMainConversationResponse {
   conversation_id: string
 }
 
+// --- Datasets ---
+
+export interface DatasetInfo {
+  name: string
+}
+
+export interface DatasetListResponse {
+  items: DatasetInfo[]
+}
+
 // --- Scenarios ---
 
 export interface RegisteredScenario {
@@ -460,10 +470,11 @@ export interface RegisteredScenario {
   all_techniques: string[]
   technique_summaries: ScenarioTechniqueSummary[]
   default_datasets: string[]
+  dataset_size_limit: ScenarioDatasetSizeLimit
   baseline_policy: 'enabled' | 'disabled' | 'forbidden'
   include_baseline_by_default: boolean
   supported_parameters: Parameter[]
-  default_run_size: ScenarioRunSizeEstimateResponse
+  default_run_size: ScenarioDefaultRunSizeEstimate | ScenarioRunSizeEstimateResponse
 }
 
 export interface ScenarioTechniqueSummary {
@@ -494,11 +505,31 @@ export interface RunScenarioRequest {
   scenario_result_id?: string | null
 }
 
+export type ScenarioRunSizeEstimateStatus = 'exact' | 'conditional' | 'unavailable'
+
+export interface ScenarioRunSizeFactor {
+  label: string
+  count: number
+}
+
 export interface ScenarioRunSizeComponent {
   label: string
   count: number
+  factors?: ScenarioRunSizeFactor[]
   is_baseline: boolean
+  condition?: 'target_capabilities' | 'launch_configuration' | null
   note: string | null
+}
+
+export interface ScenarioAdaptiveRunSizeDetails {
+  objective_count: number
+  selected_candidate_technique_count?: number
+  candidate_technique_count: number
+  max_attempts_per_objective: number
+  techniques_per_objective_upper_bound: number
+  technique_attempt_count_upper_bound: number
+  stop_on_first_success: true
+  compatibility_may_reduce_attempts: true
 }
 
 export interface ScenarioDatasetSizeCap {
@@ -517,6 +548,12 @@ export interface ScenarioDatasetSummary {
   selection_note: string | null
 }
 
+export interface ScenarioDatasetSizeLimit {
+  default_scope: 'none' | 'per_dataset' | 'combined' | 'heterogeneous'
+  default_count: number | null
+  override_scope: 'per_dataset' | 'combined' | 'unsupported'
+}
+
 export interface ScenarioRunSizeEstimateResponse {
   estimated_attack_count: number | null
   minimum_attack_count?: number | null
@@ -525,6 +562,21 @@ export interface ScenarioRunSizeEstimateResponse {
   datasets: ScenarioDatasetSummary[]
   effective_parameters?: Record<string, boolean | number | string | string[]>
   note: string | null
+}
+
+export interface ScenarioDefaultRunSizeEstimate {
+  version: 1
+  status: ScenarioRunSizeEstimateStatus
+  total_attack_count: number | null
+  minimum_attack_count?: number | null
+  maximum_attack_count?: number | null
+  condition?: 'target_capabilities' | 'launch_configuration' | null
+  components: ScenarioRunSizeComponent[]
+  datasets: ScenarioDatasetSummary[]
+  adaptive_details?: ScenarioAdaptiveRunSizeDetails | null
+  effective_parameters?: Record<string, boolean | number | string | string[]>
+  note: string | null
+  retries_included: false
 }
 
 export interface ScenarioRunSizeEstimateRequest {
@@ -541,8 +593,27 @@ export interface ScenarioRunEstimateComponent {
   id: string
   label: string
   count: number
+  factors: ScenarioRunEstimateFactor[]
   isBaseline: boolean
+  condition?: 'target_capabilities' | 'launch_configuration' | null
   note: string | null
+}
+
+export interface ScenarioRunEstimateFactor {
+  id: string
+  label: string
+  count: number
+}
+
+export interface ScenarioRunEstimateAdaptiveDetails {
+  objectiveCount: number
+  selectedCandidateTechniqueCount: number
+  candidateTechniqueCount: number
+  maxAttemptsPerObjective: number
+  techniquesPerObjectiveUpperBound: number
+  techniqueAttemptCountUpperBound: number
+  stopOnFirstSuccess: true
+  compatibilityMayReduceAttempts: true
 }
 
 export interface ScenarioRunEstimateDatasetCap {
@@ -564,14 +635,18 @@ export interface ScenarioRunEstimateDataset {
 }
 
 export interface ScenarioRunEstimate {
+  version: number
   scope: 'default' | 'request'
   total: number | null
   minimum?: number | null
   maximum?: number | null
+  condition?: 'target_capabilities' | 'launch_configuration' | null
   components: ScenarioRunEstimateComponent[]
   datasets: ScenarioRunEstimateDataset[]
+  adaptiveDetails?: ScenarioRunEstimateAdaptiveDetails | null
   effectiveParameters: Record<string, boolean | number | string | string[]>
   note: string | null
+  retriesIncluded: boolean
 }
 
 export type ScenarioRunEstimateResult =
@@ -612,7 +687,7 @@ export type ScenarioRunEstimator = (
   scenarioName: string,
   request: ScenarioRunSizeEstimateRequest,
   signal?: AbortSignal,
-) => Promise<ScenarioRunSizeEstimateResponse>
+) => Promise<ScenarioDefaultRunSizeEstimate>
 
 export interface AttackErrorSummary {
   atomic_attack_name: string

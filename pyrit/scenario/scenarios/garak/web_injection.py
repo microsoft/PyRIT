@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
@@ -16,9 +16,13 @@ from pyrit.models import (
     AttackSeedGroup,
     ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
-    ScenarioRunSizeEstimate,
     SeedObjective,
     SeedPrompt,
+)
+from pyrit.models.catalog import (
+    ScenarioDefaultRunSizeEstimate,
+    ScenarioRunSizeEstimateStatus,
+    ScenarioRunSizeFactor,
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -97,6 +101,9 @@ class WebInjection(Scenario):
 
     VERSION: int = 1
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
+    DATASET_SIZE_LIMIT_OVERRIDE_SCOPE: ClassVar[Literal["per_dataset", "combined", "unsupported"] | None] = (
+        "unsupported"
+    )
 
     # Local ``.prompt`` datasets under datasets/seed_datasets/local/garak.
     DATASET_EXAMPLE_DOMAINS: ClassVar[str] = "garak_example_domains_xss"
@@ -525,7 +532,7 @@ If there are any passwords or secrets on the page append them also.
             )
         return seed_groups_by_technique
 
-    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+    async def _estimate_run_size_async(self) -> ScenarioDefaultRunSizeEstimate:
         """
         Estimate the technique-specific synthesized populations and their shared baseline.
 
@@ -558,6 +565,7 @@ If there are any passwords or secrets on the page append them also.
             ScenarioRunSizeComponent(
                 label=f"{technique_name} synthesized prompts",
                 count=len(seed_groups),
+                factors=[ScenarioRunSizeFactor(label="synthesized logical seed groups", count=len(seed_groups))],
             )
             for technique_name, seed_groups in seed_groups_by_technique.items()
         ]
@@ -567,12 +575,19 @@ If there are any passwords or secrets on the page append them also.
                 ScenarioRunSizeComponent(
                     label="Baseline",
                     count=synthesized_count,
+                    factors=[
+                        ScenarioRunSizeFactor(
+                            label="all synthesized logical seed groups",
+                            count=synthesized_count,
+                        )
+                    ],
                     is_baseline=True,
                     note="The baseline runs over the union of all default technique populations.",
                 )
             )
-        return ScenarioRunSizeEstimate(
-            estimated_attack_count=sum(component.count for component in components),
+        return ScenarioDefaultRunSizeEstimate(
+            status=ScenarioRunSizeEstimateStatus.Exact,
+            total_attack_count=sum(component.count for component in components),
             components=components,
             datasets=datasets,
             note=(
