@@ -86,6 +86,7 @@ project:
       children:
         - file: scanner/1_pyrit_scan.ipynb
         - file: scanner/2_pyrit_shell.md
+        - file: scanner/adaptive.ipynb
         - file: scanner/airt.ipynb
         - file: scanner/benchmark.ipynb
         - file: scanner/foundry.ipynb

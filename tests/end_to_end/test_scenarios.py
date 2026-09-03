@@ -57,6 +57,12 @@ SCENARIO_EXTRA_ARGS: dict[str, list[str]] = {
     "benchmark.adversarial": ["--adversarial-targets", "adversarial_chat"],
 }
 
+#: Per-scenario objective target overrides. Scenarios absent from this map use
+#: ``openai_chat``.
+SCENARIO_TARGETS: dict[str, str] = {
+    "garak.audio_achilles_heel": "azure_openai_realtime",
+}
+
 
 def get_all_scenarios():
     """
@@ -79,6 +85,11 @@ def _extra_args_for(scenario_name: str) -> list[str]:
     return SCENARIO_EXTRA_ARGS.get(scenario_name, [])
 
 
+def _target_for(scenario_name: str) -> str:
+    """Return the objective target for ``scenario_name``, defaulting to ``openai_chat``."""
+    return SCENARIO_TARGETS.get(scenario_name, "openai_chat")
+
+
 @pytest.mark.timeout(7200)  # 2 hour timeout per scenario
 @pytest.mark.flaky(reruns=3, reruns_delay=90)
 @pytest.mark.parametrize("scenario_name", get_all_scenarios())
@@ -91,6 +102,7 @@ def test_scenario_with_pyrit_scan(scenario_name):
     """
     initializers = _initializers_for(scenario_name)
     extra_args = _extra_args_for(scenario_name)
+    target = _target_for(scenario_name)
     try:
         result = pyrit_scan_main(
             [
@@ -98,7 +110,7 @@ def test_scenario_with_pyrit_scan(scenario_name):
                 "--initializers",
                 *initializers,
                 "--target",
-                "openai_chat",
+                target,
                 "--config-file",
                 str(CONFIG_FILE),
                 "--request-timeout",
