@@ -14,7 +14,8 @@
 # The Garak scenario family implements probes inspired by the
 # [Garak](https://github.com/NVIDIA/garak) framework. These include encoding-based probes (which
 # test whether a target can be tricked into producing harmful content when prompts are encoded in
-# various formats), web-injection probes (which test whether a target emits markdown
+# various formats), prompt-injection probes (which embed override commands in benign tasks),
+# web-injection probes (which test whether a target emits markdown
 # data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
@@ -24,6 +25,26 @@
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
+
+# %% [markdown]
+# ## PromptInject
+#
+# PromptInject tests whether a target follows injected instructions hidden in benign tasks.
+# `--techniques` selects the injection wording, and `--goal-texts` selects the requested output.
+# The default run uses all five techniques, the three Garak goal texts, and up to 60 attempts.
+#
+# **CLI examples:**
+#
+# ```bash
+# pyrit_scan run garak.prompt_inject --target openai_chat
+# pyrit_scan run garak.prompt_inject --target openai_chat \
+#   --techniques ignore_print \
+#   --goal-texts "Custom trigger text" \
+#   --max-dataset-size 16
+# ```
+#
+# **Techniques:** `ignore_print`, `ignore_say`, `ignore_print_upper`, `nevermind`, and
+# `screaming_stop`.
 
 # %%
 from pathlib import Path
