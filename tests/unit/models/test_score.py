@@ -312,7 +312,7 @@ def test_scored_expectation_round_trips_through_model_dump():
     expectation = ScoringExpectation(objective="obj", conditions=(MatchesObjective(),))
     score = _make_score(scored_expectation=expectation)
 
-    dumped = score.model_dump()
+    dumped = score.model_dump(mode="json")
 
     assert dumped["scored_expectation"] == {
         "schema_version": 1,

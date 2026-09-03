@@ -1,65 +1,53 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from dataclasses import dataclass
-from typing import ClassVar
+from typing import Literal
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.models import Condition, MatchesObjective
-from pyrit.models.score.condition import (
-    _CONDITION_TYPES,
-    condition_from_dict,
-    condition_to_dict,
-)
+from pyrit.models.score.condition import _CONDITION_TYPES, condition_from_dict
 
 
-@dataclass(frozen=True, kw_only=True)
 class _KeywordCondition(Condition):
-    CONDITION_TYPE: ClassVar[str] = "test_keyword_condition"
+    condition_type: Literal["test_keyword_condition"] = "test_keyword_condition"
     keyword: str
 
 
-@dataclass(frozen=True, kw_only=True)
 class _DefaultNameCondition(Condition):
     threshold: float = 0.5
 
 
-@dataclass(frozen=True, kw_only=True)
-class _ReservedFieldCondition(Condition):
-    CONDITION_TYPE: ClassVar[str] = "test_reserved_field_condition"
-    condition_type: str = "collision"
-
-
-@dataclass(frozen=True, kw_only=True)
-class _TupleCondition(Condition):
-    CONDITION_TYPE: ClassVar[str] = "test_tuple_condition"
-    values: tuple[str, ...] = ()
-
-
 def test_matches_objective_has_stable_discriminator():
-    assert MatchesObjective.CONDITION_TYPE == "matches_objective"
+    assert MatchesObjective().condition_type == "matches_objective"
     assert _CONDITION_TYPES["matches_objective"] is MatchesObjective
 
 
-def test_explicit_discriminator_is_used():
-    assert _KeywordCondition.CONDITION_TYPE == "test_keyword_condition"
+def test_explicit_discriminator_is_registered():
+    assert _KeywordCondition(keyword="k").condition_type == "test_keyword_condition"
     assert _CONDITION_TYPES["test_keyword_condition"] is _KeywordCondition
 
 
-def test_default_discriminator_falls_back_to_class_name():
-    assert _DefaultNameCondition.CONDITION_TYPE == "_DefaultNameCondition"
+def test_discriminator_falls_back_to_class_name_without_field():
     assert _CONDITION_TYPES["_DefaultNameCondition"] is _DefaultNameCondition
 
 
-def test_condition_to_dict_tags_matches_objective():
-    assert condition_to_dict(MatchesObjective()) == {"condition_type": "matches_objective"}
+def test_condition_is_frozen():
+    condition = MatchesObjective()
+
+    with pytest.raises(ValidationError):
+        condition.condition_type = "something"
 
 
-def test_condition_round_trip_preserves_fields():
+def test_matches_objective_serializes_to_discriminator_only():
+    assert MatchesObjective().model_dump() == {"condition_type": "matches_objective"}
+
+
+def test_condition_round_trip_preserves_subclass_fields():
     condition = _KeywordCondition(keyword="secret")
 
-    serialized = condition_to_dict(condition)
+    serialized = condition.model_dump()
 
     assert serialized == {"condition_type": "test_keyword_condition", "keyword": "secret"}
     assert condition_from_dict(serialized) == condition
@@ -70,21 +58,15 @@ def test_condition_from_dict_rejects_unknown_type():
         condition_from_dict({"condition_type": "nope"})
 
 
-def test_condition_to_dict_rejects_reserved_field_name():
-    with pytest.raises(ValueError, match="reserved field name 'condition_type'"):
-        condition_to_dict(_ReservedFieldCondition())
-
-
-def test_to_persisted_dict_rejects_non_json_fields():
-    with pytest.raises(TypeError, match="do not survive a JSON round trip"):
-        _TupleCondition(values=("a", "b")).to_persisted_dict()
+def test_matches_objective_instances_compare_equal():
+    assert MatchesObjective() == MatchesObjective()
 
 
 def test_duplicate_discriminator_is_rejected():
-    class _First(Condition):
-        CONDITION_TYPE = "test_duplicate_discriminator"
+    with pytest.raises((ValueError, TypeError), match="already registered"):
 
-    with pytest.raises(ValueError, match="already registered"):
+        class _First(Condition):
+            condition_type: Literal["test_duplicate_discriminator"] = "test_duplicate_discriminator"
 
         class _Second(Condition):
-            CONDITION_TYPE = "test_duplicate_discriminator"
+            condition_type: Literal["test_duplicate_discriminator"] = "test_duplicate_discriminator"

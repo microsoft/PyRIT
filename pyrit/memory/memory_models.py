@@ -63,6 +63,7 @@ from pyrit.models import (
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
     ScoreStatus,
+    ScoringExpectation,
     Seed,
     SeedIdentifier,
     SeedObjective,
@@ -71,8 +72,6 @@ from pyrit.models import (
     SeedType,
     TargetIdentifier,
     scorable_from_dict,
-    scoring_expectation_from_dict,
-    scoring_expectation_to_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -1180,9 +1179,7 @@ class ScoreEntry(Base):
         self.scorer_identifier_hash = normalized_scorer.hash if normalized_scorer else None
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
-        self.scored_expectation = (
-            scoring_expectation_to_dict(entry.scored_expectation) if entry.scored_expectation else None
-        )
+        self.scored_expectation = entry.scored_expectation.model_dump(mode="json") if entry.scored_expectation else None
         self.pyrit_version = pyrit.__version__
 
     def get_score(self) -> Score:
@@ -1214,7 +1211,7 @@ class ScoreEntry(Base):
             scorable=scorable_from_dict(self.scorable) if self.scorable else None,
             timestamp=self.timestamp,
             scored_expectation=(
-                scoring_expectation_from_dict(self.scored_expectation) if self.scored_expectation else None
+                ScoringExpectation.model_validate(self.scored_expectation) if self.scored_expectation else None
             ),
         )
 

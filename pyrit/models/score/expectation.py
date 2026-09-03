@@ -5,14 +5,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
 
-from pyrit.models.score.condition import Condition, condition_from_dict, condition_to_dict
+from pydantic import BaseModel, ConfigDict, SerializeAsAny, field_validator
+
+from pyrit.models.score.condition import Condition, condition_from_dict
 
 
-@dataclass(frozen=True, kw_only=True)
-class ScoringExpectation:
+class ScoringExpectation(BaseModel):
     """
     What a scorer scores against.
 
@@ -26,88 +26,57 @@ class ScoringExpectation:
 
     ``conditions`` carry the criteria: typed objects routed by type to the scorers that
     match them. Attacks forward them without inspecting them, and a scorer matches at
-    most one of them.
+    most one of them. ``SerializeAsAny`` keeps each condition serialized as its own
+    subtype, so subclass fields survive a round trip.
     """
 
-    #: Version of the persisted shape. Bumped only when the serialized dict changes in a way
-    #: an older reader cannot understand; ``scoring_expectation_from_dict`` rejects other values.
-    SCHEMA_VERSION: ClassVar[int] = 1
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: Version of the persisted shape. Bumped only when the serialized dict changes in a way an
+    #: older reader cannot understand; the validator rejects any other value on load.
+    schema_version: int = 1
 
     objective: str | None = None
-    conditions: tuple[Condition, ...] = field(default_factory=tuple)
+    conditions: tuple[SerializeAsAny[Condition], ...] = ()
 
-    def __post_init__(self) -> None:
+    @field_validator("schema_version")
+    @classmethod
+    def _check_schema_version(cls, value: int) -> int:
         """
-        Validate the two axes at construction time.
+        Reject a serialized expectation this version cannot read.
+
+        Args:
+            value (int): The incoming schema version.
+
+        Returns:
+            int: The validated version.
 
         Raises:
-            TypeError: If ``objective`` is not ``str | None`` or a condition is not a
-                ``Condition``.
+            ValueError: If the version is not the one this model understands.
         """
-        if self.objective is not None and not isinstance(self.objective, str):
-            raise TypeError(
-                f"ScoringExpectation objective must be a string or None, got {type(self.objective).__name__}."
-            )
-        for condition in self.conditions:
-            if not isinstance(condition, Condition):
-                raise TypeError(
-                    f"ScoringExpectation conditions must all be Condition instances, got {type(condition).__name__}."
-                )
+        if value != 1:
+            raise ValueError(f"Unsupported ScoringExpectation schema_version {value!r}; expected 1.")
+        return value
 
+    @field_validator("conditions", mode="before")
+    @classmethod
+    def _rebuild_conditions(cls, value: Any) -> Any:
+        """
+        Rebuild serialized conditions into their concrete subtypes.
 
-def scoring_expectation_to_dict(exp: ScoringExpectation) -> dict[str, Any]:
-    """
-    Serialize an expectation to a versioned, JSON-native dict.
+        Args:
+            value (Any): The incoming conditions: an iterable of ``Condition`` instances or of
+                serialized, discriminator-tagged dicts.
 
-    Args:
-        exp (ScoringExpectation): The expectation to serialize.
+        Returns:
+            Any: A tuple of conditions, with any dict routed through the condition registry.
 
-    Returns:
-        dict[str, Any]: ``{'schema_version': …, 'objective': …, 'conditions': [ … ]}``.
-    """
-    return {
-        "schema_version": ScoringExpectation.SCHEMA_VERSION,
-        "objective": exp.objective,
-        "conditions": [condition_to_dict(condition) for condition in exp.conditions],
-    }
-
-
-def scoring_expectation_from_dict(value: dict[str, Any]) -> ScoringExpectation:
-    """
-    Rebuild an expectation from a versioned dict produced by ``scoring_expectation_to_dict``.
-
-    Args:
-        value (dict[str, Any]): The serialized expectation.
-
-    Returns:
-        ScoringExpectation: The reconstructed expectation.
-
-    Raises:
-        ValueError: If the schema version is unsupported, an unknown top-level field is
-            present, ``objective`` is not ``str | None``, or ``conditions`` is not a list of
-            dicts.
-    """
-    unknown = set(value) - {"schema_version", "objective", "conditions"}
-    if unknown:
-        raise ValueError(f"Unknown ScoringExpectation field(s): {sorted(unknown)}.")
-
-    schema_version = value.get("schema_version")
-    if schema_version != ScoringExpectation.SCHEMA_VERSION:
-        raise ValueError(
-            f"Unsupported ScoringExpectation schema_version {schema_version!r}; "
-            f"expected {ScoringExpectation.SCHEMA_VERSION}."
-        )
-
-    objective = value.get("objective")
-    if objective is not None and not isinstance(objective, str):
-        raise ValueError(f"ScoringExpectation objective must be a string or None, got {type(objective).__name__}.")
-
-    raw_conditions = value.get("conditions", [])
-    if not isinstance(raw_conditions, list) or not all(isinstance(item, dict) for item in raw_conditions):
-        raise ValueError("ScoringExpectation conditions must be a list of dicts.")
-
-    conditions = tuple(condition_from_dict(item) for item in raw_conditions)
-    return ScoringExpectation(objective=objective, conditions=conditions)
+        Raises:
+            ValueError: If a serialized condition names an unknown discriminator.
+        """
+        if value is None:
+            return ()
+        return tuple(condition_from_dict(item) if isinstance(item, dict) else item for item in value)
 
 
 def scoring_expectation_fingerprint(exp: ScoringExpectation) -> str:
@@ -125,7 +94,7 @@ def scoring_expectation_fingerprint(exp: ScoringExpectation) -> str:
         str: The lowercase SHA-256 hex digest.
     """
     serialized = json.dumps(
-        scoring_expectation_to_dict(exp),
+        exp.model_dump(mode="json"),
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,

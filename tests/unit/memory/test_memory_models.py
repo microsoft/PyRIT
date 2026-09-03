@@ -461,7 +461,7 @@ class TestScoreEntry:
         assert entry.id == score.id
         assert entry.score_value == "0.9"
         assert entry.score_type == "float_scale"
-        assert entry.objective == "test objective"
+        assert entry.scored_expectation == {"schema_version": 1, "objective": "test objective", "conditions": []}
 
     def test_roundtrip_get_score(self):
         score = _make_score()

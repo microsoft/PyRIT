@@ -131,8 +131,6 @@ if TYPE_CHECKING:
         UnvalidatedScore,
         scorable_from_dict,
         scoring_expectation_fingerprint,
-        scoring_expectation_from_dict,
-        scoring_expectation_to_dict,
     )
     from pyrit.models.seeds import (
         AttackSeedGroup,
@@ -297,8 +295,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "read_usage_value": "pyrit.models.target",
     "scorable_from_dict": "pyrit.models.score",
     "scoring_expectation_fingerprint": "pyrit.models.score",
-    "scoring_expectation_from_dict": "pyrit.models.score",
-    "scoring_expectation_to_dict": "pyrit.models.score",
     "validate_registry_name": "pyrit.models.identifiers",
     "RetryEvent": "pyrit.models.retry_event",
 }

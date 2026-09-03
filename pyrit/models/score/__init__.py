@@ -19,8 +19,6 @@ if TYPE_CHECKING:
     from pyrit.models.score.expectation import (
         ScoringExpectation,
         scoring_expectation_fingerprint,
-        scoring_expectation_from_dict,
-        scoring_expectation_to_dict,
     )
     from pyrit.models.score.scorable import (
         ContentEntryScorable,
@@ -56,8 +54,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "UnvalidatedScore": "pyrit.models.score.score",
     "scorable_from_dict": "pyrit.models.score.scorable",
     "scoring_expectation_fingerprint": "pyrit.models.score.expectation",
-    "scoring_expectation_from_dict": "pyrit.models.score.expectation",
-    "scoring_expectation_to_dict": "pyrit.models.score.expectation",
 }
 
 __all__ = list(_LAZY_EXPORTS)

@@ -17,17 +17,12 @@ from pydantic import (
     ConfigDict,
     Field,
     PlainSerializer,
-    field_serializer,
     field_validator,
     model_validator,
 )
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
-from pyrit.models.score.expectation import (
-    ScoringExpectation,
-    scoring_expectation_from_dict,
-    scoring_expectation_to_dict,
-)
+from pyrit.models.score.expectation import ScoringExpectation
 from pyrit.models.score.scorable import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     MessageScorable,
     ScorableUnion,
@@ -168,35 +163,6 @@ class Score(BaseModel):
                     f"objective {objective!r} conflicts with scored_expectation.objective {expectation_objective!r}."
                 )
         return data
-
-    @field_validator("scored_expectation", mode="before")
-    @classmethod
-    def _load_scored_expectation(cls, value: Any) -> Any:
-        """
-        Rebuild ``scored_expectation`` from its versioned dict form.
-
-        Args:
-            value (Any): A ``ScoringExpectation``, a versioned dict, or ``None``.
-
-        Returns:
-            Any: A ``ScoringExpectation`` or ``None``.
-        """
-        if isinstance(value, dict):
-            return scoring_expectation_from_dict(value)
-        return value
-
-    @field_serializer("scored_expectation")
-    def _serialize_scored_expectation(self, value: ScoringExpectation | None) -> dict[str, Any] | None:
-        """
-        Serialize ``scored_expectation`` to its versioned dict form.
-
-        Args:
-            value (ScoringExpectation | None): The expectation to serialize.
-
-        Returns:
-            dict[str, Any] | None: The versioned dict, or ``None``.
-        """
-        return scoring_expectation_to_dict(value) if value is not None else None
 
     @field_validator("score_metadata", mode="before")
     @classmethod

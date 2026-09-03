@@ -1,29 +1,25 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import dataclasses
-from typing import ClassVar
+from typing import Literal
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.models import (
     Condition,
     MatchesObjective,
     ScoringExpectation,
     scoring_expectation_fingerprint,
-    scoring_expectation_from_dict,
-    scoring_expectation_to_dict,
 )
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
 class _AlphaCondition(Condition):
-    CONDITION_TYPE: ClassVar[str] = "test_expectation_alpha"
+    condition_type: Literal["test_expectation_alpha"] = "test_expectation_alpha"
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
 class _BetaCondition(Condition):
-    CONDITION_TYPE: ClassVar[str] = "test_expectation_beta"
+    condition_type: Literal["test_expectation_beta"] = "test_expectation_beta"
     label: str = "b"
 
 
@@ -37,7 +33,7 @@ def test_expectation_defaults():
 def test_expectation_is_frozen():
     expectation = ScoringExpectation(objective="exfiltrate")
 
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(ValidationError):
         expectation.objective = "something else"
 
 
@@ -63,10 +59,6 @@ def test_expectations_differing_only_in_conditions_compare_unequal():
     assert ScoringExpectation(objective="a") != ScoringExpectation(objective="a", conditions=(MatchesObjective(),))
 
 
-def test_matches_objective_carries_no_text_of_its_own():
-    assert dataclasses.fields(MatchesObjective()) == ()
-
-
 def test_matches_objective_is_a_condition():
     assert isinstance(MatchesObjective(), Condition)
 
@@ -75,93 +67,78 @@ def test_matches_objective_instances_compare_equal():
     assert MatchesObjective() == MatchesObjective()
 
 
-def test_matches_objective_is_frozen():
-    condition = MatchesObjective()
-
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        condition.objective = "something"
-
-
 # --------------------------------------------------------------------------- #
-# Versioned serialization
+# Versioned serialization (native Pydantic model_dump / model_validate)
 # --------------------------------------------------------------------------- #
 def test_objective_only_round_trip():
     expectation = ScoringExpectation(objective="do x")
 
-    serialized = scoring_expectation_to_dict(expectation)
+    serialized = expectation.model_dump(mode="json")
 
     assert serialized == {"schema_version": 1, "objective": "do x", "conditions": []}
-    assert scoring_expectation_from_dict(serialized) == expectation
+    assert ScoringExpectation.model_validate(serialized) == expectation
 
 
 def test_condition_only_round_trip():
     expectation = ScoringExpectation(conditions=(MatchesObjective(),))
 
-    serialized = scoring_expectation_to_dict(expectation)
+    serialized = expectation.model_dump(mode="json")
 
     assert serialized == {
         "schema_version": 1,
         "objective": None,
         "conditions": [{"condition_type": "matches_objective"}],
     }
-    assert scoring_expectation_from_dict(serialized) == expectation
+    assert ScoringExpectation.model_validate(serialized) == expectation
 
 
 def test_mixed_round_trip():
     expectation = ScoringExpectation(objective="do x", conditions=(MatchesObjective(),))
 
-    assert scoring_expectation_from_dict(scoring_expectation_to_dict(expectation)) == expectation
+    assert ScoringExpectation.model_validate(expectation.model_dump(mode="json")) == expectation
 
 
 def test_conditions_serialize_in_order():
     expectation = ScoringExpectation(conditions=(_AlphaCondition(), _BetaCondition(label="x")))
 
-    serialized = scoring_expectation_to_dict(expectation)
+    serialized = expectation.model_dump(mode="json")
 
     assert [condition["condition_type"] for condition in serialized["conditions"]] == [
         "test_expectation_alpha",
         "test_expectation_beta",
     ]
-    assert scoring_expectation_from_dict(serialized) == expectation
+    assert ScoringExpectation.model_validate(serialized) == expectation
 
 
-def test_from_dict_rejects_unknown_schema_version():
-    with pytest.raises(ValueError, match="Unsupported ScoringExpectation schema_version"):
-        scoring_expectation_from_dict({"schema_version": 99, "objective": None, "conditions": []})
+def test_validate_rejects_unknown_schema_version():
+    with pytest.raises(ValidationError, match="Unsupported ScoringExpectation schema_version"):
+        ScoringExpectation.model_validate({"schema_version": 99, "objective": None, "conditions": []})
 
 
-def test_from_dict_rejects_unknown_top_level_field():
-    with pytest.raises(ValueError, match="Unknown ScoringExpectation field"):
-        scoring_expectation_from_dict({"schema_version": 1, "objective": None, "conditions": [], "extra": 1})
+def test_validate_rejects_unknown_top_level_field():
+    with pytest.raises(ValidationError):
+        ScoringExpectation.model_validate({"schema_version": 1, "objective": None, "conditions": [], "extra": 1})
 
 
-def test_from_dict_rejects_non_string_objective():
-    with pytest.raises(ValueError, match="objective must be a string or None"):
-        scoring_expectation_from_dict({"schema_version": 1, "objective": 5, "conditions": []})
+def test_validate_rejects_non_string_objective():
+    with pytest.raises(ValidationError):
+        ScoringExpectation.model_validate({"schema_version": 1, "objective": 5, "conditions": []})
 
 
-def test_from_dict_rejects_conditions_not_list_of_dicts():
-    with pytest.raises(ValueError, match="conditions must be a list of dicts"):
-        scoring_expectation_from_dict({"schema_version": 1, "objective": None, "conditions": ["nope"]})
-
-
-def test_from_dict_rejects_unknown_condition_type():
-    with pytest.raises(ValueError, match="Unknown condition_type"):
-        scoring_expectation_from_dict(
+def test_validate_rejects_unknown_condition_type():
+    with pytest.raises(ValidationError, match="Unknown condition_type"):
+        ScoringExpectation.model_validate(
             {"schema_version": 1, "objective": None, "conditions": [{"condition_type": "ghost"}]}
         )
 
 
-# --------------------------------------------------------------------------- #
-# __post_init__ validation
-# --------------------------------------------------------------------------- #
-def test_post_init_rejects_non_string_objective():
-    with pytest.raises(TypeError, match="objective must be a string or None"):
+def test_construction_rejects_non_string_objective():
+    with pytest.raises(ValidationError):
         ScoringExpectation(objective=5)  # type: ignore[arg-type]
 
 
-def test_post_init_rejects_non_condition():
-    with pytest.raises(TypeError, match="must all be Condition instances"):
+def test_construction_rejects_non_condition():
+    with pytest.raises(ValidationError):
         ScoringExpectation(conditions=("not a condition",))  # type: ignore[arg-type]
 
 
