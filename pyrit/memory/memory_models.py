@@ -71,6 +71,8 @@ from pyrit.models import (
     SeedType,
     TargetIdentifier,
     scorable_from_dict,
+    scoring_expectation_from_dict,
+    scoring_expectation_to_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -1139,7 +1141,9 @@ class ScoreEntry(Base):
     )
     prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
     timestamp = mapped_column(UTCDateTime, nullable=False)
-    objective = mapped_column(String, nullable=True)
+    # The full, versioned expectation this score was judged against (objective + conditions),
+    # serialized by ``scoring_expectation_to_dict``. Supersedes the legacy ``objective`` column.
+    scored_expectation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Version of PyRIT used when this score was created
     # Nullable for backwards compatibility with existing databases
     pyrit_version = mapped_column(String, nullable=True)
@@ -1152,7 +1156,7 @@ class ScoreEntry(Base):
         Args:
             entry (Score): The score object to convert into a database entry.
         """
-        entry = Score.model_validate(entry.model_dump())
+        entry = Score.model_validate(entry.model_dump(exclude={"objective"}))
         self.id = entry.id
         self.score_value = entry.score_value
         self.score_value_description = entry.score_value_description
@@ -1176,7 +1180,9 @@ class ScoreEntry(Base):
         self.scorer_identifier_hash = normalized_scorer.hash if normalized_scorer else None
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
-        self.objective = entry.objective
+        self.scored_expectation = (
+            scoring_expectation_to_dict(entry.scored_expectation) if entry.scored_expectation else None
+        )
         self.pyrit_version = pyrit.__version__
 
     def get_score(self) -> Score:
@@ -1207,7 +1213,9 @@ class ScoreEntry(Base):
             message_piece_id=self.prompt_request_response_id,
             scorable=scorable_from_dict(self.scorable) if self.scorable else None,
             timestamp=self.timestamp,
-            objective=self.objective,
+            scored_expectation=(
+                scoring_expectation_from_dict(self.scored_expectation) if self.scored_expectation else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1231,7 +1239,8 @@ class ScoreEntry(Base):
             "scorable_content_id": str(self.scorable_content_id) if self.scorable_content_id else None,
             "prompt_request_response_id": str(self.prompt_request_response_id),
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "objective": self.objective,
+            "scored_expectation": self.scored_expectation,
+            "objective": self.scored_expectation.get("objective") if self.scored_expectation else None,
         }
 
 

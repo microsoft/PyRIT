@@ -330,7 +330,27 @@ class Scorer(Identifiable, abc.ABC):
             raise
         except Exception as e:
             raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
+        self._stamp_scored_expectation(scores=scores, expectation=expectation)
         return await self._validate_and_persist_scores_async(scores=scores)
+
+    @staticmethod
+    def _stamp_scored_expectation(*, scores: list[Score], expectation: ScoringExpectation | None) -> None:
+        """
+        Record on each score the expectation it was judged against.
+
+        The scorer, not the score, knows the expectation it used, so it stamps the finished
+        scores before they persist. ``objective`` is the derived view, so it is refreshed to
+        match. A ``None`` expectation leaves the scores unchanged.
+
+        Args:
+            scores (list[Score]): The scores to stamp.
+            expectation (ScoringExpectation | None): The expectation the scorer used.
+        """
+        if expectation is None:
+            return
+        for score in scores:
+            score.scored_expectation = expectation
+            object.__setattr__(score, "objective", expectation.objective)
 
     def _validate_expectation(
         self,

@@ -17,11 +17,17 @@ from pydantic import (
     ConfigDict,
     Field,
     PlainSerializer,
+    field_serializer,
     field_validator,
     model_validator,
 )
 
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+from pyrit.models.score.expectation import (
+    ScoringExpectation,
+    scoring_expectation_from_dict,
+    scoring_expectation_to_dict,
+)
 from pyrit.models.score.scorable import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     MessageScorable,
     ScorableUnion,
@@ -111,12 +117,87 @@ class Score(BaseModel):
     # Timestamp of when the score was created
     timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
-    # The task based on which the text is scored (the original attacker model's objective).
-    objective: str | None = None
+    # The full, versioned expectation this score was judged against (objective + conditions).
+    # This is the durable record of what the score was scored for.
+    scored_expectation: ScoringExpectation | None = None
+
+    # Derived, read-only compatibility view over ``scored_expectation.objective``. Existing
+    # readers that expect a bare objective keep working; it is set from the expectation, and an
+    # explicit value that disagrees with the expectation is rejected.
+    objective: str | None = Field(default=None, frozen=True)
 
     # ------------------------------------------------------------------ #
     # Validators
     # ------------------------------------------------------------------ #
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_compatibility_objective(cls, data: Any) -> Any:
+        """
+        Fold a legacy ``objective`` input into ``scored_expectation``.
+
+        ``objective`` is a read-only view now, so an incoming value is never set directly. It
+        becomes an objective-only expectation when none is supplied, and otherwise must agree
+        with the expectation it accompanies.
+
+        Args:
+            data (Any): Raw input to the model.
+
+        Returns:
+            Any: The input with ``objective`` removed and ``scored_expectation`` populated.
+
+        Raises:
+            ValueError: If an explicit objective disagrees with ``scored_expectation``.
+        """
+        if not isinstance(data, dict) or "objective" not in data:
+            return data
+        data = dict(data)
+        objective = data.pop("objective")
+        expectation = data.get("scored_expectation")
+        if expectation is None:
+            if objective is not None:
+                data["scored_expectation"] = ScoringExpectation(objective=objective)
+        elif objective is not None:
+            if isinstance(expectation, ScoringExpectation):
+                expectation_objective = expectation.objective
+            elif isinstance(expectation, dict):
+                expectation_objective = expectation.get("objective")
+            else:
+                expectation_objective = None
+            if objective != expectation_objective:
+                raise ValueError(
+                    f"objective {objective!r} conflicts with scored_expectation.objective {expectation_objective!r}."
+                )
+        return data
+
+    @field_validator("scored_expectation", mode="before")
+    @classmethod
+    def _load_scored_expectation(cls, value: Any) -> Any:
+        """
+        Rebuild ``scored_expectation`` from its versioned dict form.
+
+        Args:
+            value (Any): A ``ScoringExpectation``, a versioned dict, or ``None``.
+
+        Returns:
+            Any: A ``ScoringExpectation`` or ``None``.
+        """
+        if isinstance(value, dict):
+            return scoring_expectation_from_dict(value)
+        return value
+
+    @field_serializer("scored_expectation")
+    def _serialize_scored_expectation(self, value: ScoringExpectation | None) -> dict[str, Any] | None:
+        """
+        Serialize ``scored_expectation`` to its versioned dict form.
+
+        Args:
+            value (ScoringExpectation | None): The expectation to serialize.
+
+        Returns:
+            dict[str, Any] | None: The versioned dict, or ``None``.
+        """
+        return scoring_expectation_to_dict(value) if value is not None else None
+
     @field_validator("score_metadata", mode="before")
     @classmethod
     def _default_metadata(cls, value: Any) -> Any:
@@ -168,6 +249,17 @@ class Score(BaseModel):
             raise ValueError(
                 f"message_piece_id {self.message_piece_id} is not covered by the scorable, which names {piece_ids}."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _sync_compatibility_objective(self) -> Score:
+        """
+        Refresh the derived, read-only ``objective`` view from ``scored_expectation``.
+
+        Returns:
+            Score: ``self`` with ``objective`` mirroring ``scored_expectation.objective``.
+        """
+        object.__setattr__(self, "objective", self.scored_expectation.objective if self.scored_expectation else None)
         return self
 
     def _check_score_value(self) -> None:
@@ -265,10 +357,29 @@ class UnvalidatedScore:
     score_metadata: dict[str, str | int | float] | None
     scorer_class_identifier: ComponentIdentifier
     message_piece_id: uuid.UUID | str | None
-    objective: str | None
+    objective: str | None = None
+    scored_expectation: ScoringExpectation | None = None
     id: uuid.UUID | str | None = None
     timestamp: datetime | None = None
     scorable: ScorableUnion | None = None
+
+    def __post_init__(self) -> None:
+        """
+        Keep ``objective`` and ``scored_expectation`` consistent.
+
+        Raises:
+            ValueError: If an explicit objective disagrees with ``scored_expectation``.
+        """
+        if self.scored_expectation is None:
+            if self.objective is not None:
+                self.scored_expectation = ScoringExpectation(objective=self.objective)
+        elif self.objective is None:
+            self.objective = self.scored_expectation.objective
+        elif self.objective != self.scored_expectation.objective:
+            raise ValueError(
+                f"objective {self.objective!r} conflicts with scored_expectation.objective "
+                f"{self.scored_expectation.objective!r}."
+            )
 
     def to_score(self, *, score_value: str, score_type: ScoreType) -> Score:
         """
@@ -294,5 +405,6 @@ class UnvalidatedScore:
             message_piece_id=self.message_piece_id,
             scorable=self.scorable,
             timestamp=self.timestamp if self.timestamp else datetime.now(tz=timezone.utc),
-            objective=self.objective,
+            scored_expectation=self.scored_expectation
+            or (ScoringExpectation(objective=self.objective) if self.objective is not None else None),
         )

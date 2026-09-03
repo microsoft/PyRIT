@@ -16,7 +16,12 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.models.score.condition import Condition, MatchesObjective
-    from pyrit.models.score.expectation import ScoringExpectation
+    from pyrit.models.score.expectation import (
+        ScoringExpectation,
+        scoring_expectation_fingerprint,
+        scoring_expectation_from_dict,
+        scoring_expectation_to_dict,
+    )
     from pyrit.models.score.scorable import (
         ContentEntryScorable,
         ContentScorable,
@@ -50,6 +55,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "UndeterminedScoreError": "pyrit.models.score.score",
     "UnvalidatedScore": "pyrit.models.score.score",
     "scorable_from_dict": "pyrit.models.score.scorable",
+    "scoring_expectation_fingerprint": "pyrit.models.score.expectation",
+    "scoring_expectation_from_dict": "pyrit.models.score.expectation",
+    "scoring_expectation_to_dict": "pyrit.models.score.expectation",
 }
 
 __all__ = list(_LAZY_EXPORTS)
