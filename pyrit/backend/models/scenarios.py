@@ -32,3 +32,7 @@ class ScenarioRunListResponse(BaseModel):
     """Response for listing scenario runs."""
 
     items: list[ScenarioRunListItem] = Field(..., description="List of scenario runs")
+    pagination: PaginationInfo = Field(
+        default_factory=lambda: PaginationInfo(limit=100, has_more=False),
+        description="Pagination metadata",
+    )

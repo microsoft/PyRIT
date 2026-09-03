@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, func, not_, or_, select
+from sqlalchemy import MetaData, and_, case, func, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -140,6 +140,49 @@ class AttackResultKeysetCursor(NamedTuple):
             timestamp=result.timestamp,
             attack_result_id=result.attack_result_id,
         )
+
+
+class ScenarioHistoryKeysetCursor(NamedTuple):
+    """Descending keyset anchor for scenario history."""
+
+    timestamp: datetime
+    scenario_result_id: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioHistoryRunRecord:
+    """Lightweight persisted scenario header for one history row."""
+
+    scenario_result_id: str
+    scenario_name: str
+    scenario_version: int
+    pyrit_version: str
+    scenario_identifier: dict[str, Any]
+    objective_target_identifier: dict[str, Any]
+    status: str
+    labels: dict[str, str]
+    created_at: datetime
+    completed_at: datetime | None
+    error_message: str | None
+    error_type: str | None
+    scenario_registry_name: str | None
+    plan_atomic_groups: str | list[dict[str, Any]] | None
+    plan_seed_id_map: str | list[dict[str, str]] | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioHistoryUnitRecord:
+    """One logical scenario work unit aggregated from all persisted attempts."""
+
+    scenario_result_id: str
+    atomic_attack_name: str
+    technique_eval_hash: str
+    seed_group_id: str
+    objective_sha256: str | None
+    latest_outcome: str
+    latest_timestamp: datetime
+    total_retries: int
+    error_count: int
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1562,16 +1605,52 @@ class MemoryInterface(abc.ABC):
         """
 
     @abc.abstractmethod
-    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
         """
         Return a database-specific condition for filtering ScenarioResults by labels.
 
         Args:
-            labels: Dictionary of labels that must ALL be present.
+            labels: Labels with OR-within-key and AND-across-key semantics.
 
         Returns:
             Database-specific SQLAlchemy condition.
         """
+
+    def _get_scenario_registry_name_condition(self, *, scenario_names: Sequence[str]) -> Any:
+        """
+        Return a backend-specific condition matching persisted run-plan registry names.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support Scenario history filtering.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_scenario_registry_name_condition "
+            "to support Scenario history filtering."
+        )
+
+    def _get_scenario_history_plan_expressions(self) -> tuple[Any, Any, Any]:
+        """
+        Return registry-name and compact atomic-group expressions for history rows.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support Scenario history queries.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_scenario_history_plan_expressions "
+            "to support Scenario history queries."
+        )
+
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+        """
+        Return backend-specific JSON expressions for scenario attempt unit attribution.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support Scenario history queries.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_scenario_attempt_unit_expressions "
+            "to support Scenario history queries."
+        )
 
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
@@ -4019,6 +4098,198 @@ class MemoryInterface(abc.ABC):
             limit=limit,
         )
         return [entry.get_scenario_result() for entry in entries]
+
+    def get_scenario_run_history_page(
+        self,
+        *,
+        scenario_names: Sequence[str] | None = None,
+        statuses: Sequence[str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        cursor: ScenarioHistoryKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, list[ScenarioHistoryUnitRecord]], bool]:
+        """
+        Return one descending scenario-history page and minimal linked attempts.
+
+        Only selected ScenarioResult columns and the linked AttackResult columns
+        required for aggregate counts are read. Full ORM result objects and their
+        relationships are never hydrated.
+
+        Returns:
+            tuple[list[ScenarioHistoryRunRecord], dict[str, list[ScenarioHistoryUnitRecord]], bool]:
+                Page headers, logical work units grouped by scenario ID, and whether
+                another page exists.
+
+        Raises:
+            ValueError: If the limit, cursor ID, or label keys are invalid.
+        """
+        if limit < 1 or limit > 100:
+            raise ValueError("Scenario history limit must be between 1 and 100.")
+
+        conditions: list[Any] = []
+        effective_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
+        if effective_names:
+            conditions.append(
+                or_(
+                    ScenarioResultEntry.scenario_name.in_(effective_names),
+                    self._get_scenario_registry_name_condition(scenario_names=effective_names),
+                )
+            )
+        effective_statuses = sorted({status.strip().upper() for status in statuses or [] if status.strip()})
+        if effective_statuses:
+            conditions.append(ScenarioResultEntry.scenario_run_state.in_(effective_statuses))
+        effective_labels = {
+            key: value
+            for key, value in (labels or {}).items()
+            if (isinstance(value, str) and value) or (not isinstance(value, str) and len(value) > 0)
+        }
+        invalid_keys = sorted(key for key in effective_labels if not self._LABEL_KEY_PATTERN.fullmatch(key))
+        if invalid_keys:
+            raise ValueError(
+                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
+            )
+        if effective_labels:
+            conditions.append(self._get_scenario_result_label_condition(labels=effective_labels))
+        if cursor is not None:
+            cursor_id = uuid.UUID(cursor.scenario_result_id)
+            conditions.append(
+                or_(
+                    ScenarioResultEntry.timestamp < cursor.timestamp,
+                    and_(
+                        ScenarioResultEntry.timestamp == cursor.timestamp,
+                        ScenarioResultEntry.id < cursor_id,
+                    ),
+                )
+            )
+
+        statement = select(
+            ScenarioResultEntry.id,
+            ScenarioResultEntry.scenario_name,
+            ScenarioResultEntry.scenario_version,
+            ScenarioResultEntry.pyrit_version,
+            ScenarioResultEntry.scenario_identifier,
+            ScenarioResultEntry.objective_target_identifier,
+            ScenarioResultEntry.scenario_run_state,
+            ScenarioResultEntry.labels,
+            ScenarioResultEntry.timestamp,
+            ScenarioResultEntry.completion_time,
+            ScenarioResultEntry.error_message,
+            ScenarioResultEntry.error_type,
+            *(
+                expression.label(label)
+                for expression, label in zip(
+                    self._get_scenario_history_plan_expressions(),
+                    ("scenario_registry_name", "plan_atomic_groups", "plan_seed_id_map"),
+                    strict=True,
+                )
+            ),
+        )
+        if conditions:
+            statement = statement.where(and_(*conditions))
+        statement = statement.order_by(
+            ScenarioResultEntry.timestamp.desc(),
+            ScenarioResultEntry.id.desc(),
+        ).limit(limit + 1)
+        with closing(self.get_session()) as session:
+            rows = session.execute(statement).all()
+            page_rows = rows[:limit]
+            page_ids = [row.id for row in page_rows]
+            unit_rows = []
+            if page_ids:
+                atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
+                unit_partition = (
+                    AttackResultEntry.attribution_parent_id,
+                    atomic_name,
+                    technique_hash,
+                    seed_group_id,
+                )
+                ranked_units = select(
+                    AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
+                    atomic_name.label("atomic_attack_name"),
+                    technique_hash.label("technique_eval_hash"),
+                    seed_group_id.label("seed_group_id"),
+                    AttackResultEntry.objective_sha256.label("objective_sha256"),
+                    AttackResultEntry.outcome.label("latest_outcome"),
+                    func.max(AttackResultEntry.timestamp).over(partition_by=unit_partition).label("latest_timestamp"),
+                    (
+                        func.sum(func.coalesce(AttackResultEntry.total_retries, 0)).over(partition_by=unit_partition)
+                        + func.count().over(partition_by=unit_partition)
+                        - 1
+                    ).label("total_retries"),
+                    func.sum(case((AttackResultEntry.outcome == AttackOutcome.ERROR.value, 1), else_=0))
+                    .over(partition_by=unit_partition)
+                    .label("error_count"),
+                    func.row_number()
+                    .over(
+                        partition_by=unit_partition,
+                        order_by=(
+                            case((AttackResultEntry.outcome != AttackOutcome.ERROR.value, 1), else_=0).desc(),
+                            AttackResultEntry.timestamp.desc(),
+                            AttackResultEntry.id.desc(),
+                        ),
+                    )
+                    .label("unit_rank"),
+                ).where(AttackResultEntry.attribution_parent_id.in_(page_ids))
+                ranked_subquery = ranked_units.subquery()
+                unit_rows = session.execute(select(ranked_subquery).where(ranked_subquery.c.unit_rank == 1)).all()
+
+        records = [
+            ScenarioHistoryRunRecord(
+                scenario_result_id=str(row.id),
+                scenario_name=row.scenario_name,
+                scenario_version=row.scenario_version,
+                pyrit_version=row.pyrit_version,
+                scenario_identifier=row.scenario_identifier or {},
+                objective_target_identifier=row.objective_target_identifier or {},
+                status=row.scenario_run_state,
+                labels=row.labels or {},
+                created_at=row.timestamp,
+                completed_at=row.completion_time,
+                error_message=row.error_message,
+                error_type=row.error_type,
+                scenario_registry_name=row.scenario_registry_name,
+                plan_atomic_groups=row.plan_atomic_groups,
+                plan_seed_id_map=row.plan_seed_id_map,
+            )
+            for row in page_rows
+        ]
+        units_by_run: dict[str, list[ScenarioHistoryUnitRecord]] = {record.scenario_result_id: [] for record in records}
+        for row in unit_rows:
+            if row.scenario_result_id is None:
+                continue
+            run_id = str(row.scenario_result_id)
+            units_by_run[run_id].append(
+                ScenarioHistoryUnitRecord(
+                    scenario_result_id=run_id,
+                    atomic_attack_name=row.atomic_attack_name or "",
+                    technique_eval_hash=row.technique_eval_hash or "",
+                    seed_group_id=row.seed_group_id or "",
+                    objective_sha256=row.objective_sha256,
+                    latest_outcome=row.latest_outcome,
+                    latest_timestamp=row.latest_timestamp,
+                    total_retries=row.total_retries or 0,
+                    error_count=row.error_count or 0,
+                )
+            )
+        return records, units_by_run, len(rows) > limit
+
+    def get_unique_scenario_labels(self) -> dict[str, list[str]]:
+        """Return all unique label values across scenario results."""
+        label_values: dict[str, set[str]] = {}
+        with closing(self.get_session()) as session:
+            rows = (
+                session.query(ScenarioResultEntry.labels)
+                .filter(ScenarioResultEntry.labels.isnot(None))
+                .distinct()
+                .all()
+            )
+        for (labels,) in rows:
+            if not isinstance(labels, dict):
+                continue
+            for key, value in labels.items():
+                if isinstance(value, str):
+                    label_values.setdefault(key, set()).add(value)
+        return {key: sorted(values) for key, values in sorted(label_values.items())}
 
     def get_scenario_attack_result_deltas(
         self,
