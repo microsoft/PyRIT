@@ -46,6 +46,37 @@ if TYPE_CHECKING:
     from pyrit.models.parameter import Parameter
 
 
+def _is_read_timeout(exc: BaseException) -> bool:
+    """
+    Report whether an exception is an ``httpx.ReadTimeout``.
+
+    Args:
+        exc (BaseException): The exception to classify.
+
+    Returns:
+        bool: True when httpx is importable and the exception is a read timeout.
+    """
+    try:
+        import httpx
+
+        return isinstance(exc, httpx.ReadTimeout)
+    except Exception:
+        return False
+
+
+def _print_debug_traceback(exc: BaseException) -> None:
+    """
+    Print the traceback for an exception when the log level is ``DEBUG``.
+
+    Args:
+        exc (BaseException): The exception caught by the CLI.
+    """
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
+        import traceback
+
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+
+
 def _print_cli_exception(*, exc: BaseException) -> None:
     """
     Print a user-facing error line for an exception that bubbled out of the CLI.
@@ -56,32 +87,24 @@ def _print_cli_exception(*, exc: BaseException) -> None:
     the server is taking longer than ``--request-timeout`` to respond and the
     default bare ``str(exc)`` is empty.
 
+    Only ``pyrit_scan`` verbs reach this with a timeout; ``pyrit_shell`` has no
+    ``--request-timeout`` and handles that case before it gets here.
+
     Args:
         exc (BaseException): The exception caught by the CLI.
     """
-    import traceback
-
-    try:
-        import httpx
-
-        is_read_timeout = isinstance(exc, httpx.ReadTimeout)
-    except Exception:
-        is_read_timeout = False
-
     cls_name = type(exc).__name__
     detail = str(exc) or repr(exc)
 
-    if is_read_timeout:
+    if _is_read_timeout(exc):
         print(
-            "\nError (ReadTimeout): server did not respond in time. "
-            "Pass '--request-timeout <seconds>' to wait longer, or check the "
-            "server logs for a blocked event loop."
+            "\nError (ReadTimeout): server did not respond in time. Pass '--request-timeout "
+            "<seconds>' to wait longer, or check the server logs for a blocked event loop."
         )
     else:
         print(f"\nError ({cls_name}): {detail}")
 
-    if logging.getLogger().isEnabledFor(logging.DEBUG):
-        traceback.print_exception(type(exc), exc, exc.__traceback__)
+    _print_debug_traceback(exc)
 
 
 _DESCRIPTION = """PyRIT Scanner - Run AI security scenarios from the command line.
@@ -1015,7 +1038,15 @@ async def _run_scenario_async(
     try:
         run = await client.start_scenario_run_async(request=request)
     except Exception as exc:
-        print(f"Error starting scenario: {exc}")
+        if _is_read_timeout(exc):
+            # The server keeps initializing after the client stops waiting, so whether the run
+            # started is genuinely unknown here and must not be reported as a failure to start.
+            print("\nERROR: The scenario start request timed out, so it is unknown whether the run started.")
+            _print_cli_exception(exc=exc)
+            print("Check 'pyrit_scan scenario-history' before retrying, or the run may be started twice.")
+        else:
+            print("\nERROR: The scenario could not be started.")
+            _print_cli_exception(exc=exc)
         return 1
 
     scenario_result_id = run.scenario_result_id
@@ -1045,6 +1076,8 @@ async def _run_scenario_async(
                 "retrieved or parsed from the server."
             )
             _print_cli_exception(exc=exc)
+            if _is_read_timeout(exc):
+                print(f"Retry with 'pyrit_scan scenario-results {scenario_result_id}'.")
             _output.print_scenario_run_summary(run=run)
             return 1
         return 0
