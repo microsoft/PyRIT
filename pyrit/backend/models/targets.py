@@ -51,6 +51,8 @@ class TargetTypeResponse(BaseModel):
     items: list[TargetTypeEntry] = Field(..., description="List of available target types")
 
 
+# LEGACY COMPATIBILITY: The current target configuration UI imports the catalog
+# names. Remove these aliases when the frontend switches to the /types API.
 TargetCatalogEntry = TargetTypeEntry
 TargetCatalogResponse = TargetTypeResponse
 
@@ -65,6 +67,8 @@ class TargetListResponse(BaseModel):
 class CreateTargetRequest(BaseModel):
     """Request to create a new target instance."""
 
+    # LEGACY COMPATIBILITY: The current target configuration UI does not send a
+    # name. Make this field required after that UI sends explicit registry names.
     name: str | None = Field(
         None,
         min_length=1,

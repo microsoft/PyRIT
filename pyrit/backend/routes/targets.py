@@ -72,7 +72,11 @@ async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exemp
     },
 )
 async def list_target_catalog() -> TargetCatalogResponse:  # pyrit-async-suffix-exempt
-    """Return the temporary compatibility alias for ``/types``."""
+    """
+    Return the legacy catalog projection used by the current configuration UI.
+
+    Remove this route after the frontend switches to ``/targets/types``.
+    """
     service = get_target_service()
     return await service.list_target_catalog_async()
 

@@ -153,7 +153,12 @@ class TargetService:
         return TargetTypeResponse(items=items)
 
     async def list_target_catalog_async(self) -> TargetCatalogResponse:
-        """Return the temporary compatibility projection for ``/catalog``."""
+        """
+        Return the legacy projection used by the current configuration UI.
+
+        Remove this method with the ``/catalog`` route after the frontend uses
+        ``list_target_types_async``.
+        """
         return await self.list_target_types_async()
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
@@ -194,6 +199,8 @@ class TargetService:
             # Omit any api_key so the target validates its own endpoint and authenticates itself.
             params.pop("api_key", None)
 
+        # LEGACY COMPATIBILITY: The current configuration UI omits the name.
+        # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
         target_obj = self._registry.create_named_instance(
             name=target_registry_name,

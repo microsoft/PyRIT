@@ -57,6 +57,8 @@ class ConverterTypeResponse(BaseModel):
     items: list[ConverterTypeEntry] = Field(..., description="List of available converter types")
 
 
+# LEGACY COMPATIBILITY: The current chat UI imports the catalog names. Remove
+# these aliases when the chat-migration stack layer switches to the /types API.
 ConverterCatalogEntry = ConverterTypeEntry
 ConverterCatalogResponse = ConverterTypeResponse
 
@@ -90,6 +92,8 @@ class ConverterInstanceListResponse(BaseModel):
 class CreateConverterRequest(BaseModel):
     """Request to create a new converter instance."""
 
+    # LEGACY COMPATIBILITY: The current chat UI does not send a name. Make this
+    # field required when the chat-migration stack layer sends explicit names.
     name: str | None = Field(
         None,
         min_length=1,
@@ -97,6 +101,8 @@ class CreateConverterRequest(BaseModel):
         description="Unique registry name; omitted only for legacy chat compatibility",
     )
     type: str = Field(..., description="Converter type (e.g., 'Base64Converter')")
+    # LEGACY COMPATIBILITY: The former create response echoed this field. Remove
+    # it after clients use the complete ConverterInstance response.
     display_name: str | None = Field(None, description="Human-readable display name")
     params: dict[str, Any] = Field(
         default_factory=dict,
@@ -105,7 +111,12 @@ class CreateConverterRequest(BaseModel):
 
 
 class CreateConverterResponse(BaseModel):
-    """Response after creating a converter instance."""
+    """
+    Legacy response model for downstream imports.
+
+    POST /converters now returns ``ConverterInstance``. Remove this model when
+    downstream clients no longer import the former response type.
+    """
 
     converter_id: str = Field(..., description="Unique converter instance identifier")
     converter_type: str = Field(..., description="Converter class name")

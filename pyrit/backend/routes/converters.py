@@ -62,7 +62,12 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
     response_model=ConverterCatalogResponse,
 )
 async def list_converter_catalog() -> ConverterCatalogResponse:  # pyrit-async-suffix-exempt
-    """Return the temporary compatibility alias for ``/types``."""
+    """
+    Return the legacy catalog projection used by the current chat UI.
+
+    Remove this route when the chat-migration stack layer switches to
+    ``/converters/types``.
+    """
     service = get_converter_service()
     return await service.list_converter_catalog_async()
 
