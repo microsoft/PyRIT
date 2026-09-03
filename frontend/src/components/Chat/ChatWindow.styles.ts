@@ -95,6 +95,50 @@ export const useChatWindowStyles = makeStyles({
   ribbonAction: {
     ...mobileTouchTarget,
   },
+  attackContext: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalS,
+    flexShrink: 0,
+    padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  attackFacts: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, max-content)) minmax(220px, 1fr)',
+    gap: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalXXL}`,
+    margin: 0,
+    '@media (max-width: 900px)': {
+      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    },
+    '@media (max-width: 600px)': {
+      gridTemplateColumns: '1fr',
+      gap: tokens.spacingVerticalS,
+    },
+  },
+  attackFact: {
+    display: 'grid',
+    gridTemplateColumns: 'max-content minmax(0, 1fr)',
+    gap: tokens.spacingHorizontalS,
+    minWidth: 0,
+    '& dt': {
+      color: tokens.colorNeutralForeground3,
+      fontSize: tokens.fontSizeBase200,
+    },
+    '& dd': {
+      margin: 0,
+      color: tokens.colorNeutralForeground1,
+      fontSize: tokens.fontSizeBase200,
+      fontWeight: tokens.fontWeightSemibold,
+      overflowWrap: 'anywhere',
+    },
+  },
+  objectiveFact: {
+    '& dd': {
+      fontWeight: tokens.fontWeightRegular,
+    },
+  },
   newAttackButton: {
     flexShrink: 0,
     ...mobileTouchTarget,

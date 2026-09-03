@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, func, literal, not_, or_, select
+from sqlalchemy import MetaData, String, and_, case, cast, func, literal, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
@@ -57,6 +57,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
+    SEQUENTIAL_ATTACK_CLASS_NAME,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackOutcome,
@@ -1691,6 +1692,45 @@ class MemoryInterface(abc.ABC):
             f"{type(self).__name__} must implement _get_scenario_attempt_unit_expressions "
             "to support Scenario history queries."
         )
+
+    def _get_scenario_logical_attempt_condition(self) -> Any:
+        """
+        Exclude typed and identifier-less legacy ``SequentialAttack`` envelopes.
+
+        Returns:
+            Any: A SQL condition matching only target-facing logical attempts.
+        """
+        typed_envelope = (
+            case(
+                (
+                    or_(
+                        self._get_condition_json_property_match(
+                            json_column=AttackResultEntry.atomic_attack_identifier,
+                            property_path="$.children.attack_technique.children.attack.class_name",
+                            value=SEQUENTIAL_ATTACK_CLASS_NAME,
+                            case_sensitive=True,
+                        ).unique_params(),
+                        self._get_condition_json_property_match(
+                            json_column=AttackResultEntry.atomic_attack_identifier,
+                            property_path="$.children.attack.class_name",
+                            value=SEQUENTIAL_ATTACK_CLASS_NAME,
+                            case_sensitive=True,
+                        ).unique_params(),
+                    ),
+                    1,
+                ),
+                else_=0,
+            )
+            == 1
+        )
+        legacy_envelope = and_(
+            or_(
+                AttackResultEntry.atomic_attack_identifier.is_(None),
+                func.lower(func.trim(cast(AttackResultEntry.atomic_attack_identifier, String))) == "null",
+            ),
+            func.trim(AttackResultEntry.conversation_id) == "",
+        )
+        return not_(or_(typed_envelope, legacy_envelope))
 
     def add_scores_to_memory(self, *, scores: Sequence[Score]) -> None:
         """
@@ -4225,6 +4265,63 @@ class MemoryInterface(abc.ABC):
             len(rows) > limit,
         )
 
+    def _query_scenario_history_unit_rows(
+        self,
+        *,
+        session: Session,
+        page_ids: Sequence[uuid.UUID],
+    ) -> Sequence[Any]:
+        """Return the latest logical attempt rows for one scenario-history page."""
+        if not page_ids:
+            return []
+
+        atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
+        unit_partition = (
+            AttackResultEntry.attribution_parent_id,
+            atomic_name,
+            technique_hash,
+            seed_group_id,
+        )
+        ranked_units = select(
+            AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
+            atomic_name.label("atomic_attack_name"),
+            technique_hash.label("technique_eval_hash"),
+            seed_group_id.label("seed_group_id"),
+            AttackResultEntry.objective_sha256.label("objective_sha256"),
+            AttackResultEntry.outcome.label("latest_outcome"),
+            func.max(AttackResultEntry.timestamp).over(partition_by=unit_partition).label("latest_timestamp"),
+            func.sum(
+                case(
+                    (
+                        func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                        func.coalesce(AttackResultEntry.total_retries, 0),
+                    ),
+                    else_=0,
+                )
+            )
+            .over(partition_by=unit_partition)
+            .label("inner_retries"),
+            func.count().over(partition_by=unit_partition).label("attempt_count"),
+            func.sum(case((AttackResultEntry.outcome == AttackOutcome.ERROR.value, 1), else_=0))
+            .over(partition_by=unit_partition)
+            .label("error_count"),
+            func.row_number()
+            .over(
+                partition_by=unit_partition,
+                order_by=(
+                    case((AttackResultEntry.outcome != AttackOutcome.ERROR.value, 1), else_=0).desc(),
+                    AttackResultEntry.timestamp.desc(),
+                    AttackResultEntry.id.desc(),
+                ),
+            )
+            .label("unit_rank"),
+        ).where(
+            AttackResultEntry.attribution_parent_id.in_(page_ids),
+            self._get_scenario_logical_attempt_condition(),
+        )
+        ranked_subquery = ranked_units.subquery()
+        return session.execute(select(ranked_subquery).where(ranked_subquery.c.unit_rank == 1)).all()
+
     def get_scenario_run_history_page(
         self,
         *,
@@ -4321,51 +4418,7 @@ class MemoryInterface(abc.ABC):
             rows = session.execute(statement).all()
             page_rows = rows[:limit]
             page_ids = [row.id for row in page_rows]
-            unit_rows = []
-            if page_ids:
-                atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
-                unit_partition = (
-                    AttackResultEntry.attribution_parent_id,
-                    atomic_name,
-                    technique_hash,
-                    seed_group_id,
-                )
-                ranked_units = select(
-                    AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
-                    atomic_name.label("atomic_attack_name"),
-                    technique_hash.label("technique_eval_hash"),
-                    seed_group_id.label("seed_group_id"),
-                    AttackResultEntry.objective_sha256.label("objective_sha256"),
-                    AttackResultEntry.outcome.label("latest_outcome"),
-                    func.max(AttackResultEntry.timestamp).over(partition_by=unit_partition).label("latest_timestamp"),
-                    func.sum(
-                        case(
-                            (
-                                func.coalesce(AttackResultEntry.total_retries, 0) > 0,
-                                func.coalesce(AttackResultEntry.total_retries, 0),
-                            ),
-                            else_=0,
-                        )
-                    )
-                    .over(partition_by=unit_partition)
-                    .label("inner_retries"),
-                    func.count().over(partition_by=unit_partition).label("attempt_count"),
-                    func.sum(case((AttackResultEntry.outcome == AttackOutcome.ERROR.value, 1), else_=0))
-                    .over(partition_by=unit_partition)
-                    .label("error_count"),
-                    func.row_number()
-                    .over(
-                        partition_by=unit_partition,
-                        order_by=(
-                            case((AttackResultEntry.outcome != AttackOutcome.ERROR.value, 1), else_=0).desc(),
-                            AttackResultEntry.timestamp.desc(),
-                            AttackResultEntry.id.desc(),
-                        ),
-                    )
-                    .label("unit_rank"),
-                ).where(AttackResultEntry.attribution_parent_id.in_(page_ids))
-                ranked_subquery = ranked_units.subquery()
-                unit_rows = session.execute(select(ranked_subquery).where(ranked_subquery.c.unit_rank == 1)).all()
+            unit_rows = self._query_scenario_history_unit_rows(session=session, page_ids=page_ids)
 
         records = [
             ScenarioHistoryRunRecord(
@@ -4495,6 +4548,7 @@ class MemoryInterface(abc.ABC):
                 AttackResultEntry.error_type,
                 AttackResultEntry.error_message,
                 AttackResultEntry.attribution_data,
+                AttackResultEntry.labels,
                 ScoreEntry.id.label("score_id"),
                 ScoreEntry.score_value,
                 ScoreEntry.score_type,
@@ -4552,6 +4606,7 @@ class MemoryInterface(abc.ABC):
                     error_message=row.error_message,
                     attribution_data=row.attribution_data or {},
                     score=score,
+                    labels=row.labels or {},
                 )
             )
         return deltas, has_more

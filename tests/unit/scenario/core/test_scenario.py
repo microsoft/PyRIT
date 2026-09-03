@@ -22,6 +22,7 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    ScenarioRunPlanGroupKind,
     ScenarioRunState,
     SeedObjective,
     SeedPrompt,
@@ -114,6 +115,7 @@ def mock_atomic_attacks():
     run1._scenario_result_id = None
     run1.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run1, "_scenario_result_id", sid))
     type(run1).objectives = PropertyMock(return_value=["objective1"])
+    type(run1).progress_group_kind = PropertyMock(return_value=ScenarioRunPlanGroupKind.ATTACK)
 
     run2 = MagicMock(spec=AtomicAttack)
     run2.atomic_attack_name = "attack_run_2"
@@ -122,6 +124,7 @@ def mock_atomic_attacks():
     run2._scenario_result_id = None
     run2.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run2, "_scenario_result_id", sid))
     type(run2).objectives = PropertyMock(return_value=["objective2"])
+    type(run2).progress_group_kind = PropertyMock(return_value=ScenarioRunPlanGroupKind.ATTACK)
 
     run3 = MagicMock(spec=AtomicAttack)
     run3.atomic_attack_name = "attack_run_3"
@@ -130,6 +133,7 @@ def mock_atomic_attacks():
     run3._scenario_result_id = None
     run3.set_scenario_result_id = MagicMock(side_effect=lambda sid: setattr(run3, "_scenario_result_id", sid))
     type(run3).objectives = PropertyMock(return_value=["objective3"])
+    type(run3).progress_group_kind = PropertyMock(return_value=ScenarioRunPlanGroupKind.ATTACK)
 
     return [run1, run2, run3]
 
@@ -309,6 +313,9 @@ class TestScenarioInitialization2:
         assert stored.metadata["run_plan"]["version"] == 1
         assert len(stored.metadata["run_plan"]["atomic_groups"]) == len(mock_atomic_attacks)
         assert stored.metadata["scheduler_managed_by"] == "test"
+        assert {group["group_kind"] for group in stored.metadata["run_plan"]["atomic_groups"]} == {
+            ScenarioRunPlanGroupKind.ATTACK.value
+        }
 
     async def test_initialize_async_deduplicates_logical_seed_groups_in_run_plan(self, mock_objective_target) -> None:
         duplicate_seed_groups = [

@@ -596,7 +596,7 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog /></TestWrapper>)
 
     const row = await screen.findByTestId('scenario-card-adaptive.text_adaptive')
-    expect(within(row).getByText('21–42 planned attacks · up to 42 technique attempts')).toBeInTheDocument()
+    expect(within(row).getByText('up to 63 attack attempts · 21–42 progress units')).toBeInTheDocument()
     expect(within(row).queryByText(/objective envelope/i)).not.toBeInTheDocument()
   })
 

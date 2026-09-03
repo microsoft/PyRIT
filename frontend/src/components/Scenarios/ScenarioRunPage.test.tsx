@@ -105,6 +105,7 @@ const PLAN: ScenarioRunPlan = {
     seed_group_ids: ['seed-1'],
     description: 'Uses a role-play prompt to elicit the requested response.',
     tags: ['single_turn'],
+    group_kind: 'attack',
   }],
   seed_groups: [{
     id: 'seed-1',
@@ -138,6 +139,7 @@ const ATTEMPT: ScenarioProgressResult = {
     score_value: 'true',
     score_rationale: 'The response achieved the objective.',
   },
+  result_kind: 'attack',
 }
 
 const SUMMARY: ScenarioProgressSummary = {
@@ -303,7 +305,7 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByTestId('run-state-badge')).toHaveTextContent('In progress')
     expect(screen.getByRole('progressbar', { name: 'Overall scenario run progress' })).toHaveAttribute(
       'aria-valuetext',
-      '1 of 1 executable units completed',
+      '1 of 1 progress units completed',
     )
     expect(screen.getByRole('region', { name: 'Atomic attack groups' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Objective Scorer', level: 2 })).toBeInTheDocument()
@@ -334,12 +336,184 @@ describe('ScenarioRunPage', () => {
     expect(headings).toEqual([
       'Run configuration',
       'Scenario queue',
+      'Observed execution accounting',
       'Overall progress',
       'Atomic attack groups',
       'Objective Scorer',
       'Techniques',
       'Objectives',
     ])
+  })
+
+  it('accounts for target-facing attacks separately from orchestration records', () => {
+    const objectiveIds = ['seed-1', 'seed-2', 'seed-3', 'seed-4']
+    const plan: ScenarioRunPlan = {
+      version: 1,
+      scenario_registry_name: 'adaptive.text',
+      seed_groups: objectiveIds.map((id, index) => ({
+        id,
+        objective_sha256: `sha-${index + 1}`,
+        objective: `Objective ${index + 1}`,
+        prompts: [],
+      })),
+      atomic_groups: [
+        {
+          id: 'baseline',
+          atomic_attack_name: 'baseline',
+          display_group: 'Direct baseline',
+          technique_eval_hash: 'baseline-eval',
+          seed_group_ids: objectiveIds,
+          tags: [],
+          group_kind: 'direct_baseline',
+        },
+        ...objectiveIds.map((seedId, index) => ({
+          id: `adaptive-${index + 1}`,
+          atomic_attack_name: 'adaptive',
+          display_group: index === 0 ? 'Fairness' : 'Harassment',
+          technique_eval_hash: `adaptive-eval-${index + 1}`,
+          seed_group_ids: [seedId],
+          tags: [],
+          group_kind: 'adaptive' as const,
+        })),
+      ],
+    }
+    const results: ScenarioProgressResult[] = objectiveIds.flatMap((seedId, index) => {
+      const adaptiveGroupId = `adaptive-${index + 1}`
+      return [
+        {
+          ...ATTEMPT,
+          attack_result_id: `baseline-${index}`,
+          atomic_group_id: 'baseline',
+          atomic_attack_name: 'baseline',
+          seed_group_id: seedId,
+          timestamp: `2026-01-01T00:${String(index * 3).padStart(2, '0')}:00Z`,
+          total_retries: 0,
+          result_kind: 'direct_baseline',
+        },
+        {
+          ...ATTEMPT,
+          attack_result_id: `technique-${index}`,
+          atomic_group_id: adaptiveGroupId,
+          atomic_attack_name: 'adaptive',
+          seed_group_id: seedId,
+          timestamp: `2026-01-01T00:${String(index * 3 + 1).padStart(2, '0')}:00Z`,
+          total_retries: 0,
+          result_kind: 'adaptive_technique',
+          technique_name: index === 0 ? 'Fairness technique' : 'Harassment technique',
+          attempt_index: 1,
+        },
+        {
+          ...ATTEMPT,
+          attack_result_id: `envelope-${index}`,
+          atomic_group_id: adaptiveGroupId,
+          atomic_attack_name: 'adaptive',
+          seed_group_id: seedId,
+          timestamp: `2026-01-01T00:${String(index * 3 + 2).padStart(2, '0')}:00Z`,
+          total_retries: 7,
+          result_kind: 'aggregate_parent',
+        },
+      ]
+    })
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        scenario_registry_name: 'adaptive.text',
+        status: 'COMPLETED',
+        completed_at: '2026-01-01T00:15:00Z',
+      },
+      plan,
+      results,
+      summary: {
+        ...SUMMARY,
+        overall: {
+          ...SUMMARY.overall,
+          completed: 8,
+          planned: 8,
+        },
+      },
+    }))
+
+    renderPage()
+
+    expect(screen.getByRole('group', {
+      name: '4 objectives multiplied by 2 observed attacks each equals 8 target-facing attacks. 8/8 planned progress units completed. 12 persisted result records: 8 target-facing attack results + 4 Adaptive orchestration summaries. 0 actual retries.',
+    })).toBeInTheDocument()
+    expect(screen.getByText(
+      'Per objective: 1 direct baseline + 1 Adaptive technique.',
+    )).toBeInTheDocument()
+    expect(screen.getByText(
+      '8/8 planned progress units completed · 12 persisted result records: 8 target-facing attack results + 4 Adaptive orchestration summaries · 0 actual retries',
+    )).toBeInTheDocument()
+  })
+
+  it('does not force a per-objective equation for nonuniform observed attacks', () => {
+    const plan: ScenarioRunPlan = {
+      ...PLAN,
+      atomic_groups: [{
+        ...PLAN.atomic_groups[0],
+        seed_group_ids: ['seed-1', 'seed-2'],
+      }],
+      seed_groups: [
+        PLAN.seed_groups[0],
+        {
+          id: 'seed-2',
+          objective_sha256: 'sha-2',
+          objective: 'A second objective with a different observed attack count.',
+          prompts: [],
+        },
+      ],
+    }
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        status: 'COMPLETED',
+        completed_at: '2026-01-01T00:15:00Z',
+      },
+      plan,
+      results: [
+        { ...ATTEMPT, total_retries: 0 },
+        { ...ATTEMPT, attack_result_id: 'attack-result-2', seed_group_id: 'seed-2', total_retries: 0 },
+        { ...ATTEMPT, attack_result_id: 'attack-result-3', seed_group_id: 'seed-2', total_retries: 0 },
+      ],
+      summary: {
+        ...SUMMARY,
+        overall: {
+          ...SUMMARY.overall,
+          completed: 2,
+          planned: 2,
+        },
+      },
+    }))
+
+    renderPage()
+
+    expect(screen.getByRole('group', {
+      name: '3 target-facing attacks. 2/2 planned progress units completed. 3 persisted result records. 1 actual retries.',
+    })).toBeInTheDocument()
+    expect(screen.queryByText('observed attacks each')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Per objective:/)).not.toBeInTheDocument()
+  })
+
+  it('accounts for unclassified legacy records in persisted storage provenance', () => {
+    mockHookState(makeState({
+      results: [
+        { ...ATTEMPT, total_retries: 0 },
+        {
+          ...ATTEMPT,
+          attack_result_id: 'legacy-unknown',
+          atomic_group_id: 'legacy-group',
+          atomic_attack_name: 'legacy-attack',
+          result_kind: 'unknown',
+          total_retries: 0,
+        },
+      ],
+    }))
+
+    renderPage()
+
+    expect(screen.getByRole('group', {
+      name: '1 objective multiplied by 1 observed attack each equals 1 target-facing attack. 1/1 planned progress units completed. 2 persisted result records: 1 target-facing attack result + 1 unclassified record. 0 actual retries.',
+    })).toBeInTheDocument()
   })
 
   it('renders contract-backed safe target and run configuration metadata', () => {
@@ -385,8 +559,8 @@ describe('ScenarioRunPage', () => {
 
     renderPage()
 
-    expect(screen.getByText(/legacy run has no complete persisted execution plan/i)).toBeInTheDocument()
-    expect(screen.getAllByText(/1 known completed units; planned total unavailable/i)).toHaveLength(2)
+    expect(screen.getByText(/legacy run has no complete persisted progress plan/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/1 known completed progress units; planned total unavailable/i)).toHaveLength(3)
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     expect(screen.getByText('Progress percentage unavailable')).toBeInTheDocument()
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
@@ -436,7 +610,6 @@ describe('ScenarioRunPage', () => {
         active_scenario_result_id: 'active-run',
       },
       results: [],
-      activeAtomicGroupIds: [],
     }))
 
     renderPage()
@@ -749,7 +922,6 @@ describe('ScenarioRunPage', () => {
         active_scenario_result_id: 'active-run',
       },
       results: [],
-      activeAtomicGroupIds: [],
     }))
 
     renderPage()

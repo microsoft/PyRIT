@@ -887,6 +887,25 @@ class TestPyritMessagesToDtoRealObjects:
 
         assert result[0].message_pieces[0].scores == []
 
+    async def test_prompt_metadata_round_trips_through_memory(self, sqlite_instance) -> None:
+        """Prompt metadata survives persistence and the message DTO mapper."""
+        from pyrit.models import Message as RealPyritMessage
+        from pyrit.models import MessagePiece as RealPyritMessagePiece
+
+        metadata = {"source": "generated"}
+        piece = RealPyritMessagePiece(
+            role="user",
+            original_value="generated prompt",
+            conversation_id="real-conv-metadata",
+            prompt_metadata=metadata,
+        )
+        sqlite_instance.add_message_to_memory(request=RealPyritMessage(message_pieces=[piece]))
+
+        reloaded = sqlite_instance.get_conversation_messages(conversation_id=piece.conversation_id)
+        result = await pyrit_messages_to_dto_async(list(reloaded))
+
+        assert result[0].message_pieces[0].prompt_metadata == metadata
+
     async def test_scores_are_grouped_per_piece_across_multiple_pieces(self, sqlite_instance) -> None:
         """Scores from a batched fetch are routed to the correct originating piece."""
         from pyrit.models import Message as RealPyritMessage

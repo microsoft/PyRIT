@@ -471,6 +471,22 @@ def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
     assert "scenario_registry_name_1" in combined_statement.compile().params
 
 
+def test_scenario_logical_attempt_condition_uses_typed_identifier_before_legacy_conversation(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    condition = memory_interface._get_scenario_logical_attempt_condition()
+    compiled = str(condition.compile(compile_kwargs={"literal_binds": True}))
+
+    assert "JSON_VALUE" in compiled
+    assert "$.children.attack_technique.children.attack.class_name" in compiled
+    assert "$.children.attack.class_name" in compiled
+    assert "SequentialAttack" in compiled
+    assert '"AttackResultEntries".atomic_attack_identifier IS NULL' in compiled
+    assert "CAST(" in compiled
+    assert "= 'null'" in compiled
+    assert 'trim("AttackResultEntries".conversation_id)' in compiled
+
+
 @pytest.mark.parametrize(
     "case_sensitive, partial_match, expected_sql_fragment",
     [

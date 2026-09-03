@@ -161,9 +161,12 @@ await printer.write_async(resumed_result)  # type: ignore
 # Use `result.get_display_groups()` to aggregate `attack_results` by the
 # per-dataset display label set by the scenario.
 #
-# If the trail of attacks attempted is shorter than `max_attempts_per_objective`,
-# the compatible-technique pool for that seed group was smaller than the cap —
-# the run exhausted the pool.
+# A trail shorter than `max_attempts_per_objective` means either an earlier
+# technique succeeded, or—when the envelope did not succeed—the dispatcher
+# exhausted the compatible candidates available for that objective. Compatibility
+# is objective-specific: for example, a simulated-conversation technique is
+# excluded when its seed sequence overlaps sequence positions already occupied by
+# the objective seed group.
 
 # %%
 from collections import Counter

@@ -62,9 +62,14 @@ import {
   scenarioRunRoutePath,
 } from '@/utils/routeParams'
 import {
+  getAttemptAccounting,
+  getAttemptPresentations,
   getElapsedMilliseconds,
   getEtaMilliseconds,
+  isTargetAttackRole,
   isTerminalRunState,
+  type AttemptAccounting,
+  type ScenarioAttemptRole,
 } from '@/utils/scenarioRunProgress'
 
 import AttackExecutionTable from './AttackExecutionTable'
@@ -132,6 +137,8 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
       ? 'Back to scenario'
       : 'Back to scanners'
 
+  const attemptPresentations = useMemo(() => getAttemptPresentations(state), [state])
+  const attemptAccounting = useMemo(() => getAttemptAccounting(state), [state])
   const seedObjectives = useMemo(
     () => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []),
     [state.plan],
@@ -157,6 +164,10 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     const groupedAttempts = new Map<string, ScenarioProgressResult[]>()
     for (let index = state.results.length - 1; index >= 0; index -= 1) {
       const attempt = state.results[index]
+      const role = attemptPresentations.get(attempt.attack_result_id)?.role ?? 'unknown'
+      if (!isTargetAttackRole(role)) {
+        continue
+      }
       const existing = groupedAttempts.get(attempt.atomic_group_id)
       if (existing) {
         existing.push(attempt)
@@ -165,7 +176,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
       }
     }
     return groupedAttempts
-  }, [state.results])
+  }, [attemptPresentations, state.results])
 
   const closeAttemptDetails = (): void => {
     navigate(scenarioRunRoutePath(scenarioResultId), { replace: true })
@@ -287,8 +298,12 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const progressText = queued
     ? `Queued${run.queue_position ? ` · Position ${run.queue_position}` : ''}`
     : overall.planned === null
-    ? `${overall.completed} known completed units; planned total unavailable`
-    : `${overall.completed} of ${overall.planned} executable units completed`
+    ? `${overall.completed} known completed progress units; planned total unavailable`
+    : `${overall.completed} of ${overall.planned} progress units completed`
+  const terminal = isTerminalRunState(run.status)
+  const attemptAccountingSection = state.results.length > 0 ? (
+    <ObservedAttemptAccounting accounting={attemptAccounting} />
+  ) : null
 
   return (
     <main className={styles.root} data-testid="scenario-run-page">
@@ -379,7 +394,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
           </div>
           <div className={styles.summaryGrid}>
             <ConfigurationItem
-              label="Techniques"
+              label="Configured techniques"
               value={(run.techniques_used?.length ?? 0) > 0 ? run.techniques_used?.join(', ') ?? '' : 'Unavailable'}
             />
             <ConfigurationItem
@@ -454,6 +469,8 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
             </MessageBarBody>
           </MessageBar>
         )}
+
+        {attemptAccountingSection}
 
         <section className={styles.section} aria-labelledby="overall-progress-heading">
           <div className={styles.sectionHeading}>
@@ -774,6 +791,105 @@ function DisplayGroupMetric({ label, value }: MetricProps) {
   )
 }
 
+interface ObservedAttemptAccountingProps {
+  readonly accounting: AttemptAccounting
+}
+
+function ObservedAttemptAccounting({ accounting }: ObservedAttemptAccountingProps) {
+  const styles = useScenarioRunPageStyles()
+  const progress = accounting.plannedProgressUnits === null
+    ? `${accounting.completedProgressUnits} known completed progress units; planned total unavailable`
+    : `${accounting.completedProgressUnits}/${accounting.plannedProgressUnits} planned progress units completed`
+  const otherAggregateRecords = accounting.aggregateParentRecords - accounting.adaptiveAggregateParentRecords
+  const unclassifiedRecords = accounting.persistedAttempts - accounting.attackAttempts - accounting.aggregateParentRecords
+  const persistedComponents = accounting.persistedAttempts === accounting.attackAttempts
+    ? []
+    : [
+        `${accounting.attackAttempts} target-facing attack ${accounting.attackAttempts === 1 ? 'result' : 'results'}`,
+        ...(accounting.adaptiveAggregateParentRecords > 0
+          ? [`${accounting.adaptiveAggregateParentRecords} Adaptive orchestration ${accounting.adaptiveAggregateParentRecords === 1 ? 'summary' : 'summaries'}`]
+          : []),
+        ...(otherAggregateRecords > 0
+          ? [`${otherAggregateRecords} aggregate parent ${otherAggregateRecords === 1 ? 'record' : 'records'}`]
+          : []),
+        ...(unclassifiedRecords > 0
+          ? [`${unclassifiedRecords} unclassified ${unclassifiedRecords === 1 ? 'record' : 'records'}`]
+          : []),
+      ]
+  const persistedBreakdown = persistedComponents.length > 0 ? `: ${persistedComponents.join(' + ')}` : ''
+  const uniformEquation = accounting.uniformTargetAttacksPerObjective !== null
+    && accounting.objectiveCount * accounting.uniformTargetAttacksPerObjective === accounting.attackAttempts
+  const observedAttackLabel = accounting.uniformTargetAttacksPerObjective === 1
+    ? 'observed attack each'
+    : 'observed attacks each'
+  const targetAttackLabel = accounting.attackAttempts === 1
+    ? 'target-facing attack'
+    : 'target-facing attacks'
+
+  return (
+    <section className={styles.section} aria-labelledby="observed-attempts-heading">
+      <div className={styles.sectionHeading}>
+        <Text as="h2" id="observed-attempts-heading" size={500} weight="semibold">
+          Observed execution accounting
+        </Text>
+        <Text className={styles.sectionHint}>Observed target-facing attacks lead this summary. Progress and storage details follow.</Text>
+      </div>
+      <div
+        className={styles.accountingSurface}
+        role="group"
+        aria-label={`${uniformEquation ? `${accounting.objectiveCount} ${accounting.objectiveCount === 1 ? 'objective' : 'objectives'} multiplied by ${accounting.uniformTargetAttacksPerObjective} ${observedAttackLabel} equals ` : ''}${accounting.attackAttempts} ${targetAttackLabel}. ${progress}. ${accounting.persistedAttempts} persisted result records${persistedBreakdown}. ${accounting.retries} actual retries.`}
+      >
+        <div className={styles.accountingEquation} aria-hidden="true">
+          {uniformEquation && (
+            <>
+              <AccountingOperand
+                value={String(accounting.objectiveCount)}
+                label={accounting.objectiveCount === 1 ? 'objective' : 'objectives'}
+              />
+              <Text size={500} weight="semibold" className={styles.accountingOperator}>×</Text>
+              <AccountingOperand
+                value={String(accounting.uniformTargetAttacksPerObjective)}
+                label={observedAttackLabel}
+              />
+              <Text size={500} weight="semibold" className={styles.accountingOperator}>=</Text>
+            </>
+          )}
+          <AccountingOperand
+            value={String(accounting.attackAttempts)}
+            label={targetAttackLabel}
+            result
+          />
+        </div>
+        {accounting.uniformTargetRoleCounts && (
+          <Text className={styles.accountingProvenance}>
+            Per objective: {formatRoleBreakdown(accounting.uniformTargetRoleCounts)}.
+          </Text>
+        )}
+        <Text className={styles.sectionHint}>
+          {progress} · {accounting.persistedAttempts} persisted result {accounting.persistedAttempts === 1 ? 'record' : 'records'}
+          {persistedBreakdown} · {accounting.retries} actual {accounting.retries === 1 ? 'retry' : 'retries'}
+        </Text>
+      </div>
+    </section>
+  )
+}
+
+interface AccountingOperandProps {
+  readonly value: string
+  readonly label: string
+  readonly result?: boolean
+}
+
+function AccountingOperand({ value, label, result = false }: AccountingOperandProps) {
+  const styles = useScenarioRunPageStyles()
+  return (
+    <span className={result ? styles.accountingResult : styles.accountingOperand}>
+      <Text size={600} weight="semibold" className={styles.metricValue}>{value}</Text>
+      <Text size={200}>{label}</Text>
+    </span>
+  )
+}
+
 interface ConfigurationItemProps {
   readonly label: string
   readonly value: string
@@ -845,6 +961,35 @@ function EmptyState({ text }: EmptyStateProps) {
 
 function formatRunState(status: string): string {
   return status.toLowerCase().replace('_', ' ').replace(/^\w/, (letter) => letter.toUpperCase())
+}
+
+function formatRoleBreakdown(counts: ReadonlyMap<ScenarioAttemptRole, number>): string {
+  const order: ScenarioAttemptRole[] = [
+    'direct_baseline',
+    'adaptive_technique',
+    'attack',
+    'adaptive_orchestration',
+    'aggregate_parent',
+    'unknown',
+  ]
+  return order.flatMap((role) => {
+    const count = counts.get(role) ?? 0
+    if (count === 0) {
+      return []
+    }
+    const label = role === 'direct_baseline'
+      ? count === 1 ? 'direct baseline' : 'direct baseline attacks'
+      : role === 'adaptive_technique'
+        ? `Adaptive ${count === 1 ? 'technique' : 'techniques'}`
+        : role === 'adaptive_orchestration'
+          ? `Adaptive orchestration ${count === 1 ? 'result' : 'results'}`
+          : role === 'aggregate_parent'
+            ? `aggregate parent ${count === 1 ? 'result' : 'results'}`
+          : role === 'attack'
+            ? count === 1 ? 'attack' : 'attacks'
+            : `additional persisted ${count === 1 ? 'result' : 'results'}`
+    return [`${count} ${label}`]
+  }).join(' + ')
 }
 
 function statusIcon(status: ScenarioRunState): React.ReactElement {
