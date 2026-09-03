@@ -48,6 +48,6 @@ describe('ConverterParams accessibility', () => {
 
     const keyInput = screen.getByRole('textbox', { name: 'key *' })
     expect(keyInput).toHaveAttribute('aria-invalid', 'true')
-    expect(keyInput).toHaveAccessibleDescription(expect.stringContaining('Required'))
+    expect(keyInput).toHaveAccessibleDescription(/Required/)
   })
 })
