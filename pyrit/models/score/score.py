@@ -114,7 +114,7 @@ class Score(BaseModel):
 
     # The full, versioned expectation this score was judged against (objective + conditions).
     # This is the durable record of what the score was scored for.
-    scored_expectation: ScoringExpectation | None = None
+    scored_expectation: ScoringExpectation | None = Field(default=None, frozen=True)
 
     # Derived, read-only compatibility view over ``scored_expectation.objective``. Existing
     # readers that expect a bare objective keep working; it is set from the expectation, and an
@@ -151,7 +151,7 @@ class Score(BaseModel):
         if expectation is None:
             if objective is not None:
                 data["scored_expectation"] = ScoringExpectation(objective=objective)
-        elif objective is not None:
+        else:
             if isinstance(expectation, ScoringExpectation):
                 expectation_objective = expectation.objective
             elif isinstance(expectation, dict):
@@ -163,6 +163,19 @@ class Score(BaseModel):
                     f"objective {objective!r} conflicts with scored_expectation.objective {expectation_objective!r}."
                 )
         return data
+
+    @field_validator("scored_expectation", mode="before")
+    @classmethod
+    def _load_scored_expectation(cls, value: Any) -> Any:
+        """
+        Rebuild a scored expectation from its persisted representation.
+
+        Returns:
+            Any: The validated expectation or the unchanged input.
+        """
+        if isinstance(value, dict):
+            return ScoringExpectation.model_validate_persisted(value)
+        return value
 
     @field_validator("score_metadata", mode="before")
     @classmethod

@@ -1140,8 +1140,8 @@ class ScoreEntry(Base):
     )
     prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
     timestamp = mapped_column(UTCDateTime, nullable=False)
-    # The full, versioned expectation this score was judged against (objective + conditions),
-    # serialized by ``scoring_expectation_to_dict``. Supersedes the legacy ``objective`` column.
+    # The full, versioned expectation this score was judged against (objective + conditions).
+    # Supersedes the legacy ``objective`` column.
     scored_expectation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Version of PyRIT used when this score was created
     # Nullable for backwards compatibility with existing databases
@@ -1211,7 +1211,9 @@ class ScoreEntry(Base):
             scorable=scorable_from_dict(self.scorable) if self.scorable else None,
             timestamp=self.timestamp,
             scored_expectation=(
-                ScoringExpectation.model_validate(self.scored_expectation) if self.scored_expectation else None
+                ScoringExpectation.model_validate_persisted(self.scored_expectation)
+                if self.scored_expectation
+                else None
             ),
         )
 

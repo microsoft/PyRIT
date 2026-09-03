@@ -297,9 +297,23 @@ def test_score_objective_is_read_only():
         score.objective = "obj-z"
 
 
+def test_score_scored_expectation_is_read_only():
+    score = _make_score(scored_expectation=ScoringExpectation(objective="obj-a"))
+
+    with pytest.raises(ValidationError):
+        score.scored_expectation = ScoringExpectation(objective="obj-z")
+
+    assert score.objective == "obj-a"
+
+
 def test_conflicting_objective_and_expectation_rejected():
     with pytest.raises(ValidationError, match="conflicts"):
         _make_score(objective="a", scored_expectation=ScoringExpectation(objective="b"))
+
+
+def test_explicit_null_objective_conflicting_with_expectation_rejected():
+    with pytest.raises(ValidationError, match="conflicts"):
+        _make_score(objective=None, scored_expectation=ScoringExpectation(objective="non-null"))
 
 
 def test_matching_objective_and_expectation_allowed():
@@ -322,6 +336,11 @@ def test_scored_expectation_round_trips_through_model_dump():
     restored = Score.model_validate(dumped)
     assert restored.scored_expectation == expectation
     assert restored.objective == "obj"
+
+
+def test_score_rejects_unversioned_persisted_expectation():
+    with pytest.raises(ValidationError, match="requires an explicit schema_version"):
+        _make_score(scored_expectation={"objective": "obj", "conditions": []})
 
 
 def test_model_validate_does_not_mutate_input_dict():

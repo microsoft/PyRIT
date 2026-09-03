@@ -15,10 +15,6 @@ class _KeywordCondition(Condition):
     keyword: str
 
 
-class _DefaultNameCondition(Condition):
-    threshold: float = 0.5
-
-
 def test_matches_objective_has_stable_discriminator():
     assert MatchesObjective().condition_type == "matches_objective"
     assert _CONDITION_TYPES["matches_objective"] is MatchesObjective
@@ -29,8 +25,30 @@ def test_explicit_discriminator_is_registered():
     assert _CONDITION_TYPES["test_keyword_condition"] is _KeywordCondition
 
 
-def test_discriminator_falls_back_to_class_name_without_field():
-    assert _CONDITION_TYPES["_DefaultNameCondition"] is _DefaultNameCondition
+def test_condition_subclass_requires_discriminator_field():
+    with pytest.raises(TypeError, match="single non-empty string Literal"):
+
+        class _MissingDiscriminatorCondition(Condition):
+            threshold: float = 0.5
+
+
+def test_condition_subclass_requires_single_literal_value():
+    with pytest.raises(TypeError, match="single non-empty string Literal"):
+
+        class _MultipleDiscriminatorCondition(Condition):
+            condition_type: Literal["first", "second"] = "first"
+
+
+def test_condition_subclass_requires_matching_literal_default():
+    with pytest.raises(TypeError, match="must default to its Literal value"):
+
+        class _MismatchedDiscriminatorCondition(Condition):
+            condition_type: Literal["expected"] = "different"  # type: ignore[assignment]
+
+
+def test_condition_base_cannot_be_instantiated():
+    with pytest.raises(ValidationError, match="abstract registry root"):
+        Condition(condition_type="base")
 
 
 def test_condition_is_frozen():
@@ -56,6 +74,17 @@ def test_condition_round_trip_preserves_subclass_fields():
 def test_condition_from_dict_rejects_unknown_type():
     with pytest.raises(ValueError, match="Unknown condition_type 'nope'"):
         condition_from_dict({"condition_type": "nope"})
+
+
+@pytest.mark.parametrize("value", [{}, {"condition_type": 1}])
+def test_condition_from_dict_rejects_missing_or_non_string_type(value):
+    with pytest.raises(ValueError, match="requires a string condition_type"):
+        condition_from_dict(value)
+
+
+def test_condition_from_dict_rejects_extra_fields():
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        condition_from_dict({"condition_type": "matches_objective", "unexpected": True})
 
 
 def test_matches_objective_instances_compare_equal():

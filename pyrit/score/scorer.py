@@ -349,7 +349,7 @@ class Scorer(Identifiable, abc.ABC):
         if expectation is None:
             return
         for score in scores:
-            score.scored_expectation = expectation
+            object.__setattr__(score, "scored_expectation", expectation)
             object.__setattr__(score, "objective", expectation.objective)
 
     def _validate_expectation(

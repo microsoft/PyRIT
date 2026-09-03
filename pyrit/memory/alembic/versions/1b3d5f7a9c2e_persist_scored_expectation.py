@@ -32,7 +32,7 @@ depends_on: str | Sequence[str] | None = None
 
 logger = logging.getLogger(__name__)
 
-#: Version stamped onto every backfilled expectation; matches ``ScoringExpectation.SCHEMA_VERSION``.
+#: Version stamped onto every backfilled expectation.
 _SCHEMA_VERSION = 1
 
 #: Rows per page so a large score table migrates in bounded keyset batches, not one statement.

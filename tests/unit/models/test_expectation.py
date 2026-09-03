@@ -76,7 +76,7 @@ def test_objective_only_round_trip():
     serialized = expectation.model_dump(mode="json")
 
     assert serialized == {"schema_version": 1, "objective": "do x", "conditions": []}
-    assert ScoringExpectation.model_validate(serialized) == expectation
+    assert ScoringExpectation.model_validate_persisted(serialized) == expectation
 
 
 def test_condition_only_round_trip():
@@ -89,13 +89,13 @@ def test_condition_only_round_trip():
         "objective": None,
         "conditions": [{"condition_type": "matches_objective"}],
     }
-    assert ScoringExpectation.model_validate(serialized) == expectation
+    assert ScoringExpectation.model_validate_persisted(serialized) == expectation
 
 
 def test_mixed_round_trip():
     expectation = ScoringExpectation(objective="do x", conditions=(MatchesObjective(),))
 
-    assert ScoringExpectation.model_validate(expectation.model_dump(mode="json")) == expectation
+    assert ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json")) == expectation
 
 
 def test_conditions_serialize_in_order():
@@ -107,12 +107,25 @@ def test_conditions_serialize_in_order():
         "test_expectation_alpha",
         "test_expectation_beta",
     ]
-    assert ScoringExpectation.model_validate(serialized) == expectation
+    assert ScoringExpectation.model_validate_persisted(serialized) == expectation
 
 
 def test_validate_rejects_unknown_schema_version():
     with pytest.raises(ValidationError, match="Unsupported ScoringExpectation schema_version"):
         ScoringExpectation.model_validate({"schema_version": 99, "objective": None, "conditions": []})
+
+
+@pytest.mark.parametrize("schema_version", ["1", 1.0, True])
+def test_validate_rejects_coerced_schema_version(schema_version):
+    with pytest.raises(ValidationError, match="Unsupported ScoringExpectation schema_version"):
+        ScoringExpectation.model_validate(
+            {"schema_version": schema_version, "objective": None, "conditions": []}
+        )
+
+
+def test_persisted_validation_requires_schema_version():
+    with pytest.raises(ValidationError, match="requires an explicit schema_version"):
+        ScoringExpectation.model_validate_persisted({"objective": None, "conditions": []})
 
 
 def test_validate_rejects_unknown_top_level_field():
@@ -140,6 +153,19 @@ def test_construction_rejects_non_string_objective():
 def test_construction_rejects_non_condition():
     with pytest.raises(ValidationError):
         ScoringExpectation(conditions=("not a condition",))  # type: ignore[arg-type]
+
+
+def test_json_schema_describes_registered_condition_subtypes():
+    condition_items = ScoringExpectation.model_json_schema()["properties"]["conditions"]["items"]
+
+    assert condition_items["discriminator"] == {"propertyName": "condition_type"}
+    condition_schemas = condition_items["oneOf"]
+    condition_types = {
+        schema["properties"]["condition_type"]["const"]: schema for schema in condition_schemas
+    }
+    assert "matches_objective" in condition_types
+    assert "test_expectation_beta" in condition_types
+    assert condition_types["test_expectation_beta"]["properties"]["label"]["type"] == "string"
 
 
 # --------------------------------------------------------------------------- #

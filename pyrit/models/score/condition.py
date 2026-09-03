@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 #: Maps each condition's stable discriminator to its type. A condition is persisted under
 #: its ``condition_type`` discriminator rather than its import path, so a stored score survives
@@ -26,7 +26,9 @@ class Condition(BaseModel):
     and carried in REST payloads, so the type survives serialization without its import path.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    condition_type: str
 
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
@@ -37,12 +39,25 @@ class Condition(BaseModel):
             **kwargs (Any): Forwarded to ``super().__pydantic_init_subclass__``.
 
         Raises:
+            TypeError: If the discriminator declaration is invalid.
             ValueError: If the discriminator already names a different condition.
         """
         super().__pydantic_init_subclass__(**kwargs)
         field = cls.model_fields.get("condition_type")
-        default = field.default if field is not None else None
-        discriminator = default if isinstance(default, str) and default else cls.__name__
+        literal_values = (
+            get_args(field.annotation)
+            if field is not None and get_origin(field.annotation) is Literal
+            else ()
+        )
+        if len(literal_values) != 1 or not isinstance(literal_values[0], str) or not literal_values[0]:
+            raise TypeError(
+                f"{cls.__name__}.condition_type must be a single non-empty string Literal with a matching default."
+            )
+        discriminator = literal_values[0]
+        if field.default != discriminator:
+            raise TypeError(
+                f"{cls.__name__}.condition_type must default to its Literal value {discriminator!r}."
+            )
         registered = _CONDITION_TYPES.get(discriminator)
         if registered is not None and registered is not cls:
             raise ValueError(
@@ -50,6 +65,21 @@ class Condition(BaseModel):
                 f"{registered.__name__}; give {cls.__name__} a distinct condition_type."
             )
         _CONDITION_TYPES[discriminator] = cls
+
+    @model_validator(mode="after")
+    def _reject_base_condition(self) -> Condition:
+        """
+        Reject the untyped registry root as a concrete condition.
+
+        Returns:
+            Condition: The validated concrete condition.
+
+        Raises:
+            ValueError: If the registry root is instantiated directly.
+        """
+        if type(self) is Condition:
+            raise ValueError("Condition is an abstract registry root and cannot be instantiated directly.")
+        return self
 
 
 class MatchesObjective(Condition):
@@ -75,9 +105,11 @@ def condition_from_dict(value: dict[str, Any]) -> Condition:
         Condition: The reconstructed condition.
 
     Raises:
-        ValueError: If the discriminator names no registered condition type.
+        ValueError: If the discriminator is missing, invalid, or names no registered condition type.
     """
-    discriminator = value["condition_type"]
+    discriminator = value.get("condition_type")
+    if not isinstance(discriminator, str):
+        raise ValueError("Condition requires a string condition_type discriminator.")
     condition_type = _CONDITION_TYPES.get(discriminator)
     if condition_type is None:
         raise ValueError(f"Unknown condition_type {discriminator!r}.")
