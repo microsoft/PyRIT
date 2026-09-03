@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, SerializeAsAny, TypeAdapter, field_validator, model_validator
 
-from pyrit.models.score.condition import _CONDITION_TYPES, Condition, condition_from_dict
+from pyrit.models.score.condition import _CONDITION_TYPES, Condition
 
 if TYPE_CHECKING:
     from pydantic import GetJsonSchemaHandler, ValidationInfo
@@ -107,7 +107,7 @@ class ScoringExpectation(BaseModel):
         """
         if value is None:
             return ()
-        return tuple(condition_from_dict(item) if isinstance(item, dict) else item for item in value)
+        return tuple(Condition.model_validate(item) if isinstance(item, dict) else item for item in value)
 
     @classmethod
     def model_validate_persisted(cls, value: Any) -> ScoringExpectation:

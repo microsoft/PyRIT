@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.models import Condition, MatchesObjective
-from pyrit.models.score.condition import _CONDITION_TYPES, condition_from_dict
+from pyrit.models.score.condition import _CONDITION_TYPES
 
 
 class _KeywordCondition(Condition):
@@ -68,23 +68,23 @@ def test_condition_round_trip_preserves_subclass_fields():
     serialized = condition.model_dump()
 
     assert serialized == {"condition_type": "test_keyword_condition", "keyword": "secret"}
-    assert condition_from_dict(serialized) == condition
+    assert Condition.model_validate(serialized) == condition
 
 
-def test_condition_from_dict_rejects_unknown_type():
+def test_condition_model_validate_rejects_unknown_type():
     with pytest.raises(ValueError, match="Unknown condition_type 'nope'"):
-        condition_from_dict({"condition_type": "nope"})
+        Condition.model_validate({"condition_type": "nope"})
 
 
 @pytest.mark.parametrize("value", [{}, {"condition_type": 1}])
-def test_condition_from_dict_rejects_missing_or_non_string_type(value):
+def test_condition_model_validate_rejects_missing_or_non_string_type(value):
     with pytest.raises(ValueError, match="requires a string condition_type"):
-        condition_from_dict(value)
+        Condition.model_validate(value)
 
 
-def test_condition_from_dict_rejects_extra_fields():
+def test_condition_model_validate_rejects_extra_fields():
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        condition_from_dict({"condition_type": "matches_objective", "unexpected": True})
+        Condition.model_validate({"condition_type": "matches_objective", "unexpected": True})
 
 
 def test_matches_objective_instances_compare_equal():

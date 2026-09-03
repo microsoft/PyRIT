@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, model_validator
+
+if TYPE_CHECKING:
+    from pydantic.config import ExtraValues
+    from typing_extensions import Self
 
 #: Maps each condition's stable discriminator to its type. A condition is persisted under
 #: its ``condition_type`` discriminator rather than its import path, so a stored score survives
@@ -81,6 +85,65 @@ class Condition(BaseModel):
             raise ValueError("Condition is an abstract registry root and cannot be instantiated directly.")
         return self
 
+    @classmethod
+    def model_validate(
+        cls,
+        obj: Any,
+        *,
+        strict: bool | None = None,
+        extra: ExtraValues | None = None,
+        from_attributes: bool | None = None,
+        context: Any | None = None,
+        by_alias: bool | None = None,
+        by_name: bool | None = None,
+    ) -> Self:
+        """
+        Validate a condition, dispatching the registry root to its concrete subtype.
+
+        Args:
+            obj (Any): The condition instance or discriminator-tagged representation.
+            strict (bool | None): Whether Pydantic uses strict validation.
+            extra (ExtraValues | None): How Pydantic handles extra fields.
+            from_attributes (bool | None): Whether Pydantic reads object attributes.
+            context (Any | None): Context supplied to Pydantic validators.
+            by_alias (bool | None): Whether Pydantic accepts field aliases.
+            by_name (bool | None): Whether Pydantic accepts field names.
+
+        Returns:
+            Self: The validated concrete condition.
+
+        Raises:
+            ValueError: If the abstract root receives an invalid or unknown discriminator.
+        """
+        if cls is Condition and isinstance(obj, dict):
+            discriminator = obj.get("condition_type")
+            if not isinstance(discriminator, str):
+                raise ValueError("Condition requires a string condition_type discriminator.")
+            condition_type = _CONDITION_TYPES.get(discriminator)
+            if condition_type is None:
+                raise ValueError(f"Unknown condition_type {discriminator!r}.")
+            return cast(
+                "Self",
+                condition_type.model_validate(
+                    obj,
+                    strict=strict,
+                    extra=extra,
+                    from_attributes=from_attributes,
+                    context=context,
+                    by_alias=by_alias,
+                    by_name=by_name,
+                ),
+            )
+        return super().model_validate(
+            obj,
+            strict=strict,
+            extra=extra,
+            from_attributes=from_attributes,
+            context=context,
+            by_alias=by_alias,
+            by_name=by_name,
+        )
+
 
 class MatchesObjective(Condition):
     """
@@ -92,25 +155,3 @@ class MatchesObjective(Condition):
     """
 
     condition_type: Literal["matches_objective"] = "matches_objective"
-
-
-def condition_from_dict(value: dict[str, Any]) -> Condition:
-    """
-    Rebuild a condition from its serialized, discriminator-tagged dict.
-
-    Args:
-        value (dict[str, Any]): A dict carrying ``condition_type`` and the condition's fields.
-
-    Returns:
-        Condition: The reconstructed condition.
-
-    Raises:
-        ValueError: If the discriminator is missing, invalid, or names no registered condition type.
-    """
-    discriminator = value.get("condition_type")
-    if not isinstance(discriminator, str):
-        raise ValueError("Condition requires a string condition_type discriminator.")
-    condition_type = _CONDITION_TYPES.get(discriminator)
-    if condition_type is None:
-        raise ValueError(f"Unknown condition_type {discriminator!r}.")
-    return condition_type.model_validate(value)
