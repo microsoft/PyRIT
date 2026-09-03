@@ -20,7 +20,12 @@ class UnicodeSubstitutionConverter(Converter):
 
         Args:
             start_value (int): The unicode starting point to use for encoding.
+
+        Raises:
+            ValueError: If ``start_value`` is outside the Unicode code point range.
         """
+        if not 0 <= start_value <= 0x10FFFF:
+            raise ValueError("start_value must be a valid Unicode code point between 0 and 0x10FFFF")
         self.startValue = start_value
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -49,10 +54,18 @@ class UnicodeSubstitutionConverter(Converter):
             ConverterResult: The result containing the converted output and its type.
 
         Raises:
-            ValueError: If the input type is not supported.
+            ValueError: If the input type is not supported or a substitution falls outside the Unicode range.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        ret_text = "".join(chr(self.startValue + ord(ch)) for ch in prompt)
-        return ConverterResult(output_text=ret_text, output_type="text")
+        output_chars: list[str] = []
+        for char in prompt:
+            code_point = self.startValue + ord(char)
+            if code_point > 0x10FFFF:
+                raise ValueError(
+                    f"Unicode substitution for character {char!r} exceeds the maximum code point U+10FFFF"
+                )
+            output_chars.append(chr(code_point))
+
+        return ConverterResult(output_text="".join(output_chars), output_type="text")
