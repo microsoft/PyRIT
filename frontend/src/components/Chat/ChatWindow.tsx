@@ -30,7 +30,13 @@ import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
 import ObjectiveHeader from './ObjectiveHeader'
 import type { PieceConversion } from './converterTypes'
-import { PIECE_TYPE_TO_DATA_TYPE, basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from './converterTypes'
+import {
+  basenameFromValue,
+  buildMediaUrl,
+  buildRequestConverterConfigurations,
+  dataTypeToAttachmentKind,
+  isPathDataType,
+} from './converterTypes'
 import LabelsBar from '../Labels/LabelsBar'
 import type { ChatInputAreaHandle } from './ChatInputArea'
 import { attacksApi, scoresApi } from '../../services/api'
@@ -643,18 +649,13 @@ export default function ChatWindow({
       const pieces = await buildMessagePieces(originalValue, attachments)
 
       // Send converter selections to the backend and let it apply conversions per piece.
-      // Avoid setting converted_value client-side because one preview value does not
+      // Avoid setting converted_value client-side because one converted value does not
       // necessarily correspond to every piece of the same data type, and any locally
-      // preconverted piece may cause the backend to skip converter_ids entirely.
-      const allConverterIds: string[] = []
-      for (const [pieceType, conv] of Object.entries(conversions)) {
-        const dataType = PIECE_TYPE_TO_DATA_TYPE[pieceType]
-        if (!dataType) continue
-        const hasMatchingPiece = pieces.some(piece => piece.data_type === dataType)
-        if (hasMatchingPiece) {
-          allConverterIds.push(conv.converterInstanceId)
-        }
-      }
+      // preconverted piece may cause the backend to skip the configuration entirely.
+      const requestConverterConfigurations = buildRequestConverterConfigurations(
+        pieces,
+        conversions,
+      )
 
       // Create attack lazily on first message
       let currentAttackResultId = attackResultId
@@ -701,7 +702,6 @@ export default function ChatWindow({
       const effectiveConvId = currentActiveConversationId ?? currentConversationId
 
       // Send message to target
-      const converterIds = allConverterIds.length > 0 ? allConverterIds : undefined
       if (!currentAttackResultId || !effectiveConvId) {
         throw new Error('Message send is missing an attack or conversation ID.')
       }
@@ -711,7 +711,9 @@ export default function ChatWindow({
         send: true,
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId,
-        converter_ids: converterIds,
+        request_converter_configurations: requestConverterConfigurations.length > 0
+          ? requestConverterConfigurations
+          : undefined,
       }
       const response = await attacksApi.addMessage(currentAttackResultId, addMessageRequest)
       onAttackChange?.(response.attack)
@@ -1222,8 +1224,13 @@ export default function ChatWindow({
           previewText={chatInputText}
           attachmentData={attachmentData}
           activeInputTypes={chatInputText.trim() ? ['text', ...attachmentTypes] : attachmentTypes}
-          onUseConvertedValue={(conversion) => {
-            setPieceConversions((prev) => ({ ...prev, [conversion.pieceType]: conversion }))
+          onUseConvertedValues={(conversions) => {
+            setPieceConversions((current) => ({
+              ...current,
+              ...Object.fromEntries(
+                conversions.map((conversion) => [conversion.pieceType, conversion]),
+              ),
+            }))
           }}
         />
       )}
@@ -1409,7 +1416,7 @@ export default function ChatWindow({
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           noTargetSelected={!activeTarget}
-          onConfigureTarget={() => onNavigate?.('targets')}
+          onConfigureTarget={() => onNavigate?.('registry')}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={setChatInputText}

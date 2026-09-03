@@ -251,7 +251,7 @@ export interface ConverterListResponse {
 }
 
 export interface CreateConverterRequest {
-  name?: string
+  name: string
   type: string
   params?: Record<string, unknown>
 }
@@ -281,19 +281,38 @@ export interface ConverterTypeListResponse {
   items: ConverterTypeEntry[]
 }
 
-/** Temporary compatibility names used by the existing chat converter panel. */
-export type ConverterCatalogEntry = ConverterTypeEntry
-export type ConverterCatalogResponse = ConverterTypeListResponse
+export interface ConverterPreviewRequest {
+  original_value: string
+  converter_ids: string[]
+  original_value_data_type?: string
+}
 
-export interface TargetCatalogEntry {
+/** One converter stage of a `/converters/preview` pipeline run. */
+export interface ConverterPreviewStep {  converter_id: string
+  converter_type: string
+  input_value: string
+  input_data_type: string
+  output_value: string
+  output_data_type: string
+}
+
+export interface ConverterPreviewResponse {
+  original_value: string
+  original_value_data_type: string
+  converted_value: string
+  converted_value_data_type: string
+  steps: ConverterPreviewStep[]
+}
+
+export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
   supported_auth_modes: ('api_key' | 'identity')[]
   description?: string | null
 }
 
-export interface TargetCatalogResponse {
-  items: TargetCatalogEntry[]
+export interface TargetTypeListResponse {
+  items: TargetTypeEntry[]
 }
 
 // --- Attacks ---
@@ -469,12 +488,25 @@ export interface PrependedMessageRequest {
   pieces: MessagePieceRequest[]
 }
 
+/**
+ * Ordered converter stack applied to specific pieces of a message.
+ * `indexes_to_apply` targets exact piece indexes; `prompt_data_types_to_apply`
+ * targets every piece of the listed data types.
+ */
+export interface ConverterConfigurationRequest {
+  converter_ids: string[]
+  indexes_to_apply?: number[]
+  prompt_data_types_to_apply?: string[]
+}
+
 export interface AddMessageRequest {
   role: string
   pieces: MessagePieceRequest[]
   send: boolean
   target_registry_name?: string
   converter_ids?: string[]
+  request_converter_configurations?: ConverterConfigurationRequest[]
+  response_converter_configurations?: ConverterConfigurationRequest[]
   target_conversation_id: string
 }
 

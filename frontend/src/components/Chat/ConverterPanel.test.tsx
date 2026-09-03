@@ -1,858 +1,527 @@
-import React from 'react'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+
+import { convertersApi } from '@/services/api'
+import type { ConverterInstance } from '@/types'
+
 import ConverterPanel from './ConverterPanel'
-import { convertersApi } from '../../services/api'
-import type { ConverterCatalogResponse } from '../../types'
 
-jest.setTimeout(60000)
-
-jest.mock('../../services/api', () => ({
+jest.mock('@/services/api', () => ({
   convertersApi: {
-    listConverterCatalog: jest.fn(),
+    listConverters: jest.fn(),
     createConverter: jest.fn(),
     previewConversion: jest.fn(),
   },
 }))
 
+jest.mock('@/components/Registry/CreateConverterDialog', () => ({
+  __esModule: true,
+  default: ({
+    open,
+    onCreated,
+  }: {
+    open: boolean
+    onCreated: (converterId: string) => void
+  }) => open
+    ? <button onClick={() => onCreated('new-converter')}>Complete converter creation</button>
+    : null,
+}))
+
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>
 
-const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
-)
-
-const MOCK_CATALOG = {
-  items: [
-    {
-      converter_type: 'Base64Converter',
-      supported_input_types: ['text'],
-      supported_output_types: ['text'],
-      parameters: [],
-      is_llm_based: false,
-      description: 'Encodes text to base64.',
+function makeConverter(
+  converterId: string,
+  className = 'Base64Converter',
+  inputTypes = ['text'],
+  outputTypes = ['text'],
+  isLlmBased = false,
+  description = `Description for ${className}.`,
+): ConverterInstance {
+  return {
+    converter_id: converterId,
+    identifier: {
+      class_name: className,
+      class_module: `pyrit.converter.${className}`,
+      hash: `${converterId}-hash`,
+      pyrit_version: '0.0.0',
+      supported_input_types: inputTypes,
+      supported_output_types: outputTypes,
     },
-    {
-      converter_type: 'CaesarConverter',
-      supported_input_types: ['text'],
-      supported_output_types: ['text'],
-      parameters: [
-        { name: 'caesar_offset', type_name: 'int', required: true, default: null, choices: null, description: 'Offset value.' },
-      ],
-      is_llm_based: false,
-      description: 'Caesar cipher encoding.',
-    },
-    {
-      converter_type: 'TranslationConverter',
-      supported_input_types: ['text'],
-      supported_output_types: ['text'],
-      parameters: [],
-      is_llm_based: true,
-      description: 'Translates text using LLM.',
-    },
-    {
-      converter_type: 'ImageCompressor',
-      supported_input_types: ['image_path'],
-      supported_output_types: ['image_path'],
-      parameters: [],
-      is_llm_based: false,
-      description: 'Compresses images.',
-    },
-    {
-      converter_type: 'BoolConverter',
-      supported_input_types: ['text'],
-      supported_output_types: ['text'],
-      parameters: [
-        { name: 'uppercase', type_name: 'bool', required: false, default: 'false', choices: null, description: 'Use uppercase.' },
-      ],
-      is_llm_based: false,
-      description: 'Bool param test.',
-    },
-    {
-      converter_type: 'ChoiceConverter',
-      supported_input_types: ['text'],
-      supported_output_types: ['text'],
-      parameters: [
-        { name: 'mode', type_name: 'str', required: false, default: 'fast', choices: ['fast', 'slow'], description: 'Speed mode.' },
-      ],
-      is_llm_based: false,
-      description: 'Choice param test.',
-    },
-    {
-      converter_type: 'FileParamConverter',
-      supported_input_types: ['text'],
-      supported_output_types: ['text'],
-      parameters: [
-        { name: 'template_file_path', type_name: 'str', required: false, default: null, choices: null, description: 'Path to template.' },
-      ],
-      is_llm_based: false,
-      description: 'File path param test.',
-    },
-  ],
+    is_llm_based: isLlmBased,
+    description,
+  }
 }
 
-function renderPanel(props: Partial<React.ComponentProps<typeof ConverterPanel>> = {}) {
-  const defaultProps = {
-    onClose: jest.fn(),
-    previewText: '',
-    attachmentData: {},
-    activeInputTypes: ['text'],
-    onUseConvertedValue: jest.fn(),
-  }
+const textConverter = makeConverter('base64-default')
+const imageConverter = makeConverter(
+  'image-compressor',
+  'ImageCompressionConverter',
+  ['image_path'],
+  ['image_path'],
+)
+
+function renderPanel(
+  props: Partial<React.ComponentProps<typeof ConverterPanel>> = {},
+) {
   return render(
-    <TestWrapper>
-      <ConverterPanel {...defaultProps} {...props} />
-    </TestWrapper>,
+    <FluentProvider theme={webLightTheme}>
+      <ConverterPanel
+        onClose={jest.fn()}
+        previewText=""
+        attachmentData={{}}
+        activeInputTypes={['text']}
+        onUseConvertedValues={jest.fn()}
+        {...props}
+      />
+    </FluentProvider>,
   )
 }
 
-async function waitForList() {
-  await waitFor(() => expect(screen.getByTestId('converter-panel-list')).toBeInTheDocument())
+async function selectConverter(converterId: string) {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('combobox'))
+  await user.click(await screen.findByTestId(`converter-option-${converterId}`))
 }
 
-function getComboboxInput(): HTMLElement {
-  const combobox = screen.getByTestId('converter-panel-select')
-  const input = combobox.querySelector('input')
-  return input ?? combobox
+function makePreviewResponse(
+  converterIds: string[],
+  outputs: string[],
+  originalValue = 'hello',
+) {
+  const steps = converterIds.map((converterId, index) => ({
+    converter_id: converterId,
+    converter_type: index === 0 ? 'Base64Converter' : 'SuffixAppendConverter',
+    input_value: index === 0 ? originalValue : outputs[index - 1],
+    input_data_type: 'text',
+    output_value: outputs[index],
+    output_data_type: 'text',
+  }))
+  return {
+    original_value: originalValue,
+    original_value_data_type: 'text',
+    converted_value: outputs.at(-1) ?? '',
+    converted_value_data_type: 'text',
+    steps,
+  }
 }
 
-async function openComboboxAndSelect(converterType: string) {
-  fireEvent.click(getComboboxInput())
-  await waitFor(() => expect(screen.getByTestId(`converter-option-${converterType}`)).toBeInTheDocument())
-  fireEvent.click(screen.getByTestId(`converter-option-${converterType}`))
-  await waitFor(() => expect(screen.getByTestId(`converter-item-${converterType}`)).toBeInTheDocument())
-}
+describe('ConverterPanel', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [textConverter] })
+  })
 
-beforeEach(() => {
-  jest.clearAllMocks()
-  mockedConvertersApi.listConverterCatalog.mockResolvedValue(MOCK_CATALOG as ConverterCatalogResponse)
-})
-
-// ─── Loading & Error ──────────────────────────────────────────────
-
-describe('ConverterPanel loading', () => {
-  it('shows loading spinner then renders converter list on success', async () => {
+  it('loads registered converter instances', async () => {
     renderPanel()
-    expect(screen.getByTestId('converter-panel-loading')).toBeVisible()
-    await waitForList()
+
+    expect(screen.getByTestId('converter-panel-loading')).toBeInTheDocument()
+    await screen.findByTestId('converter-panel-list')
+
+    expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('converter-panel-loading')).not.toBeInTheDocument()
   })
 
-  it('shows error message when catalog load fails', async () => {
-    mockedConvertersApi.listConverterCatalog.mockRejectedValueOnce(new Error('Network fail'))
-    renderPanel()
-    await waitFor(() => expect(screen.getByTestId('converter-panel-error')).toBeVisible())
-  })
-
-  it('shows empty state when catalog returns no items', async () => {
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce({ items: [] })
-    renderPanel()
-    await waitFor(() => expect(screen.getByTestId('converter-panel-empty')).toBeInTheDocument())
-  })
-
-  it('hides base/helper converters that should not be offered', async () => {
-    const catalogWithHidden = {
-      items: [
-        ...MOCK_CATALOG.items,
-        {
-          converter_type: 'SelectiveTextConverter',
-          supported_input_types: ['text'],
-          supported_output_types: ['text'],
-          parameters: [],
-          is_llm_based: false,
-          description: 'Base/helper converter.',
-        },
-      ],
-    }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogWithHidden as ConverterCatalogResponse)
-    renderPanel()
-    await waitForList()
-
-    fireEvent.click(getComboboxInput())
-    await waitFor(() => expect(screen.getByTestId('converter-option-Base64Converter')).toBeInTheDocument())
-    expect(screen.queryByTestId('converter-option-SelectiveTextConverter')).not.toBeInTheDocument()
-  })
-})
-
-// ─── Close button ────────────────────────────────────────────────
-
-describe('ConverterPanel close', () => {
-  it('calls onClose when close button is clicked', async () => {
-    const onClose = jest.fn()
-    renderPanel({ onClose })
-    await waitForList()
-    fireEvent.click(screen.getByTestId('close-converter-panel-btn'))
-    expect(onClose).toHaveBeenCalledTimes(1)
-  })
-})
-
-// ─── Tabs ─────────────────────────────────────────────────────────
-
-describe('ConverterPanel tabs', () => {
-  it('does not show tabs when only text type', async () => {
-    renderPanel({ activeInputTypes: ['text'] })
-    await waitForList()
-    expect(screen.queryByTestId('converter-piece-tabs')).not.toBeInTheDocument()
-  })
-
-  it('shows tabs for multiple input types', async () => {
-    renderPanel({ activeInputTypes: ['text', 'image'] })
-    await waitForList()
-    expect(screen.getByTestId('converter-piece-tabs')).toBeInTheDocument()
-    expect(screen.getByTestId('converter-tab-text')).toBeInTheDocument()
-    expect(screen.getByTestId('converter-tab-image')).toBeInTheDocument()
-  })
-
-  it('switches tab and resets state', async () => {
-    renderPanel({
-      previewText: 'hello',
-      activeInputTypes: ['text', 'image'],
-      attachmentData: { image: '/path/to/img.png' },
-    })
-    await waitForList()
-    fireEvent.click(screen.getByTestId('converter-tab-image'))
-    await waitFor(() => expect(screen.getByTestId('converter-panel-list')).toBeInTheDocument())
-  })
-
-  it('resets to text tab when active tab is removed', async () => {
-    const onClose = jest.fn()
-    const { rerender } = render(
-      <TestWrapper>
-        <ConverterPanel
-          onClose={onClose}
-          previewText=""
-          activeInputTypes={['text', 'image']}
-          onUseConvertedValue={jest.fn()}
-        />
-      </TestWrapper>,
-    )
-    await waitFor(() => expect(screen.getByTestId('converter-piece-tabs')).toBeInTheDocument())
-
-    fireEvent.click(screen.getByTestId('converter-tab-image'))
-
-    rerender(
-      <TestWrapper>
-        <ConverterPanel
-          onClose={onClose}
-          previewText=""
-          activeInputTypes={['text']}
-          onUseConvertedValue={jest.fn()}
-        />
-      </TestWrapper>,
-    )
-    await waitFor(() => expect(screen.queryByTestId('converter-piece-tabs')).not.toBeInTheDocument())
-  })
-})
-
-// ─── Converter selection & filtering ─────────────────────────────
-
-describe('ConverterPanel converter selection', () => {
-  it('shows converter card when a converter is selected', async () => {
+  it('shows each converter name once and makes its full header draggable', async () => {
+    const atbashConverter = makeConverter('AtBashConverter', 'AtBashConverter')
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [atbashConverter] })
     renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('Base64Converter')
-    expect(screen.getByTestId('converter-item-Base64Converter')).toBeInTheDocument()
+    await screen.findByTestId('converter-panel-list')
+
+    await selectConverter('AtBashConverter')
+
+    const card = screen.getByTestId('converter-item-AtBashConverter')
+    expect(within(card).getAllByText('AtBashConverter')).toHaveLength(1)
+    expect(screen.getByTestId('converter-drag-area-0')).toHaveAttribute('draggable', 'true')
+    expect(screen.getByRole('button', { name: 'Convert' })).toBeInTheDocument()
   })
 
-  it('filters converters by query string typed into combobox', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
+  it('shows the registry error', async () => {
+    mockedConvertersApi.listConverters.mockRejectedValue(new Error('Registry unavailable'))
+    renderPanel()
 
-    const input = getComboboxInput()
-    fireEvent.click(input)
-    fireEvent.change(input, { target: { value: 'Caesar' } })
-
-    await waitFor(() => {
-      expect(screen.getByTestId('converter-option-CaesarConverter')).toBeInTheDocument()
-      expect(screen.queryByTestId('converter-option-Base64Converter')).not.toBeInTheDocument()
-    })
-  })
-})
-
-// ─── Parameters ──────────────────────────────────────────────────
-
-describe('ConverterPanel parameters', () => {
-  it('renders text input for regular params and shows required validation', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('CaesarConverter')
-
-    expect(screen.getByTestId('converter-params')).toBeInTheDocument()
-    const paramEl = screen.getByTestId('param-caesar_offset')
-    expect(paramEl).toBeInTheDocument()
-
-    // Find the actual input — may be the element itself or a child
-    const paramInput = paramEl.tagName === 'INPUT' ? paramEl : paramEl.querySelector('input')
-    if (paramInput) {
-      fireEvent.change(paramInput, { target: { value: '3' } })
-      fireEvent.change(paramInput, { target: { value: '' } })
-    }
-
-    fireEvent.click(screen.getByTestId('converter-preview-btn'))
-    await waitFor(() => expect(screen.getByText('Required')).toBeInTheDocument())
+    expect(await screen.findByTestId('converter-panel-error')).toBeInTheDocument()
   })
 
-  it('renders bool switch param and toggles', async () => {
+  it('shows the input as a non-editable display and only add actions before selection', async () => {
     const user = userEvent.setup()
     renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('BoolConverter')
 
-    const switchEl = screen.getByTestId('param-uppercase')
-    expect(switchEl).toBeInTheDocument()
-    // Toggle the switch on — use userEvent to properly trigger Fluent UI onChange (line 414)
-    await user.click(switchEl)
-    await waitFor(() => expect(screen.getByText('True')).toBeInTheDocument())
-  })
+    await screen.findByTestId('converter-panel-list')
 
-  it('renders select dropdown for choice params', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('ChoiceConverter')
+    expect(screen.getByTestId('converter-input-value')).toHaveTextContent('hello')
+    expect(screen.getByTestId('converter-input-value').querySelector('textarea')).toBeNull()
+    expect(screen.getByText('Input - Text')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-panel-select')).toHaveTextContent('Add converter...')
+    expect(screen.queryByTestId('converter-preview-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-preview-result')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
 
-    const select = screen.getByTestId('param-mode')
-    expect(select).toBeInTheDocument()
-    fireEvent.change(select, { target: { value: 'slow' } })
-  })
-
-  it('renders file picker for path params and allows text input', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('FileParamConverter')
-
-    expect(screen.getByTestId('param-template_file_path')).toBeInTheDocument()
-    expect(screen.getByTestId('param-template_file_path-browse')).toBeInTheDocument()
-    // Type into the file path input to trigger onChange (line 439)
-    const paramEl = screen.getByTestId('param-template_file_path')
-    const paramInput = paramEl.tagName === 'INPUT' ? paramEl : paramEl.querySelector('input')
-    if (paramInput) {
-      fireEvent.change(paramInput, { target: { value: '/some/path.txt' } })
-    }
-  })
-
-  it('collapses/expands params section', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('CaesarConverter')
-
-    expect(screen.getByTestId('converter-params')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('toggle-params-btn'))
-    expect(screen.queryByTestId('param-caesar_offset')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('toggle-params-btn'))
-    expect(screen.getByTestId('param-caesar_offset')).toBeInTheDocument()
-  })
-})
-
-// ─── Preview ─────────────────────────────────────────────────────
-
-describe('ConverterPanel preview', () => {
-  it('runs preview and shows text output', async () => {
-    mockedConvertersApi.createConverter.mockResolvedValue({ converter_id: 'conv-1', converter_type: 'Base64Converter' })
-    mockedConvertersApi.previewConversion.mockResolvedValue({ converted_value: 'aGVsbG8=' })
-
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('Base64Converter')
-
-    fireEvent.click(screen.getByTestId('converter-preview-btn'))
-    await waitFor(() => expect(screen.getByTestId('converter-preview-result')).toHaveTextContent('aGVsbG8='))
-    expect(screen.getByTestId('use-converted-btn')).toBeInTheDocument()
-  })
-
-  it('shows error when preview fails', async () => {
-    mockedConvertersApi.createConverter.mockRejectedValue(new Error('Server error'))
-
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    // Use LLM-based converter to avoid auto-preview consuming the mock
-    await openComboboxAndSelect('TranslationConverter')
-
-    fireEvent.click(screen.getByTestId('converter-preview-btn'))
-    await waitFor(() => expect(screen.getByTestId('converter-preview-error')).toBeInTheDocument())
-  })
-
-  it('preview button is disabled when previewText is empty', async () => {
-    renderPanel({ previewText: '' })
-    await waitForList()
-    await openComboboxAndSelect('Base64Converter')
-    expect(screen.getByTestId('converter-preview-btn')).toBeDisabled()
-  })
-
-  it('handlePreview returns early when preview value is empty', async () => {
-    renderPanel({ previewText: '  ' })
-    await waitForList()
-    await openComboboxAndSelect('Base64Converter')
-    // Button should be disabled since trimmed text is empty
-    expect(screen.getByTestId('converter-preview-btn')).toBeDisabled()
-  })
-
-  it('preview button is disabled when no converter is selected', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    expect(screen.getByTestId('converter-preview-btn')).toBeDisabled()
-  })
-
-  it('blocks preview with missing required params and shows validation', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('CaesarConverter')
-
-    fireEvent.click(screen.getByTestId('converter-preview-btn'))
-    await waitFor(() => expect(screen.getByText('Required')).toBeInTheDocument())
-    expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
-  })
-
-  it('shows hint when no preview text on text tab', async () => {
-    renderPanel({ previewText: '' })
-    await waitForList()
-    expect(screen.getByText('Type in the chat input box to preview a conversion.')).toBeInTheDocument()
-  })
-
-  it('shows hint when no attachment on non-text tab', async () => {
-    renderPanel({ previewText: '', activeInputTypes: ['text', 'image'], attachmentData: {} })
-    await waitForList()
-    fireEvent.click(screen.getByTestId('converter-tab-image'))
-    await waitFor(() =>
-      expect(screen.getByText('Attach a image file to preview a conversion.')).toBeInTheDocument()
+    await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
+    const options = screen.getAllByRole('option')
+    expect(options[0]).toHaveTextContent('New converter')
+    expect(screen.getByTestId('converter-option-base64-default')).toHaveTextContent(
+      'Description for Base64Converter.',
     )
   })
-})
 
-// ─── Use Converted Value ─────────────────────────────────────────
+  it('shows the create action first when no converters are registered', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [] })
+    const user = userEvent.setup()
+    renderPanel()
 
-describe('ConverterPanel use converted value', () => {
-  it('calls onUseConvertedValue with correct data', async () => {
-    const onUseConvertedValue = jest.fn()
-    mockedConvertersApi.createConverter.mockResolvedValue({ converter_id: 'conv-1', converter_type: 'Base64Converter' })
-    mockedConvertersApi.previewConversion.mockResolvedValue({ converted_value: 'aGVsbG8=' })
+    await screen.findByTestId('converter-panel-list')
+    await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
+    await user.click(screen.getByTestId('create-converter-option'))
 
-    renderPanel({ previewText: 'hello', onUseConvertedValue })
-    await waitForList()
-    await openComboboxAndSelect('Base64Converter')
+    expect(screen.getByRole('button', { name: 'Complete converter creation' })).toBeInTheDocument()
+  })
 
-    fireEvent.click(screen.getByTestId('converter-preview-btn'))
-    await waitFor(() => expect(screen.getByTestId('converter-preview-result')).toBeInTheDocument())
-
-    fireEvent.click(screen.getByTestId('use-converted-btn'))
-    expect(onUseConvertedValue).toHaveBeenCalledWith({
-      pieceType: 'text',
-      converterInstanceId: 'conv-1',
-      convertedValue: 'aGVsbG8=',
-      originalValue: 'hello',
-      convertedDataType: 'text',
+  it('filters registered instances by active input type', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [textConverter, imageConverter],
     })
-  })
-})
-
-// ─── Auto-preview ────────────────────────────────────────────────
-
-describe('ConverterPanel auto-preview', () => {
-  it('auto-previews for non-LLM converters after delay', async () => {
-    jest.useFakeTimers()
-    mockedConvertersApi.createConverter.mockResolvedValue({ converter_id: 'conv-auto', converter_type: 'Base64Converter' })
-    mockedConvertersApi.previewConversion.mockResolvedValue({ converted_value: 'auto-result' })
-
-    renderPanel({ previewText: 'hello' })
-    // flush the initial load
-    await act(async () => { jest.advanceTimersByTime(100) })
-
-    fireEvent.click(getComboboxInput())
-    await act(async () => { jest.advanceTimersByTime(100) })
-    fireEvent.click(screen.getByTestId('converter-option-Base64Converter'))
-
-    // Auto-preview fires after 300ms timer
-    await act(async () => { jest.advanceTimersByTime(350) })
-
-    expect(mockedConvertersApi.createConverter).toHaveBeenCalled()
-    jest.useRealTimers()
-  })
-
-  it('does NOT auto-preview for LLM-based converters', async () => {
-    jest.useFakeTimers()
-    renderPanel({ previewText: 'hello' })
-    await act(async () => { jest.advanceTimersByTime(100) })
-
-    fireEvent.click(getComboboxInput())
-    await act(async () => { jest.advanceTimersByTime(100) })
-    fireEvent.click(screen.getByTestId('converter-option-TranslationConverter'))
-    await act(async () => { jest.advanceTimersByTime(500) })
-
-    expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
-    jest.useRealTimers()
-  })
-
-  it('clears auto-preview timer on unmount', async () => {
-    jest.useFakeTimers()
-    const { unmount } = renderPanel({ previewText: 'hello' })
-    await act(async () => { jest.advanceTimersByTime(100) })
-
-    fireEvent.click(getComboboxInput())
-    await act(async () => { jest.advanceTimersByTime(100) })
-    fireEvent.click(screen.getByTestId('converter-option-Base64Converter'))
-
-    unmount()
-    // Should not throw — timer was cleaned up
-    await act(async () => { jest.advanceTimersByTime(500) })
-    jest.useRealTimers()
-  })
-})
-
-// ─── Grouped converters ──────────────────────────────────────────
-
-describe('ConverterPanel grouped converters', () => {
-  it('groups converters by output type in the dropdown', async () => {
+    const user = userEvent.setup()
     renderPanel({ activeInputTypes: ['text', 'image'] })
-    await waitForList()
+    await screen.findByTestId('converter-panel-list')
 
-    fireEvent.click(screen.getByTestId('converter-tab-image'))
-    await waitFor(() => expect(screen.getByTestId('converter-panel-list')).toBeInTheDocument())
+    await user.click(screen.getByRole('combobox'))
+    expect(screen.getByTestId('converter-option-base64-default')).toBeInTheDocument()
+    expect(screen.queryByTestId('converter-option-image-compressor')).not.toBeInTheDocument()
 
-    fireEvent.click(getComboboxInput())
-    await waitFor(() =>
-      expect(screen.getByTestId('converter-option-ImageCompressor')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByTestId('converter-tab-image'))
+    await user.click(screen.getByRole('combobox'))
+    expect(screen.getByTestId('converter-option-image-compressor')).toBeInTheDocument()
+    expect(screen.queryByTestId('converter-option-base64-default')).not.toBeInTheDocument()
+  })
+
+  it('converts with the selected registry ID and does not create an instance', async () => {
+    mockedConvertersApi.previewConversion.mockResolvedValue(
+      makePreviewResponse(['base64-default'], ['aGVsbG8=']),
     )
-  })
-})
-
-// ─── Preview output types (image, audio, video) ─────────────────
-
-describe('ConverterPanel output rendering', () => {
-  async function previewWithOutput(output: string, outputType: string = 'text') {
-    mockedConvertersApi.createConverter.mockResolvedValue({ converter_id: 'conv-1', converter_type: 'Base64Converter' })
-    mockedConvertersApi.previewConversion.mockResolvedValue({ converted_value: output, converted_value_data_type: outputType })
-
+    const user = userEvent.setup()
     renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('Base64Converter')
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await user.click(screen.getByTestId('converter-preview-btn'))
 
-    fireEvent.click(screen.getByTestId('converter-preview-btn'))
-    await waitFor(() => expect(screen.getByTestId('converter-preview-result')).toBeInTheDocument())
-  }
-
-  it('renders image output for image_path data type', async () => {
-    await previewWithOutput('/output/result.png', 'image_path')
-    expect((screen.getByTestId('converter-preview-result') as HTMLElement).tagName).toBe('IMG')
-  })
-
-  it('renders audio output for audio_path data type', async () => {
-    await previewWithOutput('/output/result.wav', 'audio_path')
-    expect((screen.getByTestId('converter-preview-result') as HTMLElement).tagName).toBe('AUDIO')
-  })
-
-  it('renders video output for video_path data type', async () => {
-    await previewWithOutput('/output/result.mp4', 'video_path')
-    expect((screen.getByTestId('converter-preview-result') as HTMLElement).tagName).toBe('VIDEO')
-  })
-
-  it('renders text output for plain text', async () => {
-    await previewWithOutput('plain text output', 'text')
-    expect((screen.getByTestId('converter-preview-result') as HTMLElement).tagName).toBe('PRE')
-  })
-
-  it('renders binary file output as a chip with Open link for binary_path data type', async () => {
-    await previewWithOutput('/tmp/out.pdf', 'binary_path')
-    const result = screen.getByTestId('converter-preview-result') as HTMLElement
-    expect(result.tagName).toBe('DIV')
-    expect(result).toHaveTextContent('out.pdf')
-    expect(screen.getByTestId('converter-preview-open')).toHaveAttribute('href', '/api/media?path=%2Ftmp%2Fout.pdf')
-  })
-})
-
-// ─── Resize handle ───────────────────────────────────────────────
-
-describe('ConverterPanel resize handle', () => {
-  it('renders the resize handle', async () => {
-    renderPanel()
-    await waitForList()
-    expect(screen.getByTestId('converter-panel-resize')).toBeInTheDocument()
-  })
-
-  it('sets cursor on mousedown and clears on mouseup', async () => {
-    renderPanel()
-    await waitForList()
-    const handle = screen.getByTestId('converter-panel-resize')
-    fireEvent.mouseDown(handle)
-    expect(document.body.style.cursor).toBe('col-resize')
-    // Simulate mousemove during drag
-    fireEvent.mouseMove(document, { clientX: 400 })
-    fireEvent.mouseUp(document)
-    expect(document.body.style.cursor).toBe('')
-  })
-
-  it('does not resize when not dragging', async () => {
-    renderPanel()
-    await waitForList()
-    // Mousemove without prior mousedown should be no-op
-    fireEvent.mouseMove(document, { clientX: 400 })
-    fireEvent.mouseUp(document)
-  })
-})
-
-// ─── Attachment tab preview ──────────────────────────────────────
-
-describe('ConverterPanel attachment preview', () => {
-  it('uses attachment data for preview on non-text tab', async () => {
-    mockedConvertersApi.createConverter.mockResolvedValue({ converter_id: 'conv-img', converter_type: 'ImageCompressor' })
-    mockedConvertersApi.previewConversion.mockResolvedValue({ converted_value: '/out/compressed.png' })
-
-    renderPanel({
-      previewText: '',
-      activeInputTypes: ['text', 'image'],
-      attachmentData: { image: '/path/to/img.png' },
+    expect(await screen.findByTestId('converter-preview-result')).toHaveTextContent('aGVsbG8=')
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith({
+      original_value: 'hello',
+      converter_ids: ['base64-default'],
+      original_value_data_type: 'text',
     })
-    await waitForList()
-
-    fireEvent.click(screen.getByTestId('converter-tab-image'))
-    await waitFor(() => expect(screen.getByTestId('converter-panel-list')).toBeInTheDocument())
-
-    await openComboboxAndSelect('ImageCompressor')
-
-    fireEvent.click(screen.getByTestId('converter-preview-btn'))
-    await waitFor(() =>
-      expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith(
-        expect.objectContaining({ original_value: '/path/to/img.png', original_value_data_type: 'image_path' })
-      )
-    )
-  })
-})
-
-// ─── File picker browse button ───────────────────────────────────
-
-describe('ConverterPanel file picker', () => {
-  let createElementSpy: jest.SpyInstance | null = null
-
-  afterEach(() => {
-    createElementSpy?.mockRestore()
-    createElementSpy = null
-  })
-
-  it('opens file dialog on browse click and reads file as data URI', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('FileParamConverter')
-
-    const mockFile = new File(['content'], 'template.txt', { type: 'text/plain' })
-    const mockClick = jest.fn()
-    const mockInput = {
-      type: '',
-      onchange: null as (() => void) | null,
-      click: mockClick,
-      files: [mockFile],
-    }
-    const origCreateElement = document.createElement.bind(document)
-    createElementSpy = jest.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      if (tag === 'input') return mockInput as unknown as HTMLElement
-      return origCreateElement(tag)
-    })
-
-    // Mock FileReader to call onload synchronously with a data URI
-    const OrigFileReader = globalThis.FileReader
-    const mockDataUri = 'data:text/plain;base64,Y29udGVudA=='
-    globalThis.FileReader = class MockFileReader {
-      result: string | null = null
-      onload: (() => void) | null = null
-      readAsDataURL() {
-        this.result = mockDataUri
-        this.onload?.()
-      }
-    } as unknown as typeof FileReader
-
-    fireEvent.click(screen.getByTestId('param-template_file_path-browse'))
-    expect(mockClick).toHaveBeenCalled()
-    expect(mockInput.type).toBe('file')
-
-    // Restore before the state update triggers a re-render
-    createElementSpy.mockRestore()
-    createElementSpy = null
-
-    act(() => { mockInput.onchange?.() })
-
-    expect(screen.getByTestId('param-template_file_path')).toHaveValue(mockDataUri)
-
-    globalThis.FileReader = OrigFileReader
-  })
-})
-
-// ─── LLM badge ───────────────────────────────────────────────────
-
-describe('ConverterPanel LLM badge', () => {
-  it('shows LLM badge for LLM-based converters in dropdown', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-
-    fireEvent.click(getComboboxInput())
-    await waitFor(() => expect(screen.getByTestId('converter-option-TranslationConverter')).toBeInTheDocument())
-    expect(screen.getByText('LLM')).toBeInTheDocument()
-  })
-})
-
-// ─── Default output hint ─────────────────────────────────────────
-
-describe('ConverterPanel output hint', () => {
-  it('shows default hint when no preview output', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    expect(screen.getByText('Converted output will appear here.')).toBeInTheDocument()
-  })
-})
-
-// ─── Edge cases ──────────────────────────────────────────────────
-
-describe('ConverterPanel edge cases', () => {
-  it('unmount during successful catalog load triggers isMounted guard', async () => {
-    let resolveLoad!: (value: ConverterCatalogResponse) => void
-    mockedConvertersApi.listConverterCatalog.mockReturnValue(
-      new Promise((resolve) => { resolveLoad = resolve })
-    )
-
-    const { unmount } = renderPanel()
-    expect(screen.getByTestId('converter-panel-loading')).toBeInTheDocument()
-
-    // Unmount before the load resolves
-    unmount()
-
-    // Now resolve — the !isMounted guard (line 53) should prevent state updates
-    await act(async () => {
-      resolveLoad(MOCK_CATALOG)
-    })
-  })
-
-  it('unmount during failed catalog load triggers isMounted guard', async () => {
-    let rejectLoad!: (reason: Error) => void
-    mockedConvertersApi.listConverterCatalog.mockReturnValue(
-      new Promise((_, reject) => { rejectLoad = reject })
-    )
-
-    const { unmount } = renderPanel()
-    expect(screen.getByTestId('converter-panel-loading')).toBeInTheDocument()
-
-    // Unmount before the load fails
-    unmount()
-
-    // Now reject — the !isMounted guard (line 58) should prevent state updates
-    await act(async () => {
-      rejectLoad(new Error('fail'))
-    })
-  })
-
-  it('handlePreview returns early when non-text tab has whitespace-only value', async () => {
-    renderPanel({
-      previewText: '',
-      activeInputTypes: ['text', 'image'],
-      attachmentData: { image: '   ' },
-    })
-    await waitForList()
-
-    fireEvent.click(screen.getByTestId('converter-tab-image'))
-    await waitFor(() => expect(screen.getByTestId('converter-panel-list')).toBeInTheDocument())
-
-    await openComboboxAndSelect('ImageCompressor')
-
-    // The button may or may not be disabled for whitespace value —
-    // if the click triggers handlePreview, line 143 early return is hit
-    const btn = screen.getByTestId('converter-preview-btn')
-    fireEvent.click(btn)
-
-    // createConverter should NOT be called since preview value is whitespace-only
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
   })
 
-  it('handles duplicate input types in activeInputTypes', async () => {
-    renderPanel({ activeInputTypes: ['text', 'image', 'image'] })
-    await waitForList()
-    // Tabs should deduplicate — only text + image
-    expect(screen.getByTestId('converter-piece-tabs')).toBeInTheDocument()
-    const tabs = screen.getAllByTestId(/^converter-tab-/)
-    expect(tabs).toHaveLength(2)
+  it('keeps the picker available and converts an ordered converter chain', async () => {
+    const secondConverter = makeConverter('suffix-default', 'SuffixAppendConverter')
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [textConverter, secondConverter],
+    })
+    mockedConvertersApi.previewConversion.mockResolvedValue(
+      makePreviewResponse(
+        ['base64-default', 'suffix-default'],
+        ['aGVsbG8=', 'aGVsbG8=-suffix'],
+      ),
+    )
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+
+    await selectConverter('base64-default')
+    await selectConverter('suffix-default')
+    await user.click(screen.getByTestId('converter-preview-btn'))
+
+    expect(screen.getByTestId('converter-item-base64-default')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-item-suffix-default')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-stage-output-0')).toHaveTextContent('aGVsbG8=')
+    expect(screen.getByTestId('converter-stage-output-1')).toHaveTextContent('aGVsbG8=-suffix')
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith({
+      original_value: 'hello',
+      converter_ids: ['base64-default', 'suffix-default'],
+      original_value_data_type: 'text',
+    })
   })
 
-  it('uses fallback label for unknown tab types', async () => {
-    renderPanel({ activeInputTypes: ['text', 'custom_type'] })
-    await waitForList()
-    // Unknown type falls back to the raw type string (line 280)
-    expect(screen.getByTestId('converter-tab-custom_type')).toBeInTheDocument()
+  it('removes one converter from the chain', async () => {
+    const secondConverter = makeConverter('suffix-default', 'SuffixAppendConverter')
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [textConverter, secondConverter],
+    })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await selectConverter('suffix-default')
+
+    await user.click(screen.getByRole('button', {
+      name: 'Remove converter base64-default',
+    }))
+
+    expect(screen.queryByTestId('converter-item-base64-default')).not.toBeInTheDocument()
+    expect(screen.getByTestId('converter-item-suffix-default')).toBeInTheDocument()
   })
 
-  it('handles optional bool params (rendered as a bool Switch)', async () => {
-    const catalogWithOptionalBool = {
-      items: [
-        ...MOCK_CATALOG.items,
-        {
-          converter_type: 'OptBoolConverter',
-          supported_input_types: ['text'],
-          supported_output_types: ['text'],
-          parameters: [
-            { name: 'flag', type_name: 'bool', required: false, default: 'true', choices: null, description: 'Optional bool.' },
-          ],
-          is_llm_based: false,
-          description: 'Optional bool param test.',
-        },
-      ],
+  it('does not convert until Convert is pressed', async () => {
+    mockedConvertersApi.previewConversion.mockResolvedValue(
+      makePreviewResponse(['base64-default'], ['converted']),
+    )
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+
+    expect(mockedConvertersApi.previewConversion).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+
+    await user.click(screen.getByTestId('converter-preview-btn'))
+
+    expect(await screen.findByTestId('converter-preview-result')).toHaveTextContent('converted')
+  })
+
+  it('surfaces a conversion failure for the active modality', async () => {
+    mockedConvertersApi.previewConversion.mockRejectedValue(new Error('Conversion exploded'))
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+
+    await user.click(screen.getByTestId('converter-preview-btn'))
+
+    expect(await screen.findByTestId('converter-preview-error')).toHaveTextContent('Conversion exploded')
+    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+  })
+
+  it('refreshes and selects a converter created from the shared dialog', async () => {
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [textConverter] })
+      .mockResolvedValueOnce({
+        items: [textConverter, makeConverter('new-converter', 'CaesarConverter')],
+      })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+
+    await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
+    await user.click(screen.getByTestId('create-converter-option'))
+    await user.click(screen.getByRole('button', { name: 'Complete converter creation' }))
+
+    expect(await screen.findByTestId('converter-item-new-converter')).toBeInTheDocument()
+    expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns the selected registry ID with the converted value', async () => {
+    const onUseConvertedValues = jest.fn()
+    mockedConvertersApi.previewConversion.mockResolvedValue(
+      makePreviewResponse(['base64-default'], ['converted']),
+    )
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello', onUseConvertedValues })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await user.click(screen.getByTestId('converter-preview-btn'))
+    expect(await screen.findByTestId('use-converted-btn')).toBeEnabled()
+    await user.click(screen.getByTestId('use-converted-btn'))
+
+    expect(onUseConvertedValues).toHaveBeenCalledWith([
+      expect.objectContaining({
+        converterInstanceIds: ['base64-default'],
+        convertedValue: 'converted',
+      }),
+    ])
+  })
+
+  it('reorders a pipeline with the keyboard before converting', async () => {
+    const secondConverter = makeConverter('suffix-default', 'SuffixAppendConverter')
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [textConverter, secondConverter],
+    })
+    mockedConvertersApi.previewConversion.mockResolvedValue(
+      makePreviewResponse(
+        ['suffix-default', 'base64-default'],
+        ['hello-suffix', 'aGVsbG8tc3VmZml4'],
+      ),
+    )
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await selectConverter('suffix-default')
+
+    await user.click(screen.getByRole('button', { name: 'Reorder converter suffix-default' }))
+    await user.keyboard('{ArrowUp}')
+    await user.click(screen.getByTestId('converter-preview-btn'))
+
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith(
+      expect.objectContaining({ converter_ids: ['suffix-default', 'base64-default'] }),
+    )
+  })
+
+  it('ignores external file drops on converter cards', async () => {
+    const secondConverter = makeConverter('suffix-default', 'SuffixAppendConverter')
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [textConverter, secondConverter],
+    })
+    mockedConvertersApi.previewConversion.mockResolvedValue(
+      makePreviewResponse(
+        ['base64-default', 'suffix-default'],
+        ['aGVsbG8=', 'aGVsbG8=-suffix'],
+      ),
+    )
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await selectConverter('suffix-default')
+
+    const fileTransfer = {
+      files: [new File(['content'], 'input.txt', { type: 'text/plain' })],
+      getData: () => '',
+      types: ['Files'],
     }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogWithOptionalBool as ConverterCatalogResponse)
+    const targetCard = screen.getByTestId('converter-item-suffix-default')
+    fireEvent.dragOver(targetCard, { dataTransfer: fileTransfer })
+    fireEvent.drop(targetCard, { dataTransfer: fileTransfer })
+    await user.click(screen.getByTestId('converter-preview-btn'))
 
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('OptBoolConverter')
-
-    // An Optional[bool] constructor param surfaces as type_name 'bool', so it renders a Switch (not a text input).
-    const switchEl = screen.getByTestId('param-flag')
-    expect(switchEl).toBeInTheDocument()
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith(
+      expect.objectContaining({ converter_ids: ['base64-default', 'suffix-default'] }),
+    )
   })
 
-  it('shows validation error styling for required file path params', async () => {
-    const catalogWithRequiredFile = {
-      items: [
-        {
-          converter_type: 'RequiredFileConverter',
-          supported_input_types: ['text'],
-          supported_output_types: ['text'],
-          parameters: [
-            { name: 'config_file_path', type_name: 'str', required: true, default: null, choices: null, description: 'Config file path.' },
-          ],
-          is_llm_based: true,
-          description: 'Required file param test.',
-        },
-      ],
-    }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogWithRequiredFile as ConverterCatalogResponse)
-
+  it('distinguishes repeated converter stages for assistive technology', async () => {
     renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('RequiredFileConverter')
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await selectConverter('base64-default')
 
-    // Click preview without filling required file param (line 441 - isMissing className)
-    fireEvent.click(screen.getByTestId('converter-preview-btn'))
-    await waitFor(() => expect(screen.getByText('Required')).toBeInTheDocument())
+    expect(screen.getByTestId('converter-item-base64-default')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-item-base64-default-2')).toBeInTheDocument()
+    expect(screen.getByRole('button', {
+      name: 'Reorder converter base64-default, stage 1 of 2',
+    })).toBeInTheDocument()
+    expect(screen.getByRole('button', {
+      name: 'Remove converter base64-default, stage 2 of 2',
+    })).toBeInTheDocument()
   })
 
-  it('handles converter with no description', async () => {
-    const catalogNoDesc = {
-      items: [
-        {
-          converter_type: 'NoDescConverter',
-          supported_input_types: ['text'],
-          supported_output_types: ['text'],
-          parameters: [],
-          is_llm_based: false,
-          description: null,
-        },
-      ],
-    }
-    mockedConvertersApi.listConverterCatalog.mockResolvedValueOnce(catalogNoDesc as ConverterCatalogResponse)
+  it('preserves, converts, and applies text and image pipelines together', async () => {
+    const onUseConvertedValues = jest.fn()
+    const inputImage = 'data:image/png;base64,aW5wdXQ='
+    const outputImage = 'data:image/png;base64,b3V0cHV0'
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [textConverter, imageConverter],
+    })
+    mockedConvertersApi.previewConversion.mockImplementation(async (request) => {
+      if (request.original_value_data_type === 'image_path') {
+        return {
+          original_value: inputImage,
+          original_value_data_type: 'image_path',
+          converted_value: outputImage,
+          converted_value_data_type: 'image_path',
+          steps: [{
+            converter_id: 'image-compressor',
+            converter_type: 'ImageCompressionConverter',
+            input_value: inputImage,
+            input_data_type: 'image_path',
+            output_value: outputImage,
+            output_data_type: 'image_path',
+          }],
+        }
+      }
+      return makePreviewResponse(['base64-default'], ['aGVsbG8='])
+    })
+    const user = userEvent.setup()
+    renderPanel({
+      previewText: 'hello',
+      attachmentData: { image: inputImage },
+      activeInputTypes: ['text', 'image'],
+      onUseConvertedValues,
+    })
+    await screen.findByTestId('converter-panel-list')
 
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('NoDescConverter')
-    // Should render without description text
-    expect(screen.getByTestId('converter-item-NoDescConverter')).toBeInTheDocument()
+    await selectConverter('base64-default')
+    await user.click(screen.getByTestId('converter-tab-image'))
+    await selectConverter('image-compressor')
+    expect(screen.getByTestId('converter-item-image-compressor')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-input-value').querySelector('img')).toHaveAttribute('src', inputImage)
+
+    await user.click(screen.getByTestId('converter-tab-text'))
+    expect(screen.getByTestId('converter-item-base64-default')).toBeInTheDocument()
+    await user.click(screen.getByTestId('converter-preview-btn'))
+
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2)
+    await user.click(screen.getByTestId('converter-tab-image'))
+    expect(await screen.findByTestId('converter-preview-result')).toContainElement(
+      screen.getByRole('img', { name: 'Converted output preview' }),
+    )
+    await user.click(screen.getByTestId('use-converted-btn'))
+    expect(onUseConvertedValues).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ pieceType: 'text', convertedValue: 'aGVsbG8=' }),
+      expect.objectContaining({ pieceType: 'image', convertedValue: outputImage }),
+    ]))
   })
 
-  it('handles converter with no parameters', async () => {
-    renderPanel({ previewText: 'hello' })
-    await waitForList()
-    await openComboboxAndSelect('Base64Converter')
-    // No params section should be shown
-    expect(screen.queryByTestId('converter-params')).not.toBeInTheDocument()
+  it.each([
+    ['audio', 'audio_path', 'audio', 'data:audio/wav;base64,b3V0cHV0'],
+    ['video', 'video_path', 'video', 'data:video/mp4;base64,b3V0cHV0'],
+    ['file', 'binary_path', 'a', '/tmp/converted.bin'],
+  ])(
+    'renders %s inputs and outputs as media instead of paths',
+    async (pieceType, dataType, mediaSelector, outputValue) => {
+      const converter = makeConverter(
+        `${pieceType}-converter`,
+        `${pieceType}Converter`,
+        [dataType],
+        [dataType],
+      )
+      const inputValue = pieceType === 'file'
+        ? '/tmp/input.bin'
+        : `data:${pieceType}/example;base64,aW5wdXQ=`
+      mockedConvertersApi.listConverters.mockResolvedValue({ items: [converter] })
+      mockedConvertersApi.previewConversion.mockResolvedValue({
+        original_value: inputValue,
+        original_value_data_type: dataType,
+        converted_value: outputValue,
+        converted_value_data_type: dataType,
+        steps: [{
+          converter_id: converter.converter_id,
+          converter_type: converter.identifier.class_name,
+          input_value: inputValue,
+          input_data_type: dataType,
+          output_value: outputValue,
+          output_data_type: dataType,
+        }],
+      })
+      const user = userEvent.setup()
+      renderPanel({
+        activeInputTypes: ['text', pieceType],
+        attachmentData: { [pieceType]: inputValue },
+      })
+      await screen.findByTestId('converter-panel-list')
+
+      await user.click(screen.getByTestId(`converter-tab-${pieceType}`))
+      await selectConverter(converter.converter_id)
+      expect(screen.getByTestId('converter-input-value').querySelector(mediaSelector))
+        .toBeInTheDocument()
+      await user.click(screen.getByTestId('converter-preview-btn'))
+
+      const output = await screen.findByTestId('converter-preview-result')
+      expect(output.querySelector(mediaSelector)).toBeInTheDocument()
+      expect(output).not.toHaveTextContent(outputValue)
+    },
+  )
+
+  it('closes the panel', async () => {
+    const onClose = jest.fn()
+    const user = userEvent.setup()
+    renderPanel({ onClose })
+    await screen.findByTestId('converter-panel-list')
+
+    await user.click(screen.getByRole('button', { name: 'Close converters' }))
+
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

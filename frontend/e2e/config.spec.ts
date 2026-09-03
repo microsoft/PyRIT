@@ -112,7 +112,7 @@ async function routeResponsiveTargetData(
   page: Page,
   targets: FlatTarget[]
 ): Promise<void> {
-  await page.route(/\/api\/targets\/catalog(?:\?.*)?$/, async (route) => {
+  await page.route(/\/api\/targets\/types(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -176,6 +176,16 @@ async function selectTargetType(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+test.beforeEach(async ({ page }) => {
+  await page.route(/\/api\/auth\/config$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ auth_enabled: false }),
+    });
+  });
+});
 
 test.describe("Target Registry Page", () => {
   test("should show loading state then target list", async ({ page }) => {
@@ -276,7 +286,7 @@ test.describe("Create Target Dialog", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.route(/\/api\/targets\/catalog(?:\?.*)?$/, async (route) => {
+    await page.route(/\/api\/targets\/types(?:\?.*)?$/, async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",

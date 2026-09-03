@@ -5,11 +5,12 @@ import { getGraphScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
   TargetListResponse,
-  TargetCatalogResponse,
-  ConverterCatalogResponse,
+  TargetTypeListResponse,
   ConverterTypeListResponse,
   ConverterInstance,
   ConverterListResponse,
+  ConverterPreviewRequest,
+  ConverterPreviewResponse,
   CreateConverterRequest,
   CreateTargetRequest,
   InitializerSettingsResponse,
@@ -204,8 +205,8 @@ export const configurationApi = {
 }
 
 export const targetsApi = {
-  listTargetCatalog: async (): Promise<TargetCatalogResponse> => {
-    const response = await apiClient.get('/targets/catalog')
+  listTargetTypes: async (): Promise<TargetTypeListResponse> => {
+    const response = await apiClient.get('/targets/types')
     return response.data
   },
 
@@ -228,11 +229,6 @@ export const targetsApi = {
 }
 
 export const convertersApi = {
-  listConverterCatalog: async (): Promise<ConverterCatalogResponse> => {
-    const response = await apiClient.get('/converters/catalog')
-    return response.data
-  },
-
   listConverterTypes: async (): Promise<ConverterTypeListResponse> => {
     const response = await apiClient.get('/converters/types')
     return response.data
@@ -257,7 +253,7 @@ export const convertersApi = {
     await apiClient.delete(`/converters/${encodeURIComponent(converterId)}`)
   },
 
-  previewConversion: async (request: { original_value: string; converter_ids: string[]; original_value_data_type?: string }): Promise<{ converted_value: string; converted_value_data_type?: string }> => {
+  previewConversion: async (request: ConverterPreviewRequest): Promise<ConverterPreviewResponse> => {
     const response = await apiClient.post('/converters/preview', request)
     return response.data
   },
