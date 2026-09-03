@@ -20,6 +20,7 @@ function ConverterParameterChoiceViewer({ param, value, labelId, describedBy, on
       onChange={(_, data) => onChange(param.name, data.value)}
       aria-labelledby={labelId}
       aria-describedby={describedBy}
+      aria-required={param.required || undefined}
       data-testid={`param-${param.name}`}
     >
       {(param.choices ?? []).map((choice) => (
@@ -43,6 +44,7 @@ function ParameterFileViewer({ param, value, isMissing, labelId, describedBy, on
         onChange={(_, data) => onChange(param.name, data.value)}
         aria-labelledby={labelId}
         aria-describedby={describedBy}
+        aria-required={param.required || undefined}
         aria-invalid={isMissing || undefined}
         className={isMissing ? styles.paramInputError : undefined}
         data-testid={`param-${param.name}`}
@@ -71,6 +73,7 @@ function ConverterParameterViewer({ param, value, isMissing, labelId, describedB
       onChange={(_, data) => onChange(param.name, data.value)}
       aria-labelledby={labelId}
       aria-describedby={describedBy}
+      aria-required={param.required || undefined}
       aria-invalid={isMissing || undefined}
       className={isMissing ? styles.paramInputError : undefined}
       data-testid={`param-${param.name}`}
@@ -114,7 +117,10 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
         return (
           <div key={param.name} className={styles.paramBlock}>
             <span id={labelId} className={styles.paramLabel}>
-              <Text size={200} weight="semibold">{param.name}{param.required ? ' *' : ''}</Text>
+              <Text size={200} weight="semibold">
+                {param.name}
+                {param.required ? <span aria-hidden="true"> *</span> : null}
+              </Text>
               {param.description && (
                 <Tooltip content={param.description} relationship="description">
                   <span className={styles.paramInfo}><InfoRegular fontSize={12} /></span>
@@ -128,6 +134,7 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
                 label={(paramValues[param.name] ?? (typeof param.default === 'string' ? param.default : 'false')).toLowerCase() === 'true' ? 'True' : 'False'}
                 aria-labelledby={labelId}
                 aria-describedby={describedBy}
+                aria-required={param.required || undefined}
                 aria-invalid={isMissing || undefined}
                 data-testid={`param-${param.name}`}
               />
