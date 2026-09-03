@@ -64,8 +64,8 @@ from pyrit.models import (
     ScenarioProgressCounts,
     ScenarioProgressHeader,
     ScenarioProgressResult,
-    ScenarioProgressSummary,
     ScenarioProgressResultKind,
+    ScenarioProgressSummary,
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
@@ -82,8 +82,8 @@ from pyrit.models import (
     ScorerIdentifier,
     TargetIdentifier,
     config_hash,
-    project_behavioral_identity,
     is_sequential_attack_envelope,
+    project_behavioral_identity,
 )
 from pyrit.models.catalog import (
     AttackErrorSummary,
