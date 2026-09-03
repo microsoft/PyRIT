@@ -98,12 +98,12 @@ describe("Home", () => {
     await waitFor(() => expect(mockListAttacks).toHaveBeenCalled());
   });
 
-  it("navigates to config when 'Configure a target' is clicked", async () => {
+  it("navigates to the registry when 'Configure a target' is clicked", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
     render(<TestWrapper><Home {...defaultProps} onNavigate={onNavigate} /></TestWrapper>);
     await user.click(screen.getByTestId("home-configure-target-btn"));
-    expect(onNavigate).toHaveBeenCalledWith("targets");
+    expect(onNavigate).toHaveBeenCalledWith("registry");
   });
 
   it("shows the empty state when there are no attacks", async () => {

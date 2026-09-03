@@ -62,10 +62,10 @@ describe("Navigation", () => {
     expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
   });
 
-  it("renders the targets button", () => {
+  it("renders the registry button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     expect(
-      screen.getByRole("button", { name: "Targets" })
+      screen.getByRole("button", { name: "Registry" })
     ).toBeInTheDocument();
   });
 
@@ -80,15 +80,15 @@ describe("Navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });
 
-  it("calls onNavigate with 'targets' when targets button is clicked", async () => {
+  it("calls onNavigate with 'registry' when registry button is clicked", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
     renderWithProvider(
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    await user.click(screen.getByRole("button", { name: "Targets" }));
-    expect(onNavigate).toHaveBeenCalledWith("targets");
+    await user.click(screen.getByRole("button", { name: "Registry" }));
+    expect(onNavigate).toHaveBeenCalledWith("registry");
   });
 
   it("navigates to configuration", async () => {
@@ -138,7 +138,7 @@ describe("Navigation", () => {
       "Chat",
       "History",
       "Scanner",
-      "Targets",
+      "Registry",
       "Configuration",
     ]);
   });
