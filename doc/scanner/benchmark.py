@@ -41,6 +41,10 @@
 #
 # **Default techniques:** `role_play_video_game`, `crescendo_simulated`, and `tap`. TAP's
 # branching search makes this default slower and more expensive than the former `light` default.
+# Every selected adversarial technique prepends one shared benchmark guidance layer to its native
+# system prompt, including explicitly selected techniques such as `red_teaming`. The native strategy,
+# template parameters, and response format remain the source of truth. Global registered factories
+# and techniques used outside this benchmark remain unchanged.
 # For a cheaper run, explicitly pass `--techniques light`.
 #
 # **Other available selections:** `light`, `single_turn`, `multi_turn`, plus one member per

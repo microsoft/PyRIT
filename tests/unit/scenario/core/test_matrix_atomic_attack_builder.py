@@ -153,6 +153,18 @@ class TestMatrixAdversarialForwarding:
         injected = {call.kwargs["adversarial_chat"] for call in factory.create.call_args_list}
         assert injected == {target_a, target_b}
 
+    def test_create_receives_adversarial_system_prompt_prefix(self):
+        builder = _builder()
+        factory = _mock_factory(name="tech")
+
+        builder.build(
+            technique_factories={"tech": factory},
+            dataset_groups={"ds": [_seed_group(objective="o1")]},
+            adversarial_system_prompt_prefix="Static guidance",
+        )
+
+        assert factory.create.call_args.kwargs["adversarial_system_prompt_prefix"] == "Static guidance"
+
     def test_atomic_attack_adversarial_chat_is_resolved_target(self):
         builder = _builder()
         target_a = MagicMock(spec=PromptTarget)
@@ -171,8 +183,7 @@ class TestMatrixAdversarialForwarding:
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
         )
-        # No adversarial_chat is forwarded into create() when the axis is collapsed.
-        assert "adversarial_chat" not in factory.create.call_args.kwargs
+        assert factory.create.call_args.kwargs["adversarial_chat"] is None
         assert result[0]._adversarial_chat is baked
 
     def test_no_target_axis_stamps_factory_resolved_adversarial_chat(self):
@@ -187,7 +198,7 @@ class TestMatrixAdversarialForwarding:
             technique_factories={"tech": factory},
             dataset_groups={"ds": [_seed_group(objective="o1")]},
         )
-        assert "adversarial_chat" not in factory.create.call_args.kwargs
+        assert factory.create.call_args.kwargs["adversarial_chat"] is None
         assert result[0]._adversarial_chat is resolved
 
 

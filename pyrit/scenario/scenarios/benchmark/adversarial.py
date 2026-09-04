@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import apply_defaults
+from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -18,6 +19,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    SeedPrompt,
 )
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
@@ -39,6 +41,17 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+@cache
+def _get_benchmark_adversarial_guidance() -> str:
+    """
+    Load the static guidance prepended to every selected adversarial technique.
+
+    Returns:
+        str: The benchmark-owned cross-technique guidance.
+    """
+    return SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "benchmark" / "adversarial_guidance.yaml").value
 
 
 @cache
@@ -88,13 +101,16 @@ class AdversarialBenchmark(Scenario):
     already be registered in ``TargetRegistry`` — typically by
     ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars, or
     programmatically via ``TargetRegistry.get_registry_singleton().instances.register``.
+    Every selected adversarial technique prepends one shared benchmark guidance
+    layer to its native adversarial system prompt at creation time, leaving global
+    factories and canonical prompt files unchanged.
 
     At run time, ``_build_atomic_attacks_async`` performs the
     ``(technique × adversarial_target × dataset)`` cross-product: for each
     selected adversarial-capable factory in the
     ``AttackTechniqueRegistry`` and each requested target, it calls
-    ``factory.create(adversarial_chat=...)`` with the
-    resolved target — no global registry mutation. The resulting
+    ``factory.create(adversarial_chat=...)`` with the resolved target — no global
+    registry mutation. The resulting
     ``AtomicAttack`` is named ``f"{technique}__{target}_{dataset}"`` with
     ``display_group`` set to the target's registry name so per-model ASR
     rolls up naturally in result displays.
@@ -109,10 +125,12 @@ class AdversarialBenchmark(Scenario):
     #: initializer registered rather than only core-tagged factories.
     #: Bumped from 3 → 4 when the no-selection default changed from the ``light``
     #: aggregate to ``role_play_video_game``, ``crescendo_simulated``, and ``tap``.
-    #: ``VERSION`` participates in resume identity, so v3 results cannot be resumed
-    #: as v4. The separate ``use_cached`` behavioral cache intentionally remains
+    #: Bumped from 4 → 5 when every selected adversarial technique began prepending
+    #: shared benchmark guidance to its native system prompt.
+    #: ``VERSION`` participates in resume identity, so older results cannot be resumed
+    #: as v5. The separate ``use_cached`` behavioral cache intentionally remains
     #: keyed by technique and objective-target identity across scenario versions.
-    VERSION: int = 4
+    VERSION: int = 5
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.
@@ -123,7 +141,7 @@ class AdversarialBenchmark(Scenario):
         """
         Declare the ``adversarial_targets`` parameter.
 
-        The list is treated as required at run time:
+        The target list is treated as required at run time:
         ``_build_atomic_attacks_async`` raises ``ValueError`` if
         ``self.params["adversarial_targets"]`` is empty or missing. The
         scenario-side error (rather than a declaration-side default) lets
@@ -314,7 +332,9 @@ class AdversarialBenchmark(Scenario):
         ``(technique × target × dataset)`` cross-product to ``MatrixAtomicAttackBuilder``
         with the resolved targets as its adversarial-target axis. Each pair calls
         ``factory.create(adversarial_chat=...)`` with the resolved target — no global
-        registry state is touched. When ``self._use_cached`` is set, the resulting candidate
+        registry state is touched. Shared benchmark guidance is forwarded when each
+        attack technique is created and prepended to its native system prompt. When
+        ``self._use_cached`` is set, the resulting candidate
         list is filtered against the live behavioral cache via
         ``_collect_cached_completion_pairs``, which delegates to
         ``pyrit.analytics.get_cached_results_for_technique`` for each unique
@@ -355,6 +375,7 @@ class AdversarialBenchmark(Scenario):
             technique_factories=technique_factories,
             dataset_groups=context.seed_groups_by_dataset,
             adversarial_targets=resolved_targets,
+            adversarial_system_prompt_prefix=_get_benchmark_adversarial_guidance(),
             display_group_fn=lambda combo: combo.target_name or "",
             include_baseline=context.include_baseline,
         )

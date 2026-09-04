@@ -167,6 +167,7 @@ class AttackParameters:
                 num_turns=simulated_conversation_config.num_turns,
                 starting_sequence=simulated_conversation_config.sequence,
                 adversarial_chat_system_prompt_path=simulated_conversation_config.adversarial_chat_system_prompt_path,
+                adversarial_chat_system_prompt_prefix=simulated_conversation_config.adversarial_chat_system_prompt_prefix,
                 simulated_target_system_prompt_path=simulated_conversation_config.simulated_target_system_prompt_path,
                 next_message_system_prompt_path=simulated_conversation_config.next_message_system_prompt_path,
             )

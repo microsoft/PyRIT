@@ -44,6 +44,7 @@ async def generate_simulated_conversation_async(
     num_turns: int = 3,
     starting_sequence: int = 0,
     adversarial_chat_system_prompt_path: str | Path,
+    adversarial_chat_system_prompt_prefix: str | None = None,
     simulated_target_system_prompt_path: str | Path | None = None,
     next_message_system_prompt_path: str | Path | None = None,
     attack_converter_config: AttackConverterConfig | None = None,
@@ -71,6 +72,8 @@ async def generate_simulated_conversation_async(
         starting_sequence: The starting sequence number for the generated SeedPrompts.
             Each message gets an incrementing sequence number. Defaults to 0.
         adversarial_chat_system_prompt_path: Path to the system prompt for the adversarial chat.
+        adversarial_chat_system_prompt_prefix: Static guidance prepended to the
+            resolved adversarial chat system prompt.
         simulated_target_system_prompt_path: Path to the system prompt for the simulated target.
             If None, no system prompt is used for the simulated target.
         next_message_system_prompt_path: Optional path to a system prompt for generating
@@ -107,12 +110,11 @@ async def generate_simulated_conversation_async(
 
     # Create adversarial config for the simulation. Load the optional path into a SeedPrompt so the
     # resolved prompt is stored directly on the configuration.
-    adversarial_system_prompt = (
-        SeedPrompt.from_yaml_file(adversarial_chat_system_prompt_path) if adversarial_chat_system_prompt_path else None
-    )
+    adversarial_system_prompt = SeedPrompt.from_yaml_file(adversarial_chat_system_prompt_path)
     adversarial_config = AttackAdversarialConfig(
         target=adversarial_chat,
         system_prompt=adversarial_system_prompt,
+        system_prompt_prefix=adversarial_chat_system_prompt_prefix,
     )
 
     # Create scoring config

@@ -1497,6 +1497,7 @@ class SeedEntry(Base):
                 num_turns=config.get("num_turns", 3),
                 sequence=config.get("sequence", 0),
                 adversarial_chat_system_prompt_path=config.get("adversarial_chat_system_prompt_path"),
+                adversarial_chat_system_prompt_prefix=config.get("adversarial_chat_system_prompt_prefix"),
                 simulated_target_system_prompt_path=config.get("simulated_target_system_prompt_path"),
                 next_message_system_prompt_path=config.get("next_message_system_prompt_path"),
             )

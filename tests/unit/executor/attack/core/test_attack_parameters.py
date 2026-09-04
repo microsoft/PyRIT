@@ -233,6 +233,32 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         assert call_kwargs["num_turns"] == 3
 
     @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
+    async def test_passes_adversarial_system_prompt_prefix_to_simulated_conversation(
+        self,
+        mock_generate: AsyncMock,
+        seed_objective: SeedObjective,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_simulated_result: list,
+    ) -> None:
+        prefix = "Static guidance"
+        config = SeedSimulatedConversation(
+            adversarial_chat_system_prompt_path="/path/to/adversarial.yaml",
+            adversarial_chat_system_prompt_prefix=prefix,
+        )
+        mock_generate.return_value = mock_simulated_result
+
+        await AttackParameters.from_seed_group_async(
+            seed_group=AttackSeedGroup(seeds=[seed_objective, config]),
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+        )
+
+        call_kwargs = mock_generate.call_args.kwargs
+        assert call_kwargs["adversarial_chat_system_prompt_path"] == config.adversarial_chat_system_prompt_path
+        assert call_kwargs["adversarial_chat_system_prompt_prefix"] == prefix
+
+    @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
     async def test_uses_generated_prepended_messages(
         self,
         mock_generate: AsyncMock,
