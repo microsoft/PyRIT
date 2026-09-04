@@ -170,7 +170,7 @@ class ConcreteScenario(Scenario):
         # Add required technique_class if not provided
 
         class TestTechnique(ScenarioTechnique):
-            TEST = ("test", {"concrete"})  # Tagged as concrete, not aggregate
+            TEST = ("test", {"concrete"}, "Test technique description.")  # Tagged as concrete, not aggregate
             ALL = ("all", {"all"})
 
             @classmethod
@@ -307,18 +307,24 @@ class TestScenarioInitialization2:
         expected_seed_id = duplicate_seed_groups[0].logical_id
         assert persisted_plan["atomic_groups"][0]["seed_group_ids"] == [expected_seed_id]
         assert [seed_group["id"] for seed_group in persisted_plan["seed_groups"]] == [expected_seed_id]
-        assert scenario._build_run_plan().model_dump(mode="json") == persisted_plan
+        assert scenario._build_run_plan().model_dump(mode="json", exclude_none=True) == persisted_plan
         assert atomic_attack.seed_groups is duplicate_seed_groups
         assert len(atomic_attack.seed_groups) == 2
 
     async def test_build_run_plan_preserves_unique_seed_group_order(self, mock_objective_target) -> None:
         seed_groups = [
-            AttackSeedGroup(seeds=[SeedObjective(value="first objective")]),
+            AttackSeedGroup(
+                seeds=[
+                    SeedObjective(value="first objective"),
+                    SeedPrompt(value="first prompt", role="user", sequence=0),
+                ]
+            ),
             AttackSeedGroup(seeds=[SeedObjective(value="second objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
         atomic_attack.atomic_attack_name = "unique_attack"
-        atomic_attack.display_group = "unique_attack"
+        atomic_attack.display_group = "custom display group"
+        atomic_attack.technique_name = "test"
         atomic_attack.technique_eval_hash = "unique-technique"
         type(atomic_attack).seed_groups = PropertyMock(return_value=seed_groups)
         scenario = ConcreteScenario(
@@ -333,7 +339,13 @@ class TestScenarioInitialization2:
         plan = scenario._build_run_plan()
         expected_seed_ids = [seed_group.logical_id for seed_group in seed_groups]
         assert plan.atomic_groups[0].seed_group_ids == expected_seed_ids
+        assert plan.atomic_groups[0].display_group == "custom display group"
+        assert plan.atomic_groups[0].technique_name == "test"
+        assert plan.atomic_groups[0].description == "Test technique description."
+        assert plan.atomic_groups[0].tags == ["concrete"]
         assert [seed_group.id for seed_group in plan.seed_groups] == expected_seed_ids
+        assert plan.seed_groups[0].prompts[0].value == "first prompt"
+        assert plan.seed_groups[0].prompts[0].role == "user"
 
     async def test_initialize_async_sets_objective_target(self, mock_objective_target):
         """Test that initialize_async sets objective_target properly."""

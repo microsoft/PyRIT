@@ -19,6 +19,7 @@ from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
     ScenarioRunState,
+    Score,
     SeedObjective,
 )
 
@@ -83,6 +84,18 @@ def test_scenario_progress_deltas_page_equal_timestamps_by_id(
             objective="unrelated",
         ),
     ]
+    score = Score(
+        score_value="true",
+        score_type="true_false",
+        score_rationale="The objective was achieved.",
+        scorer_class_identifier=ComponentIdentifier(
+            class_name="TestScorer",
+            class_module="tests",
+        ),
+        timestamp=timestamp,
+    )
+    rows[0].last_score = score
+    sqlite_instance.add_scores_to_memory(scores=[score])
     sqlite_instance.add_attack_results_to_memory(attack_results=rows)
 
     first_page, has_more = sqlite_instance.get_scenario_attack_result_deltas(
@@ -99,12 +112,49 @@ def test_scenario_progress_deltas_page_equal_timestamps_by_id(
     )
 
     assert [row.attack_result_id for row in first_page] == [str(first_id)]
+    assert first_page[0].conversation_id == f"conversation-{first_id}"
+    assert first_page[0].score is not None
+    assert first_page[0].score.scorer_name == "TestScorer"
+    assert first_page[0].score.score_rationale == "The objective was achieved."
     assert has_more is True
     assert [row.attack_result_id for row in second_page] == [str(second_id)]
     assert second_has_more is False
     assert second_page[0].atomic_attack_identifier is not None
     source_identifier = AtomicAttackIdentifier.from_component_identifier(rows[1].atomic_attack_identifier)
     assert second_page[0].atomic_attack_identifier.logical_seed_group_id == source_identifier.logical_seed_group_id
+
+
+def test_scenario_progress_delta_uses_unknown_for_empty_scorer_identifier(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    scenario = make_scenario_result(
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    attack_result = _make_delta_result(
+        scenario_result_id=str(scenario.id),
+        attack_result_id=uuid.UUID(int=5),
+        timestamp=datetime(2026, 8, 6, tzinfo=timezone.utc),
+        objective="objective",
+    )
+    score = Score(
+        score_value="true",
+        score_type="true_false",
+        scorer_class_identifier=None,
+    )
+    attack_result.last_score = score
+    sqlite_instance.add_scores_to_memory(scores=[score])
+    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+
+    deltas, has_more = sqlite_instance.get_scenario_attack_result_deltas(
+        scenario_result_id=str(scenario.id),
+        limit=1,
+    )
+
+    assert has_more is False
+    assert deltas[0].score is not None
+    assert deltas[0].score.scorer_name == "Unknown"
 
 
 def test_scenario_result_header_does_not_hydrate_attack_results(

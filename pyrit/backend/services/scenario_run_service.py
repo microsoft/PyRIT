@@ -15,11 +15,13 @@ import functools
 import json
 import logging
 import uuid
-from collections.abc import Sequence
+from collections import OrderedDict
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from threading import Lock
+from typing import Any, Literal
 
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
@@ -30,17 +32,32 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackTechniqueIdentifier,
     ComponentIdentifier,
+    ScenarioAtomicGroupProgress,
     ScenarioAttackResultDelta,
+    ScenarioAttackTechniqueDetails,
+    ScenarioComponentIdentity,
+    ScenarioDisplayGroupProgress,
+    ScenarioObjectiveScorer,
+    ScenarioObjectiveScorerMetrics,
+    ScenarioProgressCounts,
     ScenarioProgressHeader,
     ScenarioProgressResult,
+    ScenarioProgressSummary,
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
     ScenarioRunProgress,
     ScenarioRunState,
+    ScenarioScorerIdentity,
+    ScenarioSeedGroupProgress,
+    ScenarioTechniqueProgress,
+    ScorerEvaluationIdentifier,
+    ScorerIdentifier,
     config_hash,
+    project_behavioral_identity,
 )
 from pyrit.models.catalog.scenario import (
     AttackErrorSummary,
@@ -48,13 +65,24 @@ from pyrit.models.catalog.scenario import (
     RunScenarioRequest,
     ScenarioRunListItem,
     ScenarioRunSummary,
+    ScenarioTechniqueSummary,
 )
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.scenario import Scenario
+from pyrit.score.scorer_evaluation.scorer_metrics_io import find_objective_metrics_by_eval_hash
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CONCURRENT_RUNS = 3
+_PROGRESS_CACHE_MAX_RUNS = 32
+
+# The only display decision this layer still owns: technique seeds are rendered as
+# content, so the REST payload carries just what the UI draws. Every other narrowing
+# (dropping operational target params, unwrapping multi-targets, dropping the
+# separately returned objective scorer) is declared by the identifier types
+# themselves and applied by project_behavioral_identity.
+_TECHNIQUE_SEEDS_CHILD = "technique_seeds"
+_TECHNIQUE_SEED_DISPLAY_PARAMS = ("value", "data_type")
 
 
 @dataclass
@@ -81,6 +109,18 @@ class _ResultUnitIdentity:
 
     atomic_group_id: str
     seed_group_id: str
+
+
+@dataclass
+class _ProgressCacheEntry:
+    """Mapped progress state for one scenario run."""
+
+    plan_signature: str | None = None
+    deltas: list[ScenarioAttackResultDelta] = field(default_factory=list)
+    results: list[ScenarioProgressResult] = field(default_factory=list)
+    cursor: AttackResultKeysetCursor | None = None
+    summary: ScenarioProgressSummary | None = None
+    summary_state: tuple[tuple[str, ...], bool, bool] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +216,10 @@ class ScenarioRunService:
         self._active_tasks: dict[str, _ActiveTask] = {}
         self._run_semaphore = asyncio.Semaphore(max_concurrent_runs)
         self._configuration_resolver = ScenarioConfigurationResolver()
+        self._progress_cache: OrderedDict[str, _ProgressCacheEntry] = OrderedDict()
+        self._progress_cache_lock = Lock()
+        self._technique_metadata_cache: dict[str, dict[str, ScenarioTechniqueSummary]] = {}
+        self._technique_metadata_lock = Lock()
 
         # Initialization writes to CentralMemory, and the in-memory SQLite backend shares one
         # DBAPI connection across every thread (StaticPool, sqlite_memory.py). Two preparations
@@ -756,7 +800,7 @@ class ScenarioRunService:
         # a COMPLETED scenario can still hide errored objectives or rate-limit retries.
         failed_attacks: list[AttackErrorSummary] = []
         attack_retries: list[AttackRetrySummary] = []
-        total_retries = 0
+        persisted_retries: list[int] = []
         attempts_by_unit: dict[_ResultUnitIdentity, int] = {}
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
@@ -768,7 +812,7 @@ class ScenarioRunService:
                 attempts_by_unit[unit_identity] = attempts_by_unit.get(unit_identity, 0) + 1
                 retries = getattr(attack_result, "total_retries", 0)
                 if isinstance(retries, int):
-                    total_retries += retries
+                    persisted_retries.append(retries)
 
                 retry_events = getattr(attack_result, "retry_events", None)
                 if isinstance(retry_events, list) and retry_events:
@@ -790,7 +834,10 @@ class ScenarioRunService:
                             total_retries=retries if isinstance(retries, int) else 0,
                         )
                     )
-        total_retries += sum(max(0, attempt_count - 1) for attempt_count in attempts_by_unit.values())
+        total_retries = self._total_retry_pressure(
+            attempts_per_unit=attempts_by_unit.values(),
+            persisted_retries=persisted_retries,
+        )
 
         updated_at = scenario_result.creation_time
         if terminal and scenario_result.completion_time is not None:
@@ -837,8 +884,7 @@ class ScenarioRunService:
         active_group_ids = tuple(sorted(active.scenario.active_atomic_group_ids)) if active.scenario is not None else ()
         return _ActiveRunSnapshot(error=active.error, active_group_ids=active_group_ids)
 
-    @staticmethod
-    def _load_run_plan(*, scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
+    def _load_run_plan(self, *, scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
         """
         Load a validated plan from scenario metadata.
 
@@ -847,7 +893,79 @@ class ScenarioRunService:
         """
         metadata = getattr(scenario_result, "metadata", None)
         raw_plan = (metadata or {}).get(SCENARIO_RUN_PLAN_METADATA_KEY)
-        return ScenarioRunPlan.model_validate(raw_plan) if raw_plan is not None else None
+        if raw_plan is None:
+            return None
+        plan = ScenarioRunPlan.model_validate(raw_plan)
+        return self._enrich_legacy_plan_techniques(plan=plan)
+
+    def _enrich_legacy_plan_techniques(self, *, plan: ScenarioRunPlan) -> ScenarioRunPlan:
+        """
+        Add technique identity and metadata to plans stored before those fields existed.
+
+        Returns:
+            ScenarioRunPlan: The original plan or a copy with recovered technique metadata.
+        """
+        scenario_name = plan.scenario_registry_name
+        if scenario_name is None or all(group.technique_name for group in plan.atomic_groups):
+            return plan
+
+        technique_summaries = self._get_scenario_technique_summaries(scenario_name=scenario_name)
+        if not technique_summaries:
+            return plan
+
+        candidate_names = sorted(technique_summaries, key=len, reverse=True)
+        enriched_groups: list[ScenarioRunPlanAtomicGroup] = []
+        for group in plan.atomic_groups:
+            technique_name = group.technique_name
+            if technique_name is None:
+                technique_name = next(
+                    (
+                        candidate
+                        for candidate in candidate_names
+                        if group.display_group == candidate
+                        or group.atomic_attack_name == candidate
+                        or group.atomic_attack_name.startswith(f"{candidate}_")
+                        or group.atomic_attack_name.startswith(f"{candidate}__")
+                    ),
+                    None,
+                )
+            summary = technique_summaries.get(technique_name) if technique_name else None
+            enriched_groups.append(
+                group.model_copy(
+                    update={
+                        "technique_name": technique_name,
+                        "description": group.description or (summary.description if summary else None),
+                        "tags": group.tags or (list(summary.tags) if summary else []),
+                    }
+                )
+            )
+        return plan.model_copy(update={"atomic_groups": enriched_groups})
+
+    def _get_scenario_technique_summaries(
+        self,
+        *,
+        scenario_name: str,
+    ) -> dict[str, ScenarioTechniqueSummary]:
+        """
+        Get cached technique metadata without materializing unrelated scenarios.
+
+        Returns:
+            dict[str, ScenarioTechniqueSummary]: Technique metadata keyed by name.
+        """
+        with self._technique_metadata_lock:
+            cached = self._technique_metadata_cache.get(scenario_name)
+            if cached is not None:
+                return cached
+
+            registry = ScenarioRegistry.get_registry_singleton()
+            if scenario_name not in registry:
+                summaries: dict[str, ScenarioTechniqueSummary] = {}
+            else:
+                scenario_class = registry.get_class(scenario_name)
+                metadata = registry.get_class_metadata(scenario_class)
+                summaries = {summary.name: summary for summary in metadata.technique_summaries}
+            self._technique_metadata_cache[scenario_name] = summaries
+            return summaries
 
     @staticmethod
     def _resolve_result_unit_identity(
@@ -970,28 +1088,39 @@ class ScenarioRunService:
         if header_result is None:
             return None
 
-        cursor = self._decode_progress_cursor(since=since, scenario_result_id=scenario_result_id)
-        deltas, has_more = self._memory.get_scenario_attack_result_deltas(
-            scenario_result_id=scenario_result_id,
-            cursor=cursor,
-            limit=limit,
-        )
         plan = self._load_run_plan(scenario_result=header_result)
-        plan_lookup = _ScenarioPlanLookup.from_plan(plan=plan)
         plan_complete = plan is not None
-        response_plan = plan if since is None else None
-        if plan is None and since is None:
-            response_plan = self._synthesize_legacy_plan(deltas=deltas)
-
-        response_plan_lookup = plan_lookup if plan is not None else _ScenarioPlanLookup.from_plan(plan=response_plan)
-        results = [self._map_progress_delta(delta=delta, plan_lookup=response_plan_lookup) for delta in deltas]
-        next_cursor = (
-            self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since
-        )
+        cursor = self._decode_progress_cursor(since=since, scenario_result_id=scenario_result_id)
         terminal = header_result.scenario_run_state in (
             ScenarioRunState.COMPLETED,
             ScenarioRunState.FAILED,
             ScenarioRunState.CANCELLED,
+        )
+        objective_scorer_identifier = header_result.objective_scorer_identifier
+        if not isinstance(objective_scorer_identifier, ComponentIdentifier):
+            objective_scorer_identifier = None
+        all_deltas, all_results, summary, summary_plan = self._get_progress_snapshot(
+            scenario_result_id=scenario_result_id,
+            plan=plan,
+            plan_complete=plan_complete,
+            active_group_ids=active_group_ids,
+            terminal=terminal,
+            objective_scorer_identifier=objective_scorer_identifier,
+        )
+        available = [
+            (delta, result)
+            for delta, result in zip(all_deltas, all_results, strict=True)
+            if cursor is None
+            or (delta.timestamp, uuid.UUID(delta.attack_result_id))
+            > (cursor.timestamp, uuid.UUID(cursor.attack_result_id))
+        ]
+        page = available[:limit]
+        deltas = [delta for delta, _ in page]
+        results = [result for _, result in page]
+        has_more = len(available) > limit
+        response_plan = summary_plan if since is None else None
+        next_cursor = (
+            self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since
         )
         return ScenarioRunProgress(
             run=ScenarioProgressHeader(
@@ -1004,12 +1133,488 @@ class ScenarioRunService:
                 completed_at=header_result.completion_time if terminal else None,
             ),
             plan=response_plan,
-            reset=False,
-            active_atomic_group_ids=list(active_group_ids),
             results=results,
+            summary=summary,
             next_cursor=next_cursor,
             has_more=has_more,
             plan_complete=plan_complete,
+        )
+
+    def _get_progress_snapshot(
+        self,
+        *,
+        scenario_result_id: str,
+        plan: ScenarioRunPlan | None,
+        plan_complete: bool,
+        active_group_ids: Sequence[str],
+        terminal: bool,
+        objective_scorer_identifier: ComponentIdentifier | None,
+    ) -> tuple[
+        list[ScenarioAttackResultDelta],
+        list[ScenarioProgressResult],
+        ScenarioProgressSummary,
+        ScenarioRunPlan,
+    ]:
+        """
+        Refresh and return cached mapped progress state.
+
+        Returns:
+            tuple: Deltas, mapped results, canonical summary, and effective plan.
+        """
+        plan_signature = plan.model_dump_json() if plan is not None else None
+        with self._progress_cache_lock:
+            entry = self._progress_cache.get(scenario_result_id)
+            if entry is not None and entry.plan_signature == plan_signature:
+                has_unenriched_identifier = any(
+                    delta.atomic_attack_identifier is not None and not delta.atomic_attack_identifier.seed_identifiers
+                    for delta in entry.deltas
+                )
+                was_terminal = entry.summary_state is not None and entry.summary_state[1]
+                if has_unenriched_identifier and (not terminal or not was_terminal):
+                    entry = None
+            if entry is None or entry.plan_signature != plan_signature:
+                entry = _ProgressCacheEntry(plan_signature=plan_signature)
+                self._progress_cache[scenario_result_id] = entry
+            self._progress_cache.move_to_end(scenario_result_id)
+            while len(self._progress_cache) > _PROGRESS_CACHE_MAX_RUNS:
+                self._progress_cache.popitem(last=False)
+
+            first_new_index = len(entry.deltas)
+            while True:
+                page, has_more = self._memory.get_scenario_attack_result_deltas(
+                    scenario_result_id=scenario_result_id,
+                    cursor=entry.cursor,
+                    limit=500,
+                )
+                entry.deltas.extend(page)
+                if page:
+                    last = page[-1]
+                    entry.cursor = AttackResultKeysetCursor(
+                        timestamp=last.timestamp,
+                        attack_result_id=last.attack_result_id,
+                    )
+                if not has_more:
+                    break
+                if not page:
+                    raise RuntimeError("Scenario progress storage returned an empty page with has_more=True.")
+
+            summary_plan = plan or self._synthesize_legacy_plan(deltas=entry.deltas)
+            if len(entry.results) < len(entry.deltas):
+                plan_lookup = _ScenarioPlanLookup.from_plan(plan=summary_plan)
+                entry.results.extend(
+                    self._map_progress_delta(delta=delta, plan_lookup=plan_lookup)
+                    for delta in entry.deltas[len(entry.results) :]
+                )
+
+            summary_state = (tuple(active_group_ids), terminal, plan_complete)
+            if entry.summary is None or first_new_index < len(entry.deltas) or entry.summary_state != summary_state:
+                technique_details_by_group = self._build_technique_details_by_group(
+                    deltas=entry.deltas,
+                    results=entry.results,
+                )
+                entry.summary = self._build_progress_summary(
+                    plan=summary_plan,
+                    plan_complete=plan_complete,
+                    results=entry.results,
+                    active_group_ids=active_group_ids,
+                    terminal=terminal,
+                    objective_scorer_identifier=objective_scorer_identifier,
+                    technique_details_by_group=technique_details_by_group,
+                )
+                entry.summary_state = summary_state
+
+            return (
+                list(entry.deltas),
+                list(entry.results),
+                entry.summary,
+                summary_plan,
+            )
+
+    @staticmethod
+    def _build_technique_details_by_group(
+        *,
+        deltas: Sequence[ScenarioAttackResultDelta],
+        results: Sequence[ScenarioProgressResult],
+    ) -> dict[str, ScenarioAttackTechniqueDetails]:
+        """
+        Build one technique-details projection for each enriched atomic group.
+
+        Returns:
+            Details keyed by atomic group ID.
+        """
+        details_by_group: dict[str, ScenarioAttackTechniqueDetails] = {}
+        for delta, result in zip(deltas, results, strict=True):
+            atomic_identifier = delta.atomic_attack_identifier
+            if (
+                result.atomic_group_id in details_by_group
+                or atomic_identifier is None
+                or not atomic_identifier.seed_identifiers
+                or atomic_identifier.attack_technique is None
+            ):
+                continue
+            details_by_group[result.atomic_group_id] = ScenarioRunService._build_attack_technique_details(
+                technique_identifier=atomic_identifier.attack_technique
+            )
+        return details_by_group
+
+    @staticmethod
+    def _build_progress_summary(
+        *,
+        plan: ScenarioRunPlan,
+        plan_complete: bool,
+        results: Sequence[ScenarioProgressResult],
+        active_group_ids: Sequence[str],
+        terminal: bool,
+        objective_scorer_identifier: ComponentIdentifier | None,
+        technique_details_by_group: dict[str, ScenarioAttackTechniqueDetails],
+    ) -> ScenarioProgressSummary:
+        """
+        Build canonical progress rollups from a plan and persisted attempts.
+
+        Returns:
+            ScenarioProgressSummary: Progress grouped for client display.
+        """
+        attempts_by_unit: dict[_ResultUnitIdentity, list[ScenarioProgressResult]] = {}
+        for result in results:
+            identity = _ResultUnitIdentity(
+                atomic_group_id=result.atomic_group_id,
+                seed_group_id=result.seed_group_id,
+            )
+            attempts_by_unit.setdefault(identity, []).append(result)
+
+        def aggregate(
+            *,
+            units: Sequence[_ResultUnitIdentity],
+            planned: int | None,
+        ) -> ScenarioProgressCounts:
+            completed = 0
+            succeeded = 0
+            errors = 0
+            retries = 0
+            for unit in units:
+                attempts = attempts_by_unit.get(unit, [])
+                if attempts:
+                    completed += 1
+                    succeeded += int(attempts[-1].outcome == AttackOutcome.SUCCESS)
+                    errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in attempts)
+                    retries += ScenarioRunService._total_retry_pressure(
+                        attempts_per_unit=[len(attempts)],
+                        persisted_retries=[attempt.total_retries for attempt in attempts],
+                    )
+            return ScenarioProgressCounts(
+                completed=completed,
+                planned=planned,
+                succeeded=succeeded,
+                success_percentage=int((succeeded / completed) * 100) if completed else None,
+                errors=errors,
+                retries=retries,
+            )
+
+        group_units: dict[str, list[_ResultUnitIdentity]] = {
+            group.id: [
+                _ResultUnitIdentity(atomic_group_id=group.id, seed_group_id=seed_group_id)
+                for seed_group_id in group.seed_group_ids
+            ]
+            for group in plan.atomic_groups
+        }
+        overall_units = (
+            [unit for units in group_units.values() for unit in units] if plan_complete else list(attempts_by_unit)
+        )
+        overall = aggregate(
+            units=overall_units,
+            planned=len(overall_units) if plan_complete else None,
+        )
+        # When the plan is complete the rollups iterate planned units only, so any attempt
+        # that failed attribution would silently vanish from every count. Surface it instead.
+        planned_units = set(overall_units)
+        unattributed_attempts = sum(
+            len(attempts) for unit, attempts in attempts_by_unit.items() if unit not in planned_units
+        )
+        if unattributed_attempts:
+            logger.warning(
+                "%d persisted attempt(s) matched no planned execution unit and are excluded from "
+                "scenario progress rollups.",
+                unattributed_attempts,
+            )
+        latest_results = [attempts_by_unit[unit][-1] for unit in overall_units if attempts_by_unit.get(unit)]
+        objective_scorer = ScenarioRunService._build_objective_scorer(
+            scorer_identifier=objective_scorer_identifier,
+            results=latest_results,
+        )
+
+        active_ids = set(active_group_ids)
+        atomic_groups: list[ScenarioAtomicGroupProgress] = []
+        for group in plan.atomic_groups:
+            units = group_units[group.id]
+            counts = aggregate(
+                units=units,
+                planned=len(units) if plan_complete else None,
+            )
+            if not terminal and group.id in active_ids:
+                group_status: Literal["RUNNING", "PENDING", "INCOMPLETE", "COMPLETED"] = "RUNNING"
+            elif counts.planned is not None and counts.planned > 0 and counts.completed >= counts.planned:
+                group_status = "COMPLETED"
+            elif terminal:
+                group_status = "INCOMPLETE"
+            else:
+                group_status = "PENDING"
+            atomic_groups.append(
+                ScenarioAtomicGroupProgress(
+                    id=group.id,
+                    atomic_attack_name=group.atomic_attack_name,
+                    display_group=group.display_group,
+                    status=group_status,
+                    technique_details=technique_details_by_group.get(group.id),
+                    **counts.model_dump(),
+                )
+            )
+        status_order = {"RUNNING": 0, "PENDING": 1, "INCOMPLETE": 2, "COMPLETED": 3}
+        atomic_groups.sort(
+            key=lambda group: (
+                status_order[group.status],
+                group.display_group,
+                group.atomic_attack_name,
+            )
+        )
+
+        groups_by_technique: dict[str, list[ScenarioRunPlanAtomicGroup]] = {}
+        groups_by_display: dict[str, list[ScenarioRunPlanAtomicGroup]] = {}
+        for group in plan.atomic_groups:
+            technique_name = group.technique_name or group.display_group
+            groups_by_technique.setdefault(technique_name, []).append(group)
+            groups_by_display.setdefault(group.display_group, []).append(group)
+        display_groups: list[ScenarioDisplayGroupProgress] = []
+        for display_group, groups in groups_by_display.items():
+            units = [unit for group in groups for unit in group_units[group.id]]
+            counts = aggregate(
+                units=units,
+                planned=len(units) if plan_complete else None,
+            )
+            display_groups.append(
+                ScenarioDisplayGroupProgress(
+                    id=display_group,
+                    display_group=display_group,
+                    atomic_attack_names=list(dict.fromkeys(group.atomic_attack_name for group in groups)),
+                    atomic_group_ids=[group.id for group in groups],
+                    **counts.model_dump(),
+                )
+            )
+        display_groups.sort(key=lambda group: group.display_group)
+
+        techniques: list[ScenarioTechniqueProgress] = []
+        for technique_name, groups in groups_by_technique.items():
+            units = [unit for group in groups for unit in group_units[group.id]]
+            counts = aggregate(
+                units=units,
+                planned=len(units) if plan_complete else None,
+            )
+            descriptions = list(dict.fromkeys(group.description for group in groups if group.description))
+            tags = sorted({tag for group in groups for tag in group.tags})
+            techniques.append(
+                ScenarioTechniqueProgress(
+                    id=technique_name,
+                    display_group=technique_name,
+                    atomic_attack_names=list(dict.fromkeys(group.atomic_attack_name for group in groups)),
+                    atomic_group_ids=[group.id for group in groups],
+                    description=descriptions[0] if descriptions else None,
+                    tags=tags,
+                    **counts.model_dump(),
+                )
+            )
+        techniques.sort(key=lambda technique: technique.display_group)
+
+        seed_by_id = {seed.id: seed for seed in plan.seed_groups}
+        seed_groups: list[ScenarioSeedGroupProgress] = []
+        for seed_id, seed in seed_by_id.items():
+            units = [
+                _ResultUnitIdentity(atomic_group_id=group.id, seed_group_id=seed_id)
+                for group in plan.atomic_groups
+                if seed_id in group.seed_group_ids
+            ]
+            counts = aggregate(
+                units=units,
+                planned=len(units) if plan_complete else None,
+            )
+            seed_groups.append(
+                ScenarioSeedGroupProgress(
+                    id=seed_id,
+                    objective=seed.objective,
+                    **counts.model_dump(),
+                )
+            )
+        seed_groups.sort(key=lambda seed: seed.objective or seed.id)
+
+        return ScenarioProgressSummary(
+            overall=overall,
+            objective_scorer=objective_scorer,
+            display_groups=display_groups,
+            techniques=techniques,
+            seed_groups=seed_groups,
+            atomic_groups=atomic_groups,
+            unattributed_attempts=unattributed_attempts,
+        )
+
+    @staticmethod
+    def _build_objective_scorer(
+        *,
+        scorer_identifier: ComponentIdentifier | None,
+        results: Sequence[ScenarioProgressResult],
+    ) -> ScenarioObjectiveScorer | None:
+        """
+        Build the objective scorer identity and its official evaluation metrics.
+
+        Returns:
+            ScenarioObjectiveScorer | None: Scorer information, or None when no scorer is known.
+        """
+        if scorer_identifier is None:
+            scorer_names = {result.score.scorer_name for result in results if result.score is not None}
+            if len(scorer_names) != 1:
+                return None
+            return ScenarioObjectiveScorer(
+                component_name=next(iter(scorer_names)),
+            )
+
+        official_metrics = find_objective_metrics_by_eval_hash(
+            eval_hash=ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+        )
+        metrics = (
+            ScenarioObjectiveScorerMetrics(
+                accuracy=official_metrics.accuracy,
+                accuracy_standard_error=official_metrics.accuracy_standard_error,
+                f1_score=official_metrics.f1_score,
+                precision=official_metrics.precision,
+                recall=official_metrics.recall,
+                average_score_time_seconds=official_metrics.average_score_time_seconds,
+            )
+            if official_metrics
+            else None
+        )
+        identity = ScenarioRunService._build_scorer_identity(scorer_identifier=scorer_identifier)
+        return ScenarioObjectiveScorer(**identity.model_dump(), metrics=metrics)
+
+    @staticmethod
+    def _build_scorer_identity(*, scorer_identifier: ComponentIdentifier) -> ScenarioScorerIdentity:
+        """
+        Project the complete scorer identity used to distinguish configurations.
+
+        Returns:
+            ScenarioScorerIdentity: Scorer parameters and nested component identities.
+        """
+        projected = project_behavioral_identity(
+            scorer_identifier,
+            identifier_type=ScorerIdentifier,
+        )
+        identity = ScenarioRunService._build_component_identity(component_identifier=projected)
+        return ScenarioScorerIdentity(
+            component_name=identity.component_name,
+            parameters=identity.parameters,
+            children=identity.children,
+        )
+
+    @staticmethod
+    def _total_retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:
+        """
+        Combine per-attempt retries with re-attempts of the same execution unit.
+
+        Both the CLI-facing run summary and the GUI-facing progress rollups report
+        this same quantity, so the definition lives here once.
+
+        Returns:
+            int: Total retry pressure.
+        """
+        within_attempts = sum(max(0, retries) for retries in persisted_retries)
+        repeated_units = sum(max(0, count - 1) for count in attempts_per_unit)
+        return within_attempts + repeated_units
+
+    @staticmethod
+    def _build_component_identity(*, component_identifier: ComponentIdentifier) -> ScenarioComponentIdentity:
+        """
+        Project a component identifier without duplicating component-specific schemas.
+
+        Returns:
+            ScenarioComponentIdentity: Behavioral parameters and recursive child identities.
+        """
+        children: dict[str, list[ScenarioComponentIdentity]] = {}
+        for child_name, child_value in component_identifier.children.items():
+            child_identifiers = child_value if isinstance(child_value, list) else [child_value]
+            children[child_name] = [
+                ScenarioRunService._build_component_identity(component_identifier=child) for child in child_identifiers
+            ]
+        return ScenarioComponentIdentity(
+            component_name=component_identifier.class_name,
+            parameters=dict(component_identifier.params),
+            children=children,
+        )
+
+    @staticmethod
+    def _build_attack_technique_details(
+        *,
+        technique_identifier: ComponentIdentifier,
+    ) -> ScenarioAttackTechniqueDetails:
+        """
+        Build REST details for an attack technique.
+
+        Returns:
+            ScenarioAttackTechniqueDetails: The projected technique details.
+        """
+        projected = project_behavioral_identity(
+            technique_identifier,
+            identifier_type=AttackTechniqueIdentifier,
+        )
+        details = ScenarioRunService._build_attack_technique_component_details(component_identifier=projected)
+        return ScenarioAttackTechniqueDetails(
+            component_name=details.component_name,
+            parameters=details.parameters,
+            children=details.children,
+        )
+
+    @staticmethod
+    def _build_attack_technique_component_details(
+        *,
+        component_identifier: ComponentIdentifier,
+    ) -> ScenarioComponentIdentity:
+        """
+        Map an already-projected technique component to its REST shape.
+
+        Returns:
+            ScenarioComponentIdentity: The mapped component details.
+        """
+        children: dict[str, list[ScenarioComponentIdentity]] = {}
+        for child_name, child_value in component_identifier.children.items():
+            child_identifiers = child_value if isinstance(child_value, list) else [child_value]
+            if child_name == _TECHNIQUE_SEEDS_CHILD:
+                children[child_name] = [
+                    ScenarioRunService._build_technique_seed_details(seed_identifier=child)
+                    for child in child_identifiers
+                ]
+            else:
+                children[child_name] = [
+                    ScenarioRunService._build_attack_technique_component_details(component_identifier=child)
+                    for child in child_identifiers
+                ]
+
+        return ScenarioComponentIdentity(
+            component_name=component_identifier.class_name,
+            parameters=dict(component_identifier.params),
+            children=children,
+        )
+
+    @staticmethod
+    def _build_technique_seed_details(*, seed_identifier: ComponentIdentifier) -> ScenarioComponentIdentity:
+        """
+        Keep only seed content needed by the REST attack details.
+
+        Returns:
+            ScenarioComponentIdentity: The simplified seed details.
+        """
+        parameters = {
+            name: seed_identifier.params[name]
+            for name in _TECHNIQUE_SEED_DISPLAY_PARAMS
+            if seed_identifier.params.get(name) is not None
+        }
+        return ScenarioComponentIdentity(
+            component_name=seed_identifier.class_name,
+            parameters=parameters,
         )
 
     @staticmethod
@@ -1054,6 +1659,7 @@ class ScenarioRunService:
             seed_group_id = config_hash({"objective": delta.objective})
         return ScenarioProgressResult(
             attack_result_id=delta.attack_result_id,
+            conversation_id=delta.conversation_id,
             atomic_group_id=atomic_group_id,
             atomic_attack_name=atomic_attack_name,
             seed_group_id=seed_group_id,
@@ -1064,6 +1670,7 @@ class ScenarioRunService:
             retries=delta.retry_events,
             error_type=delta.error_type,
             error_message=delta.error_message,
+            score=delta.score,
         )
 
     @staticmethod
