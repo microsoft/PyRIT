@@ -4378,7 +4378,6 @@ class MemoryInterface(abc.ABC):
             .label("unit_rank"),
         ).subquery("history_ranked_units")
         counted = and_(ranked.c.unit_rank == 1, ranked.c.is_planned == 1)
-        counted = and_(ranked.c.unit_rank == 1, ranked.c.is_planned == 1)
         return (
             select(
                 ranked.c.scenario_result_id,
