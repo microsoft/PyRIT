@@ -31,6 +31,25 @@ async def test_sneaky_bits_custom_chars():
     assert len(result.output_text) == 8  # 1 ASCII byte = 8 bits
 
 
+@pytest.mark.parametrize(
+    ("zero_char", "one_char"),
+    [
+        ("", "1"),
+        ("00", "1"),
+        ("0", ""),
+        ("0", "11"),
+    ],
+)
+def test_sneaky_bits_custom_chars_must_be_single_characters(zero_char: str, one_char: str):
+    with pytest.raises(ValueError, match="exactly one character"):
+        SneakyBitsSmugglerConverter(zero_char=zero_char, one_char=one_char)
+
+
+def test_sneaky_bits_custom_chars_must_be_distinct():
+    with pytest.raises(ValueError, match="must be distinct"):
+        SneakyBitsSmugglerConverter(zero_char="x", one_char="x")
+
+
 async def test_sneaky_bits_empty():
     converter = SneakyBitsSmugglerConverter(action="encode")
     result = await converter.convert_async(prompt="", input_type="text")
