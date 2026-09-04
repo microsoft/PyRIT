@@ -8,11 +8,7 @@ import {
   Switch,
   mergeClasses,
 } from '@fluentui/react-components'
-import {
-  ChevronDownRegular,
-  ChevronUpRegular,
-  FilterDismissRegular,
-} from '@fluentui/react-icons'
+import { FilterDismissRegular } from '@fluentui/react-icons'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import type { HistoryFilters } from './historyFilters'
 import { useAttackHistoryStyles } from './AttackHistory.styles'
@@ -158,12 +154,6 @@ export default function HistoryFiltersBar({
   }
 
   const showMatchModeToggle = converterFilter.length >= 2 && hasConverters !== false
-  const hasAdvancedFilters =
-    attackTypeFilters.length > 0 ||
-    converterFilter.length > 0 ||
-    hasConverters !== undefined ||
-    !includeScenarioAttacks
-  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(hasAdvancedFilters)
 
   // Searchable state for the converter Combobox (custom because of the
   // "(No converters)" sentinel OptionGroup).
@@ -175,175 +165,165 @@ export default function HistoryFiltersBar({
 
   return (
     <div className={styles.filters}>
-      <Tooltip content="Reset all filters" relationship="label">
-        <Button
-          className={styles.touchTargetHeight}
-          appearance="subtle"
-          size="small"
-          icon={<FilterDismissRegular />}
-          aria-label="Reset all filters"
-          disabled={!hasActiveFilters}
-          onClick={() => onFiltersChange({ ...DEFAULT_HISTORY_FILTERS })}
-          data-testid="reset-filters-btn"
+      <div className={styles.filterRow}>
+        <Tooltip content="Reset all filters" relationship="label">
+          <Button
+            className={styles.touchTargetHeight}
+            appearance="subtle"
+            size="small"
+            icon={<FilterDismissRegular />}
+            aria-label="Reset all filters"
+            disabled={!hasActiveFilters}
+            onClick={() => onFiltersChange({ ...DEFAULT_HISTORY_FILTERS })}
+            data-testid="reset-filters-btn"
+          />
+        </Tooltip>
+        <SearchableMultiCombobox
+          className={styles.filterDropdown}
+          placeholder="All operators"
+          selectedOptions={operatorFilters}
+          options={operatorOptions}
+          onSelect={(selected) => setFilter('operator', selected)}
+          testid="operator-filter"
         />
-      </Tooltip>
-      <SearchableMultiCombobox
-        className={styles.filterDropdown}
-        placeholder="All operators"
-        selectedOptions={operatorFilters}
-        options={operatorOptions}
-        onSelect={(selected) => setFilter('operator', selected)}
-        testid="operator-filter"
-      />
-      <SearchableMultiCombobox
-        className={styles.filterDropdown}
-        placeholder="All operations"
-        selectedOptions={operationFilters}
-        options={operationOptions}
-        onSelect={(selected) => setFilter('operation', selected)}
-        testid="operation-filter"
-      />
-      <Combobox
-        className={styles.filterDropdown}
-        placeholder="All outcomes"
-        value={OUTCOME_LABELS[outcomeFilter] ?? ''}
-        selectedOptions={outcomeFilter ? [outcomeFilter] : []}
-        onOptionSelect={(_e, data) =>
-          setFilter('outcome', data.selectedOptions[0] ?? '')
-        }
-        data-testid="outcome-filter"
-      >
-        <Option value="">All outcomes</Option>
-        <Option value="success">Success</Option>
-        <Option value="failure">Failure</Option>
-        <Option value="error">Error</Option>
-        <Option value="undetermined">Undetermined</Option>
-      </Combobox>
-      <Combobox
-        className={styles.filterDropdown}
-        placeholder="Filter labels..."
-        multiselect
-        selectedOptions={otherLabelFilters}
-        onOptionSelect={(_e, data) => {
-          onFiltersChange({ ...filters, otherLabels: data.selectedOptions, labelSearchText: '' })
-        }}
-        value={labelSearchText}
-        onChange={(e) => setFilter('labelSearchText', (e.target as HTMLInputElement).value)}
-        data-testid="label-filter"
-        freeform
-      >
-        {otherLabelOptions
-          .filter(l => !labelSearchText || l.toLowerCase().includes(labelSearchText.toLowerCase()))
-          .slice(0, 50)
-          .map(l => (
-            <Option key={l} value={l}>{l}</Option>
-          ))}
-        {otherLabelOptions.filter(l => !labelSearchText || l.toLowerCase().includes(labelSearchText.toLowerCase())).length > 50 && (
-          <Option disabled value="__more" text={`Type to search more...`}>{`Type to search ${otherLabelOptions.length - 50} more...`}</Option>
-        )}
-      </Combobox>
-      <Button
-        className={styles.touchTargetHeight}
-        appearance="subtle"
-        size="small"
-        icon={advancedFiltersOpen ? <ChevronUpRegular /> : <ChevronDownRegular />}
-        aria-expanded={advancedFiltersOpen}
-        aria-label={advancedFiltersOpen ? 'Hide advanced filters' : 'Show advanced filters'}
-        onClick={() => setAdvancedFiltersOpen((open) => !open)}
-        data-testid="advanced-filters-btn"
-      />
-      {advancedFiltersOpen && (
-        <>
-          <SearchableMultiCombobox
-            className={styles.filterDropdown}
-            placeholder="All attack types"
-            selectedOptions={attackTypeFilters}
-            options={attackTypeOptions}
-            onSelect={(selected) => setFilter('attackTypes', selected)}
-            testid="attack-type-filter"
-          />
-          <Switch
-            checked={includeScenarioAttacks}
-            onChange={(_event, data) => setFilter('includeScenarioAttacks', data.checked)}
-            label="Include scanner attacks"
-            data-testid="include-scanner-attacks"
-          />
-          <Combobox
-            className={styles.filterDropdown}
-            placeholder="All converters"
-            multiselect
-            freeform
-            open={converterOpen}
-            onOpenChange={(_e, data) => {
-              setConverterOpen(data.open)
-              setConverterSearch('')
-            }}
-            selectedOptions={converterSelectedOptions}
-            value={
-              converterOpen
-                ? converterSearch
-                : hasConverters === false
-                  ? '(No converters)'
-                  : formatMultiSelectValue(converterFilter)
-            }
-            onChange={(e) => setConverterSearch((e.target as HTMLInputElement).value)}
-            onOptionSelect={(_e, data) => {
-              handleConverterSelect(data.selectedOptions)
-              setConverterSearch('')
-            }}
-            data-testid="converter-filter"
-          >
-            <OptionGroup label="Special">
-              <Option value={NO_CONVERTERS_SENTINEL} text="(No converters)">(No converters)</Option>
-            </OptionGroup>
-            <OptionGroup label="Converters">
-              {filteredConverterOptions.map((c) => (
-                <Option key={c} value={c}>{c}</Option>
-              ))}
-            </OptionGroup>
-          </Combobox>
-          {showMatchModeToggle && (
-            <Tooltip
-              content={
-                converterMatchMode === 'all'
-                  ? 'Attack must use ALL selected converters'
-                  : 'Attack must use ANY of the selected converters'
-              }
-              relationship="label"
-            >
-              <span className={styles.matchModeToggle}>
-                <span className={styles.matchModeLabel}>Converters:</span>
-                <span
-                  className={mergeClasses(
-                    styles.matchModeLabel,
-                    converterMatchMode === 'any' && styles.matchModeLabelActive,
-                  )}
-                  data-testid="converter-match-mode-label-any"
-                >
-                  ANY
-                </span>
-                <Switch
-                  checked={converterMatchMode === 'all'}
-                  onChange={(_e, data) =>
-                    setFilter('converterMatchMode', data.checked ? 'all' : 'any')
-                  }
-                  aria-label={`Match ${converterMatchMode === 'all' ? 'all' : 'any'} selected converters`}
-                  data-testid="converter-match-mode-toggle"
-                />
-                <span
-                  className={mergeClasses(
-                    styles.matchModeLabel,
-                    converterMatchMode === 'all' && styles.matchModeLabelActive,
-                  )}
-                  data-testid="converter-match-mode-label-all"
-                >
-                  ALL
-                </span>
-              </span>
-            </Tooltip>
+        <SearchableMultiCombobox
+          className={styles.filterDropdown}
+          placeholder="All operations"
+          selectedOptions={operationFilters}
+          options={operationOptions}
+          onSelect={(selected) => setFilter('operation', selected)}
+          testid="operation-filter"
+        />
+        <Combobox
+          className={styles.filterDropdown}
+          placeholder="All outcomes"
+          value={OUTCOME_LABELS[outcomeFilter] ?? ''}
+          selectedOptions={outcomeFilter ? [outcomeFilter] : []}
+          onOptionSelect={(_e, data) =>
+            setFilter('outcome', data.selectedOptions[0] ?? '')
+          }
+          data-testid="outcome-filter"
+        >
+          <Option value="">All outcomes</Option>
+          <Option value="success">Success</Option>
+          <Option value="failure">Failure</Option>
+          <Option value="error">Error</Option>
+          <Option value="undetermined">Undetermined</Option>
+        </Combobox>
+        <Combobox
+          className={styles.filterDropdown}
+          placeholder="Filter labels..."
+          multiselect
+          selectedOptions={otherLabelFilters}
+          onOptionSelect={(_e, data) => {
+            onFiltersChange({ ...filters, otherLabels: data.selectedOptions, labelSearchText: '' })
+          }}
+          value={labelSearchText}
+          onChange={(e) => setFilter('labelSearchText', (e.target as HTMLInputElement).value)}
+          data-testid="label-filter"
+          freeform
+        >
+          {otherLabelOptions
+            .filter(l => !labelSearchText || l.toLowerCase().includes(labelSearchText.toLowerCase()))
+            .slice(0, 50)
+            .map(l => (
+              <Option key={l} value={l}>{l}</Option>
+            ))}
+          {otherLabelOptions.filter(l => !labelSearchText || l.toLowerCase().includes(labelSearchText.toLowerCase())).length > 50 && (
+            <Option disabled value="__more" text={`Type to search more...`}>{`Type to search ${otherLabelOptions.length - 50} more...`}</Option>
           )}
-        </>
-      )}
+        </Combobox>
+        <SearchableMultiCombobox
+          className={styles.filterDropdown}
+          placeholder="All attack types"
+          selectedOptions={attackTypeFilters}
+          options={attackTypeOptions}
+          onSelect={(selected) => setFilter('attackTypes', selected)}
+          testid="attack-type-filter"
+        />
+        <Combobox
+          className={styles.filterDropdown}
+          placeholder="All converters"
+          multiselect
+          freeform
+          open={converterOpen}
+          onOpenChange={(_e, data) => {
+            setConverterOpen(data.open)
+            setConverterSearch('')
+          }}
+          selectedOptions={converterSelectedOptions}
+          value={
+            converterOpen
+              ? converterSearch
+              : hasConverters === false
+                ? '(No converters)'
+                : formatMultiSelectValue(converterFilter)
+          }
+          onChange={(e) => setConverterSearch((e.target as HTMLInputElement).value)}
+          onOptionSelect={(_e, data) => {
+            handleConverterSelect(data.selectedOptions)
+            setConverterSearch('')
+          }}
+          data-testid="converter-filter"
+        >
+          <OptionGroup label="Special">
+            <Option value={NO_CONVERTERS_SENTINEL} text="(No converters)">(No converters)</Option>
+          </OptionGroup>
+          <OptionGroup label="Converters">
+            {filteredConverterOptions.map((c) => (
+              <Option key={c} value={c}>{c}</Option>
+            ))}
+          </OptionGroup>
+        </Combobox>
+        {showMatchModeToggle && (
+          <Tooltip
+            content={
+              converterMatchMode === 'all'
+                ? 'Attack must use ALL selected converters'
+                : 'Attack must use ANY of the selected converters'
+            }
+            relationship="label"
+          >
+            <span className={styles.matchModeToggle}>
+              <span className={styles.matchModeLabel}>Converters:</span>
+              <span
+                className={mergeClasses(
+                  styles.matchModeLabel,
+                  converterMatchMode === 'any' && styles.matchModeLabelActive,
+                )}
+                data-testid="converter-match-mode-label-any"
+              >
+                ANY
+              </span>
+              <Switch
+                checked={converterMatchMode === 'all'}
+                onChange={(_e, data) =>
+                  setFilter('converterMatchMode', data.checked ? 'all' : 'any')
+                }
+                aria-label={`Match ${converterMatchMode === 'all' ? 'all' : 'any'} selected converters`}
+                data-testid="converter-match-mode-toggle"
+              />
+              <span
+                className={mergeClasses(
+                  styles.matchModeLabel,
+                  converterMatchMode === 'all' && styles.matchModeLabelActive,
+                )}
+                data-testid="converter-match-mode-label-all"
+              >
+                ALL
+              </span>
+            </span>
+          </Tooltip>
+        )}
+      </div>
+      <div className={styles.secondaryFilterRow} data-testid="scanner-attack-filter-row">
+        <Switch
+          checked={includeScenarioAttacks}
+          onChange={(_event, data) => setFilter('includeScenarioAttacks', data.checked)}
+          label="Include scanner attacks"
+          data-testid="include-scanner-attacks"
+        />
+      </div>
     </div>
   )
 }

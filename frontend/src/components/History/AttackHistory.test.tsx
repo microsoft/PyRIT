@@ -93,8 +93,8 @@ describe('AttackHistory', () => {
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
-    expect(screen.queryByTestId('attack-type-filter')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('converter-filter')).not.toBeInTheDocument()
+    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
 
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
@@ -799,7 +799,6 @@ describe('AttackHistory', () => {
     })
 
     // Open the attack type dropdown and select an option
-    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     const attackDropdown = screen.getByTestId('attack-type-filter')
     fireEvent.click(attackDropdown)
 
@@ -872,7 +871,6 @@ describe('AttackHistory', () => {
       expect(mockedAttacksApi.getConverterOptions).toHaveBeenCalled()
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     const converterDropdown = screen.getByTestId('converter-filter')
     fireEvent.click(converterDropdown)
 
@@ -996,11 +994,7 @@ describe('AttackHistory', () => {
       expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
     })
 
-    // Fluent UI Combobox renders input with role="combobox"
-    const inputs = screen.getAllByRole('combobox')
-    // The label filter combobox is the last one
-    const labelInput = inputs[inputs.length - 1]
-    fireEvent.change(labelInput, { target: { value: 'red' } })
+    fireEvent.change(screen.getByTestId('label-filter'), { target: { value: 'red' } })
 
     expect(onFiltersChange).toHaveBeenCalledWith(
       expect.objectContaining({ labelSearchText: 'red' })

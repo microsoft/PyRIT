@@ -26,7 +26,7 @@ describe('HistoryFiltersBar', () => {
     jest.clearAllMocks()
   })
 
-  it('should render primary filters and reveal advanced filters on demand', () => {
+  it('should render all filters with scanner inclusion on a second row', () => {
     render(
       <TestWrapper>
         <HistoryFiltersBar {...defaultProps} />
@@ -37,14 +37,12 @@ describe('HistoryFiltersBar', () => {
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
-    expect(screen.queryByTestId('attack-type-filter')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('converter-filter')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
-
     expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
     expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: 'Include scanner attacks' })).toBeChecked()
+    expect(screen.getByTestId('scanner-attack-filter-row')).toContainElement(
+      screen.getByRole('switch', { name: 'Include scanner attacks' }),
+    )
+    expect(screen.queryByTestId('advanced-filters-btn')).not.toBeInTheDocument()
   })
 
   it('should disable reset when no filters are active', () => {
@@ -91,7 +89,6 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     fireEvent.click(screen.getByRole('switch', { name: 'Include scanner attacks' }))
 
     expect(onFiltersChange).toHaveBeenCalledWith({
@@ -114,7 +111,6 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     const dropdown = screen.getByTestId('attack-type-filter')
     fireEvent.click(dropdown)
 
@@ -160,7 +156,6 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     const dropdown = screen.getByTestId('converter-filter')
     fireEvent.click(dropdown)
 
@@ -236,9 +231,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    const inputs = screen.getAllByRole('combobox')
-    const labelInput = inputs[inputs.length - 1]
-    fireEvent.change(labelInput, { target: { value: 'team' } })
+    fireEvent.change(screen.getByTestId('label-filter'), { target: { value: 'team' } })
 
     expect(onFiltersChange).toHaveBeenCalledWith(
       expect.objectContaining({ labelSearchText: 'team' })
@@ -296,7 +289,6 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     fireEvent.click(screen.getByTestId('converter-filter'))
     const option = await screen.findByText('(No converters)')
     fireEvent.click(option)
