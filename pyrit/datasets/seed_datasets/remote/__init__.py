@@ -110,6 +110,7 @@ if TYPE_CHECKING:
     from pyrit.datasets.seed_datasets.remote.red_team_social_bias_dataset import _RedTeamSocialBiasDataset
     from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
     from pyrit.datasets.seed_datasets.remote.salad_bench_dataset import _SaladBenchDataset
+    from pyrit.datasets.seed_datasets.remote.semguard_dataset import SemGuardCategory, _SemGuardDataset
     from pyrit.datasets.seed_datasets.remote.sgxstest_dataset import SGXSTestLabel, _SGXSTestDataset
     from pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset import _SimpleSafetyTestsDataset
     from pyrit.datasets.seed_datasets.remote.siuo_dataset import SIUOCategory, _SIUODataset
@@ -164,6 +165,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ODINTaxonomyCategory": "pyrit.datasets.seed_datasets.remote.odin_dataset",
     "PromptIntelCategory": "pyrit.datasets.seed_datasets.remote.promptintel_dataset",
     "PromptIntelSeverity": "pyrit.datasets.seed_datasets.remote.promptintel_dataset",
+    "SemGuardCategory": "pyrit.datasets.seed_datasets.remote.semguard_dataset",
     "SGXSTestLabel": "pyrit.datasets.seed_datasets.remote.sgxstest_dataset",
     "SIUOCategory": "pyrit.datasets.seed_datasets.remote.siuo_dataset",
     "VLGuardCategory": "pyrit.datasets.seed_datasets.remote.vlguard_dataset",
@@ -231,8 +233,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "_PromptIntelDataset": "pyrit.datasets.seed_datasets.remote.promptintel_dataset",
     "_RedTeamSocialBiasDataset": "pyrit.datasets.seed_datasets.remote.red_team_social_bias_dataset",
     "_RemoteDatasetLoader": "pyrit.datasets.seed_datasets.remote.remote_dataset_loader",
-    "_SGXSTestDataset": "pyrit.datasets.seed_datasets.remote.sgxstest_dataset",
     "_SaladBenchDataset": "pyrit.datasets.seed_datasets.remote.salad_bench_dataset",
+    "_SemGuardDataset": "pyrit.datasets.seed_datasets.remote.semguard_dataset",
+    "_SGXSTestDataset": "pyrit.datasets.seed_datasets.remote.sgxstest_dataset",
     "_SimpleSafetyTestsDataset": "pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset",
     "_SIUODataset": "pyrit.datasets.seed_datasets.remote.siuo_dataset",
     "_SOSBenchDataset": "pyrit.datasets.seed_datasets.remote.sosbench_dataset",
