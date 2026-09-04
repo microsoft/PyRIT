@@ -272,7 +272,7 @@ silent: true
         initializer_names = [initializer.name for initializer in config._initializer_configs]
         example_text = example_path.read_text(encoding="utf-8")
 
-        assert initializer_names == ["target", "scorer", "technique"]
+        assert initializer_names == ["target", "converter", "scorer", "technique"]
         assert "# - name: load_default_datasets" in example_text
         assert "several minutes" in example_text
         assert "provider credentials" in example_text

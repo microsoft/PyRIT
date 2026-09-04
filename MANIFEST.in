@@ -5,6 +5,7 @@ recursive-include pyrit *.prompt
 recursive-include pyrit *.yaml
 recursive-include pyrit *.pdf
 recursive-include pyrit *.png
+recursive-include pyrit *.jpg
 recursive-include pyrit *.wav
 recursive-include pyrit *.mp4
 recursive-include pyrit *.md
