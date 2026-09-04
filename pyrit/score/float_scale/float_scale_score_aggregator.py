@@ -215,6 +215,7 @@ def _create_aggregator_by_category(
     result_func: FloatScaleOp,
     aggregate_description: str,
     group_by_category: bool = True,
+    use_selected_score_metadata: bool = False,
 ) -> FloatScaleAggregatorFunc:
     """
     Create a float-scale aggregator that can optionally group scores by category.
@@ -232,6 +233,8 @@ def _create_aggregator_by_category(
         result_func (FloatScaleOp): Function applied to the list of float values to compute the aggregation result.
         aggregate_description (str): Base description for the aggregated result.
         group_by_category (bool): Whether to group scores by category. Defaults to True.
+        use_selected_score_metadata (bool): Whether conflicting metadata is resolved from scores whose
+            value matches the aggregate. Defaults to False.
 
     Returns:
         FloatScaleMultiScoreAggregator: Aggregator function that reduces a sequence of float-scale Scores
@@ -299,8 +302,14 @@ def _create_aggregator_by_category(
                     _undetermined_result(category_scores, name=name, metadata=metadata, category=category_list)
                 )
                 continue
-            result = result_func(float_values)
-            result = max(0.0, min(1.0, result))
+            raw_result = result_func(float_values)
+            if use_selected_score_metadata:
+                selected_score = next(
+                    score for score, value in zip(category_scores, float_values, strict=True) if value == raw_result
+                )
+                selected_metadata = selected_score.score_metadata or {}
+                metadata.update(selected_metadata)
+            result = max(0.0, min(1.0, raw_result))
 
             # Build description and rationale for this category group
             if len(category_scores) == 1:
@@ -350,6 +359,7 @@ class FloatScaleScorerByCategory:
         result_func=max,
         aggregate_description="Maximum value among constituent scorers",
         group_by_category=True,
+        use_selected_score_metadata=True,
     )
 
     MIN: FloatScaleAggregatorFunc = _create_aggregator_by_category(
@@ -357,6 +367,7 @@ class FloatScaleScorerByCategory:
         result_func=min,
         aggregate_description="Minimum value among constituent scorers",
         group_by_category=True,
+        use_selected_score_metadata=True,
     )
 
 
