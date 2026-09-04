@@ -49,6 +49,7 @@ class TestServeMedia:
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
+        assert response.headers["x-content-type-options"] == "nosniff"
         assert response.content == b"\x89PNG\r\n\x1a\n"
 
     def test_rejects_path_outside_results_directory(self, client: TestClient, _mock_memory: Path) -> None:
@@ -161,6 +162,37 @@ class TestServeMedia:
         response = client.get("/api/media", params={"path": str(file_path)})
 
         assert response.status_code == 403
+
+    @pytest.mark.parametrize("extension", [".html", ".svg"])
+    def test_serves_active_documents_as_neutralized_downloads(
+        self,
+        client: TestClient,
+        _mock_memory: Path,
+        extension: str,
+    ) -> None:
+        """Active documents are stored and served, but never rendered in this origin."""
+        file_path = _mock_memory / "prompt-memory-entries" / f"active{extension}"
+        file_path.write_text("<script>alert(1)</script>")
+
+        response = client.get("/api/media", params={"path": str(file_path)})
+
+        assert response.status_code == 200
+        assert response.text == "<script>alert(1)</script>"
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["content-disposition"].startswith("attachment;")
+        assert f"active{extension}" in response.headers["content-disposition"]
+        assert response.headers["x-content-type-options"] == "nosniff"
+
+    def test_serves_documents_as_attachments(self, client: TestClient, _mock_memory: Path) -> None:
+        """Allowed documents download instead of rendering in the application origin."""
+        file_path = _mock_memory / "prompt-memory-entries" / "document.pdf"
+        file_path.write_bytes(b"%PDF-1.4\n")
+
+        response = client.get("/api/media", params={"path": str(file_path)})
+
+        assert response.status_code == 200
+        assert response.headers["content-disposition"].startswith("attachment;")
+        assert response.headers["x-content-type-options"] == "nosniff"
 
     def test_rejects_disallowed_subdirectory(self, client: TestClient, _mock_memory: Path) -> None:
         """Files in non-allowed subdirectories are rejected."""

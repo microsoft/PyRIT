@@ -78,12 +78,21 @@ class InstanceRegistry(Protocol[T]):
         name: str | None = None,
         tags: dict[str, str] | list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        replace: bool = False,
     ) -> None:
         """Register a pre-configured instance, defaulting its name to the identifier's ``unique_name``."""
         ...
 
     def get(self, name: str) -> T | None:
         """Return the instance registered under ``name``, or None."""
+        ...
+
+    def validate_name_available(self, name: str) -> None:
+        """Raise if ``name`` is reserved or already registered."""
+        ...
+
+    def unregister(self, name: str) -> T | None:
+        """Remove and return the instance registered under ``name``, or None."""
         ...
 
     def get_entry(self, name: str) -> RegistryEntry[T] | None:
@@ -170,7 +179,12 @@ class DefaultInstanceRegistry(Generic[T]):
         T: The type of instances held (must be ``Identifiable``).
     """
 
-    def __init__(self, *, instance_type: type[T] | Callable[[], type[T]] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        instance_type: type[T] | Callable[[], type[T]] | None = None,
+        reserved_names: set[str] | frozenset[str] | None = None,
+    ) -> None:
         """
         Initialize an empty instance container.
 
@@ -183,10 +197,13 @@ class DefaultInstanceRegistry(Generic[T]):
                 zero-argument callable returning it; the callable form lets owners
                 defer importing the type so a registry's lazy discovery is preserved.
                 It is resolved once, on the first ``register`` call, and cached.
+            reserved_names (set[str] | frozenset[str] | None): Names that cannot be
+                registered in this container.
         """
         self._registry_items: dict[str, RegistryEntry[T]] = {}
         self._metadata_cache: list[ComponentIdentifier] | None = None
         self._instance_type: type[T] | Callable[[], type[T]] | None = instance_type
+        self._reserved_names = frozenset(reserved_names or ())
 
     def _resolve_instance_type(self) -> type | None:
         """
@@ -228,6 +245,7 @@ class DefaultInstanceRegistry(Generic[T]):
         name: str | None = None,
         tags: dict[str, str] | list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        replace: bool = False,
     ) -> None:
         """
         Register a pre-configured instance.
@@ -239,10 +257,13 @@ class DefaultInstanceRegistry(Generic[T]):
             tags (dict[str, str] | list[str] | None): Optional tags for
                 categorization.
             metadata (dict[str, Any] | None): Optional per-entry metadata.
+            replace (bool): Whether to replace an existing entry with the same name.
 
         Raises:
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
+            ValueError: If the name is reserved or already registered and ``replace``
+                is False.
         """
         expected_type = self._resolve_instance_type()
         if expected_type is not None and not isinstance(instance, expected_type):
@@ -253,6 +274,10 @@ class DefaultInstanceRegistry(Generic[T]):
 
         if name is None:
             name = instance.get_identifier().unique_name
+        if name in self._reserved_names:
+            raise ValueError(f"Instance name '{name}' is reserved")
+        if not replace:
+            self.validate_name_available(name)
 
         self._registry_items[name] = RegistryEntry(
             name=name,
@@ -274,6 +299,37 @@ class DefaultInstanceRegistry(Generic[T]):
         """
         entry = self._registry_items.get(name)
         return entry.instance if entry is not None else None
+
+    def validate_name_available(self, name: str) -> None:
+        """
+        Validate that a registry name can be used.
+
+        Args:
+            name (str): The proposed registry name.
+
+        Raises:
+            ValueError: If the name is reserved or already registered.
+        """
+        if name in self._reserved_names:
+            raise ValueError(f"Instance name '{name}' is reserved")
+        if name in self._registry_items:
+            raise ValueError(f"Instance '{name}' already exists")
+
+    def unregister(self, name: str) -> T | None:
+        """
+        Remove a registered instance by name.
+
+        Args:
+            name (str): The registry name of the instance.
+
+        Returns:
+            T | None: The removed instance, or None if not found.
+        """
+        entry = self._registry_items.pop(name, None)
+        if entry is None:
+            return None
+        self._metadata_cache = None
+        return entry.instance
 
     def get_entry(self, name: str) -> RegistryEntry[T] | None:
         """

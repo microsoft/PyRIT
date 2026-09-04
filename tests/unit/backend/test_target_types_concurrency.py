@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Concurrency regressions for target catalog routes."""
+"""Concurrency regressions for target type routes."""
 
 import asyncio
 from threading import Event
@@ -13,7 +13,7 @@ from pyrit.backend.main import app
 from pyrit.backend.services.target_service import TargetService
 
 
-async def test_health_remains_schedulable_during_cold_target_catalog() -> None:
+async def test_health_remains_schedulable_during_cold_target_types() -> None:
     discovery_started = Event()
     discovery_release = Event()
     discovery_finished = Event()
@@ -31,7 +31,7 @@ async def test_health_remains_schedulable_during_cold_target_catalog() -> None:
         patch("pyrit.backend.routes.targets.get_target_service", return_value=service),
     ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            catalog_request = asyncio.create_task(client.get("/api/targets/catalog"))
+            types_request = asyncio.create_task(client.get("/api/targets/types"))
             assert await asyncio.to_thread(discovery_started.wait, 5)
 
             health_response = await asyncio.wait_for(client.get("/api/health"), timeout=2)
@@ -39,6 +39,6 @@ async def test_health_remains_schedulable_during_cold_target_catalog() -> None:
             assert health_response.status_code == 200
             assert not discovery_finished.is_set()
             discovery_release.set()
-            catalog_response = await asyncio.wait_for(catalog_request, timeout=2)
+            types_response = await asyncio.wait_for(types_request, timeout=2)
 
-    assert catalog_response.status_code == 200
+    assert types_response.status_code == 200

@@ -124,15 +124,31 @@ class TestTargetRegistryRegisterInstance:
 
         assert len(registry.instances) == 2
 
-    def test_register_instance_duplicate_name_overwrites(self, registry: TargetRegistry):
+    def test_register_instance_duplicate_name_raises(self, registry: TargetRegistry):
         first = MockPromptTarget(model_name="first")
         second = MockPromptTarget(model_name="second")
 
         registry.instances.register(first, name="same_name")
-        registry.instances.register(second, name="same_name")
 
-        assert len(registry.instances) == 1
-        assert registry.instances.get("same_name") is second
+        with pytest.raises(ValueError, match="already exists"):
+            registry.instances.register(second, name="same_name")
+
+        assert registry.instances.get("same_name") is first
+
+    def test_create_named_instance_builds_and_stores_target(self, registry: TargetRegistry):
+        registry.register_class(MockPromptTarget)
+
+        target = registry.create_named_instance(name="mock", target_type="MockPromptTarget")
+
+        assert isinstance(target, MockPromptTarget)
+        assert registry.instances.get("mock") is target
+
+    @pytest.mark.parametrize("name", ["catalog", "types"])
+    def test_create_named_instance_rejects_reserved_name(self, registry: TargetRegistry, name: str):
+        registry.register_class(MockPromptTarget)
+
+        with pytest.raises(ValueError, match="reserved"):
+            registry.create_named_instance(name=name, target_type="MockPromptTarget")
 
     def test_register_instance_rejects_non_target(self, registry: TargetRegistry):
         class NotATarget:

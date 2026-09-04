@@ -703,7 +703,7 @@ class ScorerInitializer(PyRITInitializer):
 
         try:
             scorer = factory()
-            scorer_registry.instances.register(scorer, name=name, tags=list(tags) if tags else None)
+            scorer_registry.instances.register(scorer, name=name, tags=list(tags) if tags else None, replace=True)
             logger.info(f"Registered scorer: {name}")
         except (ValueError, TypeError, KeyError) as e:
             logger.warning(f"Skipping scorer {name}: {e}")

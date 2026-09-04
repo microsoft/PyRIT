@@ -8,6 +8,15 @@ Serves locally stored media files (images, audio, video, etc.) via HTTP
 so the frontend can reference them by URL instead of requiring inline
 base64 data URIs.  For Azure deployments, media is served directly from
 Azure Blob Storage via signed URLs and this endpoint is not used.
+
+This route is the only place PyRIT hands stored bytes to a browser, so it is the
+only place that restricts content.  Storage stays unrestricted on purpose: any
+file type is a legitimate attack payload (uploading an ``.html`` file so an attack
+can push it to a blob target is a valid operation).  Files therefore keep their
+real name and extension on disk, and this route never renames them -- anything
+reading a stored path gets the original file.  Only the HTTP *response* is
+adjusted: a document type a browser would execute in this origin is returned as an
+opaque download instead of a rendered page.
 """
 
 import logging
@@ -26,6 +35,13 @@ router = APIRouter()
 # Only serve files from known media subdirectories under results_path.
 _ALLOWED_SUBDIRECTORIES = {"prompt-memory-entries", "seed-prompt-entries"}
 
+# Types a browser executes in this origin. They are still stored and still served,
+# but always as an opaque download so stored content cannot script against the UI.
+_ACTIVE_DOCUMENT_EXTENSIONS = {".htm", ".html", ".svg", ".xhtml", ".xml"}
+
+# Types the browser is asked to download rather than render inline.
+_ATTACHMENT_EXTENSIONS = {".csv", ".md", ".pdf", ".txt"} | _ACTIVE_DOCUMENT_EXTENSIONS
+
 # Only serve known media file types (allowlist approach).
 _ALLOWED_EXTENSIONS = {
     # Images
@@ -35,7 +51,6 @@ _ALLOWED_EXTENSIONS = {
     ".gif",
     ".bmp",
     ".webp",
-    ".svg",
     ".ico",
     ".tiff",
     # Audio
@@ -56,8 +71,7 @@ _ALLOWED_EXTENSIONS = {
     ".md",
     ".csv",
     ".pdf",
-    ".html",
-}
+} | _ACTIVE_DOCUMENT_EXTENSIONS
 
 
 def _validate_media_path(*, path: str, allowed_root: Path) -> Path:
@@ -110,6 +124,12 @@ async def serve_media_async(
     configured results directory (e.g. ``dbdata/prompt-memory-entries/``)
     to prevent path traversal attacks and exfiltration of sensitive files.
 
+    The stored file is never modified or renamed. Active document types
+    (see ``_ACTIVE_DOCUMENT_EXTENSIONS``) are returned as opaque downloads so the
+    browser does not execute them in this origin; the bytes and the file name are
+    unchanged, so a caller that needs the real file (e.g. to attach an ``.html``
+    payload to a target) reads it from its stored path.
+
     Args:
         path: Absolute path to the file.
 
@@ -134,8 +154,16 @@ async def serve_media_async(
     if not validated_path.is_file():
         raise HTTPException(status_code=404, detail="File not found.")
 
-    mime_type, _ = mimetypes.guess_type(validated_path)
+    extension = validated_path.suffix.lower()
+    if extension in _ACTIVE_DOCUMENT_EXTENSIONS:
+        media_type = "application/octet-stream"
+    else:
+        guessed_type, _ = mimetypes.guess_type(validated_path)
+        media_type = guessed_type or "application/octet-stream"
     return FileResponse(
         path=validated_path,
-        media_type=mime_type or "application/octet-stream",
+        media_type=media_type,
+        filename=validated_path.name if extension in _ATTACHMENT_EXTENSIONS else None,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
     )

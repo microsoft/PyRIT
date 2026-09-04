@@ -14,6 +14,7 @@ Targets can be:
 
 import asyncio
 import logging
+import uuid
 from functools import lru_cache
 from typing import Any, Literal, cast
 
@@ -21,9 +22,10 @@ from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetCatalogEntry,
     TargetCatalogResponse,
     TargetListResponse,
+    TargetTypeEntry,
+    TargetTypeResponse,
 )
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.registry import TargetRegistry
@@ -125,7 +127,7 @@ class TargetService:
         """
         return self._registry.instances.get(target_registry_name)
 
-    async def list_target_catalog_async(self) -> TargetCatalogResponse:
+    async def list_target_types_async(self) -> TargetTypeResponse:
         """
         List all available target types from the target class registry.
 
@@ -136,17 +138,39 @@ class TargetService:
         not this service.
 
         Returns:
-            TargetCatalogResponse containing all available target classes.
+            TargetTypeResponse containing all available target classes.
         """
         metadata_items = await asyncio.to_thread(self._registry.get_all_registered_class_metadata)
-        items: list[TargetCatalogEntry] = [
-            TargetCatalogEntry(
+        items: list[TargetTypeEntry] = [
+            TargetTypeEntry(
                 target_type=metadata.class_name,
-                parameters=[p for p in metadata.parameters if p.is_string_coercible],
+                parameters=[p for p in metadata.parameters if p.is_string_coercible or p.reference is not None],
                 supported_auth_modes=cast("list[Literal['api_key', 'identity']]", list(metadata.supported_auth_modes)),
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items
+        ]
+        return TargetTypeResponse(items=items)
+
+    async def list_target_catalog_async(self) -> TargetCatalogResponse:
+        """
+        Return the legacy projection used by the current configuration UI.
+
+        LEGACY COMPATIBILITY: ``catalog`` is the pre-registry name for ``types``, and
+        the whole concept goes away -- there is no ``TargetCatalog`` class and nothing
+        new should use this. It differs from ``list_target_types_async`` in exactly one
+        way: it drops registry-reference parameters, which the un-migrated
+        configuration UI cannot render. Delete this method, the ``/catalog`` route, and
+        the ``TargetCatalog*`` aliases together when that UI switches to
+        ``/targets/types``.
+
+        Returns:
+            TargetCatalogResponse: The scalar-only legacy projection.
+        """
+        types_response = await self.list_target_types_async()
+        items = [
+            entry.model_copy(update={"parameters": [p for p in entry.parameters if p.is_string_coercible]})
+            for entry in types_response.items
         ]
         return TargetCatalogResponse(items=items)
 
@@ -188,11 +212,14 @@ class TargetService:
             # Omit any api_key so the target validates its own endpoint and authenticates itself.
             params.pop("api_key", None)
 
-        target_obj = self._registry.create_instance(request.type, **params)
-
-        self._registry.instances.register(target_obj)
-
-        target_registry_name = target_obj.get_identifier().unique_name
+        # LEGACY COMPATIBILITY: The current configuration UI omits the name.
+        # Remove this generated fallback after that UI sends an explicit name.
+        target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
+        target_obj = self._registry.create_named_instance(
+            name=target_registry_name,
+            target_type=request.type,
+            **params,
+        )
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
 
 

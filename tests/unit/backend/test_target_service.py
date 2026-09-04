@@ -253,6 +253,19 @@ class TestListTargetCatalog:
         assert "api_key" in openai_entry.supported_auth_modes
         assert "identity" in openai_entry.supported_auth_modes
 
+    async def test_types_include_references_while_catalog_preserves_scalar_contract(self) -> None:
+        service = TargetService()
+
+        types_result = await service.list_target_types_async()
+        catalog_result = await service.list_target_catalog_async()
+
+        types_entry = next(item for item in types_result.items if item.target_type == "RoundRobinTarget")
+        catalog_entry = next(item for item in catalog_result.items if item.target_type == "RoundRobinTarget")
+        targets_parameter = next(param for param in types_entry.parameters if param.name == "targets")
+        assert targets_parameter.reference_type == "target"
+        assert all(param.name != "targets" for param in catalog_entry.parameters)
+        assert catalog_entry.parameters == [param for param in types_entry.parameters if param.is_string_coercible]
+
     async def test_catalog_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
 
@@ -356,6 +369,34 @@ class TestCreateTarget:
 
         assert result.target_registry_name is not None
         assert result.identifier.class_name == "TextTarget"
+
+    async def test_create_target_uses_explicit_registry_name(self, sqlite_instance) -> None:
+        service = TargetService()
+
+        result = await service.create_target_async(
+            request=CreateTargetRequest(name="text-target", type="TextTarget", params={}),
+        )
+
+        assert result.target_registry_name == "text-target"
+        assert service.get_target_object(target_registry_name="text-target") is not None
+
+    async def test_create_target_rejects_duplicate_name(self, sqlite_instance) -> None:
+        service = TargetService()
+        service._registry.instances.register(MockPromptTarget(), name="shared-name")
+
+        with pytest.raises(ValueError, match="already exists"):
+            await service.create_target_async(
+                request=CreateTargetRequest(name="shared-name", type="TextTarget", params={}),
+            )
+
+    @pytest.mark.parametrize("name", ["catalog", "types"])
+    async def test_create_target_rejects_reserved_route_name(self, sqlite_instance, name: str) -> None:
+        service = TargetService()
+
+        with pytest.raises(ValueError, match="reserved"):
+            await service.create_target_async(
+                request=CreateTargetRequest(name=name, type="TextTarget", params={}),
+            )
 
     async def test_create_target_delegates_construction_to_registry(self, sqlite_instance) -> None:
         """Every target construction path is owned by the registry."""
