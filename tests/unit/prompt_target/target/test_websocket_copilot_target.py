@@ -2,12 +2,13 @@
 # Licensed under the MIT license.
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
 
-from pyrit.auth import CopilotAuthenticator
+from pyrit.auth import BrowserSessionCopilotAuthenticator, CopilotAuthenticator
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import WebSocketCopilotTarget
 from pyrit.prompt_target.websocket_copilot_target import CopilotMessageType
@@ -139,7 +140,7 @@ class TestWebSocketCopilotTargetInit:
             assert target._authenticator == mock_auth_instance
             assert target._response_timeout_seconds == WebSocketCopilotTarget.RESPONSE_TIMEOUT_SECONDS
             assert target._model_name == "copilot"
-            assert target._endpoint == "wss://substrate.office.com/m365Copilot/Chathub"
+            assert target._endpoint == "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub"
             assert target._verbose is False
             assert target._max_requests_per_minute is None
 
@@ -160,6 +161,15 @@ class TestWebSocketCopilotTargetInit:
         for invalid_timeout in [0, -10, -1]:
             with pytest.raises(ValueError, match="response_timeout_seconds must be a positive integer."):
                 WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=invalid_timeout)
+
+    def test_init_with_browser_session_authenticator(self, tmp_path: Path) -> None:
+        authenticator = BrowserSessionCopilotAuthenticator(
+            profile_path=tmp_path / "copilot-profile",
+        )
+
+        target = WebSocketCopilotTarget(authenticator=authenticator)
+
+        assert target._authenticator is authenticator
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -252,7 +262,7 @@ class TestBuildWebsocketUrl:
         )
         expected_token = await mock_authenticator.get_token_async()
 
-        assert url.startswith("wss://substrate.office.com/m365Copilot/Chathub/test_object_id@test_tenant_id?")
+        assert url.startswith("wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub/test_object_id@test_tenant_id?")
         assert f"X-SessionId={session_id}" in url
         assert f"ConversationId={copilot_conversation_id}" in url
         assert f"access_token={expected_token}" in url
