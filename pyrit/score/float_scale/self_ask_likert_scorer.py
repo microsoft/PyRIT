@@ -18,6 +18,7 @@ from pyrit.models import (
     SeedPrompt,
     UnvalidatedScore,
 )
+from pyrit.models.harm_category import HarmCategory
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEvalFiles
@@ -115,7 +116,7 @@ class LikertScalePaths(enum.Enum):
         LikertScaleEvalFiles(
             human_labeled_datasets_files=["harm/sexual.csv"],
             result_file="harm/sexual_metrics.jsonl",
-            harm_category="sexual",
+            harm_category=HarmCategory.SEXUAL_CONTENT.name,
         ),
     )
     VIOLENCE_SCALE = (
@@ -145,7 +146,7 @@ class LikertScalePaths(enum.Enum):
         LikertScaleEvalFiles(
             human_labeled_datasets_files=["harm/fairness_bias.csv"],
             result_file="harm/fairness_bias_metrics.jsonl",
-            harm_category="fairness_bias",
+            harm_category=HarmCategory.REPRESENTATIONAL.name,
         ),
     )
     HARM_SCALE = (
