@@ -195,7 +195,10 @@ class LikertScalePaths(enum.Enum):
         Returns:
             LikertScale: The loaded scale.
         """
-        return LikertScale.from_yaml(self.path, evaluation_files=self.evaluation_files)
+        scale = LikertScale.from_yaml(self.path, evaluation_files=self.evaluation_files)
+        if self.evaluation_files and self.evaluation_files.harm_category:
+            return scale.model_copy(update={"category": self.evaluation_files.harm_category})
+        return scale
 
 
 class _LikertScaleResponseHandler(ResponseHandler):

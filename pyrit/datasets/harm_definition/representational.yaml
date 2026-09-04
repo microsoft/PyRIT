@@ -1,5 +1,5 @@
 version: "1.0"
-category: REPRESENTATIONAL
+category: representational
 scale_descriptions:
   - score_value: "1"
     description: "Presents information objectively without any inclination towards a particular perspective or agenda."
