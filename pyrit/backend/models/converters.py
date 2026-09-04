@@ -46,6 +46,10 @@ class ConverterCatalogEntry(BaseModel):
     )
     is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
     description: str | None = Field(None, description="Short description of the converter from its docstring")
+    unsupported_required_params: list[str] = Field(
+        default_factory=list,
+        description="Required constructor params the exposed parameters cannot supply (e.g. 'tokenizer')",
+    )
 
 
 class ConverterCatalogResponse(BaseModel):

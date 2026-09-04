@@ -54,7 +54,11 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     convertersApi.listConverterCatalog()
       .then((response) => {
         if (cancelled) return
-        setConverters(response.items.filter((c) => !HIDDEN_CONVERTER_TYPES.has(c.converter_type)))
+        setConverters(
+          response.items.filter(
+            (c) => !HIDDEN_CONVERTER_TYPES.has(c.converter_type) && !c.unsupported_required_params?.length,
+          ),
+        )
         setError(null)
       })
       .catch((err) => {
