@@ -2389,7 +2389,7 @@ def test_get_progress_cache_refreshes_identifier_enriched_after_insert(mock_memo
     assert mock_memory.get_scenario_attack_result_deltas.call_args_list[1].kwargs["cursor"] is None
 
 
-def test_get_progress_rejects_duplicate_stored_plan_groups(mock_memory) -> None:
+def test_get_progress_treats_duplicate_stored_plan_groups_as_incomplete(mock_memory) -> None:
     group = ScenarioRunPlanAtomicGroup(
         id="duplicate",
         atomic_attack_name="attack",
@@ -2416,12 +2416,16 @@ def test_get_progress_rejects_duplicate_stored_plan_groups(mock_memory) -> None:
     mock_memory.get_scenario_result_header.return_value = header
     mock_memory.get_scenario_attack_result_deltas.return_value = ([], False)
 
-    with pytest.raises(ValueError, match="duplicate atomic group IDs"):
-        ScenarioRunService().get_run_progress(
-            scenario_result_id=str(header.id),
-            since=None,
-            limit=25,
-        )
+    progress = ScenarioRunService().get_run_progress(
+        scenario_result_id=str(header.id),
+        since=None,
+        limit=25,
+    )
+
+    assert progress is not None
+    assert progress.plan_complete is False
+    assert progress.plan is not None
+    assert progress.plan.atomic_groups == []
 
 
 def test_progress_prefers_persisted_logical_seed_group_attribution() -> None:
@@ -2638,6 +2642,28 @@ def test_get_progress_synthesizes_incomplete_legacy_plan(mock_memory) -> None:
     assert progress.plan is not None
     assert len(progress.plan.atomic_groups) == 1
     assert len(progress.results) == 1
+
+
+def test_get_progress_treats_invalid_persisted_plan_as_incomplete(mock_memory, caplog) -> None:
+    header = make_scenario_result(
+        attack_results={},
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: {"atomic_groups": "invalid"}},
+    )
+    mock_memory.get_scenario_result_header.return_value = header
+    mock_memory.get_scenario_attack_result_deltas.return_value = ([], False)
+
+    progress = ScenarioRunService().get_run_progress(
+        scenario_result_id=str(header.id),
+        since=None,
+        limit=25,
+    )
+
+    assert progress is not None
+    assert progress.plan_complete is False
+    assert progress.plan is not None
+    assert progress.plan.atomic_groups == []
+    assert "treating the plan as unavailable" in caplog.text
 
 
 def test_progress_summary_uses_latest_attempt_for_backend_owned_counts() -> None:

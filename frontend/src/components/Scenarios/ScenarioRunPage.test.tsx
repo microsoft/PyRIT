@@ -353,11 +353,38 @@ describe('ScenarioRunPage', () => {
 
     expect(screen.getByText('gpt-4o')).toBeInTheDocument()
     expect(screen.getByText('https://example.test/v1')).toBeInTheDocument()
-    expect(screen.getByText('safe-hash')).toBeInTheDocument()
+    expect(screen.queryByText('safe-hash')).not.toBeInTheDocument()
     expect(screen.getByText('harmbench')).toBeInTheDocument()
     expect(screen.getByText('max_turns: 5')).toBeInTheDocument()
     expect(screen.getByText('operator: alice')).toBeInTheDocument()
     expect(screen.getByText('0.10.0')).toBeInTheDocument()
+  })
+
+  it('collapses long objective scorer parameter values', async () => {
+    const user = userEvent.setup()
+    const longInstructions = 'Evaluate the response against the objective. '.repeat(20).trim()
+    mockHookState(makeState({
+      summary: {
+        ...SUMMARY,
+        objective_scorer: {
+          ...SUMMARY.objective_scorer!,
+          parameters: {
+            ...SUMMARY.objective_scorer!.parameters,
+            instructions: longInstructions,
+          },
+        },
+      },
+    }))
+
+    renderPage()
+
+    const expand = screen.getByRole('button', { name: 'Show full Instructions' })
+    expect(expand).toHaveAttribute('aria-expanded', 'false')
+    await user.click(expand)
+    expect(screen.getByRole('button', { name: 'Collapse Instructions' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
   })
 
   it('keeps legacy runs useful without misleading totals, ETA, or a progress bar', () => {

@@ -120,6 +120,47 @@ def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: Memory
     assert second_has_more is False
 
 
+def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    first_created_at = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    first = _make_scenario(
+        result_id=uuid.UUID(int=1),
+        timestamp=first_created_at,
+        name="First",
+        state=ScenarioRunState.IN_PROGRESS,
+        labels={},
+    )
+    second = _make_scenario(
+        result_id=uuid.UUID(int=2),
+        timestamp=first_created_at + timedelta(minutes=1),
+        name="Second",
+        state=ScenarioRunState.COMPLETED,
+        labels={},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[first, second])
+
+    rebuilt_first = sqlite_instance.get_scenario_results(scenario_result_ids=[str(first.id)])[0]
+    rebuilt_first.number_tries += 1
+    sqlite_instance._update_entry(ScenarioResultEntry(entry=rebuilt_first))
+
+    first_page, _, has_more = sqlite_instance.get_scenario_run_history_page(limit=1)
+    second_page, _, second_has_more = sqlite_instance.get_scenario_run_history_page(
+        cursor=ScenarioHistoryKeysetCursor(
+            timestamp=first_page[-1].created_at,
+            scenario_result_id=first_page[-1].scenario_result_id,
+        ),
+        limit=1,
+    )
+
+    assert first_page[0].scenario_result_id == str(second.id)
+    assert first_page[0].created_at == second.creation_time
+    assert has_more is True
+    assert second_page[0].scenario_result_id == str(first.id)
+    assert second_page[0].created_at == first.creation_time
+    assert second_has_more is False
+
+
 def test_history_filters_names_statuses_and_labels_without_hydration(
     sqlite_instance: MemoryInterface,
     monkeypatch,

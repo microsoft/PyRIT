@@ -26,33 +26,38 @@ describe('HistoryFiltersBar', () => {
     jest.clearAllMocks()
   })
 
-  it('should render all filter dropdowns', () => {
+  it('should render primary filters and reveal advanced filters on demand', () => {
     render(
       <TestWrapper>
         <HistoryFiltersBar {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
-    expect(screen.getByRole('switch', { name: 'Include scanner attacks' })).not.toBeChecked()
+    expect(screen.queryByTestId('attack-type-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-filter')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
+
+    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Include scanner attacks' })).toBeChecked()
   })
 
-  it('should not show reset button when no filters are active', () => {
+  it('should disable reset when no filters are active', () => {
     render(
       <TestWrapper>
         <HistoryFiltersBar {...defaultProps} />
       </TestWrapper>
     )
 
-    expect(screen.queryByTestId('reset-filters-btn')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
   })
 
-  it('should show reset button when a filter is active', () => {
+  it('should enable reset when a filter is active', () => {
     const activeFilters = { ...DEFAULT_HISTORY_FILTERS, outcome: 'success' }
 
     render(
@@ -61,7 +66,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByTestId('reset-filters-btn')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeEnabled()
   })
 
   it('should call onFiltersChange with defaults when reset is clicked', () => {
@@ -78,7 +83,7 @@ describe('HistoryFiltersBar', () => {
     expect(onFiltersChange).toHaveBeenCalledWith(DEFAULT_HISTORY_FILTERS)
   })
 
-  it('should include scanner attacks when the switch is enabled', () => {
+  it('should exclude scanner attacks when the switch is disabled', () => {
     const onFiltersChange = jest.fn()
     render(
       <TestWrapper>
@@ -86,11 +91,12 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     fireEvent.click(screen.getByRole('switch', { name: 'Include scanner attacks' }))
 
     expect(onFiltersChange).toHaveBeenCalledWith({
       ...DEFAULT_HISTORY_FILTERS,
-      includeScenarioAttacks: true,
+      includeScenarioAttacks: false,
     })
   })
 
@@ -108,6 +114,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     const dropdown = screen.getByTestId('attack-type-filter')
     fireEvent.click(dropdown)
 
@@ -153,6 +160,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     const dropdown = screen.getByTestId('converter-filter')
     fireEvent.click(dropdown)
 
@@ -288,6 +296,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     fireEvent.click(screen.getByTestId('converter-filter'))
     const option = await screen.findByText('(No converters)')
     fireEvent.click(option)

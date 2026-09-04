@@ -93,6 +93,10 @@ describe('ScenarioHistory', () => {
     expect(screen.getByText('gpt-4o')).toBeInTheDocument()
     expect(screen.getByText('2/2')).toBeInTheDocument()
     expect(screen.getByText('1/2 (50%)')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Runtime' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Attacks Complete' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Attack Success' })).toBeInTheDocument()
+    expect(screen.getByText('1m (completed)')).toBeInTheDocument()
     expect(screen.getByText('operator: alice')).toBeInTheDocument()
 
     await user.click(row)
@@ -175,6 +179,22 @@ describe('ScenarioHistory', () => {
     })
     expect(await screen.findByText('Try adjusting your filters.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Browse scenarios' })).not.toBeInTheDocument()
+  })
+
+  it('enables the single reset icon only when filters are active', () => {
+    const history = renderHistory()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
+
+    history.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <ScenarioHistory
+          {...defaultProps}
+          filters={{ ...DEFAULT_SCENARIO_HISTORY_FILTERS, statuses: ['FAILED'] }}
+        />
+      </FluentProvider>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeEnabled()
   })
 
   it('serializes filters, paginates by cursor, and refreshes from the first page', async () => {

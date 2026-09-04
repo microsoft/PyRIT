@@ -383,9 +383,6 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
               value={formatConfiguration(run.labels ?? {})}
             />
             {run.target?.endpoint && <ConfigurationItem label="Target endpoint" value={run.target.endpoint} />}
-            {run.target?.identifier_hash && (
-              <ConfigurationItem label="Target identifier" value={run.target.identifier_hash} />
-            )}
           </div>
         </section>
 

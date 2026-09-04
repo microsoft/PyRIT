@@ -58,14 +58,14 @@ describe("historyFilters URL encoding", () => {
     expect(filtersFromSearchParams(unset).hasConverters).toBeUndefined();
   });
 
-  it("only stores the non-default scanner attack inclusion", () => {
-    const included = filtersToSearchParams({
+  it("only stores explicit scanner attack exclusion", () => {
+    const excluded = filtersToSearchParams({
       ...DEFAULT_HISTORY_FILTERS,
-      includeScenarioAttacks: true,
+      includeScenarioAttacks: false,
     });
 
-    expect(included.get("includeScannerAttacks")).toBe("true");
-    expect(filtersFromSearchParams(included).includeScenarioAttacks).toBe(true);
+    expect(excluded.get("includeScannerAttacks")).toBe("false");
+    expect(filtersFromSearchParams(excluded).includeScenarioAttacks).toBe(false);
     expect(filtersToSearchParams(DEFAULT_HISTORY_FILTERS).has("includeScannerAttacks")).toBe(false);
   });
 

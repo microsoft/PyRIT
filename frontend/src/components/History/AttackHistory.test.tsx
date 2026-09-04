@@ -89,12 +89,12 @@ describe('AttackHistory', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: 'Attack History' })).toBeInTheDocument()
     expect(screen.getByTestId('refresh-btn')).toBeInTheDocument()
-    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
+    expect(screen.queryByTestId('attack-type-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-filter')).not.toBeInTheDocument()
 
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
@@ -621,6 +621,59 @@ describe('AttackHistory', () => {
     })
   })
 
+  it('should discard the current cursor when filters change on a later page', async () => {
+    mockedAttacksApi.listAttacks
+      .mockResolvedValueOnce({
+        items: sampleAttacks,
+        pagination: { limit: 25, has_more: true, next_cursor: 'cursor-page2' },
+      })
+      .mockResolvedValueOnce({
+        items: [sampleAttacks[1]],
+        pagination: { limit: 25, has_more: false },
+      })
+      .mockResolvedValueOnce({
+        items: [sampleAttacks[0]],
+        pagination: { limit: 25, has_more: false },
+      })
+      .mockResolvedValueOnce({
+        items: sampleAttacks,
+        pagination: { limit: 25, has_more: false },
+      })
+
+    const history = render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+    await waitFor(() => expect(screen.getByTestId('next-page-btn')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('next-page-btn'))
+    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2))
+
+    history.rerender(
+      <TestWrapper>
+        <AttackHistory
+          {...defaultProps}
+          filters={{ ...DEFAULT_HISTORY_FILTERS, outcome: 'success' }}
+        />
+      </TestWrapper>
+    )
+
+    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(3))
+    const filteredRequest = mockedAttacksApi.listAttacks.mock.calls[2][0]
+    expect(filteredRequest).toEqual(expect.objectContaining({ outcome: 'success' }))
+    expect(filteredRequest).not.toHaveProperty('cursor')
+    expect(screen.getByText('Page 1')).toBeInTheDocument()
+
+    history.rerender(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(4))
+    expect(mockedAttacksApi.listAttacks.mock.calls[3][0]).not.toHaveProperty('cursor')
+  })
+
   it('should load and display filter options from API', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
@@ -698,7 +751,7 @@ describe('AttackHistory', () => {
     expect(onFiltersChange).toHaveBeenCalledWith(DEFAULT_HISTORY_FILTERS)
   })
 
-  it('should not show reset filters button when no filters are active', async () => {
+  it('should disable reset filters when no filters are active', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: sampleAttacks,
       pagination: { limit: 25, has_more: false },
@@ -714,7 +767,7 @@ describe('AttackHistory', () => {
       expect(screen.getByText('Attack History')).toBeInTheDocument()
     })
 
-    expect(screen.queryByTestId('reset-filters-btn')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
   })
 
   it('should call onFiltersChange with attackTypes when attack type filter is selected', async () => {
@@ -746,6 +799,7 @@ describe('AttackHistory', () => {
     })
 
     // Open the attack type dropdown and select an option
+    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     const attackDropdown = screen.getByTestId('attack-type-filter')
     fireEvent.click(attackDropdown)
 
@@ -818,6 +872,7 @@ describe('AttackHistory', () => {
       expect(mockedAttacksApi.getConverterOptions).toHaveBeenCalled()
     })
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show advanced filters' }))
     const converterDropdown = screen.getByTestId('converter-filter')
     fireEvent.click(converterDropdown)
 
@@ -1083,7 +1138,7 @@ describe('AttackHistory', () => {
     expect(callArgs).not.toHaveProperty('converter_types_match')
   })
 
-  it('should exclude scanner attacks by default and include them when enabled', async () => {
+  it('should include scanner attacks by default and exclude them when disabled', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
@@ -1097,7 +1152,7 @@ describe('AttackHistory', () => {
 
     await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalled())
     expect(mockedAttacksApi.listAttacks.mock.calls[0][0]).toEqual(
-      expect.objectContaining({ include_scenario_attacks: false })
+      expect.objectContaining({ include_scenario_attacks: true })
     )
 
     unmount()
@@ -1111,14 +1166,14 @@ describe('AttackHistory', () => {
       <TestWrapper>
         <AttackHistory
           {...defaultProps}
-          filters={{ ...DEFAULT_HISTORY_FILTERS, includeScenarioAttacks: true }}
+          filters={{ ...DEFAULT_HISTORY_FILTERS, includeScenarioAttacks: false }}
         />
       </TestWrapper>
     )
 
     await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalled())
     expect(mockedAttacksApi.listAttacks.mock.calls[0][0]).toEqual(
-      expect.objectContaining({ include_scenario_attacks: true })
+      expect.objectContaining({ include_scenario_attacks: false })
     )
   })
 

@@ -23,7 +23,6 @@ import {
   ArrowRightRegular,
   ArrowSyncRegular,
   FilterDismissRegular,
-  FilterRegular,
   ScriptRegular,
 } from '@fluentui/react-icons'
 
@@ -104,6 +103,7 @@ export default function ScenarioHistory({
   const [page, setPage] = useState(0)
   const [nextCursor, setNextCursor] = useState<string | undefined>()
   const [hasMore, setHasMore] = useState(false)
+  const [now, setNow] = useState(0)
   const filterKey = JSON.stringify([
     filters.scenarioNames,
     filters.statuses,
@@ -157,6 +157,12 @@ export default function ScenarioHistory({
   }, [])
 
   useEffect(() => {
+    if (!runs.some((run) => !isTerminal(run.status))) return
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [runs])
+
+  useEffect(() => {
     let cancelled = false
     const effectiveCursor = fetchToken.filterKey === filterKey ? fetchToken.cursor : undefined
     const label = [
@@ -173,6 +179,7 @@ export default function ScenarioHistory({
     }).then((response) => {
       if (cancelled) return
       setRuns(response.items)
+      setNow(Date.now())
       setHasMore(response.pagination.has_more)
       setNextCursor(response.pagination.next_cursor ?? undefined)
       setSettledFilterKey(filterKey)
@@ -233,17 +240,18 @@ export default function ScenarioHistory({
           </Button>
         </div>
         <div className={styles.filters}>
-          <FilterRegular />
-          {hasFilters && (
+          <Tooltip content="Reset all filters" relationship="label">
             <Button
               className={styles.touchTargetHeight}
               appearance="subtle"
+              size="small"
               icon={<FilterDismissRegular />}
+              aria-label="Reset all filters"
+              disabled={!hasFilters}
               onClick={() => onFiltersChange({ ...DEFAULT_SCENARIO_HISTORY_FILTERS })}
-            >
-              Reset
-            </Button>
-          )}
+              data-testid="scenario-reset-filters-btn"
+            />
+          </Tooltip>
           <MultiFilter
             label="Registered scenario"
             placeholder="All scenarios"
@@ -318,7 +326,7 @@ export default function ScenarioHistory({
             )}
           </div>
         ) : (
-          <ScenarioHistoryTable runs={runs} onOpenRun={onOpenRun} />
+          <ScenarioHistoryTable runs={runs} onOpenRun={onOpenRun} now={now} />
         )}
       </div>
 
@@ -358,9 +366,10 @@ export default function ScenarioHistory({
 interface ScenarioHistoryTableProps {
   runs: ScenarioRunListItem[]
   onOpenRun: (scenarioResultId: string) => void
+  now: number
 }
 
-function ScenarioHistoryTable({ runs, onOpenRun }: ScenarioHistoryTableProps) {
+function ScenarioHistoryTable({ runs, onOpenRun, now }: ScenarioHistoryTableProps) {
   const styles = useScenarioHistoryStyles()
   return (
     <Table className={styles.table} aria-label="Scanner history" data-testid="scenario-history-table">
@@ -370,9 +379,9 @@ function ScenarioHistoryTable({ runs, onOpenRun }: ScenarioHistoryTableProps) {
           <TableHeaderCell>State</TableHeaderCell>
           <TableHeaderCell>Target</TableHeaderCell>
           <TableHeaderCell>Created</TableHeaderCell>
-          <TableHeaderCell>Completed / elapsed</TableHeaderCell>
-          <TableHeaderCell>Work</TableHeaderCell>
-          <TableHeaderCell>Success</TableHeaderCell>
+          <TableHeaderCell>Runtime</TableHeaderCell>
+          <TableHeaderCell>Attacks Complete</TableHeaderCell>
+          <TableHeaderCell>Attack Success</TableHeaderCell>
           <TableHeaderCell>Errors / retries</TableHeaderCell>
           <TableHeaderCell>Labels</TableHeaderCell>
         </TableRow>
@@ -425,10 +434,7 @@ function ScenarioHistoryTable({ runs, onOpenRun }: ScenarioHistoryTableProps) {
             </TableCell>
             <TableCell className={styles.nowrap}>{formatTimestamp(run.created_at)}</TableCell>
             <TableCell className={styles.nowrap}>
-              <div className={styles.identity}>
-                <Text>{run.completed_at ? formatTimestamp(run.completed_at) : 'Not yet'}</Text>
-                <Text size={200} className={styles.secondary}>{formatElapsed(run)}</Text>
-              </div>
+              {formatRuntime(run, now)}
             </TableCell>
             <TableCell className={styles.nowrap}>
               {run.planned_total_available !== false && run.total_attacks !== null
@@ -466,13 +472,23 @@ function formatTimestamp(value: string): string {
   })
 }
 
-function formatElapsed(run: ScenarioRunListItem): string {
+function formatRuntime(run: ScenarioRunListItem, now: number): string {
   const start = Date.parse(run.created_at)
-  const end = run.completed_at ? Date.parse(run.completed_at) : Date.now()
+  const terminal = isTerminal(run.status)
+  const end = terminal
+    ? Date.parse(run.completed_at ?? run.updated_at)
+    : now
   const seconds = Math.max(0, Math.floor((end - start) / 1000))
-  if (seconds < 60) return `${seconds}s elapsed`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m elapsed`
-  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m elapsed`
+  const duration = seconds < 60
+    ? `${seconds}s`
+    : seconds < 3600
+      ? `${Math.floor(seconds / 60)}m`
+      : `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`
+  return `${duration} (${terminal ? 'completed' : 'in progress'})`
+}
+
+function isTerminal(status: ScenarioRunState): boolean {
+  return status === 'COMPLETED' || status === 'FAILED' || status === 'CANCELLED'
 }
 
 function formatSuccess(run: ScenarioRunListItem): string {

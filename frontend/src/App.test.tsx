@@ -489,12 +489,12 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
   });
 
-  it("renders the scanner run dashboard and marks the sidebar current when deep-linked to /scanner-history/:id", () => {
+  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner-history/:id", () => {
     renderApp("/scanner-history/sr-123");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "scenarios"
+      "history"
     );
     expect(screen.getByTestId("scenario-run-page")).toBeInTheDocument();
   });
@@ -504,7 +504,7 @@ describe("App", () => {
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "scenarios"
+      "history"
     );
     expect(screen.getByTestId("scenario-run-page")).toHaveAttribute(
       "data-location",

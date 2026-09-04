@@ -73,16 +73,32 @@ export default function AttackHistory({
   const [cursor, setCursor] = useState<string | undefined>(undefined)
   const [isLastPage, setIsLastPage] = useState(true)
   const [page, setPage] = useState(0)
+  const filterKey = JSON.stringify([
+    filters.attackTypes,
+    filters.outcome,
+    filters.converter,
+    filters.converterMatchMode,
+    filters.hasConverters,
+    filters.includeScenarioAttacks,
+    filters.operator,
+    filters.operation,
+    filters.otherLabels,
+  ])
+  const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
 
   // Bumped from event handlers (Refresh button, pagination) to re-trigger the
   // fetch effect without calling setState synchronously inside it.
-  const [fetchToken, setFetchToken] = useState({ cursor: undefined as string | undefined, nonce: 0 })
+  const [fetchToken, setFetchToken] = useState({
+    cursor: undefined as string | undefined,
+    filterKey,
+    nonce: 0,
+  })
 
   const fetchAttacks = useCallback((pageCursor?: string) => {
     setLoading(true)
     setError(null)
-    setFetchToken(prev => ({ cursor: pageCursor, nonce: prev.nonce + 1 }))
-  }, [])
+    setFetchToken(prev => ({ cursor: pageCursor, filterKey, nonce: prev.nonce + 1 }))
+  }, [filterKey])
 
   // Load filter options on mount
   useEffect(() => {
@@ -120,23 +136,28 @@ export default function AttackHistory({
   // react-hooks/set-state-in-effect.
   useEffect(() => {
     let cancelled = false
-    attacksApi.listAttacks(buildListParams(filters, fetchToken.cursor))
+    const effectiveCursor = fetchToken.filterKey === filterKey && settledFilterKey === filterKey
+      ? fetchToken.cursor
+      : undefined
+    attacksApi.listAttacks(buildListParams(filters, effectiveCursor))
       .then(response => {
         if (cancelled) return
         setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
         setIsLastPage(!response.pagination.has_more)
         setCursor(response.pagination.next_cursor ?? undefined)
+        setSettledFilterKey(filterKey)
         setError(null)
         // Reset displayed page index when the trigger is a filter change (no
         // explicit cursor). Pagination handlers pass an explicit cursor and
         // update `page` themselves.
-        if (!fetchToken.cursor) setPage(0)
+        if (!effectiveCursor) setPage(0)
       })
       .catch(err => {
         if (cancelled) return
         setAttacks([])
+        setSettledFilterKey(filterKey)
         setError(toApiError(err).detail)
-        if (!fetchToken.cursor) setPage(0)
+        if (!effectiveCursor) setPage(0)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -158,6 +179,7 @@ export default function AttackHistory({
     filters.operator,
     filters.operation,
     filters.otherLabels,
+    filterKey,
     fetchToken,
   ])
 
@@ -187,8 +209,10 @@ export default function AttackHistory({
   const hasActiveFilters =
     filters.attackTypes.length > 0 || filters.outcome || filters.converter.length > 0 ||
     filters.hasConverters !== undefined ||
-    filters.includeScenarioAttacks ||
+    !filters.includeScenarioAttacks ||
     filters.operator.length > 0 || filters.operation.length > 0 || filters.otherLabels.length > 0
+  const filtersPending = settledFilterKey !== filterKey
+  const displayLoading = loading || filtersPending
   const emptyStateGuidance = activeTarget
     ? {
         text: 'Start an attack to see it here.',
@@ -213,7 +237,7 @@ export default function AttackHistory({
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={() => fetchAttacks()}
-            disabled={loading}
+            disabled={displayLoading}
             data-testid="refresh-btn"
           >
             Refresh
@@ -231,7 +255,7 @@ export default function AttackHistory({
       </div>
 
       <div className={styles.content}>
-        {loading ? (
+        {displayLoading ? (
           <div className={styles.emptyState}>
             <Spinner size="medium" label="Loading attacks..." />
           </div>
@@ -245,7 +269,7 @@ export default function AttackHistory({
               appearance="primary"
               icon={<ArrowSyncRegular />}
               onClick={() => fetchAttacks()}
-              disabled={loading}
+              disabled={displayLoading}
               data-testid="retry-btn"
             >
               Retry
@@ -273,7 +297,7 @@ export default function AttackHistory({
         )}
       </div>
 
-      {!loading && attacks.length > 0 && (
+      {!displayLoading && attacks.length > 0 && (
         <HistoryPagination
           page={page}
           isLastPage={isLastPage}

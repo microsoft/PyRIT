@@ -1408,7 +1408,14 @@ class ScenarioRunService:
         if header_result is None:
             return None
 
-        plan = self._load_run_plan(scenario_result=header_result)
+        try:
+            plan = self._load_run_plan(scenario_result=header_result)
+        except (ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has invalid persisted plan metadata; treating the plan as unavailable.",
+                scenario_result_id,
+            )
+            plan = None
         plan_complete = plan is not None
         cursor = self._decode_progress_cursor(since=since, scenario_result_id=scenario_result_id)
         terminal = header_result.scenario_run_state in (

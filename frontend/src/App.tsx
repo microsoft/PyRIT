@@ -65,20 +65,19 @@ const VIEW_PATHS: Record<ViewName, string> = {
 
 /**
  * Resolves the active view from a URL path, defaulting to home for unknown
- * paths. Scanner routes are prefix-matched (`/scanner/...` and
- * `/scanner-history/...`) since they carry a path parameter rather than a
- * single canonical `VIEW_PATHS` entry.
+ * paths. Scanner catalog routes and persisted scanner-history routes are
+ * prefix-matched since they carry path parameters rather than single canonical
+ * `VIEW_PATHS` entries.
  */
 function viewFromPath(pathname: string): ViewName {
+  if (pathname === '/history' || pathname.startsWith('/history/') || pathname.startsWith('/scanner-history/')) {
+    return 'history'
+  }
   if (
     pathname === VIEW_PATHS.scenarios
     || pathname.startsWith(`${VIEW_PATHS.scenarios}/`)
-    || pathname.startsWith('/scanner-history/')
   ) {
     return 'scenarios'
-  }
-  if (pathname === '/history' || pathname.startsWith('/history/')) {
-    return 'history'
   }
   const match = (Object.entries(VIEW_PATHS) as [ViewName, string][]).find(
     ([, path]) => path === pathname,

@@ -1943,7 +1943,7 @@ class ScenarioResultEntry(Base):
         self.error_type = entry.error_type
         self.scenario_metadata = entry.metadata if entry.metadata else None
 
-        self.timestamp = datetime.now(tz=timezone.utc)
+        self.timestamp = entry.creation_time
 
     def get_scenario_result(self) -> ScenarioResult:
         """
