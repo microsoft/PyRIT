@@ -25,7 +25,8 @@ class SemGuardCategory(Enum):
     VIOLENT_INCITEMENT: Content inciting violence or hatred toward groups/individuals.
     HARMFUL_CONTENT: Requests for information that facilitates physical harm.
     IMPERSONATION: Content impersonating an official or trusted role for deception.
-    SAFE: Benign, educational, or unrelated prompts (control set).
+    SAFE: Benign, educational, or unrelated prompts (control set). Opt-in only —
+        not included in the default category set.
     """
 
     INJECTION_JAILBREAK = "injection_jailbreak"
@@ -35,6 +36,19 @@ class SemGuardCategory(Enum):
     HARMFUL_CONTENT = "harmful_content"
     IMPERSONATION = "impersonation"
     SAFE = "safe"
+
+
+# Attack categories loaded by default. SAFE is intentionally excluded — callers
+# must opt in explicitly via `categories=[SemGuardCategory.SAFE, ...]` for
+# control-set or over-refusal evaluation, per the discussion in #2331.
+_DEFAULT_CATEGORIES: tuple[SemGuardCategory, ...] = (
+    SemGuardCategory.INJECTION_JAILBREAK,
+    SemGuardCategory.PHISHING,
+    SemGuardCategory.PRIVACY_LEAKAGE,
+    SemGuardCategory.VIOLENT_INCITEMENT,
+    SemGuardCategory.HARMFUL_CONTENT,
+    SemGuardCategory.IMPERSONATION,
+)
 
 
 class _SemGuardDataset(_RemoteDatasetLoader):
@@ -93,16 +107,25 @@ class _SemGuardDataset(_RemoteDatasetLoader):
             source: HuggingFace dataset identifier. Defaults to
                 "AG-31625874/SemGuard-Dataset".
             categories: List of SemGuardCategory values to filter by. If None,
-                all categories are included (including SAFE).
+                defaults to the six attack categories (SAFE excluded). Pass
+                SemGuardCategory.SAFE explicitly to include benign control-set
+                rows, e.g. for over-refusal evaluation.
 
         Raises:
-            ValueError: If categories is an empty list.
+            ValueError: If categories is an empty list, or contains a value
+                that is not a valid SemGuardCategory.
         """
         self.source = source
-        self.categories = categories
 
-        if categories is not None and not categories:
-            raise ValueError("`categories` must be a non-empty list (pass None to include all categories)")
+        if categories is not None:
+            if not categories:
+                raise ValueError(
+                    "`categories` must be a non-empty list (pass None to use the defaults)"
+                )
+            self._validate_enums(categories, SemGuardCategory, "category")
+            self.categories = categories
+        else:
+            self.categories = list(_DEFAULT_CATEGORIES)
 
     @property
     @override
@@ -124,79 +147,71 @@ class _SemGuardDataset(_RemoteDatasetLoader):
 
         Raises:
             ValueError: If the dataset is empty after processing.
-            Exception: If the dataset cannot be loaded or processed.
         """
-        try:
-            logger.info(f"Loading SemGuard dataset from {self.source}")
+        logger.info(f"Loading SemGuard dataset from {self.source}")
 
-            data = await self._fetch_from_huggingface_async(
-                dataset_name=self.source,
-                config="detailed",
-                split="train",
-                cache=cache,
+        data = await self._fetch_from_huggingface_async(
+            dataset_name=self.source,
+            config="detailed",
+            split="train",
+            cache=cache,
+        )
+
+        description = (
+            "A validated Arabic/Arabizi/English prompt attack dataset (SemGuard), "
+            "covering injection, jailbreak, phishing, privacy leakage, and related "
+            "threat categories, produced via a three-judge LLM-as-Judge pipeline."
+        )
+
+        category_values = {cat.value for cat in self.categories}
+
+        seed_prompts: list[SeedUnion] = []
+
+        for item in data:
+            text = item.get("text", "").strip()
+            category = item.get("category", "")
+            label = item.get("label")
+
+            if not text:
+                logger.warning("[SemGuard] Skipping item with empty text field")
+                continue
+
+            if category not in category_values:
+                continue
+
+            standardized_categories = self._standardize_harm_categories(
+                category,
+                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
             )
 
-            description = (
-                "A validated Arabic/Arabizi/English prompt attack dataset (SemGuard), "
-                "covering injection, jailbreak, phishing, privacy leakage, and related "
-                "threat categories, produced via a three-judge LLM-as-Judge pipeline."
+            seed_prompt = SeedPrompt(
+                value=text,
+                data_type="text",
+                name="SemGuard",
+                dataset_name=self.dataset_name,
+                harm_categories=standardized_categories,
+                description=description,
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
+                source=f"https://huggingface.co/datasets/{self.source}",
+                metadata={
+                    "semguard_category": category,
+                    "label": label,
+                    "language": item.get("language"),
+                    "judge_gpt4o": item.get("judge_gpt4o"),
+                    "judge_grok": item.get("judge_grok"),
+                    "judge_llama": item.get("judge_llama"),
+                    "agreement_score": item.get("agreement_score"),
+                    "all_agree": item.get("all_agree"),
+                    "validation_method": item.get("validation_method"),
+                },
             )
 
-            category_values = (
-                {cat.value for cat in self.categories} if self.categories is not None else None
-            )
+            seed_prompts.append(seed_prompt)
 
-            seed_prompts: list[SeedUnion] = []
+        if not seed_prompts:
+            raise ValueError("SeedDataset cannot be empty. Check your filter criteria.")
 
-            for item in data:
-                text = item.get("text", "").strip()
-                category = item.get("category", "")
-                label = item.get("label")
+        logger.info(f"Successfully loaded {len(seed_prompts)} prompts from SemGuard dataset")
 
-                if not text:
-                    logger.warning("[SemGuard] Skipping item with empty text field")
-                    continue
-
-                if category_values is not None and category not in category_values:
-                    continue
-
-                standardized_categories = self._standardize_harm_categories(
-                    category,
-                    alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
-                )
-
-                seed_prompt = SeedPrompt(
-                    value=text,
-                    data_type="text",
-                    name="SemGuard",
-                    dataset_name=self.dataset_name,
-                    harm_categories=standardized_categories,
-                    description=description,
-                    authors=self._AUTHORS,
-                    groups=self._GROUPS,
-                    source=f"https://huggingface.co/datasets/{self.source}",
-                    metadata={
-                        "semguard_category": category,
-                        "label": label,
-                        "language": item.get("language"),
-                        "judge_gpt4o": item.get("judge_gpt4o"),
-                        "judge_grok": item.get("judge_grok"),
-                        "judge_llama": item.get("judge_llama"),
-                        "agreement_score": item.get("agreement_score"),
-                        "all_agree": item.get("all_agree"),
-                        "validation_method": item.get("validation_method"),
-                    },
-                )
-
-                seed_prompts.append(seed_prompt)
-
-            if not seed_prompts:
-                raise ValueError("SeedDataset cannot be empty. Check your filter criteria.")
-
-            logger.info(f"Successfully loaded {len(seed_prompts)} prompts from SemGuard dataset")
-
-            return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
-
-        except Exception as e:
-            logger.error(f"Failed to load SemGuard dataset: {str(e)}")
-            raise Exception(f"Error loading SemGuard dataset: {str(e)}") from e
+        return SeedDataset(seeds=seed_prompts, dataset_name=self.dataset_name)
