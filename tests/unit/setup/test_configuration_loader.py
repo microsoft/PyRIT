@@ -7,12 +7,14 @@ from unittest import mock
 
 import pytest
 
+from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import (
     ConfigurationLoader,
     InitializerConfig,
     ServerConfig,
     initialize_from_config_async,
 )
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 class TestInitializerConfig:
@@ -43,12 +45,36 @@ class TestConfigurationLoader:
         assert config.env_files is None  # None means "use defaults"
         assert config.env_akv_ref is None
         assert config.env_akv_strict is True
+        assert config.custom_initializers_source is None
         assert config.silent is False
+
+    def test_custom_initializers_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
+        """Test loading an Azure Blob container URI for custom initializer scripts."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "custom_initializers_source: https://account.blob.core.windows.net/initializers\n",
+            encoding="utf-8",
+        )
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+
+        assert config.custom_initializers_source == "https://account.blob.core.windows.net/initializers"
+
+    @pytest.mark.parametrize("invalid_value", ["", "   ", 42])
+    def test_custom_initializers_source_rejects_invalid_value(self, invalid_value: object) -> None:
+        """Test rejecting empty or non-string custom initializer sources."""
+        with pytest.raises(ValueError, match="custom_initializers_source"):
+            ConfigurationLoader(custom_initializers_source=invalid_value)  # type: ignore[arg-type]
 
     @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
     def test_rejects_non_boolean_env_akv_strict(self, invalid_value):
         with pytest.raises(TypeError, match=r"env_akv_strict must be a bool"):
             ConfigurationLoader(env_akv_strict=invalid_value)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
+    def test_rejects_non_boolean_allow_custom_initializers(self, invalid_value: object) -> None:
+        with pytest.raises(TypeError, match=r"allow_custom_initializers must be a bool"):
+            ConfigurationLoader(allow_custom_initializers=invalid_value)  # type: ignore[arg-type]
 
     def test_valid_memory_db_types_snake_case(self):
         """Test all valid memory database types in snake_case."""
@@ -286,6 +312,23 @@ silent: true
 class TestConfigurationLoaderResolvers:
     """Tests for ConfigurationLoader path resolution methods."""
 
+    def test_resolve_initializers_uses_singleton_registry(self) -> None:
+        """Test resolving a custom initializer registered during backend startup."""
+
+        class CustomInitializer(PyRITInitializer):
+            async def initialize_async(self) -> None:
+                pass
+
+        registry = InitializerRegistry(lazy_discovery=True)
+        registry.register_class(CustomInitializer, name="custom")
+        config = ConfigurationLoader(initializers=["custom"])
+
+        with mock.patch.object(InitializerRegistry, "get_registry_singleton", return_value=registry):
+            resolved = config.resolve_initializers()
+
+        assert len(resolved) == 1
+        assert isinstance(resolved[0], CustomInitializer)
+
     def testresolve_initialization_scripts_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
@@ -411,7 +454,7 @@ class TestConfigurationLoaderInitialization:
         """Test initialization with initializers resolved from registry."""
         # Setup mock registry
         mock_registry = mock.MagicMock()
-        mock_registry_cls.return_value = mock_registry
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
 
         # Mock the configured initializer instance produced by the registry
         mock_initializer_instance = mock.MagicMock()
@@ -435,7 +478,7 @@ class TestConfigurationLoaderInitialization:
     async def test_initialize_pyrit_async_unknown_initializer_raises_error(self, mock_registry_cls):
         """Test that unknown initializer name raises ValueError."""
         mock_registry = mock.MagicMock()
-        mock_registry_cls.return_value = mock_registry
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
         mock_registry.create_and_configure.side_effect = KeyError("unknown_initializer")
         mock_registry.get_class_names.return_value = ["simple", "airt"]
 
@@ -446,6 +489,22 @@ class TestConfigurationLoaderInitialization:
 
         with pytest.raises(ValueError, match="not found in registry"):
             await config.initialize_pyrit_async()
+
+    @mock.patch("pyrit.setup.configuration_loader.initialize_pyrit_async")
+    @mock.patch("pyrit.registry.InitializerRegistry")
+    async def test_initialize_pyrit_async_can_skip_unresolved_initializer(self, mock_registry_cls, mock_init):
+        mock_registry = mock.MagicMock()
+        mock_registry_cls.get_registry_singleton.return_value = mock_registry
+        healthy = mock.MagicMock()
+        mock_registry.create_and_configure.side_effect = [KeyError("bad"), healthy]
+        mock_registry.get_class_names.return_value = ["good"]
+        config = ConfigurationLoader(memory_db_type="in_memory", initializers=["bad", "good"])
+
+        await config.initialize_pyrit_async(raise_on_initializer_error=False)
+
+        assert mock_registry.create_and_configure.call_count == 2
+        assert mock_init.call_args.kwargs["initializers"] == [healthy]
+        assert mock_init.call_args.kwargs["raise_on_initializer_error"] is False
 
 
 @pytest.mark.usefixtures("patch_central_database")

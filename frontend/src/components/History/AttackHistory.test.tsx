@@ -126,7 +126,7 @@ describe('AttackHistory', () => {
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
 
     await user.click(configureTargetButton)
-    expect(onNavigate).toHaveBeenCalledWith('config')
+    expect(onNavigate).toHaveBeenCalledWith('targets')
   })
 
   it('should guide users with an active target to start an attack', async () => {

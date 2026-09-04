@@ -65,6 +65,9 @@ jest.mock("./services/api", () => ({
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
   },
+  authApi: {
+    getAccess: jest.fn().mockResolvedValue({ isAdmin: true }),
+  },
   setMsalInstance: jest.fn(),
 }));
 
@@ -100,7 +103,7 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("home")} data-testid="nav-home">
           Home
         </button>
-        <button onClick={() => onNavigate("config")} data-testid="nav-config">
+        <button onClick={() => onNavigate("targets")} data-testid="nav-config">
           Config
         </button>
         <button onClick={() => onNavigate("chat")} data-testid="nav-chat">
@@ -108,6 +111,9 @@ jest.mock("./components/Layout/MainLayout", () => {
         </button>
         <button onClick={() => onNavigate("history")} data-testid="nav-history">
           History
+        </button>
+        <button onClick={() => onNavigate("scenarios")} data-testid="nav-scenarios">
+          Scenarios
         </button>
         {children}
       </div>
@@ -121,6 +127,7 @@ jest.mock("./components/Layout/MainLayout", () => {
 });
 
 jest.mock("./components/Chat/ChatWindow", () => {
+  const { useLocation } = jest.requireActual("react-router") as typeof import("react-router");
   const MockChatWindow = ({
     onNewAttack,
     activeTarget,
@@ -134,6 +141,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onConversationCreated,
     onSelectConversation,
     labels,
+    scenarioResultId,
   }: {
     onNewAttack: () => void;
     activeTarget: unknown;
@@ -147,7 +155,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
+    scenarioResultId?: string | null;
   }) => {
+    const location = useLocation();
     return (
       <div data-testid="chat-window">
         <span data-testid="attack-result-id">{attackResultId ?? "none"}</span>
@@ -162,6 +172,8 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="target-resolution-status">{targetResolutionStatus ?? "none"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
+        <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
+        <span data-testid="route-location">{`${location.pathname}${location.search}`}</span>
         <button onClick={onNewAttack} data-testid="new-attack">
           New Attack
         </button>
@@ -228,6 +240,11 @@ jest.mock("./components/Config/TargetConfig", () => {
   };
 });
 
+jest.mock("./components/Configuration/Configuration", () => ({
+  __esModule: true,
+  default: () => <div data-testid="configuration">Configuration</div>,
+}));
+
 jest.mock("./components/History/AttackHistory", () => {
   const MockAttackHistory = ({
     onOpenAttack,
@@ -251,7 +268,7 @@ jest.mock("./components/History/AttackHistory", () => {
             Start attack
           </button>
         ) : (
-          <button onClick={() => onNavigate("config")} data-testid="history-configure-target">
+          <button onClick={() => onNavigate("targets")} data-testid="history-configure-target">
             Configure target
           </button>
         )}
@@ -299,7 +316,7 @@ jest.mock("./components/Home/Home", () => {
       <div data-testid="home-view">
         <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
-        <button onClick={() => onNavigate("config")} data-testid="home-go-config">
+        <button onClick={() => onNavigate("targets")} data-testid="home-go-config">
           Go to config
         </button>
         <button
@@ -318,9 +335,58 @@ jest.mock("./components/Home/Home", () => {
   };
 });
 
+jest.mock("./components/Scenarios/ScenarioCatalog", () => {
+  const MockScenarioCatalog = () => <div data-testid="scenario-catalog" />;
+  MockScenarioCatalog.displayName = "MockScenarioCatalog";
+  return {
+    __esModule: true,
+    default: MockScenarioCatalog,
+  };
+});
+
+jest.mock("./components/Scenarios/ScenarioDetail", () => {
+  const MockScenarioDetail = ({
+    activeTarget,
+    labels,
+    onNavigate,
+  }: {
+    activeTarget: unknown;
+    labels: Record<string, string>;
+    onNavigate: (view: string) => void;
+  }) => {
+    return (
+      <div data-testid="scenario-detail">
+        <span data-testid="scenario-detail-has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="scenario-detail-labels-json">{JSON.stringify(labels)}</span>
+        <button onClick={() => onNavigate("targets")} data-testid="scenario-detail-go-config">
+          Configure target
+        </button>
+      </div>
+    );
+  };
+  MockScenarioDetail.displayName = "MockScenarioDetail";
+  return {
+    __esModule: true,
+    default: MockScenarioDetail,
+  };
+});
+
+jest.mock("./components/Scenarios/ScenarioRunPage", () => {
+  const { useLocation } = jest.requireActual<typeof import("react-router")>("react-router");
+  const MockScenarioRunPage = () => {
+    const location = useLocation();
+    return <div data-testid="scenario-run-page" data-location={location.pathname} />;
+  };
+  MockScenarioRunPage.displayName = "MockScenarioRunPage";
+  return {
+    __esModule: true,
+    default: MockScenarioRunPage,
+  };
+});
+
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
-  // initialPath lets a test deep-link straight to a view (e.g. "/config").
+  // initialPath lets a test deep-link straight to a view (e.g. "/targets").
   function renderApp(initialPath = "/") {
     return render(
       <ThemeProvider>
@@ -359,13 +425,23 @@ describe("App", () => {
   });
 
   it("renders the view named by the initial URL", () => {
+    renderApp("/targets");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "targets"
+    );
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+  });
+
+  it("renders configuration at /config", () => {
     renderApp("/config");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "configuration"
     );
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByTestId("configuration")).toBeInTheDocument();
   });
 
   it("renders the history view when deep-linked to /history", () => {
@@ -376,6 +452,89 @@ describe("App", () => {
       "history"
     );
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+  });
+
+  it("renders the scenario catalog when deep-linked to /scanner", () => {
+    renderApp("/scanner");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
+  });
+
+  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
+  });
+
+  it("renders the scanner run dashboard and marks the sidebar current when deep-linked to /scanner-history/:id", () => {
+    renderApp("/scanner-history/sr-123");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-run-page")).toBeInTheDocument();
+  });
+
+  it("renders the scanner run dashboard for a direct attack detail link", () => {
+    renderApp("/scanner-history/sr-123/attack-456");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-run-page")).toHaveAttribute(
+      "data-location",
+      "/scanner-history/sr-123/attack-456"
+    );
+  });
+
+  it("redirects legacy scenario-history links to scanner-history", async () => {
+    renderApp("/scenario-history/sr-123");
+
+    expect(await screen.findByTestId("scenario-run-page")).toHaveAttribute(
+      "data-location",
+      "/scanner-history/sr-123"
+    );
+  });
+
+  it("switches to the scenarios view via the sidebar", () => {
+    renderApp();
+
+    fireEvent.click(screen.getByTestId("nav-scenarios"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
+  });
+
+  it("passes the active target and labels to the scenario detail view", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    expect(screen.getByTestId("scenario-detail-has-target")).toHaveTextContent("no");
+    expect(screen.getByTestId("scenario-detail-labels-json")).toHaveTextContent("operator");
+  });
+
+  it("navigates from scenario detail to targets when it requests it", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    fireEvent.click(screen.getByTestId("scenario-detail-go-config"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "targets"
+    );
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
   it("redirects an unknown path back to home", () => {
@@ -400,19 +559,19 @@ describe("App", () => {
     expect(screen.getByTestId("chat-window")).toBeInTheDocument();
   });
 
-  it("switches to config view", () => {
+  it("switches to targets view", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "targets"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("switches back to chat from config", () => {
+  it("switches back to chat from targets", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
@@ -488,14 +647,14 @@ describe("App", () => {
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
   });
 
-  it("sets active target from config page and passes to chat", () => {
+  it("sets active target from targets page and passes to chat", () => {
     renderApp();
 
     // Switch to chat and confirm no target initially
     fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("has-target")).toHaveTextContent("no");
 
-    // Switch to config and set target
+    // Switch to targets and set target
     fireEvent.click(screen.getByTestId("nav-config"));
     fireEvent.click(screen.getByTestId("set-target"));
 
@@ -516,13 +675,13 @@ describe("App", () => {
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
   });
 
-  it("navigates from empty history to config when no target is active", () => {
+  it("navigates from empty history to targets when no target is active", () => {
     renderApp("/history");
 
     expect(screen.getByTestId("history-has-target")).toHaveTextContent("no");
     fireEvent.click(screen.getByTestId("history-configure-target"));
 
-    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "config");
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "targets");
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
@@ -573,14 +732,14 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("home-conv-1"));
   });
 
-  it("navigates to config from the home view", () => {
+  it("navigates to targets from the home view", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("home-go-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "targets"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
@@ -810,6 +969,7 @@ describe("App", () => {
     );
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main");
     expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
   });
 
   it("hides the normalized empty objective of an unnamed manual attack on reload", async () => {
@@ -827,6 +987,69 @@ describe("App", () => {
       expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
     );
     expect(screen.getByTestId("objective")).toHaveTextContent("");
+  });
+
+  it("hydrates validated scenario provenance on a direct attack reload", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+
+    renderApp(`/attacks/ar-1?scenarioResultId=${scenarioResultId}`);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId)
+    );
+    expect(screen.getByTestId("route-location")).toHaveTextContent(
+      `/attacks/ar-1?scenarioResultId=${scenarioResultId}`
+    );
+  });
+
+  it.each([
+    "/attacks/ar-1?scenarioResultId=run-1",
+    "/attacks/ar-1?scenarioResultId=https%3A%2F%2Fevil.example",
+    "/attacks/ar-1?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&scenarioResultId=123e4567-e89b-12d3-a456-426614174000",
+  ])("ignores unsafe or ambiguous scenario provenance on %s", async (path: string) => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+
+    renderApp(path);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
+  });
+
+  it("preserves validated provenance within an attack and clears it for a new attack", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-456"],
+    });
+    renderApp(`/attacks/ar-1?scenarioResultId=${scenarioResultId}`);
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+
+    fireEvent.click(screen.getByTestId("select-conversation"));
+    expect(screen.getByTestId("route-location")).toHaveTextContent(
+      `/attacks/ar-1/conversations/conv-456?scenarioResultId=${scenarioResultId}`
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+
+    fireEvent.click(screen.getByTestId("new-attack"));
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/chat");
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
   });
 
   it("uses the conversation from a deep link when it belongs to the attack", async () => {
@@ -856,6 +1079,24 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
     );
+  });
+
+  it("retains validated provenance while canonicalizing an unknown conversation route", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+    renderApp(`/attacks/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("route-location")).toHaveTextContent(
+        `/attacks/ar-1?scenarioResultId=${scenarioResultId}`
+      )
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
   });
 
   it("hydrates history filters from the URL query string", () => {

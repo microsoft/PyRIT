@@ -22,11 +22,12 @@ if TYPE_CHECKING:
         FloatScaleScorerAllCategories,
         FloatScaleScorerByCategory,
     )
-    from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+    from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer, MessageFloatScaleScorer
     from pyrit.score.float_scale.insecure_code_scorer import InsecureCodeScorer, render_insecure_code_system_prompt
     from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
+    from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
     from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
     from pyrit.score.float_scale.self_ask_likert_scorer import (
         LikertScaleEvalFiles,
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.system_prompt_extraction_scorer import SystemPromptExtractionScorer
     from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
-    from pyrit.score.message_scorer import MessageScorer, MessageScoringOptions
+    from pyrit.score.message_scorer import MessageScorer
     from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
     from pyrit.score.scorer import Scorer
@@ -127,7 +128,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.true_false_composite_scorer import TrueFalseCompositeScorer
     from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
     from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
-    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+    from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
     from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -150,6 +151,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FloatScaleScorerAllCategories": "pyrit.score.float_scale.float_scale_score_aggregator",
     "FloatScaleScorerByCategory": "pyrit.score.float_scale.float_scale_score_aggregator",
     "FloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
+    "MessageFloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
+    "MessageTrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "FloatScaleThresholdScorer": "pyrit.score.true_false.float_scale_threshold_scorer",
     "GandalfScorer": "pyrit.score.true_false.gandalf_scorer",
     "HarmHumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
@@ -173,7 +176,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MessageScorableResolver": "pyrit.score.message_scorable_resolver",
     "MessageScorable": "pyrit.score.scorable",
     "MessageScorer": "pyrit.score.message_scorer",
-    "MessageScoringOptions": "pyrit.score.message_scorer",
     "MethKeywordScorer": "pyrit.score.true_false.regex.meth_keyword_scorer",
     "MetricsType": "pyrit.score.scorer_evaluation.metrics_type",
     "NerveAgentKeywordScorer": "pyrit.score.true_false.regex.nerve_agent_keyword_scorer",
@@ -202,6 +204,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "render_shieldgemma_prompt": "pyrit.score.true_false.shieldgemma_scorer",
     "render_true_false_system_prompt": "pyrit.score.true_false.self_ask_true_false_scorer",
     "ResponseHandler": "pyrit.score.response_handler",
+    "RobloxPiiCategory": "pyrit.score.float_scale.roblox_pii_scorer",
+    "RobloxPiiScorer": "pyrit.score.float_scale.roblox_pii_scorer",
     "Scorer": "pyrit.score.scorer",
     "Scorable": "pyrit.score.scorable",
     "ScorerEvalDatasetFiles": "pyrit.score.scorer_evaluation.scorer_evaluator",

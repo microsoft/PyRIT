@@ -99,6 +99,26 @@ _TARGET_CATALOG_FORBIDDEN = [
 class TestImportGuards:
     """Verify heavy modules are not eagerly loaded at key import points."""
 
+    def test_hugging_face_classifier_does_not_load_inference_frameworks(self) -> None:
+        """Importing the private classifier must not import local inference frameworks."""
+        loaded = _check_forbidden_imports(
+            import_statement=("from pyrit.score._classifiers.hugging_face import _HuggingFaceSequenceClassifier"),
+            forbidden=_TARGET_CATALOG_FORBIDDEN,
+        )
+        assert not loaded, f"Hugging Face classifier import loaded inference frameworks: {loaded}."
+
+    def test_scorer_catalog_does_not_load_inference_frameworks(self) -> None:
+        """Scorer discovery must include Roblox PII without importing its runtime frameworks."""
+        loaded = _check_forbidden_imports(
+            import_statement=(
+                "from pyrit.registry import ScorerRegistry\n"
+                "metadata = ScorerRegistry.get_registry_singleton().get_all_registered_class_metadata()\n"
+                "assert any(item.class_name == 'RobloxPiiScorer' for item in metadata)"
+            ),
+            forbidden=_TARGET_CATALOG_FORBIDDEN,
+        )
+        assert not loaded, f"Scorer catalog discovery loaded inference frameworks: {loaded}."
+
     def test_cli_arg_parsing_does_not_load_heavy_modules(self):
         """
         Importing pyrit_scan's module-level symbols (for --help) must not

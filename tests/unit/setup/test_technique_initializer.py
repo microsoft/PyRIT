@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
+from pyrit.converter import CharNoiseConverter, CharSwapConverter, RandomCapitalLettersConverter
 from pyrit.executor.attack import (
     CrescendoAttack,
     PAIRAttack,
@@ -47,7 +48,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
     "flip",
 ]
 
-EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "skeleton_key", "violent_durian", "split_payload"]
+EXTRA_TECHNIQUE_NAMES: list[str] = ["pair", "skeleton_key", "best_of_n", "violent_durian", "split_payload"]
 
 PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
     "crescendo_movie_director",
@@ -140,6 +141,21 @@ class TestExtraGroupCatalog:
         factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")
         assert factory.uses_adversarial is False
 
+    def test_best_of_n_configures_prompt_sending_attack(self) -> None:
+        factory = next(f for f in extra.get_technique_factories() if f.name == "best_of_n")
+        assert factory.attack_class is PromptSendingAttack
+        assert factory._attack_kwargs["max_attempts_on_failure"] == 19
+
+        converter_config = factory._attack_kwargs["attack_converter_config"]
+        converters = [configuration.converters[0] for configuration in converter_config.request_converters]
+        assert len(converters) == 3
+        assert isinstance(converters[0], CharSwapConverter)
+        assert isinstance(converters[1], RandomCapitalLettersConverter)
+        assert isinstance(converters[2], CharNoiseConverter)
+        assert converters[0]._word_selection_strategy._proportion == pytest.approx(0.4**0.5)
+        assert converters[1].percentage == pytest.approx(0.4**0.5 * 100)
+        assert converters[2].noise_probability == pytest.approx(0.4**3)
+
     def test_split_payload_uses_crescendo_attack(self):
         factory = next(f for f in extra.get_technique_factories() if f.name == "split_payload")
         assert factory.attack_class is CrescendoAttack
@@ -176,6 +192,10 @@ class TestBuildTechniqueFactories:
     def test_factory_names_are_unique(self):
         names = [f.name for f in build_technique_factories()]
         assert len(names) == len(set(names))
+
+    def test_factory_descriptions_are_available_for_catalogs(self):
+        factories = build_technique_factories()
+        assert all(factory.description for factory in factories)
 
 
 # ---------------------------------------------------------------------------

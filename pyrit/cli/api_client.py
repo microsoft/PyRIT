@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         RegisteredInitializer,
         RegisteredScenario,
         RunScenarioRequest,
+        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
@@ -342,17 +343,17 @@ class PyRITApiClient:
         self._raise_for_status(resp)
         return ScenarioRunSummary.model_validate(resp.json())
 
-    async def list_scenario_runs_async(self, *, limit: int = 100) -> list[ScenarioRunSummary]:
+    async def list_scenario_runs_async(self, *, limit: int = 100) -> list[ScenarioRunListItem]:
         """
         List tracked scenario runs.
 
         Returns:
-            list[ScenarioRunSummary]: All tracked scenario runs.
+            list[ScenarioRunListItem]: All tracked scenario runs.
         """
-        from pyrit.models.catalog import ScenarioRunSummary
+        from pyrit.models.catalog import ScenarioRunListItem
 
         payload = await self._get_json_async(path="/api/scenarios/runs", params={"limit": limit})
-        return [ScenarioRunSummary.model_validate(item) for item in payload.get("items", [])]
+        return [ScenarioRunListItem.model_validate(item) for item in payload.get("items", [])]
 
     # ------------------------------------------------------------------
     # Attacks / conversations

@@ -1,12 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import gc
 import io
 import logging
 import os
 import tempfile
+import threading
 import uuid
 from collections.abc import Sequence
+from contextlib import closing
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,10 +19,12 @@ from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
+from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
 from pyrit.memory.memory_models import EmbeddingDataEntry, PromptMemoryEntry
 from pyrit.memory.migration import run_schema_migrations
+from pyrit.memory.sqlite_memory import SQLiteMemory
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target.text_target import TextTarget
@@ -332,7 +337,6 @@ def test_reset_database_keeps_foreign_alembic_version_table(sqlite_instance):
 
 
 async def test_insert_entry(sqlite_instance):
-    session = sqlite_instance.get_session()
     message_piece_entry = MessagePiece(
         id=uuid.uuid4(),
         conversation_id="123",
@@ -999,3 +1003,106 @@ def test_run_schema_migrations_no_memory_tables():
             }.issubset(table_names)
         finally:
             engine.dispose()
+
+
+@pytest.fixture
+def isolated_memory_factory():
+    """Build SQLiteMemory instances that are not the shared process-wide singleton."""
+    saved = Singleton._instances.copy()
+    Singleton._instances.clear()
+    created = []
+
+    def _factory(**kwargs):
+        Singleton._instances.pop(SQLiteMemory, None)
+        memory = SQLiteMemory(**kwargs)
+        created.append(memory)
+        return memory
+
+    try:
+        yield _factory
+    finally:
+        for memory in created:
+            memory.dispose_engine()
+        Singleton._instances.clear()
+        Singleton._instances.update(saved)
+
+
+def test_in_memory_database_serializes_sessions_across_threads(isolated_memory_factory):
+    """
+    An in-memory database shares one DBAPI connection, so overlapping sessions corrupt writes.
+    Without serialization this loses rows and raises sqlite3.InterfaceError.
+    """
+    memory = isolated_memory_factory(db_path=":memory:")
+    with closing(memory.get_session()) as session:
+        session.execute(text("CREATE TABLE lock_probe (id INTEGER PRIMARY KEY, value TEXT)"))
+        session.commit()
+
+    errors: list[str] = []
+
+    def _writer(worker: int) -> None:
+        try:
+            for index in range(30):
+                with closing(memory.get_session()) as session:
+                    session.execute(
+                        text("INSERT INTO lock_probe (value) VALUES (:value)"),
+                        {"value": f"{worker}-{index}"},
+                    )
+                    session.commit()
+        except Exception as exc:  # pragma: no cover - only runs when serialization breaks
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=_writer, args=(worker,)) for worker in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert not any(thread.is_alive() for thread in threads), "session lock deadlocked"
+    assert errors == []
+    with closing(memory.get_session()) as session:
+        assert session.execute(text("SELECT COUNT(*) FROM lock_probe")).scalar() == 120
+
+
+def test_in_memory_database_allows_nested_sessions_on_one_thread(isolated_memory_factory):
+    """The lock is re-entrant so a caller that opens a second session cannot deadlock itself."""
+    memory = isolated_memory_factory(db_path=":memory:")
+    with closing(memory.get_session()) as outer:
+        with closing(memory.get_session()) as inner:
+            assert inner.execute(text("SELECT 1")).scalar() == 1
+        assert outer.execute(text("SELECT 1")).scalar() == 1
+
+
+def test_in_memory_session_close_is_idempotent(isolated_memory_factory):
+    """A double close must not release the lock twice and free it for another thread."""
+    memory = isolated_memory_factory(db_path=":memory:")
+    session = memory.get_session()
+    session.close()
+    session.close()
+
+    assert not memory._connection_lock._is_owned()
+    with closing(memory.get_session()) as session:
+        assert session.execute(text("SELECT 1")).scalar() == 1
+
+
+def test_in_memory_session_discarded_without_close_frees_the_lock(isolated_memory_factory):
+    """One caller that forgets to close must not stall every other thread forever."""
+    memory = isolated_memory_factory(db_path=":memory:")
+
+    def _leak_a_session() -> None:
+        memory.get_session()
+
+    _leak_a_session()
+    gc.collect()
+
+    assert not memory._connection_lock._is_owned()
+    with closing(memory.get_session()) as session:
+        assert session.execute(text("SELECT 1")).scalar() == 1
+
+
+def test_file_backed_database_is_not_serialized(isolated_memory_factory):
+    """File-backed databases get a connection per checkout, so they must not pay for the lock."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        memory = isolated_memory_factory(db_path=os.path.join(temp_dir, "locking.db"))
+        assert memory._connection_lock is None
+        # Windows cannot remove the temp directory while the engine still holds the file open.
+        memory.dispose_engine()

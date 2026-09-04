@@ -38,7 +38,6 @@ import pyrit
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
-    AdditionalInitializer,
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -47,6 +46,7 @@ from pyrit.models import (
     AttackTechniqueIdentifier,
     ChatMessageRole,
     ComponentIdentifier,
+    ContentEntryScorable,
     Conversation,
     ConversationReference,
     ConversationRetry,
@@ -62,6 +62,7 @@ from pyrit.models import (
     Score,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
+    ScoreStatus,
     Seed,
     SeedIdentifier,
     SeedObjective,
@@ -69,6 +70,7 @@ from pyrit.models import (
     SeedSimulatedConversation,
     SeedType,
     TargetIdentifier,
+    scorable_from_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -418,50 +420,6 @@ class DomainBackedEntry(Base, Generic[TDomain]):
                 "from_domain_model(...); every concrete entry must define how its "
                 "domain model is converted into a row."
             )
-
-
-class AdditionalInitializerEntry(DomainBackedEntry[AdditionalInitializer]):
-    """Persistence row for an ``AdditionalInitializer``."""
-
-    __tablename__ = "AdditionalInitializers"
-    __table_args__ = {"extend_existing": True}
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    initializer_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    parameters: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    order_index: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
-
-    @classmethod
-    def from_domain_model(cls, domain_model: AdditionalInitializer) -> Self:
-        """
-        Build an unsaved additional-initializer row from its domain model.
-
-        Args:
-            domain_model (AdditionalInitializer): The domain model this entry persists.
-
-        Returns:
-            Self: A new, unsaved row.
-        """
-        return cls(
-            id=domain_model.id,
-            initializer_name=domain_model.initializer_name,
-            parameters=domain_model.parameters,
-            order_index=domain_model.order_index,
-        )
-
-    def to_domain_model(self) -> AdditionalInitializer:
-        """
-        Convert this row back into its domain model.
-
-        Returns:
-            AdditionalInitializer: The reconstructed additional initializer.
-        """
-        return AdditionalInitializer(
-            id=self.id,
-            initializer_name=self.initializer_name,
-            parameters=self.parameters,
-            order_index=self.order_index,
-        )
 
 
 T = TypeVar("T", bound=ComponentIdentifier)
@@ -1122,6 +1080,34 @@ class EmbeddingDataEntry(Base):
         return f"{self.id}"
 
 
+class ScorableContentEntry(Base):
+    """
+    Loose content a score was taken over.
+
+    ``score_text_async`` / ``score_image_async`` scored content that was never a conversation
+    turn, so before this table the score's anchor resolved to nothing. Several scores taken
+    over the same content in one write share a row, because they share the scorable value.
+    """
+
+    __tablename__ = "ScorableContentEntries"
+    __table_args__ = {"extend_existing": True}
+
+    id = mapped_column(CustomUUID, nullable=False, primary_key=True)
+    value = mapped_column(Unicode, nullable=False)
+    value_sha256 = mapped_column(String(64), nullable=False)
+    data_type: Mapped[PromptDataType] = mapped_column(String(32), nullable=False)
+    timestamp = mapped_column(UTCDateTime, nullable=False)
+
+    def __str__(self) -> str:
+        """
+        Return a string representation of the content entry (its ID).
+
+        Returns:
+            str: The stringified ID of the entry.
+        """
+        return f"{self.id}"
+
+
 class ScoreEntry(Base):
     """
     Represents the Score Memory Entry.
@@ -1132,13 +1118,22 @@ class ScoreEntry(Base):
     __table_args__ = {"extend_existing": True}
 
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    score_value = mapped_column(String, nullable=False)
+    score_value = mapped_column(String, nullable=True)
     score_value_description = mapped_column(String, nullable=True)
+    # "complete" or "undetermined"; an undetermined score carries no score_value.
+    status = mapped_column(String(16), nullable=False, default=ScoreStatus.COMPLETE.value)
     score_type: Mapped[Literal["true_false", "float_scale", "unknown"]] = mapped_column(String, nullable=False)
     score_category: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     score_rationale = mapped_column(String, nullable=True)
     score_metadata: Mapped[dict[str, str | int | float]] = mapped_column(JSON)
     scorer_class_identifier: Mapped[dict[str, Any]] = mapped_column(JSON)
+    # What the score is about, in the shape the Scorable owns. Always a reference once stored.
+    scorable: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Foreign key to the loose content a ``ContentEntryScorable`` anchor names. Promoted out
+    #: of ``scorable`` so the reference is enforced and joinable; the JSON stays the read source.
+    scorable_content_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey(f"{ScorableContentEntry.__tablename__}.id"), nullable=True
+    )
     scorer_identifier_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
     )
@@ -1157,13 +1152,19 @@ class ScoreEntry(Base):
         Args:
             entry (Score): The score object to convert into a database entry.
         """
+        entry = Score.model_validate(entry.model_dump())
         self.id = entry.id
         self.score_value = entry.score_value
         self.score_value_description = entry.score_value_description
+        self.status = entry.status.value
         self.score_type = entry.score_type
         self.score_category = entry.score_category
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata or {}
+        self.scorable = entry.scorable.model_dump(mode="json") if entry.scorable else None
+        self.scorable_content_id = (
+            entry.scorable.content_id if isinstance(entry.scorable, ContentEntryScorable) else None
+        )
         normalized_scorer = entry.scorer_class_identifier
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
@@ -1197,12 +1198,14 @@ class ScoreEntry(Base):
             id=self.id,
             score_value=self.score_value,
             score_value_description=self.score_value_description,
+            status=ScoreStatus(self.status) if self.status else ScoreStatus.COMPLETE,
             score_type=self.score_type,
             score_category=self.score_category,
             score_rationale=self.score_rationale,
             score_metadata=self.score_metadata,
             scorer_class_identifier=scorer_identifier,
             message_piece_id=self.prompt_request_response_id,
+            scorable=scorable_from_dict(self.scorable) if self.scorable else None,
             timestamp=self.timestamp,
             objective=self.objective,
         )
@@ -1218,11 +1221,14 @@ class ScoreEntry(Base):
             "id": str(self.id),
             "score_value": self.score_value,
             "score_value_description": self.score_value_description,
+            "status": self.status,
             "score_type": self.score_type,
             "score_category": self.score_category,
             "score_rationale": self.score_rationale,
             "score_metadata": self.score_metadata,
             "scorer_class_identifier": self.scorer_class_identifier,
+            "scorable": self.scorable,
+            "scorable_content_id": str(self.scorable_content_id) if self.scorable_content_id else None,
             "prompt_request_response_id": str(self.prompt_request_response_id),
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "objective": self.objective,
@@ -1555,6 +1561,13 @@ class AttackResultEntry(Base):
         Index("ix_AttackResultEntries_conversation_id", "conversation_id"),
         # Serves the History recency ORDER BY timestamp DESC, id DESC and its keyset seek.
         Index("ix_AttackResultEntries_timestamp_id", "timestamp", "id"),
+        # Serves scenario progress deltas scoped by parent and ordered oldest-first.
+        Index(
+            "ix_AttackResultEntries_attribution_parent_timestamp_id",
+            "attribution_parent_id",
+            "timestamp",
+            "id",
+        ),
         {"extend_existing": True},
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
@@ -1864,12 +1877,9 @@ class ScenarioResultEntry(Base):
     error_message: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     error_type: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # Free-form JSON metadata stamped by the scenario. Currently used to record
-    # ``objective_hashes`` — the objective sha256 set chosen on the
-    # first run, replayed on resume so a fresh ``random.sample`` can't
-    # silently change which objectives the scenario operates on. Column is
-    # named ``scenario_metadata`` because SQLAlchemy's ``DeclarativeBase``
-    # reserves ``metadata`` as a class attribute on the model.
+    # Free-form JSON metadata stamped by the scenario. Stores the normalized run
+    # plan and sampled objective hashes. Column is named ``scenario_metadata``
+    # because SQLAlchemy's ``DeclarativeBase`` reserves ``metadata``.
     scenario_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: ScenarioResult) -> None:

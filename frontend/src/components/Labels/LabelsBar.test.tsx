@@ -1215,7 +1215,6 @@ describe('LabelsBar', () => {
     })
 
     it('should let focus advance to the next control when tabbing away', async () => {
-      const user = userEvent.setup()
       const onChange = jest.fn()
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
@@ -1230,11 +1229,18 @@ describe('LabelsBar', () => {
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
       fireEvent.keyDown(screen.getByTestId('label-operation'), { key: 'Enter' })
-      await screen.findByTestId('edit-label-operation')
-      await user.tab()
+      const input = await screen.findByTestId('edit-label-operation')
+      await waitFor(() => expect(input).toHaveFocus())
+      const nextButton = screen.getByRole('button', { name: 'after' })
 
+      // jsdom cannot complete Fluent's Tabster focus-guard navigation, so
+      // dispatch Tab and drive its browser focus destination explicitly.
+      fireEvent.keyDown(input, { key: 'Tab' })
+      nextButton.focus()
+
+      await waitFor(() => expect(input).not.toBeInTheDocument())
       expect(onChange).not.toHaveBeenCalled()
-      await waitFor(() => expect(document.activeElement).not.toBe(document.body))
+      expect(nextButton).toHaveFocus()
     })
 
     it('should match existing operations regardless of their casing', async () => {

@@ -30,8 +30,9 @@ import {
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
+import MarkdownContent from '@/components/Markdown/MarkdownContent'
+
 import type { DisplayScore, Message, MessageAttachment, MessageDisplayPiece } from '../../types'
-import MarkdownContent from './MarkdownContent'
 import { useMessageListStyles } from './MessageList.styles'
 
 interface MessageListProps {
@@ -103,6 +104,15 @@ function MediaWithFallback({ type, src, className }: { type: 'video' | 'audio'; 
   return <audio src={src} controls className={className} onError={handleError} data-testid="audio-player" />
 }
 
+function scoreDisplayValue(score: DisplayScore): string {
+  // An undetermined score has no value, so name its status instead.
+  return score.score_value ?? score.status ?? ''
+}
+
+function scoreDisplayLabel(score: DisplayScore): string {
+  return `Score: ${scoreDisplayValue(score)}`
+}
+
 function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }) {
   const styles = useMessageListStyles()
   const categories = score.score_category?.filter(Boolean) ?? []
@@ -111,8 +121,8 @@ function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }
     <div className={styles.scoreSurface} data-testid={testId}>
       <Text weight="semibold">Score details</Text>
       <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Value</Text>
-        <Badge appearance="tint" color="brand" size="small" className={styles.scoreValue}>{score.score_value}</Badge>
+        <Text size={200} weight="semibold" className={styles.scoreLabel}>Score</Text>
+        <Badge appearance="tint" color="brand" size="small" className={styles.scoreValue}>{scoreDisplayValue(score)}</Badge>
       </div>
       <div className={styles.scoreRow}>
         <Text size={200} weight="semibold" className={styles.scoreLabel}>Type</Text>
@@ -150,20 +160,22 @@ function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }
 
 function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
   const styles = useMessageListStyles()
+  const displayValue = scoreDisplayValue(score)
+  const displayLabel = scoreDisplayLabel(score)
 
   return (
     <Popover withArrow>
-      <Tooltip content={score.score_value} relationship="description" withArrow>
+      <Tooltip content={displayLabel} relationship="description" withArrow>
         <PopoverTrigger disableButtonEnhancement>
           <Button
             appearance="subtle"
             size="small"
             className={styles.scoreChip}
-            aria-label={`Score ${score.score_value} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`}
+            aria-label={`Score ${displayValue} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`}
             data-testid={`message-score-${groupId}-${scoreIndex}`}
           >
             <Badge appearance="tint" color="brand" size="medium" className={styles.scoreChipValue}>
-              {score.score_value}
+              {displayLabel}
             </Badge>
           </Button>
         </PopoverTrigger>
@@ -210,7 +222,7 @@ function getScoreOverflowLabels(scores: DisplayScore[]): string[] {
   const baseLabels = scores.map((score) => {
     const categories = score.score_category?.filter(Boolean) ?? []
     return [
-      score.score_value,
+      scoreDisplayValue(score),
       score.scorer_type,
       score.is_objective_score ? 'Objective' : '',
       score.sourceLabel,
@@ -383,26 +395,27 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
         unstable_disableAutoFocus
         onOpenChange={(_event: unknown, data: { open: boolean }) => setIsScorePopoverOpen(data.open)}
       >
-        <Tooltip content={displayedScore.score_value} relationship="description" withArrow>
+        <Tooltip content={scoreDisplayLabel(displayedScore)} relationship="description" withArrow>
           <PopoverTrigger disableButtonEnhancement>
             <Button
               appearance="subtle"
               size="small"
               className={styles.stackedScoreButton}
-              aria-label={`View ${scores.length} scores, displayed score ${displayedScore.score_value} from ${displayedScore.scorer_type}${displayedScore.is_objective_score ? ', objective score' : ''}${displayedScore.sourceLabel ? `, ${displayedScore.sourceLabel}` : ''}`}
+              aria-label={`View ${scores.length} scores, displayed score ${scoreDisplayValue(displayedScore)} from ${displayedScore.scorer_type}${displayedScore.is_objective_score ? ', objective score' : ''}${displayedScore.sourceLabel ? `, ${displayedScore.sourceLabel}` : ''}`}
               data-testid={`message-score-stack-${groupId}`}
             >
               <span className={styles.scoreStack} aria-hidden="true">
                 <span className={styles.scoreStackOvalBack} />
                 <span className={styles.scoreStackOvalMiddle} />
                 <span className={styles.scoreStackOvalFront}>
-                  {displayedScore.score_value}
+                  {scoreDisplayLabel(displayedScore)}
                 </span>
               </span>
             </Button>
           </PopoverTrigger>
         </Tooltip>
         <PopoverSurface className={styles.multiScorePopover}>
+          <Text size={200} weight="semibold">Score:</Text>
           <div ref={tabBarRef} className={styles.scoreTabBar} data-score-tab-bar>
             <TabList
               selectedValue={selectedScore.id}
@@ -414,7 +427,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
             >
               {visibleScores.map((score) => {
                 const scoreIndex = scores.indexOf(score)
-                const scoreContext = `Score ${score.score_value} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`
+                const scoreContext = `Score ${scoreDisplayValue(score)} from ${score.scorer_type}${score.is_objective_score ? ', objective score' : ''}${score.sourceLabel ? `, ${score.sourceLabel}` : ''}`
                 return (
                   <Tooltip
                     key={score.id}
@@ -432,7 +445,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
                       data-testid={`message-score-tab-${groupId}-${scoreIndex}`}
                     >
                       <span className={styles.scoreTabValue}>
-                        {score.score_value}
+                        {scoreDisplayValue(score)}
                       </span>
                     </Tab>
                   </Tooltip>

@@ -42,6 +42,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=PromptSendingAttack,
             description="Obfuscates the objective by asking for it encoded as the first letter of each word.",
             technique_tags=["single_turn", "airt", "leakage"],
+            supports_additional_request_converters=True,
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
                     request_converters=ConverterConfiguration.from_converters(converters=[FirstLetterConverter()])

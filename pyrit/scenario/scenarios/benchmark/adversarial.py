@@ -11,11 +11,23 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique
 from pyrit.common import apply_defaults
-from pyrit.models import AttackOutcome, AttackResult, ObjectiveTargetEvaluationIdentifier, ScenarioResult
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ObjectiveTargetEvaluationIdentifier,
+    ScenarioResult,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder, resolve_technique_factories
+from pyrit.scenario.core.matrix_atomic_attack_builder import (
+    MatrixAtomicAttackBuilder,
+    filter_compatible_seed_groups,
+    resolve_technique_factories,
+    resolve_technique_factories_for_techniques,
+)
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
 if TYPE_CHECKING:
@@ -189,6 +201,108 @@ class AdversarialBenchmark(Scenario):
                 max_dataset_size=8,
             ),
             scenario_result_id=scenario_result_id,
+        )
+
+    async def _estimate_run_size_async(self) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the target-by-technique matrix using execution compatibility.
+
+        Returns:
+            ScenarioRunSizeEstimate: Structured benchmark estimate.
+        """
+        selected_groups, datasets = await self._resolve_dataset_groups_for_estimate_async()
+        factories = resolve_technique_factories_for_techniques(
+            scenario_techniques=self._scenario_techniques,
+        )
+        per_target_components: list[ScenarioRunSizeComponent] = []
+        for technique in self._scenario_techniques:
+            factory = factories.get(technique.value)
+            if factory is None:
+                continue
+            compatible_count = sum(
+                len(filter_compatible_seed_groups(factory=factory, seed_groups=groups))
+                for groups in selected_groups.values()
+            )
+            per_target_components.append(
+                ScenarioRunSizeComponent(
+                    label=technique.value,
+                    count=compatible_count,
+                    note="Count per adversarial target.",
+                )
+            )
+
+        compatibility_bounds = (
+            self._get_technique_compatibility_bounds(datasets=datasets) if self._estimate_has_binding_size_cap else None
+        )
+        sampled_per_target_count = sum(component.count for component in per_target_components)
+        if compatibility_bounds is not None:
+            per_target_minimum = sum(bounds[0] for bounds in compatibility_bounds.values())
+            per_target_maximum = sum(bounds[1] for bounds in compatibility_bounds.values())
+        elif self._estimate_has_binding_size_cap:
+            per_target_minimum = None
+            per_target_maximum = None
+        else:
+            per_target_minimum = sampled_per_target_count
+            per_target_maximum = sampled_per_target_count
+        target_names = self.params.get("adversarial_targets") or []
+        if not target_names:
+            return ScenarioRunSizeEstimate(
+                minimum_attack_count=per_target_minimum,
+                components=per_target_components,
+                datasets=datasets,
+                note=(
+                    "Counts are per adversarial target. At least one adversarial_targets entry is required, "
+                    "and the total scales with the number of entries supplied. Baseline is forbidden."
+                ),
+            )
+
+        resolved_targets = self._resolve_adversarial_targets(target_names=target_names)
+        target_count = len(resolved_targets)
+        components = [
+            component.model_copy(update={"count": component.count * target_count, "note": None})
+            for component in per_target_components
+        ]
+        if self._use_cached:
+            return ScenarioRunSizeEstimate(
+                minimum_attack_count=0,
+                maximum_attack_count=per_target_maximum * target_count if per_target_maximum is not None else None,
+                components=components,
+                datasets=datasets,
+                note=(
+                    "Components describe the candidate population. Live behavioral-cache hits can suppress work, "
+                    "so the authoritative total is unavailable before launch."
+                ),
+            )
+        if self._estimate_has_binding_size_cap and compatibility_bounds is None:
+            return ScenarioRunSizeEstimate(
+                components=components,
+                datasets=datasets,
+                note=(
+                    "Components describe the sampled candidate population. A binding randomized dataset cap may "
+                    "select a different compatibility mix at launch."
+                ),
+            )
+        if (
+            self._estimate_has_binding_size_cap
+            and per_target_minimum is not None
+            and per_target_maximum is not None
+            and per_target_minimum != per_target_maximum
+        ):
+            return ScenarioRunSizeEstimate(
+                minimum_attack_count=per_target_minimum * target_count,
+                maximum_attack_count=per_target_maximum * target_count,
+                components=components,
+                datasets=datasets,
+                note=(
+                    "The range covers every compatibility mix that the randomized per-dataset caps can select. "
+                    "Baseline is forbidden."
+                ),
+            )
+        return ScenarioRunSizeEstimate(
+            estimated_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note="Baseline is forbidden; retries and internal attack turns are excluded.",
         )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:

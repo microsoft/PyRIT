@@ -29,6 +29,16 @@ from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
+
+class TechniqueResolutionError(ValueError):
+    """
+    Raised when a selected scenario technique has no registered factory.
+
+    Subclasses ``ValueError`` so existing ``except ValueError`` handlers keep working,
+    mirroring ``DatasetConstraintError``.
+    """
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
@@ -36,8 +46,8 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.score import Scorer
-    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+    from pyrit.score import Scorer, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +151,8 @@ def resolve_technique_factories(
     Resolve a run's selected techniques to their registered ``AttackTechniqueFactory`` instances.
 
     Reads the ``AttackTechniqueRegistry`` singleton and keeps only the factories whose name
-    matches a selected technique, preserving selection order. Techniques with no registered
-    factory are silently dropped so the caller can proceed with whatever techniques exist.
+    matches a selected technique, preserving selection order. Raises if any selected
+    technique has no registered factory so the run cannot silently omit requested work.
 
     Args:
         context (ScenarioContext): The resolved runtime inputs for this run.
@@ -154,17 +164,70 @@ def resolve_technique_factories(
     Returns:
         dict[str, AttackTechniqueFactory]: Mapping of technique name to factory, ordered by
         the selected techniques.
+
+    Raises:
+        TechniqueResolutionError: If any selected technique has no registered factory.
+    """
+    return resolve_technique_factories_for_techniques(
+        scenario_techniques=context.scenario_techniques,
+        extra_factories=extra_factories,
+    )
+
+
+def resolve_technique_factories_for_techniques(
+    *,
+    scenario_techniques: Sequence[ScenarioTechnique],
+    extra_factories: dict[str, AttackTechniqueFactory] | None = None,
+) -> dict[str, AttackTechniqueFactory]:
+    """
+    Resolve selected concrete techniques to their canonical factories.
+
+    Args:
+        scenario_techniques (Sequence[ScenarioTechnique]): Concrete techniques to resolve.
+        extra_factories (dict[str, AttackTechniqueFactory] | None): Scenario-local factories
+            merged on top of the registry.
+
+    Returns:
+        dict[str, AttackTechniqueFactory]: Selected factories in technique order.
+
+    Raises:
+        TechniqueResolutionError: If any selected technique has no registered factory.
     """
     from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 
     all_factories = dict(AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise())
     if extra_factories:
         all_factories.update(extra_factories)
-    return {
-        technique.value: all_factories[technique.value]
-        for technique in context.scenario_techniques
-        if technique.value in all_factories
-    }
+
+    missing = list(dict.fromkeys(t.value for t in scenario_techniques if t.value not in all_factories))
+
+    if missing:
+        raise TechniqueResolutionError(
+            "The following selected attack techniques have no registered factory: "
+            f"{', '.join(missing)}. Register the techniques (or pass them via "
+            "extra_factories) before starting the run."
+        )
+
+    return {technique.value: all_factories[technique.value] for technique in scenario_techniques}
+
+
+def filter_compatible_seed_groups(
+    *,
+    factory: AttackTechniqueFactory,
+    seed_groups: Sequence[AttackSeedGroup],
+) -> list[AttackSeedGroup]:
+    """
+    Apply the matrix builder's seed-technique compatibility rule.
+
+    Returns:
+        list[AttackSeedGroup]: Compatible groups in source order.
+    """
+    if factory.seed_technique is None:
+        return list(seed_groups)
+    return AttackSeedGroup.filter_compatible(
+        seed_groups=list(seed_groups),
+        technique=factory.seed_technique,
+    )
 
 
 def build_matrix_atomic_attacks(
@@ -365,6 +428,7 @@ class MatrixAtomicAttackBuilder:
                             objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
                             memory_labels=self._memory_labels,
                             display_group=display_group_fn(combo),
+                            technique_name=technique_name,
                         )
                     )
 
@@ -404,13 +468,7 @@ class MatrixAtomicAttackBuilder:
             list[AttackSeedGroup] | None: The compatible groups, or ``None`` when the
             ``(technique, dataset)`` pair has no compatible groups and should be skipped.
         """
-        if factory.seed_technique is None:
-            return list(seed_groups)
-
-        compatible_groups = AttackSeedGroup.filter_compatible(
-            seed_groups=seed_groups,
-            technique=factory.seed_technique,
-        )
+        compatible_groups = filter_compatible_seed_groups(factory=factory, seed_groups=seed_groups)
         skipped = len(seed_groups) - len(compatible_groups)
         if skipped:
             logger.info(

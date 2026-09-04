@@ -22,7 +22,7 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -122,7 +122,7 @@ def render_shieldgemma_prompt(
     )
 
 
-class ShieldGemmaScorer(TrueFalseScorer):
+class ShieldGemmaScorer(MessageTrueFalseScorer):
     """
     Classify text against one ShieldGemma safety guideline.
 
