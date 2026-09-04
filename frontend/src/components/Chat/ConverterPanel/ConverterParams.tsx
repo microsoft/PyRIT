@@ -7,14 +7,18 @@ interface ParamInputProps {
   param: Parameter
   value: string
   isMissing: boolean
+  labelId: string
+  descriptionId?: string
   onChange: (name: string, value: string) => void
 }
 
-function ConverterParameterChoiceViewer({ param, value, onChange }: ParamInputProps) {
+function ConverterParameterChoiceViewer({ param, value, labelId, descriptionId, onChange }: ParamInputProps) {
   const stringDefault = typeof param.default === 'string' ? param.default : ''
   return (
     <Select
       value={value ?? stringDefault}
+      aria-labelledby={labelId}
+      aria-describedby={descriptionId}
       onChange={(_, data) => onChange(param.name, data.value)}
       data-testid={`param-${param.name}`}
     >
@@ -27,7 +31,7 @@ function ConverterParameterChoiceViewer({ param, value, onChange }: ParamInputPr
   )
 }
 
-function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: ParamInputProps & { onBrowse: (name: string) => void }) {
+function ParameterFileViewer({ param, value, isMissing, labelId, descriptionId, onChange, onBrowse }: ParamInputProps & { onBrowse: (name: string) => void }) {
   const styles = useConverterPanelStyles()
   const stringDefault = typeof param.default === 'string' ? param.default : 'Select a file...'
 
@@ -36,6 +40,8 @@ function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: Pa
       <Input
         value={value ?? ''}
         placeholder={stringDefault}
+        aria-labelledby={labelId}
+        aria-describedby={descriptionId}
         onChange={(_, data) => onChange(param.name, data.value)}
         className={isMissing ? styles.paramInputError : undefined}
         data-testid={`param-${param.name}`}
@@ -43,6 +49,7 @@ function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: Pa
       <Button
         appearance="subtle"
         size="small"
+        aria-label={`Browse for ${param.name}`}
         onClick={() => onBrowse(param.name)}
         className={styles.touchTarget}
         data-testid={`param-${param.name}-browse`}
@@ -53,7 +60,7 @@ function ParameterFileViewer({ param, value, isMissing, onChange, onBrowse }: Pa
   )
 }
 
-function ConverterParameterViewer({ param, value, isMissing, onChange }: ParamInputProps) {
+function ConverterParameterViewer({ param, value, isMissing, labelId, descriptionId, onChange }: ParamInputProps) {
   const styles = useConverterPanelStyles()
   const stringDefault = typeof param.default === 'string' ? param.default : undefined
 
@@ -61,6 +68,8 @@ function ConverterParameterViewer({ param, value, isMissing, onChange }: ParamIn
     <Input
       value={value ?? ''}
       placeholder={stringDefault}
+      aria-labelledby={labelId}
+      aria-describedby={descriptionId}
       onChange={(_, data) => onChange(param.name, data.value)}
       className={isMissing ? styles.paramInputError : undefined}
       data-testid={`param-${param.name}`}
@@ -97,29 +106,33 @@ export default function ConverterParams({ converter, paramValues, paramsExpanded
       </Button>
       {paramsExpanded && (converter.parameters ?? []).map((param) => {
         const isMissing = showValidation && param.required && !paramValues[param.name]?.trim()
+        const labelId = `converter-param-${param.name}-label`
+        const descriptionId = param.description ? `converter-param-${param.name}-description` : undefined
         return (
           <div key={param.name} className={styles.paramBlock}>
-            <span className={styles.paramLabel}>
+            <span id={labelId} className={styles.paramLabel}>
               <Text size={200} weight="semibold">{param.name}{param.required ? ' *' : ''}</Text>
               {param.description && (
                 <Tooltip content={param.description} relationship="description">
-                  <span className={styles.paramInfo}><InfoRegular fontSize={12} /></span>
+                  <span id={descriptionId} className={styles.paramInfo} aria-label={param.description}><InfoRegular fontSize={12} /></span>
                 </Tooltip>
               )}
             </span>
             {param.type_name === 'bool' ? (
               <Switch
                 checked={(paramValues[param.name] ?? (typeof param.default === 'string' ? param.default : 'false')).toLowerCase() === 'true'}
+                aria-labelledby={labelId}
+                aria-describedby={descriptionId}
                 onChange={(_, data) => onParamChange(param.name, data.checked ? 'true' : 'false')}
                 label={(paramValues[param.name] ?? (typeof param.default === 'string' ? param.default : 'false')).toLowerCase() === 'true' ? 'True' : 'False'}
                 data-testid={`param-${param.name}`}
               />
             ) : param.choices ? (
-              <ConverterParameterChoiceViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={onParamChange} />
+              <ConverterParameterChoiceViewer param={param} value={paramValues[param.name]} isMissing={isMissing} labelId={labelId} descriptionId={descriptionId} onChange={onParamChange} />
             ) : /path|file/i.test(param.name) || /path|file/i.test(param.description ?? '') ? (
-              <ParameterFileViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={onParamChange} onBrowse={onFileBrowse} />
+              <ParameterFileViewer param={param} value={paramValues[param.name]} isMissing={isMissing} labelId={labelId} descriptionId={descriptionId} onChange={onParamChange} onBrowse={onFileBrowse} />
             ) : (
-              <ConverterParameterViewer param={param} value={paramValues[param.name]} isMissing={isMissing} onChange={onParamChange} />
+              <ConverterParameterViewer param={param} value={paramValues[param.name]} isMissing={isMissing} labelId={labelId} descriptionId={descriptionId} onChange={onParamChange} />
             )}
             {isMissing && (
               <Text size={100} className={styles.paramErrorText}>Required</Text>
