@@ -316,12 +316,89 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks/attack-1/messages",
-                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "attack-1"},
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    "request_converter_configurations": [
+                        {
+                            "converter_ids": ["request-1", "request-2"],
+                            "indexes_to_apply": [0],
+                            "prompt_data_types_to_apply": ["text"],
+                        }
+                    ],
+                    "response_converter_configurations": [
+                        {
+                            "converter_ids": ["response-1"],
+                            "prompt_data_types_to_apply": ["text"],
+                        }
+                    ],
+                },
             )
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert len(data["messages"]["messages"]) == 2
+            request = mock_service.add_message_async.await_args.kwargs["request"]
+            assert request.request_converter_configurations[0].converter_ids == [
+                "request-1",
+                "request-2",
+            ]
+            assert request.request_converter_configurations[0].indexes_to_apply == [0]
+            assert request.request_converter_configurations[0].prompt_data_types_to_apply == ["text"]
+            assert request.response_converter_configurations[0].converter_ids == ["response-1"]
+
+    @pytest.mark.parametrize(
+        "converter_fields",
+        [
+            {
+                "converter_ids": ["legacy-converter"],
+                "request_converter_configurations": [{"converter_ids": ["request-converter"]}],
+            },
+            {"request_converter_configurations": []},
+            {"request_converter_configurations": [{"converter_ids": []}]},
+            {"response_converter_configurations": []},
+            {"request_converter_configurations": [{"converter_ids": ["request-converter"], "indexes_to_apply": []}]},
+            {"request_converter_configurations": [{"converter_ids": ["request-converter"], "indexes_to_apply": [-1]}]},
+            {"request_converter_configurations": [{"converter_ids": ["request-converter"], "indexes_to_apply": [1]}]},
+            {
+                "request_converter_configurations": [
+                    {"converter_ids": ["request-converter"], "prompt_data_types_to_apply": []}
+                ]
+            },
+        ],
+    )
+    def test_add_message_rejects_invalid_converter_configurations(
+        self, client: TestClient, converter_fields: dict[str, object]
+    ) -> None:
+        """Test invalid structured converter configurations."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    **converter_fields,
+                },
+            )
+
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            mock_get_service.return_value.add_message_async.assert_not_called()
+
+    def test_add_message_rejects_converter_configuration_when_send_is_false(self, client: TestClient) -> None:
+        """Test that converter configurations cannot be supplied without sending."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    "send": False,
+                    "converter_ids": ["legacy-converter"],
+                },
+            )
+
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            mock_get_service.return_value.add_message_async.assert_not_called()
 
     def test_update_attack_not_found(self, client: TestClient) -> None:
         """Test updating a non-existent attack returns 404."""
@@ -356,6 +433,20 @@ class TestAttackRoutes:
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.add_message_async = AsyncMock(side_effect=ValueError("Target object for 'target-1' not found"))
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "attack-1"},
+            )
+
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_add_message_converter_not_found(self, client: TestClient) -> None:
+        """Test adding a message with an unknown converter returns 404."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.add_message_async = AsyncMock(side_effect=ValueError("Converter instance 'missing' not found"))
             mock_get_service.return_value = mock_service
 
             response = client.post(

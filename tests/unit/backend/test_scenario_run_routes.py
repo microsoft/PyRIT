@@ -18,7 +18,9 @@ from pyrit.backend.main import app
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress
 from pyrit.models import (
+    ScenarioProgressCounts,
     ScenarioProgressHeader,
+    ScenarioProgressSummary,
     ScenarioRunPlan,
     ScenarioRunProgress,
     ScenarioRunState,
@@ -263,7 +265,15 @@ class TestGetScenarioRunRoute:
                 atomic_groups=[],
                 seed_groups=[],
             ),
-            active_atomic_group_ids=["active-group"],
+            summary=ScenarioProgressSummary(
+                overall=ScenarioProgressCounts(
+                    completed=0,
+                    planned=0,
+                    succeeded=0,
+                    errors=0,
+                    retries=0,
+                )
+            ),
             plan_complete=True,
         )
         snapshot_thread: list[int] = []
@@ -282,7 +292,6 @@ class TestGetScenarioRunRoute:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["plan"]["scenario_registry_name"] == "test.scenario"
-        assert response.json()["active_atomic_group_ids"] == ["active-group"]
         mock_service.get_run_progress_from_storage.assert_called_once_with(
             scenario_result_id="test-run-id",
             since=None,
@@ -305,6 +314,15 @@ class TestGetScenarioRunRoute:
                 scenario_registry_name="test.scenario",
                 atomic_groups=[],
                 seed_groups=[],
+            ),
+            summary=ScenarioProgressSummary(
+                overall=ScenarioProgressCounts(
+                    completed=0,
+                    planned=0,
+                    succeeded=0,
+                    errors=0,
+                    retries=0,
+                )
             ),
             plan_complete=True,
         )

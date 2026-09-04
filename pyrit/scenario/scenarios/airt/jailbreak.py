@@ -76,6 +76,7 @@ def _prompt_sending_factory() -> AttackTechniqueFactory:
     return AttackTechniqueFactory(
         name=_PROMPT_SENDING,
         attack_class=PromptSendingAttack,
+        description="Renders each jailbreak template around the objective and sends it as the user message.",
         technique_tags=["single_turn"],
     )
 
@@ -97,6 +98,10 @@ def _jailbreak_system_prompt_factory() -> AttackTechniqueFactory:
     return AttackTechniqueFactory(
         name=_JAILBREAK_SYSTEM_PROMPT,
         attack_class=PromptSendingAttack,
+        description=(
+            "Uses the jailbreak template as the system prompt and sends the objective as the user message. "
+            "This technique requires editable history and system-prompt support."
+        ),
         technique_tags=["single_turn"],
     )
 

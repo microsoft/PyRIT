@@ -127,6 +127,7 @@ jest.mock("./components/Layout/MainLayout", () => {
 });
 
 jest.mock("./components/Chat/ChatWindow", () => {
+  const { useLocation } = jest.requireActual("react-router") as typeof import("react-router");
   const MockChatWindow = ({
     onNewAttack,
     activeTarget,
@@ -140,6 +141,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onConversationCreated,
     onSelectConversation,
     labels,
+    scenarioResultId,
   }: {
     onNewAttack: () => void;
     activeTarget: unknown;
@@ -153,7 +155,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
+    scenarioResultId?: string | null;
   }) => {
+    const location = useLocation();
     return (
       <div data-testid="chat-window">
         <span data-testid="attack-result-id">{attackResultId ?? "none"}</span>
@@ -168,6 +172,8 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="target-resolution-status">{targetResolutionStatus ?? "none"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
+        <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
+        <span data-testid="route-location">{`${location.pathname}${location.search}`}</span>
         <button onClick={onNewAttack} data-testid="new-attack">
           New Attack
         </button>
@@ -365,12 +371,16 @@ jest.mock("./components/Scenarios/ScenarioDetail", () => {
   };
 });
 
-jest.mock("./components/Scenarios/ScenarioRunStarted", () => {
-  const MockScenarioRunStarted = () => <div data-testid="scenario-run-started" />;
-  MockScenarioRunStarted.displayName = "MockScenarioRunStarted";
+jest.mock("./components/Scenarios/ScenarioRunPage", () => {
+  const { useLocation } = jest.requireActual<typeof import("react-router")>("react-router");
+  const MockScenarioRunPage = () => {
+    const location = useLocation();
+    return <div data-testid="scenario-run-page" data-location={location.pathname} />;
+  };
+  MockScenarioRunPage.displayName = "MockScenarioRunPage";
   return {
     __esModule: true,
-    default: MockScenarioRunStarted,
+    default: MockScenarioRunPage,
   };
 });
 
@@ -464,14 +474,36 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
   });
 
-  it("renders the scenario run-started shell and marks the sidebar current when deep-linked to /scenario-history/:id", () => {
-    renderApp("/scenario-history/sr-123");
+  it("renders the scanner run dashboard and marks the sidebar current when deep-linked to /scanner-history/:id", () => {
+    renderApp("/scanner-history/sr-123");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-run-started")).toBeInTheDocument();
+    expect(screen.getByTestId("scenario-run-page")).toBeInTheDocument();
+  });
+
+  it("renders the scanner run dashboard for a direct attack detail link", () => {
+    renderApp("/scanner-history/sr-123/attack-456");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-run-page")).toHaveAttribute(
+      "data-location",
+      "/scanner-history/sr-123/attack-456"
+    );
+  });
+
+  it("redirects legacy scenario-history links to scanner-history", async () => {
+    renderApp("/scenario-history/sr-123");
+
+    expect(await screen.findByTestId("scenario-run-page")).toHaveAttribute(
+      "data-location",
+      "/scanner-history/sr-123"
+    );
   });
 
   it("switches to the scenarios view via the sidebar", () => {
@@ -937,6 +969,7 @@ describe("App", () => {
     );
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main");
     expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
   });
 
   it("hides the normalized empty objective of an unnamed manual attack on reload", async () => {
@@ -954,6 +987,69 @@ describe("App", () => {
       expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
     );
     expect(screen.getByTestId("objective")).toHaveTextContent("");
+  });
+
+  it("hydrates validated scenario provenance on a direct attack reload", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+
+    renderApp(`/attacks/ar-1?scenarioResultId=${scenarioResultId}`);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId)
+    );
+    expect(screen.getByTestId("route-location")).toHaveTextContent(
+      `/attacks/ar-1?scenarioResultId=${scenarioResultId}`
+    );
+  });
+
+  it.each([
+    "/attacks/ar-1?scenarioResultId=run-1",
+    "/attacks/ar-1?scenarioResultId=https%3A%2F%2Fevil.example",
+    "/attacks/ar-1?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&scenarioResultId=123e4567-e89b-12d3-a456-426614174000",
+  ])("ignores unsafe or ambiguous scenario provenance on %s", async (path: string) => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+
+    renderApp(path);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
+  });
+
+  it("preserves validated provenance within an attack and clears it for a new attack", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-456"],
+    });
+    renderApp(`/attacks/ar-1?scenarioResultId=${scenarioResultId}`);
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+
+    fireEvent.click(screen.getByTestId("select-conversation"));
+    expect(screen.getByTestId("route-location")).toHaveTextContent(
+      `/attacks/ar-1/conversations/conv-456?scenarioResultId=${scenarioResultId}`
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+
+    fireEvent.click(screen.getByTestId("new-attack"));
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/chat");
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
   });
 
   it("uses the conversation from a deep link when it belongs to the attack", async () => {
@@ -983,6 +1079,24 @@ describe("App", () => {
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
     );
+  });
+
+  it("retains validated provenance while canonicalizing an unknown conversation route", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+    renderApp(`/attacks/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("route-location")).toHaveTextContent(
+        `/attacks/ar-1?scenarioResultId=${scenarioResultId}`
+      )
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
   });
 
   it("hydrates history filters from the URL query string", () => {

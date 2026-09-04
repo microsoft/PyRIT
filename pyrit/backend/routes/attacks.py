@@ -449,10 +449,10 @@ async def add_message(  # pyrit-async-suffix-exempt
     If send=False, just stores the message in memory without sending (useful for
     system messages, context injection, or replaying assistant responses).
 
-    Converters can be specified at three levels (in priority order):
-    1. request.converter_ids - per-message converter instances
-    2. request.converters - inline converter definitions
-    3. attack.converter_ids - attack-level defaults
+    Request and response converters can be supplied as ordered, registry-backed
+    configurations. Each configuration can target message piece indexes, prompt
+    data types, or both. The global ``converter_ids`` request pipeline remains
+    available for compatibility but is deprecated.
 
     Returns:
         AddMessageResponse: Updated attack with new message(s).

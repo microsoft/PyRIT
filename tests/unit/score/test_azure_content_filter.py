@@ -303,6 +303,17 @@ async def test_evaluate_async_sets_file_mapping_for_single_category(patch_centra
         mock_eval.assert_called_once()
 
 
+async def test_evaluate_async_uses_canonical_sexual_category(patch_central_database):
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.SEXUAL])
+
+    with patch.object(FloatScaleScorer, "evaluate_async", AsyncMock(return_value=None)):
+        await scorer.evaluate_async()
+
+    assert scorer.evaluation_file_mapping is not None
+    assert scorer.evaluation_file_mapping.harm_category == "SEXUAL_CONTENT"
+    assert scorer.evaluation_file_mapping.result_file == "harm/sexual_metrics.jsonl"
+
+
 def test_init_raises_runtime_error_when_api_key_not_string():
     """Test that __init__ raises RuntimeError when resolved api_key is neither callable nor string."""
     with patch(

@@ -675,8 +675,33 @@ export interface ScenarioProgressHeader {
 }
 
 /** One persisted attack attempt in ascending progress order. */
+export interface ScenarioProgressScore {
+  scorer_name: string
+  score_type: 'true_false' | 'float_scale' | 'unknown'
+  status: 'complete' | 'undetermined'
+  score_value?: string | null
+  score_rationale?: string | null
+}
+
+export type ScenarioIdentityValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ScenarioIdentityValue[]
+  | { [key: string]: ScenarioIdentityValue }
+
+export interface ScenarioComponentIdentity {
+  component_name: string
+  parameters: Record<string, ScenarioIdentityValue>
+  children: Record<string, ScenarioComponentIdentity[]>
+}
+
+export type ScenarioAttackTechniqueDetails = ScenarioComponentIdentity
+
 export interface ScenarioProgressResult {
   attack_result_id: string
+  conversation_id: string
   atomic_group_id: string
   atomic_attack_name: string
   seed_group_id: string
@@ -687,20 +712,33 @@ export interface ScenarioProgressResult {
   retries: RetryEvent[]
   error_type?: string | null
   error_message?: string | null
+  score?: ScenarioProgressScore | null
 }
 
 export interface ScenarioRunPlanSeedGroup {
   id: string
   objective_sha256: string
   objective: string
+  prompts: ScenarioRunPlanSeedPrompt[]
+}
+
+export interface ScenarioRunPlanSeedPrompt {
+  value: string
+  data_type?: string | null
+  role?: string | null
+  sequence: number
+  parameters: string[]
 }
 
 export interface ScenarioRunPlanAtomicGroup {
   id: string
   atomic_attack_name: string
   display_group: string
+  technique_name?: string | null
   technique_eval_hash: string
   seed_group_ids: string[]
+  description?: string | null
+  tags: string[]
 }
 
 export interface ScenarioRunPlan {
@@ -710,12 +748,74 @@ export interface ScenarioRunPlan {
   seed_groups: ScenarioRunPlanSeedGroup[]
 }
 
+export interface ScenarioProgressCounts {
+  completed: number
+  planned: number | null
+  succeeded: number
+  success_percentage: number | null
+  errors: number
+  retries: number
+}
+
+export interface ScenarioTechniqueProgress extends ScenarioProgressCounts {
+  id: string
+  display_group: string
+  atomic_attack_names: string[]
+  atomic_group_ids: string[]
+  description?: string | null
+  tags: string[]
+}
+
+export interface ScenarioDisplayGroupProgress extends ScenarioProgressCounts {
+  id: string
+  display_group: string
+  atomic_attack_names: string[]
+  atomic_group_ids: string[]
+}
+
+export interface ScenarioSeedGroupProgress extends ScenarioProgressCounts {
+  id: string
+  objective?: string | null
+}
+
+export interface ScenarioAtomicGroupProgress extends ScenarioProgressCounts {
+  id: string
+  atomic_attack_name: string
+  display_group: string
+  status: 'RUNNING' | 'PENDING' | 'INCOMPLETE' | 'COMPLETED'
+  technique_details?: ScenarioAttackTechniqueDetails | null
+}
+
+export interface ScenarioObjectiveScorerMetrics {
+  accuracy: number
+  accuracy_standard_error?: number | null
+  f1_score?: number | null
+  precision?: number | null
+  recall?: number | null
+  average_score_time_seconds?: number | null
+}
+
+export type ScenarioScorerIdentity = ScenarioComponentIdentity
+
+export interface ScenarioObjectiveScorer extends ScenarioScorerIdentity {
+  metrics?: ScenarioObjectiveScorerMetrics | null
+}
+
+export interface ScenarioProgressSummary {
+  overall: ScenarioProgressCounts
+  objective_scorer?: ScenarioObjectiveScorer | null
+  display_groups?: ScenarioDisplayGroupProgress[]
+  techniques: ScenarioTechniqueProgress[]
+  seed_groups: ScenarioSeedGroupProgress[]
+  atomic_groups: ScenarioAtomicGroupProgress[]
+  unattributed_attempts?: number
+}
+
 export interface ScenarioRunProgress {
   run: ScenarioProgressHeader
   plan: ScenarioRunPlan | null
-  reset: boolean
-  active_atomic_group_ids: string[]
   results: ScenarioProgressResult[]
+  summary: ScenarioProgressSummary
   next_cursor?: string | null
   has_more: boolean
   plan_complete: boolean

@@ -109,6 +109,10 @@ function scoreDisplayValue(score: DisplayScore): string {
   return score.score_value ?? score.status ?? ''
 }
 
+function scoreDisplayLabel(score: DisplayScore): string {
+  return `Score: ${scoreDisplayValue(score)}`
+}
+
 function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }) {
   const styles = useMessageListStyles()
   const categories = score.score_category?.filter(Boolean) ?? []
@@ -117,7 +121,7 @@ function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }
     <div className={styles.scoreSurface} data-testid={testId}>
       <Text weight="semibold">Score details</Text>
       <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Value</Text>
+        <Text size={200} weight="semibold" className={styles.scoreLabel}>Score</Text>
         <Badge appearance="tint" color="brand" size="small" className={styles.scoreValue}>{scoreDisplayValue(score)}</Badge>
       </div>
       <div className={styles.scoreRow}>
@@ -157,10 +161,11 @@ function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }
 function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
   const styles = useMessageListStyles()
   const displayValue = scoreDisplayValue(score)
+  const displayLabel = scoreDisplayLabel(score)
 
   return (
     <Popover withArrow>
-      <Tooltip content={displayValue} relationship="description" withArrow>
+      <Tooltip content={displayLabel} relationship="description" withArrow>
         <PopoverTrigger disableButtonEnhancement>
           <Button
             appearance="subtle"
@@ -170,7 +175,7 @@ function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; gro
             data-testid={`message-score-${groupId}-${scoreIndex}`}
           >
             <Badge appearance="tint" color="brand" size="medium" className={styles.scoreChipValue}>
-              {displayValue}
+              {displayLabel}
             </Badge>
           </Button>
         </PopoverTrigger>
@@ -390,7 +395,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
         unstable_disableAutoFocus
         onOpenChange={(_event: unknown, data: { open: boolean }) => setIsScorePopoverOpen(data.open)}
       >
-        <Tooltip content={scoreDisplayValue(displayedScore)} relationship="description" withArrow>
+        <Tooltip content={scoreDisplayLabel(displayedScore)} relationship="description" withArrow>
           <PopoverTrigger disableButtonEnhancement>
             <Button
               appearance="subtle"
@@ -403,13 +408,14 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
                 <span className={styles.scoreStackOvalBack} />
                 <span className={styles.scoreStackOvalMiddle} />
                 <span className={styles.scoreStackOvalFront}>
-                  {scoreDisplayValue(displayedScore)}
+                  {scoreDisplayLabel(displayedScore)}
                 </span>
               </span>
             </Button>
           </PopoverTrigger>
         </Tooltip>
         <PopoverSurface className={styles.multiScorePopover}>
+          <Text size={200} weight="semibold">Score:</Text>
           <div ref={tabBarRef} className={styles.scoreTabBar} data-score-tab-bar>
             <TabList
               selectedValue={selectedScore.id}
