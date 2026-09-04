@@ -10,14 +10,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from PIL import Image
 
-from pyrit.models import MessagePiece, Score
+from pyrit.models import MessagePiece
 from pyrit.output.conversation.markdown import MarkdownConversationPrinter
 from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
 
 
-class _ConcreteMarkdown(MarkdownConversationPrinter):
-    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
+class _NullConversationSource:
+    async def get_messages_async(self, *, conversation_id: str) -> list:
         return []
+
+    async def get_scores_async(self, *, prompt_ids: list[str]) -> list:
+        return []
+
+
+class _ConcreteMarkdown(MarkdownConversationPrinter):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(source=_NullConversationSource(), **kwargs)
 
 
 def _make_image_bytes(*, multicolor: bool = True) -> bytes:

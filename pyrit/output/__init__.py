@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         output_attack_async,
         output_conversation_async,
         output_scenario_async,
+        output_scenario_attacks_async,
         output_score_async,
         output_scorer_async,
     )
@@ -38,6 +39,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "output_attack_async": "pyrit.output.helpers",
     "output_conversation_async": "pyrit.output.helpers",
     "output_scenario_async": "pyrit.output.helpers",
+    "output_scenario_attacks_async": "pyrit.output.helpers",
     "output_score_async": "pyrit.output.helpers",
     "output_scorer_async": "pyrit.output.helpers",
     "PrinterBase": "pyrit.output.base",
