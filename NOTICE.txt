@@ -17,6 +17,19 @@ required to debug changes to any libraries licensed under the GNU Lesser General
 
 ---------------------------------------------------------
 
+garak ProPILE data and prompt templates - Apache-2.0
+
+Copyright (c) 2023 Leon Derczynski
+Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES
+
+Source: https://github.com/NVIDIA/garak
+
+The ProPILE record and template files were modified for PyRIT's local SeedDataset format.
+The original work is licensed under the Apache License, Version 2.0, whose terms are
+reproduced in this notice file.
+
+---------------------------------------------------------
+
 aioconsole 0.8.1 - AGPL-3.0-or-later AND GPL-3.0 AND GPL-3.0-only
 
 

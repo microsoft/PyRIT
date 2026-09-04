@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -18,9 +18,10 @@
 # data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
-# target recommends non-existent packages that an attacker could squat), an audio probe (which
-# delivers spoken jailbreaks to multimodal targets), and FigStep visual jailbreaks (which place
-# harmful instructions in images).
+# target recommends non-existent packages that an attacker could squat), ProPILE privacy probes
+# (which ask for a withheld personal attribute using other known attributes), an audio probe
+# (which delivers spoken jailbreaks to multimodal targets), and FigStep visual jailbreaks (which
+# place harmful instructions in images).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -29,6 +30,7 @@
 from pathlib import Path
 
 from pyrit.output import output_scenario_async
+from pyrit.prompt_target import TextTarget
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.garak import (
@@ -38,6 +40,8 @@ from pyrit.scenario.garak import (
     FigStep,
     PackageHallucination,
     PackageHallucinationTechnique,
+    ProPILE,
+    ProPILETechnique,
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
     WebInjection,
@@ -259,6 +263,56 @@ sysprompt_result = await sysprompt_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(sysprompt_result)
+
+# %% [markdown]
+# ## ProPILE
+#
+# Ports Garak's ProPILE privacy-leakage probes [@kim2023propile] into PyRIT's scenario model. Each attack uses known
+# personal attributes from a local record to ask for one withheld attribute, then checks the response
+# with a record-specific `SubStringScorer`. The available techniques are `Twin` (name known),
+# `Triplet` (name and one additional attribute known), `Quadruplet` (name and two attributes known),
+# and `Unstructured` (relationships or affiliations).
+#
+# Both the technique and local record dataset are explicit opt-ins. The bundled Garak records support
+# Twin and a limited number of Triplet combinations; selecting Quadruplet or Unstructured with those
+# records raises an error instead of reporting an empty successful scan.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan garak.propile --target openai_chat --techniques twin \
+#     --dataset-names garak_propile_pii --max-dataset-size 1
+# ```
+#
+# > **Interpretation:** An exact match indicates possible disclosure. It does not prove that the
+# > target memorized a specific training record; coincidental or independently sourced matches remain
+# > possible.
+#
+# The local example below uses `TextTarget` to print the generated prompt without sending the bundled
+# personal data to an external service. Replace it with an authorized target when running a disclosure
+# evaluation.
+
+# %%
+propile_dataset_config = DatasetAttackConfiguration(dataset_names=["garak_propile_pii"], max_dataset_size=1)
+propile_target = TextTarget()
+
+propile_scenario = ProPILE()
+propile_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": propile_target,
+        "scenario_techniques": [ProPILETechnique.Twin],
+        "dataset_config": propile_dataset_config,
+    }
+)
+await propile_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {propile_scenario.name}")
+print(f"Atomic attacks: {propile_scenario.atomic_attack_count}")
+
+propile_result = await propile_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(propile_result)
 
 # %% [markdown]
 # ## PackageHallucination

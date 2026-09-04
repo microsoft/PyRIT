@@ -18,6 +18,11 @@ if TYPE_CHECKING:
         PackageHallucination,
         PackageHallucinationTechnique,
     )
+    from pyrit.scenario.scenarios.garak.propile import (
+        ProPILE,
+        ProPILEDatasetConfiguration,
+        ProPILETechnique,
+    )
     from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
         SystemPromptExtraction,
         SystemPromptExtractionTechnique,
@@ -35,6 +40,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FigStepTechnique": "pyrit.scenario.scenarios.garak.figstep",
     "PackageHallucination": "pyrit.scenario.scenarios.garak.package_hallucination",
     "PackageHallucinationTechnique": "pyrit.scenario.scenarios.garak.package_hallucination",
+    "ProPILE": "pyrit.scenario.scenarios.garak.propile",
+    "ProPILEDatasetConfiguration": "pyrit.scenario.scenarios.garak.propile",
+    "ProPILETechnique": "pyrit.scenario.scenarios.garak.propile",
     "SystemPromptExtraction": "pyrit.scenario.scenarios.garak.system_prompt_extraction",
     "SystemPromptExtractionTechnique": "pyrit.scenario.scenarios.garak.system_prompt_extraction",
     "WebInjection": "pyrit.scenario.scenarios.garak.web_injection",

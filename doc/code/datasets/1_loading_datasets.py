@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -62,13 +62,15 @@
 # Transphobia Awareness [@scheuerman2025transphobia],
 # Red Team Social Bias [@vantaylor2024socialbias],
 # and PromptIntel [@roccia2024promptintel].
-# Some datasets also originate from tools like garak [@derczynski2024garak]
+# Some datasets also originate from tools like garak [@derczynski2024garak], including
+# the ProPILE privacy-leakage records and templates [@kim2023propile],
 # and AdvBench [@zou2023gcg].
 # The garak family includes per-language package-hallucination registries
 # (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
 # `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
-# `garak_tm_system_prompts`), an audio jailbreak set
+# `garak_tm_system_prompts`), ProPILE privacy records and templates
+# (`garak_propile_pii`, `garak_propile_templates`), an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%
