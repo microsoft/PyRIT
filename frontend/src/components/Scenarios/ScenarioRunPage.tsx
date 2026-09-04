@@ -34,7 +34,7 @@ import {
   ErrorCircleRegular,
   StopRegular,
 } from '@fluentui/react-icons'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 
 import AttackAttemptDetails from '@/components/AttackResults/AttackAttemptDetails'
 import ObjectiveScorerDetails from '@/components/AttackResults/ObjectiveScorerDetails'
@@ -75,6 +75,7 @@ const MAX_VISIBLE_ATTEMPTS_PER_GROUP = 100
 
 const RUN_BADGE_COLORS: Record<ScenarioRunState, 'informative' | 'brand' | 'success' | 'danger' | 'warning'> = {
   CREATED: 'informative',
+  QUEUED: 'informative',
   IN_PROGRESS: 'brand',
   COMPLETED: 'success',
   FAILED: 'danger',
@@ -102,6 +103,7 @@ interface ScenarioRunPageContentProps {
 
 function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRunPageContentProps) {
   const styles = useScenarioRunPageStyles()
+  const location = useLocation()
   const navigate = useNavigate()
   const { state, retry, applyRunSummary } = useScenarioRunProgress(scenarioResultId)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
@@ -111,6 +113,21 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   const [selectedObjective, setSelectedObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set())
   const detailsTriggerRef = useRef<HTMLElement | null>(null)
+  const navigationState = location.state as {
+    fromScenarioHistory?: boolean
+    scenarioHistorySearch?: string
+    scenarioName?: string
+  } | null
+  const backPath = navigationState?.fromScenarioHistory
+    ? `/history/scanner${navigationState.scenarioHistorySearch ?? ''}`
+    : navigationState?.scenarioName
+      ? `/scanner/${encodeURIComponent(navigationState.scenarioName)}`
+      : '/scanner'
+  const backLabel = navigationState?.fromScenarioHistory
+    ? 'Back to scanner history'
+    : navigationState?.scenarioName
+      ? 'Back to scenario'
+      : 'Back to scanners'
 
   const seedObjectives = useMemo(
     () => new Map(state.plan?.seed_groups.map((seed) => [seed.id, seed.objective]) ?? []),
@@ -148,7 +165,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   }, [state.results])
 
   const closeAttemptDetails = (): void => {
-    navigate(scenarioRunRoutePath(scenarioResultId), { replace: true })
+    navigate(scenarioRunRoutePath(scenarioResultId), { replace: true, state: location.state })
     requestAnimationFrame(() => detailsTriggerRef.current?.focus())
   }
 
@@ -157,7 +174,7 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     trigger: HTMLElement,
   ): void => {
     detailsTriggerRef.current = trigger
-    navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id))
+    navigate(scenarioRunAttackRoutePath(scenarioResultId, attempt.attack_result_id), { state: location.state })
   }
 
   const toggleDisplayGroup = (groupId: string): void => {
@@ -190,8 +207,8 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     return (
       <main className={styles.root} data-testid="scenario-run-page">
         <div className={styles.content}>
-          <Link to="/scanner" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scanners
+          <Link to={backPath} className={styles.backLink}>
+            <ArrowLeftRegular /> {backLabel}
           </Link>
           <div className={styles.centeredState} aria-label="Loading scenario run">
             <Skeleton className={styles.loadingBlock}>
@@ -212,8 +229,8 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     return (
       <main className={styles.root} data-testid="scenario-run-page">
         <div className={styles.content}>
-          <Link to="/scanner" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scanners
+          <Link to={backPath} className={styles.backLink}>
+            <ArrowLeftRegular /> {backLabel}
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
@@ -232,8 +249,8 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     return (
       <main className={styles.root} data-testid="scenario-run-page">
         <div className={styles.content}>
-          <Link to="/scanner" className={styles.backLink}>
-            <ArrowLeftRegular /> Back to scanners
+          <Link to={backPath} className={styles.backLink}>
+            <ArrowLeftRegular /> {backLabel}
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
@@ -270,8 +287,8 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
   return (
     <main className={styles.root} data-testid="scenario-run-page">
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
-          <ArrowLeftRegular /> Back to scanners
+        <Link to={backPath} className={styles.backLink}>
+          <ArrowLeftRegular /> {backLabel}
         </Link>
 
         <header className={styles.header}>
@@ -326,7 +343,48 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
             <Text size={200} className={styles.metadataLabel}>Completed</Text>
             <Text weight="semibold">{run.completed_at ? formatTimestamp(run.completed_at) : 'Not yet'}</Text>
           </div>
+          {run.target && (
+            <div className={styles.metadataItem}>
+              <Text size={200} className={styles.metadataLabel}>Target</Text>
+              <Text weight="semibold">{run.target.model_name ?? run.target.target_type}</Text>
+              <Text size={200} className={styles.sectionHint}>{run.target.target_type}</Text>
+            </div>
+          )}
+          {run.pyrit_version && (
+            <div className={styles.metadataItem}>
+              <Text size={200} className={styles.metadataLabel}>PyRIT version</Text>
+              <Text weight="semibold">{run.pyrit_version}</Text>
+            </div>
+          )}
         </div>
+
+        <section className={styles.section} aria-labelledby="run-configuration-heading">
+          <div className={styles.sectionHeading}>
+            <Text as="h2" id="run-configuration-heading" size={500} weight="semibold">
+              Run configuration
+            </Text>
+            <Text className={styles.sectionHint}>Persisted, secret-free settings for this run.</Text>
+          </div>
+          <div className={styles.summaryGrid}>
+            <ConfigurationItem
+              label="Techniques"
+              value={(run.techniques_used?.length ?? 0) > 0 ? run.techniques_used?.join(', ') ?? '' : 'Unavailable'}
+            />
+            <ConfigurationItem
+              label="Datasets"
+              value={(run.datasets_used?.length ?? 0) > 0 ? run.datasets_used?.join(', ') ?? '' : 'Unavailable'}
+            />
+            <ConfigurationItem
+              label="Scenario parameters"
+              value={formatConfiguration(run.scenario_parameters ?? {})}
+            />
+            <ConfigurationItem
+              label="Labels"
+              value={formatConfiguration(run.labels ?? {})}
+            />
+            {run.target?.endpoint && <ConfigurationItem label="Target endpoint" value={run.target.endpoint} />}
+          </div>
+        </section>
 
         {state.stale && (
           <MessageBar intent="warning">
@@ -658,6 +716,21 @@ function DisplayGroupMetric({ label, value }: MetricProps) {
   )
 }
 
+interface ConfigurationItemProps {
+  readonly label: string
+  readonly value: string
+}
+
+function ConfigurationItem({ label, value }: ConfigurationItemProps) {
+  const styles = useScenarioRunPageStyles()
+  return (
+    <article className={styles.summaryItem}>
+      <Text size={200} className={styles.metadataLabel}>{label}</Text>
+      <Text className={styles.objective}>{value}</Text>
+    </article>
+  )
+}
+
 function Metric({ label, value }: MetricProps) {
   const styles = useScenarioRunPageStyles()
   return (
@@ -727,6 +800,16 @@ function statusIcon(status: ScenarioRunState): React.ReactElement {
     return <StopRegular />
   }
   return <ArrowSyncRegular />
+}
+
+function formatConfiguration(value: Record<string, unknown>): string {
+  const entries = Object.entries(value)
+  if (entries.length === 0) {
+    return 'None'
+  }
+  return entries
+    .map(([key, item]) => `${key}: ${typeof item === 'string' ? item : JSON.stringify(item)}`)
+    .join(', ')
 }
 
 function formatSuccess(succeeded: number, evaluated: number, percent: number | null): string {

@@ -27,9 +27,20 @@ export const useAttackHistoryStyles = makeStyles({
   },
   filters: {
     display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: tokens.spacingVerticalS,
+  },
+  filterRow: {
+    display: 'flex',
     gap: tokens.spacingHorizontalS,
     alignItems: 'center',
     flexWrap: 'wrap',
+  },
+  secondaryFilterRow: {
+    display: 'flex',
+    alignItems: 'center',
+    minHeight: MINIMUM_TOUCH_TARGET_SIZE,
   },
   filterDropdown: {
     minWidth: '160px',

@@ -16,17 +16,32 @@ import json
 import logging
 import uuid
 from collections import OrderedDict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Lock
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
+from pydantic import TypeAdapter, ValidationError
+
+from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.services.pagination import (
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+    fingerprint_filters,
+    normalize_label_filters,
+)
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory
+from pyrit.memory.memory_interface import (
+    ScenarioHistoryAggregate,
+    ScenarioHistoryKeysetCursor,
+    ScenarioHistoryRunRecord,
+)
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -39,6 +54,7 @@ from pyrit.models import (
     ScenarioAttackTechniqueDetails,
     ScenarioComponentIdentity,
     ScenarioDisplayGroupProgress,
+    ScenarioIdentifier,
     ScenarioObjectiveScorer,
     ScenarioObjectiveScorerMetrics,
     ScenarioProgressCounts,
@@ -56,6 +72,7 @@ from pyrit.models import (
     ScenarioTechniqueProgress,
     ScorerEvaluationIdentifier,
     ScorerIdentifier,
+    TargetIdentifier,
     config_hash,
     project_behavioral_identity,
 )
@@ -65,6 +82,7 @@ from pyrit.models.catalog.scenario import (
     RunScenarioRequest,
     ScenarioRunListItem,
     ScenarioRunSummary,
+    ScenarioTargetSummary,
     ScenarioTechniqueSummary,
 )
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
@@ -83,6 +101,21 @@ _PROGRESS_CACHE_MAX_RUNS = 32
 # themselves and applied by project_behavioral_identity.
 _TECHNIQUE_SEEDS_CHILD = "technique_seeds"
 _TECHNIQUE_SEED_DISPLAY_PARAMS = ("value", "data_type")
+
+_SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
+    {
+        "adversarial_targets",
+        "jailbreak_names",
+        "max_attempts_per_objective",
+        "max_turns",
+        "num_jailbreak_attempts",
+        "num_jailbreaks",
+        "sub_harm",
+        "version",
+    }
+)
+_HISTORY_ATOMIC_GROUPS_ADAPTER = TypeAdapter(list[ScenarioRunPlanAtomicGroup])
+_HISTORY_SEED_ID_MAP_ADAPTER = TypeAdapter(list[dict[str, str]])
 
 
 @dataclass
@@ -540,57 +573,99 @@ class ScenarioRunService:
         """
         return self._build_response(scenario_result_id=scenario_result_id, active_error=active_error)
 
-    def list_runs(self, *, limit: int = 100) -> ScenarioRunListResponse:
+    def list_runs(
+        self,
+        *,
+        scenario_names: Sequence[str] | None = None,
+        statuses: Sequence[ScenarioRunState | str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ScenarioRunListResponse:
         """
         List scenario runs by querying the database (most recent first).
 
         Args:
-            limit (int): Maximum number of runs to return. Defaults to 100.
+            scenario_names: Registered or persisted scenario names to match.
+            statuses: Run states to match.
+            labels: Labels with OR-within-key and AND-across-key semantics.
+            limit: Maximum number of runs to return.
+            cursor: Opaque cursor from the previous page.
 
         Returns:
             ScenarioRunListResponse with runs.
         """
-        results = self._memory.get_scenario_result_headers(limit=limit)
-        items = [self._build_list_response_from_header(scenario_result=result) for result in results]
-        return ScenarioRunListResponse(items=items)
-
-    def _build_list_response_from_header(self, *, scenario_result: ScenarioResult) -> ScenarioRunListItem:
-        """
-        Build a bounded run-history item without hydrating attack results.
-
-        Returns:
-            ScenarioRunListItem: Lightweight run metadata.
-        """
-        status = scenario_result.scenario_run_state
-        terminal = status in (
-            ScenarioRunState.COMPLETED,
-            ScenarioRunState.FAILED,
-            ScenarioRunState.CANCELLED,
+        normalized_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
+        normalized_statuses = sorted(
+            {
+                status.value if isinstance(status, ScenarioRunState) else str(status).strip().upper()
+                for status in statuses or []
+                if str(status).strip()
+            }
         )
-        plan = self._load_run_plan(scenario_result=scenario_result)
-        total_attacks = sum(len(group.seed_group_ids) for group in plan.atomic_groups) if plan is not None else None
-        techniques_used = (
-            list(dict.fromkeys(group.display_group for group in plan.atomic_groups)) if plan is not None else []
+        normalized_labels = normalize_label_filters(labels=labels)
+        fingerprint = fingerprint_filters(
+            filters={
+                "scenario_names": normalized_names,
+                "statuses": normalized_statuses,
+                "labels": normalized_labels,
+            }
         )
-        updated_at = (
-            scenario_result.completion_time
-            if terminal and scenario_result.completion_time is not None
-            else scenario_result.creation_time
+        decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
+        after = (
+            ScenarioHistoryKeysetCursor(
+                timestamp=decoded_cursor.timestamp,
+                scenario_result_id=decoded_cursor.identifier,
+            )
+            if decoded_cursor is not None
+            else None
         )
-        return ScenarioRunListItem(
-            scenario_result_id=str(scenario_result.id),
-            scenario_name=scenario_result.scenario_name,
-            scenario_registry_name=plan.scenario_registry_name if plan else None,
-            scenario_version=scenario_result.scenario_version,
-            status=status,
-            created_at=scenario_result.creation_time,
-            updated_at=updated_at,
-            error=scenario_result.error_message,
-            error_type=scenario_result.error_type,
-            techniques_used=techniques_used,
-            total_attacks=total_attacks,
-            labels=scenario_result.labels,
-            completed_at=scenario_result.completion_time if terminal else None,
+        records, aggregates, has_more = self._memory.get_scenario_run_history_page(
+            scenario_names=normalized_names,
+            statuses=normalized_statuses,
+            labels=normalized_labels,
+            cursor=after,
+            limit=limit,
+        )
+        plans = {record.scenario_result_id: self._parse_history_plan(record=record) for record in records}
+        # Memory resolves units against every persisted plan. Runs whose plan this service
+        # rejects must fall back to legacy unit identity, which needs a plan-free aggregate.
+        unusable_plan_ids = [
+            record.scenario_result_id
+            for record in records
+            if record.plan_atomic_groups is not None and plans[record.scenario_result_id] is None
+        ]
+        if unusable_plan_ids:
+            aggregates = {
+                **aggregates,
+                **self._memory.get_scenario_history_aggregates(scenario_result_ids=unusable_plan_ids),
+            }
+        items = [
+            self._build_history_summary(
+                record=record,
+                atomic_groups=plans[record.scenario_result_id],
+                aggregate=aggregates.get(record.scenario_result_id)
+                or ScenarioHistoryAggregate.empty(scenario_result_id=record.scenario_result_id),
+            )
+            for record in records
+        ]
+        next_cursor = (
+            encode_keyset_cursor(
+                timestamp=records[-1].created_at,
+                identifier=records[-1].scenario_result_id,
+                fingerprint=fingerprint,
+            )
+            if has_more and records
+            else None
+        )
+        return ScenarioRunListResponse(
+            items=items,
+            pagination=PaginationInfo(
+                limit=limit,
+                has_more=has_more,
+                next_cursor=next_cursor,
+                prev_cursor=cursor,
+            ),
         )
 
     async def cancel_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
@@ -781,11 +856,18 @@ class ScenarioRunService:
             ScenarioRunState.FAILED,
             ScenarioRunState.CANCELLED,
         )
-        plan = self._load_run_plan(scenario_result=scenario_result)
+        try:
+            plan = self._load_run_plan(scenario_result=scenario_result)
+        except (ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has invalid persisted plan metadata; using legacy run detail fields.",
+                scenario_result_id,
+            )
+            plan = None
         plan_lookup = _ScenarioPlanLookup.from_plan(plan=plan)
 
         # Build result fields from DB (always computed so in-progress runs show progress)
-        total_attacks, completed_attacks, objective_achieved_rate = self._calculate_progress_counts(
+        total_attacks, completed_attacks, objective_achieved_rate, successful_attacks = self._calculate_progress_counts(
             scenario_result=scenario_result,
             plan=plan,
             plan_lookup=plan_lookup,
@@ -794,6 +876,9 @@ class ScenarioRunService:
             list(dict.fromkeys(group.display_group for group in plan.atomic_groups))
             if plan is not None
             else scenario_result.get_techniques_used()
+        )
+        target, datasets_used, scenario_parameters = self._safe_run_metadata(
+            scenario_identifier=getattr(scenario_result, "scenario_identifier", None)
         )
 
         # Surface per-attack errors and retry pressure regardless of overall run status:
@@ -862,7 +947,241 @@ class ScenarioRunService:
             total_retries=total_retries,
             labels=scenario_result.labels,
             completed_at=scenario_result.completion_time if terminal else None,
+            pyrit_version=(
+                scenario_result.pyrit_version
+                if isinstance(getattr(scenario_result, "pyrit_version", None), str)
+                else None
+            ),
+            target=target,
+            datasets_used=datasets_used,
+            scenario_parameters=scenario_parameters,
+            planned_total_available=plan is not None,
+            successful_attacks=successful_attacks,
+            error_attacks=len(failed_attacks),
         )
+
+    @staticmethod
+    def _parse_history_plan(*, record: ScenarioHistoryRunRecord) -> list[ScenarioRunPlanAtomicGroup] | None:
+        """
+        Validate the compact persisted run plan projected onto one history row.
+
+        Returns:
+            list[ScenarioRunPlanAtomicGroup] | None: Planned atomic groups, or None when the
+                run has no plan or the persisted plan cannot identify units unambiguously.
+        """
+        if record.plan_atomic_groups is None:
+            return None
+        try:
+            raw_atomic_groups = (
+                json.loads(record.plan_atomic_groups)
+                if isinstance(record.plan_atomic_groups, str)
+                else record.plan_atomic_groups
+            )
+            atomic_groups = _HISTORY_ATOMIC_GROUPS_ADAPTER.validate_python(raw_atomic_groups)
+            group_ids = [group.id for group in atomic_groups]
+            if len(group_ids) != len(set(group_ids)):
+                raise ValueError("duplicate atomic group IDs")
+            raw_seed_map = (
+                json.loads(record.plan_seed_id_map)
+                if isinstance(record.plan_seed_id_map, str)
+                else record.plan_seed_id_map or []
+            )
+            seed_hash_by_id: dict[str, str] = {}
+            for seed in _HISTORY_SEED_ID_MAP_ADAPTER.validate_python(raw_seed_map):
+                seed_id = seed.get("id")
+                objective_sha256 = seed.get("objective_sha256")
+                if not seed_id or not objective_sha256:
+                    raise ValueError("seed projection is missing required identity fields")
+                previous_hash = seed_hash_by_id.get(seed_id)
+                if previous_hash is not None and previous_hash != objective_sha256:
+                    raise ValueError("conflicting objective hashes for seed group")
+                seed_hash_by_id[seed_id] = objective_sha256
+            for group in atomic_groups:
+                objective_hashes = [
+                    seed_hash_by_id[seed_id] for seed_id in group.seed_group_ids if seed_id in seed_hash_by_id
+                ]
+                if len(objective_hashes) != len(set(objective_hashes)):
+                    raise ValueError("ambiguous objective hash within atomic group")
+            return atomic_groups
+        except (json.JSONDecodeError, ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has an incomplete persisted plan; using legacy history totals.",
+                record.scenario_result_id,
+            )
+            return None
+
+    def _build_history_summary(
+        self,
+        *,
+        record: ScenarioHistoryRunRecord,
+        atomic_groups: list[ScenarioRunPlanAtomicGroup] | None,
+        aggregate: ScenarioHistoryAggregate,
+    ) -> ScenarioRunListItem:
+        """
+        Map lightweight persisted history projections to the public summary DTO.
+
+        Returns:
+            ScenarioRunListItem: Safe, aggregated history summary.
+        """
+        scenario_identifier = None
+        try:
+            scenario_identifier = ScenarioIdentifier.from_component_identifier(
+                ComponentIdentifier.model_validate(
+                    {**record.scenario_identifier, "pyrit_version": record.pyrit_version}
+                )
+            )
+        except (ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has invalid persisted identifier metadata; using legacy history fields.",
+                record.scenario_result_id,
+            )
+        target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
+        if target is None and record.objective_target_identifier:
+            try:
+                target = self._safe_target_metadata(
+                    target_identifier=TargetIdentifier.from_component_identifier(
+                        ComponentIdentifier.model_validate(record.objective_target_identifier)
+                    )
+                )
+            except ValidationError:
+                logger.warning(
+                    "Scenario run %s has invalid persisted target metadata; omitting the target summary.",
+                    record.scenario_result_id,
+                )
+
+        planned_total = (
+            len({(group.id, seed_group_id) for group in atomic_groups for seed_group_id in group.seed_group_ids})
+            if atomic_groups is not None
+            else aggregate.unit_count
+        )
+        completed = aggregate.completed_units
+        successful = aggregate.successful_units
+        status = ScenarioRunState(record.status)
+        terminal = status in (
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.CANCELLED,
+        )
+        timestamps = [record.created_at]
+        if aggregate.latest_attempt_timestamp is not None:
+            timestamps.append(aggregate.latest_attempt_timestamp)
+        if terminal and record.completed_at is not None:
+            timestamps.append(record.completed_at)
+        techniques = (
+            list(dict.fromkeys(group.display_group for group in atomic_groups))
+            if atomic_groups is not None
+            else list(aggregate.atomic_attack_names)
+        )
+        return ScenarioRunListItem(
+            scenario_result_id=record.scenario_result_id,
+            scenario_name=record.scenario_name,
+            scenario_registry_name=record.scenario_registry_name,
+            scenario_version=record.scenario_version,
+            status=status,
+            created_at=record.created_at,
+            updated_at=max(timestamps),
+            error=record.error_message,
+            error_type=record.error_type,
+            techniques_used=techniques,
+            total_attacks=planned_total if atomic_groups is not None or planned_total else None,
+            completed_attacks=completed,
+            objective_achieved_rate=int((successful / completed) * 100) if completed else 0,
+            total_retries=aggregate.total_retries,
+            labels=record.labels,
+            completed_at=record.completed_at if terminal else None,
+            pyrit_version=record.pyrit_version,
+            target=target,
+            datasets_used=datasets_used,
+            scenario_parameters=scenario_parameters,
+            planned_total_available=atomic_groups is not None,
+            successful_attacks=successful,
+            error_attacks=aggregate.error_attempts,
+            attack_details_available=False,
+        )
+
+    @staticmethod
+    def _safe_run_metadata(
+        *,
+        scenario_identifier: ScenarioIdentifier | None,
+    ) -> tuple[ScenarioTargetSummary | None, list[str], dict[str, Any]]:
+        """
+        Project canonical identifiers to an allow-listed, secret-free API shape.
+
+        Returns:
+            tuple[ScenarioTargetSummary | None, list[str], dict[str, Any]]:
+                Safe target, datasets, and scenario parameters.
+        """
+        if scenario_identifier is None:
+            return None, [], {}
+
+        target = ScenarioRunService._safe_target_metadata(target_identifier=scenario_identifier.objective_target)
+        return (
+            target,
+            list(scenario_identifier.datasets or []),
+            ScenarioRunService._safe_scenario_parameters(parameters=dict(scenario_identifier.params)),
+        )
+
+    @staticmethod
+    def _safe_target_metadata(*, target_identifier: TargetIdentifier | None) -> ScenarioTargetSummary | None:
+        """
+        Project a target identifier to the secret-free public shape.
+
+        Returns:
+            ScenarioTargetSummary | None: Safe target metadata when available.
+        """
+        if target_identifier is None:
+            return None
+        return ScenarioTargetSummary(
+            target_type=target_identifier.class_name,
+            endpoint=ScenarioRunService._safe_endpoint(target_identifier.endpoint),
+            model_name=target_identifier.model_name or target_identifier.underlying_model_name,
+            identifier_hash=target_identifier.hash,
+        )
+
+    @staticmethod
+    def _safe_scenario_parameters(*, parameters: dict[str, Any]) -> dict[str, Any]:
+        """
+        Return only explicitly approved, JSON-safe scenario configuration fields.
+
+        Returns:
+            dict[str, Any]: Allow-listed scenario parameters with sensitive keys removed.
+        """
+        filtered = filter_sensitive_fields(parameters)
+        return {
+            key: value
+            for key, value in filtered.items()
+            if key in _SAFE_SCENARIO_PARAMETER_NAMES
+            and (
+                value is None
+                or isinstance(value, (bool, int, float, str))
+                or (
+                    isinstance(value, list)
+                    and all(item is None or isinstance(item, (bool, int, float, str)) for item in value)
+                )
+            )
+        }
+
+    @staticmethod
+    def _safe_endpoint(endpoint: str | None) -> str | None:
+        """
+        Remove endpoint credentials, query parameters, and fragments.
+
+        Returns:
+            str | None: Sanitized endpoint.
+        """
+        if not endpoint:
+            return None
+        parsed = urlsplit(endpoint)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        host = parsed.hostname or ""
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        if port is not None:
+            host = f"{host}:{port}"
+        return urlunsplit((parsed.scheme, host, "", "", ""))
 
     def _get_active_task(self, *, scenario_result_id: str) -> _ActiveTask | None:
         """Return a live task and release completed task state."""
@@ -1019,12 +1338,13 @@ class ScenarioRunService:
         scenario_result: ScenarioResult,
         plan: ScenarioRunPlan | None,
         plan_lookup: _ScenarioPlanLookup,
-    ) -> tuple[int, int, int]:
+    ) -> tuple[int, int, int, int]:
         """
         Calculate planned-unit totals without inflating retries or error attempts.
 
         Returns:
-            tuple[int, int, int]: Total, completed, and success-rate percentage.
+            tuple[int, int, int, int]: Total, completed, success-rate percentage,
+                and successful-unit count.
         """
         latest_result_by_unit: dict[_ResultUnitIdentity, AttackResult] = {}
         for atomic_attack_name, results in scenario_result.attack_results.items():
@@ -1044,7 +1364,7 @@ class ScenarioRunService:
         completed = len(completed_results)
         succeeded = sum(result.outcome == AttackOutcome.SUCCESS for result in completed_results)
         rate = int((succeeded / completed) * 100) if completed else 0
-        return total, completed, rate
+        return total, completed, rate, succeeded
 
     @staticmethod
     def _result_order_key(attack_result: AttackResult) -> tuple[datetime, str]:
@@ -1088,7 +1408,14 @@ class ScenarioRunService:
         if header_result is None:
             return None
 
-        plan = self._load_run_plan(scenario_result=header_result)
+        try:
+            plan = self._load_run_plan(scenario_result=header_result)
+        except (ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has invalid persisted plan metadata; treating the plan as unavailable.",
+                scenario_result_id,
+            )
+            plan = None
         plan_complete = plan is not None
         cursor = self._decode_progress_cursor(since=since, scenario_result_id=scenario_result_id)
         terminal = header_result.scenario_run_state in (
@@ -1122,6 +1449,14 @@ class ScenarioRunService:
         next_cursor = (
             self._encode_progress_cursor(scenario_result_id=scenario_result_id, delta=deltas[-1]) if deltas else since
         )
+        scenario_identifier = header_result.scenario_identifier
+        target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
+        if plan is not None:
+            techniques_used = list(dict.fromkeys(group.display_group for group in plan.atomic_groups))
+        elif scenario_identifier is not None:
+            techniques_used = list(scenario_identifier.techniques or [])
+        else:
+            techniques_used = []
         return ScenarioRunProgress(
             run=ScenarioProgressHeader(
                 scenario_result_id=scenario_result_id,
@@ -1131,6 +1466,12 @@ class ScenarioRunService:
                 status=header_result.scenario_run_state,
                 created_at=header_result.creation_time,
                 completed_at=header_result.completion_time if terminal else None,
+                pyrit_version=header_result.pyrit_version,
+                target=target,
+                techniques_used=techniques_used,
+                datasets_used=datasets_used,
+                scenario_parameters=scenario_parameters,
+                labels=header_result.labels,
             ),
             plan=response_plan,
             results=results,

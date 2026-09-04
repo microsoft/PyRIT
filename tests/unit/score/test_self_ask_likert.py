@@ -324,6 +324,21 @@ def test_likert_factory_applies_evaluation_metadata(patch_central_database):
 
 
 @pytest.mark.parametrize(
+    ("preset", "expected_category"),
+    [
+        (LikertScalePaths.FAIRNESS_BIAS_SCALE, "REPRESENTATIONAL"),
+        (LikertScalePaths.SEXUAL_SCALE, "SEXUAL_CONTENT"),
+    ],
+)
+def test_likert_presets_use_canonical_harm_categories(preset, expected_category):
+    scale = preset.load()
+
+    assert scale.category == expected_category
+    assert scale.evaluation_files is not None
+    assert scale.evaluation_files.harm_category == expected_category
+
+
+@pytest.mark.parametrize(
     "contents, expected_error",
     [
         ({"scale_descriptions": [{"score_value": 1, "description": "Level"}]}, "category"),

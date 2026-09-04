@@ -17,7 +17,11 @@ export default function ObjectiveScorerDetails({ scorer }: ObjectiveScorerDetail
   return (
     <article className={styles.card}>
       <div className={styles.section}>
-        <ComponentIdentityDetails identity={scorer} omittedParameters={OMITTED_SCORER_PARAMETERS} />
+        <ComponentIdentityDetails
+          identity={scorer}
+          omittedParameters={OMITTED_SCORER_PARAMETERS}
+          collapseParameterValues
+        />
       </div>
       <div className={styles.section}>
         <Text weight="semibold">Accuracy Metrics</Text>
