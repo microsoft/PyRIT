@@ -124,9 +124,14 @@
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import LoadDefaultDatasets
+from pyrit.setup.initializers import LoadDefaultDatasets, TechniqueInitializer
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefaultDatasets()])  # type: ignore
+dataset_initializer = LoadDefaultDatasets()
+dataset_initializer.set_params_from_args(args={"dataset_names": ["harmbench"]})
+await initialize_pyrit_async(
+    memory_db_type=IN_MEMORY,
+    initializers=[TechniqueInitializer(), dataset_initializer],
+)  # type: ignore
 
 objective_target = OpenAIChatTarget()
 
