@@ -10,6 +10,9 @@ import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
+import HistoryPage from './components/History/HistoryPage'
+import type { HistoryTab } from './components/History/HistoryPage'
+import ScenarioHistory from './components/History/ScenarioHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
 import ScenarioDetail from './components/Scenarios/ScenarioDetail'
 import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
@@ -22,6 +25,11 @@ import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnec
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { readStoredGlobalLabels, persistGlobalLabels } from './components/Labels/labelStorage'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
+import {
+  scenarioHistoryFiltersFromSearchParams,
+  scenarioHistoryFiltersToSearchParams,
+} from './components/History/scenarioHistoryFilters'
+import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type { TargetInfo } from './types'
 import {
@@ -42,12 +50,14 @@ import {
 } from './utils/routeParams'
 
 const AUTO_DISMISS_MS = 5_000
+const HISTORY_ATTACKS_PATH = '/history/attacks'
+const HISTORY_SCANNER_PATH = '/history/scanner'
 
 /** Maps each navigable view to its canonical URL path. */
 const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
-  history: '/history',
+  history: HISTORY_ATTACKS_PATH,
   targets: '/targets',
   scenarios: '/scanner',
   configuration: '/config',
@@ -55,16 +65,17 @@ const VIEW_PATHS: Record<ViewName, string> = {
 
 /**
  * Resolves the active view from a URL path, defaulting to home for unknown
- * paths. Scanner routes are prefix-matched (`/scanner/...` and
- * `/scanner-history/...`) since they carry a path parameter rather than a
- * single canonical `VIEW_PATHS` entry.
+ * paths. Scanner catalog routes and persisted scanner-history routes are
+ * prefix-matched since they carry path parameters rather than single canonical
+ * `VIEW_PATHS` entries.
  */
 function viewFromPath(pathname: string): ViewName {
+  if (pathname === '/history' || pathname.startsWith('/history/') || pathname.startsWith('/scanner-history/')) {
+    return 'history'
+  }
   if (
     pathname === VIEW_PATHS.scenarios
     || pathname.startsWith(`${VIEW_PATHS.scenarios}/`)
-    || pathname.startsWith('/scanner-history/')
-    || pathname.startsWith('/scenario-history/')
   ) {
     return 'scenarios'
   }
@@ -77,6 +88,16 @@ function viewFromPath(pathname: string): ViewName {
 function LegacyScenarioRunRedirect() {
   const { scenarioResultId } = useParams<{ scenarioResultId: string }>()
   return <Navigate replace to={scenarioRunRoutePath(routerPathParamValue(scenarioResultId))} />
+}
+
+function LegacyScenarioHistoryRedirect() {
+  const location = useLocation()
+  return <Navigate replace to={`${HISTORY_SCANNER_PATH}${location.search}`} />
+}
+
+function LegacyAttackHistoryRedirect() {
+  const location = useLocation()
+  return <Navigate replace to={`${HISTORY_ATTACKS_PATH}${location.search}`} />
 }
 
 /** Status of the in-flight attack load for an /attacks/:id route. */
@@ -174,14 +195,22 @@ function App() {
   // the History nav button can restore filters after visiting another view.
   const [searchParams, setSearchParams] = useSearchParams()
   const historyFilters = useMemo(() => filtersFromSearchParams(searchParams), [searchParams])
+  const scenarioHistoryFilters = useMemo(
+    () => scenarioHistoryFiltersFromSearchParams(searchParams),
+    [searchParams],
+  )
   const scenarioResultId = useMemo(
     () => scenarioRunProvenance(searchParams),
     [searchParams],
   )
   const lastHistorySearch = useRef('')
+  const lastScenarioHistorySearch = useRef('')
   useEffect(() => {
-    if (location.pathname === VIEW_PATHS.history) {
+    if (location.pathname === HISTORY_ATTACKS_PATH) {
       lastHistorySearch.current = location.search
+    }
+    if (location.pathname === HISTORY_SCANNER_PATH) {
+      lastScenarioHistorySearch.current = location.search
     }
   }, [location.pathname, location.search])
 
@@ -189,7 +218,17 @@ function App() {
     setSearchParams(filtersToSearchParams(filters), { replace: true })
   }, [setSearchParams])
 
-    /** App version display, attached to feedback context */
+  const handleScenarioHistoryFiltersChange = useCallback((filters: ScenarioHistoryFilters) => {
+    setSearchParams(scenarioHistoryFiltersToSearchParams(filters), { replace: true })
+  }, [setSearchParams])
+
+  const handleHistoryTabChange = useCallback((tab: HistoryTab) => {
+    const path = tab === 'attacks' ? HISTORY_ATTACKS_PATH : HISTORY_SCANNER_PATH
+    const search = tab === 'attacks' ? lastHistorySearch.current : lastScenarioHistorySearch.current
+    navigate(path + search)
+  }, [navigate])
+
+  /** App version display, attached to feedback context */
   const [appVersion, setAppVersion] = useState<string>('')
   /** Whether the feedback dialog is currently open */
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -421,6 +460,15 @@ function App() {
     navigate(attackRoutePath(openAttackResultId))
   }, [navigate])
 
+  const handleOpenScenarioRun = useCallback((scenarioResultId: string) => {
+    navigate(scenarioRunRoutePath(scenarioResultId), {
+      state: {
+        fromScenarioHistory: true,
+        scenarioHistorySearch: location.search,
+      },
+    })
+  }, [location.search, navigate])
+
   const chatElement = isAttackNotFound || isAttackError ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
@@ -518,20 +566,40 @@ function App() {
                   />
                 }
               />
+              <Route path="/scanner-history" element={<LegacyScenarioHistoryRedirect />} />
               <Route path="/scanner-history/:scenarioResultId/:attackResultId" element={<ScenarioRunPage />} />
               <Route path="/scanner-history/:scenarioResultId" element={<ScenarioRunPage />} />
+              <Route path="/scenario-history" element={<LegacyScenarioHistoryRedirect />} />
               <Route path="/scenario-history/:scenarioResultId" element={<LegacyScenarioRunRedirect />} />
               <Route path="/config" element={<Configuration />} />
+              <Route path="/history" element={<LegacyAttackHistoryRedirect />} />
               <Route
-                path="/history"
+                path={HISTORY_ATTACKS_PATH}
                 element={
-                  <AttackHistory
-                    onOpenAttack={handleOpenAttack}
-                    filters={historyFilters}
-                    onFiltersChange={handleFiltersChange}
-                    activeTarget={activeTarget}
-                    onNavigate={handleNavigate}
-                  />
+                  <HistoryPage selectedTab="attacks" onTabChange={handleHistoryTabChange}>
+                    <AttackHistory
+                      onOpenAttack={handleOpenAttack}
+                      filters={historyFilters}
+                      onFiltersChange={handleFiltersChange}
+                      activeTarget={activeTarget}
+                      onNavigate={handleNavigate}
+                      showTitle={false}
+                    />
+                  </HistoryPage>
+                }
+              />
+              <Route
+                path={HISTORY_SCANNER_PATH}
+                element={
+                  <HistoryPage selectedTab="scanner" onTabChange={handleHistoryTabChange}>
+                    <ScenarioHistory
+                      filters={scenarioHistoryFilters}
+                      onFiltersChange={handleScenarioHistoryFiltersChange}
+                      onOpenRun={handleOpenScenarioRun}
+                      onNavigate={handleNavigate}
+                      showTitle={false}
+                    />
+                  </HistoryPage>
                 }
               />
               <Route path="*" element={<Navigate to="/" replace />} />

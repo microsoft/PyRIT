@@ -25,6 +25,18 @@ export const useComponentIdentityDetailsStyles = makeStyles({
     overflowWrap: 'anywhere',
     whiteSpace: 'pre-wrap',
   },
+  collapsedValue: {
+    display: '-webkit-box',
+    overflow: 'hidden',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: 4,
+  },
+  valueToggle: {
+    alignSelf: 'flex-start',
+    minWidth: 0,
+    paddingInline: 0,
+    color: tokens.colorBrandForegroundLink,
+  },
   childSection: {
     display: 'flex',
     flexDirection: 'column',

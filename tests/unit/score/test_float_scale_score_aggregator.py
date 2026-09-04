@@ -215,6 +215,50 @@ def test_by_category_min():
     assert violence_result.value == 0.2
 
 
+def test_by_category_extrema_resolve_conflicting_metadata_from_selected_score() -> None:
+    scores = [
+        _mk_score(0.3, category=["Hate"], metadata={"severity": 2, "low_only": 1}),
+        _mk_score(0.7, category=["Hate"], metadata={"severity": 5, "high_only": 1}),
+    ]
+
+    max_result = FloatScaleScorerByCategory.MAX(scores)[0]
+    min_result = FloatScaleScorerByCategory.MIN(scores)[0]
+
+    assert max_result.value == 0.7
+    assert max_result.metadata == {"severity": 5, "low_only": 1, "high_only": 1}
+    assert min_result.value == 0.3
+    assert min_result.metadata == {"severity": 2, "low_only": 1, "high_only": 1}
+
+
+def test_by_category_max_keeps_categories_and_metadata_separate() -> None:
+    scores = [
+        _mk_score(0.3, category=["Hate"], metadata={"severity": 2}),
+        _mk_score(0.7, category=["Hate"], metadata={"severity": 5}),
+        _mk_score(0.8, category=["Violence"], metadata={"severity": 6}),
+        _mk_score(0.4, category=["Violence"], metadata={"severity": 3}),
+    ]
+
+    results = FloatScaleScorerByCategory.MAX(scores)
+
+    assert [(result.category, result.value, result.metadata) for result in results] == [
+        (["Hate"], 0.7, {"severity": 5}),
+        (["Violence"], 0.8, {"severity": 6}),
+    ]
+
+
+def test_by_category_max_uses_first_winner_metadata_for_ties() -> None:
+    scores = [
+        _mk_score(0.7, category=["Hate"], metadata={"source": "first"}),
+        _mk_score(0.7, category=["Hate"], metadata={"source": "second"}),
+        _mk_score(0.3, category=["Hate"], metadata={"source": "lower"}),
+    ]
+
+    result = FloatScaleScorerByCategory.MAX(scores)[0]
+
+    assert result.value == 0.7
+    assert result.metadata == {"source": "first"}
+
+
 def test_by_category_empty_strings_treated_as_uncategorized():
     """Test that empty string categories are grouped together as uncategorized."""
     scores = [
