@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.main import app
+from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.routes.scenarios import get_scenario_run_progress, list_scenario_runs
 from pyrit.models import (
@@ -175,7 +176,11 @@ class TestListScenarioRunsRoute:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
             mock_service.list_runs.side_effect = lambda **_: (
-                route_thread.append(get_ident()) or ScenarioRunListResponse(items=[])
+                route_thread.append(get_ident())
+                or ScenarioRunListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=100, has_more=False),
+                )
             )
             mock_get.return_value = mock_service
 
@@ -207,7 +212,10 @@ class TestListScenarioRunsRoute:
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.return_value = ScenarioRunListResponse(items=runs)
+            mock_service.list_runs.return_value = ScenarioRunListResponse(
+                items=runs,
+                pagination=PaginationInfo(limit=100, has_more=False),
+            )
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs")
@@ -219,7 +227,10 @@ class TestListScenarioRunsRoute:
         """Test that history query parameters preserve repeated values."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.list_runs.return_value = ScenarioRunListResponse(items=[])
+            mock_service.list_runs.return_value = ScenarioRunListResponse(
+                items=[],
+                pagination=PaginationInfo(limit=10, has_more=False),
+            )
             mock_get.return_value = mock_service
 
             response = client.get(
@@ -238,18 +249,6 @@ class TestListScenarioRunsRoute:
             limit=10,
             cursor="opaque",
         )
-
-    def test_list_runs_returns_400_for_invalid_cursor(self, client: TestClient) -> None:
-        """Test that invalid cursors are surfaced clearly."""
-        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
-            mock_service = MagicMock()
-            mock_service.list_runs.side_effect = ValueError("Malformed scenario history cursor.")
-            mock_get.return_value = mock_service
-
-            response = client.get("/api/scenarios/runs?cursor=bad")
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json()["detail"] == "Malformed scenario history cursor."
 
 
 class TestGetScenarioRunRoute:

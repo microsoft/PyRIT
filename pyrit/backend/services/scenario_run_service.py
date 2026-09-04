@@ -10,10 +10,8 @@ retrieving results, and cancellation.
 
 import asyncio
 import base64
-import binascii
 import contextlib
 import functools
-import hashlib
 import json
 import logging
 import uuid
@@ -30,13 +28,19 @@ from pydantic import TypeAdapter, ValidationError
 
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.services.pagination import (
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+    fingerprint_filters,
+    normalize_label_filters,
+)
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory
 from pyrit.memory.memory_interface import (
+    ScenarioHistoryAggregate,
     ScenarioHistoryKeysetCursor,
     ScenarioHistoryRunRecord,
-    ScenarioHistoryUnitRecord,
 )
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -599,33 +603,56 @@ class ScenarioRunService:
                 if str(status).strip()
             }
         )
-        normalized_labels = self._normalize_history_labels(labels=labels)
-        fingerprint = self._history_filter_fingerprint(
-            scenario_names=normalized_names,
-            statuses=normalized_statuses,
-            labels=normalized_labels,
+        normalized_labels = normalize_label_filters(labels=labels)
+        fingerprint = fingerprint_filters(
+            filters={
+                "scenario_names": normalized_names,
+                "statuses": normalized_statuses,
+                "labels": normalized_labels,
+            }
         )
-        after = self._decode_history_cursor(cursor=cursor, fingerprint=fingerprint)
-        records, units_by_run, has_more = self._memory.get_scenario_run_history_page(
+        decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
+        after = (
+            ScenarioHistoryKeysetCursor(
+                timestamp=decoded_cursor.timestamp,
+                scenario_result_id=decoded_cursor.identifier,
+            )
+            if decoded_cursor is not None
+            else None
+        )
+        records, aggregates, has_more = self._memory.get_scenario_run_history_page(
             scenario_names=normalized_names,
             statuses=normalized_statuses,
             labels=normalized_labels,
             cursor=after,
             limit=limit,
         )
+        plans = {record.scenario_result_id: self._parse_history_plan(record=record) for record in records}
+        # Memory resolves units against every persisted plan. Runs whose plan this service
+        # rejects must fall back to legacy unit identity, which needs a plan-free aggregate.
+        unusable_plan_ids = [
+            record.scenario_result_id
+            for record in records
+            if record.plan_atomic_groups is not None and plans[record.scenario_result_id] is None
+        ]
+        if unusable_plan_ids:
+            aggregates = {
+                **aggregates,
+                **self._memory.get_scenario_history_aggregates(scenario_result_ids=unusable_plan_ids),
+            }
         items = [
             self._build_history_summary(
                 record=record,
-                units=units_by_run.get(record.scenario_result_id, []),
+                atomic_groups=plans[record.scenario_result_id],
+                aggregate=aggregates.get(record.scenario_result_id)
+                or ScenarioHistoryAggregate.empty(scenario_result_id=record.scenario_result_id),
             )
             for record in records
         ]
         next_cursor = (
-            self._encode_history_cursor(
-                cursor=ScenarioHistoryKeysetCursor(
-                    timestamp=records[-1].created_at,
-                    scenario_result_id=records[-1].scenario_result_id,
-                ),
+            encode_keyset_cursor(
+                timestamp=records[-1].created_at,
+                identifier=records[-1].scenario_result_id,
                 fingerprint=fingerprint,
             )
             if has_more and records
@@ -639,46 +666,6 @@ class ScenarioRunService:
                 next_cursor=next_cursor,
                 prev_cursor=cursor,
             ),
-        )
-
-    def _build_list_response_from_header(self, *, scenario_result: ScenarioResult) -> ScenarioRunListItem:
-        """
-        Build a bounded run-history item without hydrating attack results.
-
-        Returns:
-            ScenarioRunListItem: Lightweight run metadata.
-        """
-        status = scenario_result.scenario_run_state
-        terminal = status in (
-            ScenarioRunState.COMPLETED,
-            ScenarioRunState.FAILED,
-            ScenarioRunState.CANCELLED,
-        )
-        plan = self._load_run_plan(scenario_result=scenario_result)
-        total_attacks = sum(len(group.seed_group_ids) for group in plan.atomic_groups) if plan is not None else None
-        techniques_used = (
-            list(dict.fromkeys(group.display_group for group in plan.atomic_groups)) if plan is not None else []
-        )
-        updated_at = (
-            scenario_result.completion_time
-            if terminal and scenario_result.completion_time is not None
-            else scenario_result.creation_time
-        )
-        return ScenarioRunListItem(
-            scenario_result_id=str(scenario_result.id),
-            scenario_name=scenario_result.scenario_name,
-            scenario_registry_name=plan.scenario_registry_name if plan else None,
-            scenario_version=scenario_result.scenario_version,
-            status=status,
-            created_at=scenario_result.creation_time,
-            updated_at=updated_at,
-            error=scenario_result.error_message,
-            error_type=scenario_result.error_type,
-            techniques_used=techniques_used,
-            total_attacks=total_attacks,
-            labels=scenario_result.labels,
-            completed_at=scenario_result.completion_time if terminal else None,
-            planned_total_available=plan is not None,
         )
 
     async def cancel_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
@@ -973,11 +960,62 @@ class ScenarioRunService:
             error_attacks=len(failed_attacks),
         )
 
+    @staticmethod
+    def _parse_history_plan(*, record: ScenarioHistoryRunRecord) -> list[ScenarioRunPlanAtomicGroup] | None:
+        """
+        Validate the compact persisted run plan projected onto one history row.
+
+        Returns:
+            list[ScenarioRunPlanAtomicGroup] | None: Planned atomic groups, or None when the
+                run has no plan or the persisted plan cannot identify units unambiguously.
+        """
+        if record.plan_atomic_groups is None:
+            return None
+        try:
+            raw_atomic_groups = (
+                json.loads(record.plan_atomic_groups)
+                if isinstance(record.plan_atomic_groups, str)
+                else record.plan_atomic_groups
+            )
+            atomic_groups = _HISTORY_ATOMIC_GROUPS_ADAPTER.validate_python(raw_atomic_groups)
+            group_ids = [group.id for group in atomic_groups]
+            if len(group_ids) != len(set(group_ids)):
+                raise ValueError("duplicate atomic group IDs")
+            raw_seed_map = (
+                json.loads(record.plan_seed_id_map)
+                if isinstance(record.plan_seed_id_map, str)
+                else record.plan_seed_id_map or []
+            )
+            seed_hash_by_id: dict[str, str] = {}
+            for seed in _HISTORY_SEED_ID_MAP_ADAPTER.validate_python(raw_seed_map):
+                seed_id = seed.get("id")
+                objective_sha256 = seed.get("objective_sha256")
+                if not seed_id or not objective_sha256:
+                    raise ValueError("seed projection is missing required identity fields")
+                previous_hash = seed_hash_by_id.get(seed_id)
+                if previous_hash is not None and previous_hash != objective_sha256:
+                    raise ValueError("conflicting objective hashes for seed group")
+                seed_hash_by_id[seed_id] = objective_sha256
+            for group in atomic_groups:
+                objective_hashes = [
+                    seed_hash_by_id[seed_id] for seed_id in group.seed_group_ids if seed_id in seed_hash_by_id
+                ]
+                if len(objective_hashes) != len(set(objective_hashes)):
+                    raise ValueError("ambiguous objective hash within atomic group")
+            return atomic_groups
+        except (json.JSONDecodeError, ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has an incomplete persisted plan; using legacy history totals.",
+                record.scenario_result_id,
+            )
+            return None
+
     def _build_history_summary(
         self,
         *,
         record: ScenarioHistoryRunRecord,
-        units: list[ScenarioHistoryUnitRecord],
+        atomic_groups: list[ScenarioRunPlanAtomicGroup] | None,
+        aggregate: ScenarioHistoryAggregate,
     ) -> ScenarioRunListItem:
         """
         Map lightweight persisted history projections to the public summary DTO.
@@ -997,40 +1035,6 @@ class ScenarioRunService:
                 "Scenario run %s has invalid persisted identifier metadata; using legacy history fields.",
                 record.scenario_result_id,
             )
-        atomic_groups = None
-        seed_id_by_objective_hash: dict[str, str] = {}
-        if record.plan_atomic_groups is not None:
-            try:
-                raw_atomic_groups = (
-                    json.loads(record.plan_atomic_groups)
-                    if isinstance(record.plan_atomic_groups, str)
-                    else record.plan_atomic_groups
-                )
-                candidate_atomic_groups = _HISTORY_ATOMIC_GROUPS_ADAPTER.validate_python(raw_atomic_groups)
-                group_ids = [group.id for group in candidate_atomic_groups]
-                if len(group_ids) != len(set(group_ids)):
-                    raise ValueError("duplicate atomic group IDs")
-                raw_seed_map = (
-                    json.loads(record.plan_seed_id_map)
-                    if isinstance(record.plan_seed_id_map, str)
-                    else record.plan_seed_id_map
-                )
-                candidate_seed_map = _HISTORY_SEED_ID_MAP_ADAPTER.validate_python(raw_seed_map)
-                candidate_seed_ids: dict[str, str] = {}
-                for seed in candidate_seed_map:
-                    objective_sha256 = seed["objective_sha256"]
-                    seed_id = seed["id"]
-                    previous_seed_id = candidate_seed_ids.get(objective_sha256)
-                    if previous_seed_id is not None and previous_seed_id != seed_id:
-                        raise ValueError("ambiguous objective hash in run plan")
-                    candidate_seed_ids[objective_sha256] = seed_id
-                atomic_groups = candidate_atomic_groups
-                seed_id_by_objective_hash = candidate_seed_ids
-            except (json.JSONDecodeError, ValidationError, ValueError):
-                logger.warning(
-                    "Scenario run %s has an incomplete persisted plan; using legacy history totals.",
-                    record.scenario_result_id,
-                )
         target, datasets_used, scenario_parameters = self._safe_run_metadata(scenario_identifier=scenario_identifier)
         if target is None and record.objective_target_identifier:
             try:
@@ -1045,41 +1049,29 @@ class ScenarioRunService:
                     record.scenario_result_id,
                 )
 
-        units_by_key: dict[tuple[str, str], ScenarioHistoryUnitRecord] = {}
-        for unit in units:
-            unit_key = self._history_unit_key(
-                unit=unit,
-                atomic_groups=atomic_groups,
-                seed_id_by_objective_hash=seed_id_by_objective_hash,
-            )
-            existing = units_by_key.get(unit_key)
-            units_by_key[unit_key] = self._merge_history_units(existing=existing, incoming=unit) if existing else unit
-        planned_units = (
-            {(group.id, seed_group_id) for group in atomic_groups for seed_group_id in group.seed_group_ids}
+        planned_total = (
+            len({(group.id, seed_group_id) for group in atomic_groups for seed_group_id in group.seed_group_ids})
             if atomic_groups is not None
-            else set(units_by_key)
+            else aggregate.unit_count
         )
-        included_units = [unit for key, unit in units_by_key.items() if key in planned_units]
-        completed_units = [unit for unit in included_units if unit.latest_outcome != AttackOutcome.ERROR.value]
-        successful = sum(unit.latest_outcome == AttackOutcome.SUCCESS.value for unit in completed_units)
-        error_count = sum(unit.error_count for unit in included_units)
-        retry_count = sum(max(0, unit.total_retries) for unit in included_units)
+        completed = aggregate.completed_units
+        successful = aggregate.successful_units
         status = ScenarioRunState(record.status)
         terminal = status in (
             ScenarioRunState.COMPLETED,
             ScenarioRunState.FAILED,
             ScenarioRunState.CANCELLED,
         )
-        timestamps = [record.created_at, *(unit.latest_timestamp for unit in units)]
+        timestamps = [record.created_at]
+        if aggregate.latest_attempt_timestamp is not None:
+            timestamps.append(aggregate.latest_attempt_timestamp)
         if terminal and record.completed_at is not None:
             timestamps.append(record.completed_at)
-        updated_at = max(timestamps)
         techniques = (
             list(dict.fromkeys(group.display_group for group in atomic_groups))
             if atomic_groups is not None
-            else sorted({unit.atomic_attack_name for unit in units if unit.atomic_attack_name})
+            else list(aggregate.atomic_attack_names)
         )
-        completed = len(completed_units)
         return ScenarioRunListItem(
             scenario_result_id=record.scenario_result_id,
             scenario_name=record.scenario_name,
@@ -1087,14 +1079,14 @@ class ScenarioRunService:
             scenario_version=record.scenario_version,
             status=status,
             created_at=record.created_at,
-            updated_at=updated_at,
+            updated_at=max(timestamps),
             error=record.error_message,
             error_type=record.error_type,
             techniques_used=techniques,
-            total_attacks=len(planned_units),
+            total_attacks=planned_total if atomic_groups is not None or planned_total else None,
             completed_attacks=completed,
             objective_achieved_rate=int((successful / completed) * 100) if completed else 0,
-            total_retries=retry_count,
+            total_retries=aggregate.total_retries,
             labels=record.labels,
             completed_at=record.completed_at if terminal else None,
             pyrit_version=record.pyrit_version,
@@ -1103,62 +1095,8 @@ class ScenarioRunService:
             scenario_parameters=scenario_parameters,
             planned_total_available=atomic_groups is not None,
             successful_attacks=successful,
-            error_attacks=error_count,
+            error_attacks=aggregate.error_attempts,
             attack_details_available=False,
-        )
-
-    @staticmethod
-    def _history_unit_key(
-        *,
-        unit: ScenarioHistoryUnitRecord,
-        atomic_groups: list[ScenarioRunPlanAtomicGroup] | None,
-        seed_id_by_objective_hash: dict[str, str],
-    ) -> tuple[str, str]:
-        """
-        Resolve a projected history attempt to its logical planned unit.
-
-        Returns:
-            tuple[str, str]: Atomic-group and logical seed-group IDs.
-        """
-        atomic_group_id = unit.atomic_attack_name
-        if atomic_groups is not None:
-            for group in atomic_groups:
-                if group.atomic_attack_name == unit.atomic_attack_name and (
-                    not unit.technique_eval_hash or group.technique_eval_hash == unit.technique_eval_hash
-                ):
-                    atomic_group_id = group.id
-                    break
-        seed_group_id = seed_id_by_objective_hash.get(unit.seed_group_id, unit.seed_group_id)
-        return atomic_group_id, seed_group_id
-
-    @staticmethod
-    def _merge_history_units(
-        *,
-        existing: ScenarioHistoryUnitRecord,
-        incoming: ScenarioHistoryUnitRecord,
-    ) -> ScenarioHistoryUnitRecord:
-        """
-        Merge attempt partitions that resolve to the same persisted logical unit.
-
-        Returns:
-            ScenarioHistoryUnitRecord: Combined counters and preferred latest outcome.
-        """
-        existing_completed = existing.latest_outcome != AttackOutcome.ERROR.value
-        incoming_completed = incoming.latest_outcome != AttackOutcome.ERROR.value
-        if incoming_completed != existing_completed:
-            preferred = incoming if incoming_completed else existing
-        else:
-            preferred = incoming if incoming.latest_timestamp > existing.latest_timestamp else existing
-        return ScenarioHistoryUnitRecord(
-            scenario_result_id=preferred.scenario_result_id,
-            atomic_attack_name=preferred.atomic_attack_name,
-            technique_eval_hash=preferred.technique_eval_hash,
-            seed_group_id=preferred.seed_group_id,
-            objective_sha256=preferred.objective_sha256 or existing.objective_sha256 or incoming.objective_sha256,
-            latest_outcome=preferred.latest_outcome,
-            latest_timestamp=max(existing.latest_timestamp, incoming.latest_timestamp),
-            total_retries=max(0, existing.total_retries) + max(0, incoming.total_retries) + 1,
-            error_count=max(0, existing.error_count) + max(0, incoming.error_count),
         )
 
     @staticmethod
@@ -1244,104 +1182,6 @@ class ScenarioRunService:
         if port is not None:
             host = f"{host}:{port}"
         return urlunsplit((parsed.scheme, host, "", "", ""))
-
-    @staticmethod
-    def _normalize_history_labels(
-        *,
-        labels: Mapping[str, str | Sequence[str]] | None,
-    ) -> dict[str, str | list[str]] | None:
-        """
-        Normalize history labels for filtering and cursor binding.
-
-        Returns:
-            dict[str, str | list[str]] | None: Canonical effective labels.
-        """
-        normalized: dict[str, str | list[str]] = {}
-        for key in sorted(labels or {}):
-            raw_value = (labels or {})[key]
-            if isinstance(raw_value, str):
-                if raw_value:
-                    normalized[key] = raw_value
-                continue
-            values = sorted({str(value) for value in raw_value if str(value)})
-            if values:
-                normalized[key] = values
-        return normalized or None
-
-    @staticmethod
-    def _history_filter_fingerprint(
-        *,
-        scenario_names: Sequence[str],
-        statuses: Sequence[str],
-        labels: Mapping[str, str | Sequence[str]] | None,
-    ) -> str:
-        """Return a stable fingerprint binding a cursor to normalized filters."""
-        payload = {
-            "scenario_names": sorted(scenario_names),
-            "statuses": sorted(statuses),
-            "labels": labels,
-        }
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
-
-    @staticmethod
-    def _encode_history_cursor(*, cursor: ScenarioHistoryKeysetCursor, fingerprint: str) -> str:
-        """
-        Encode a descending scenario-history keyset anchor.
-
-        Returns:
-            str: Opaque cursor.
-        """
-        payload = {
-            "v": 1,
-            "f": fingerprint,
-            "t": cursor.timestamp.isoformat(),
-            "i": cursor.scenario_result_id,
-        }
-        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-    @staticmethod
-    def _decode_history_cursor(
-        *,
-        cursor: str | None,
-        fingerprint: str,
-    ) -> ScenarioHistoryKeysetCursor | None:
-        """
-        Decode and validate a filter-bound scenario-history cursor.
-
-        Returns:
-            ScenarioHistoryKeysetCursor | None: Validated keyset anchor.
-
-        Raises:
-            ValueError: If the cursor is malformed or belongs to different filters.
-        """
-        if cursor is None:
-            return None
-        try:
-            padded = cursor + "=" * (-len(cursor) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-        except (binascii.Error, UnicodeDecodeError, ValueError, TypeError) as exc:
-            raise ValueError("Malformed scenario history cursor.") from exc
-        if not isinstance(payload, dict) or payload.get("v") != 1:
-            raise ValueError("Malformed scenario history cursor.")
-        if payload.get("f") != fingerprint:
-            raise ValueError("Scenario history cursor does not match the requested filters.")
-        try:
-            timestamp = datetime.fromisoformat(payload["t"])
-            scenario_result_id = str(uuid.UUID(payload["i"]))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError("Malformed scenario history cursor.") from exc
-        if timestamp.tzinfo is None:
-            raise ValueError("Scenario history cursor timestamp must include a timezone.")
-        try:
-            timestamp = timestamp.astimezone(timezone.utc)
-        except (OverflowError, OSError) as exc:
-            raise ValueError("Malformed scenario history cursor.") from exc
-        return ScenarioHistoryKeysetCursor(
-            timestamp=timestamp,
-            scenario_result_id=scenario_result_id,
-        )
 
     def _get_active_task(self, *, scenario_result_id: str) -> _ActiveTask | None:
         """Return a live task and release completed task state."""

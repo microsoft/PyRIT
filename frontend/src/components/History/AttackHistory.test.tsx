@@ -1083,6 +1083,45 @@ describe('AttackHistory', () => {
     expect(callArgs).not.toHaveProperty('converter_types_match')
   })
 
+  it('should exclude scanner attacks by default and include them when enabled', async () => {
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: [],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    const { unmount } = render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+
+    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalled())
+    expect(mockedAttacksApi.listAttacks.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ include_scenario_attacks: false })
+    )
+
+    unmount()
+    jest.clearAllMocks()
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: [],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    render(
+      <TestWrapper>
+        <AttackHistory
+          {...defaultProps}
+          filters={{ ...DEFAULT_HISTORY_FILTERS, includeScenarioAttacks: true }}
+        />
+      </TestWrapper>
+    )
+
+    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalled())
+    expect(mockedAttacksApi.listAttacks.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ include_scenario_attacks: true })
+    )
+  })
+
   it('should only send converter_types_match when two or more converters are selected', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],

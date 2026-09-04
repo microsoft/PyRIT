@@ -115,6 +115,7 @@ export default function HistoryFiltersBar({
     converter: converterFilter,
     converterMatchMode,
     hasConverters,
+    includeScenarioAttacks,
     operator: operatorFilters,
     operation: operationFilters,
     otherLabels: otherLabelFilters,
@@ -130,6 +131,7 @@ export default function HistoryFiltersBar({
     outcomeFilter ||
     converterFilter.length > 0 ||
     hasConverters !== undefined ||
+    includeScenarioAttacks ||
     operatorFilters.length > 0 ||
     operationFilters.length > 0 ||
     otherLabelFilters.length > 0
@@ -181,6 +183,12 @@ export default function HistoryFiltersBar({
           </Button>
         </Tooltip>
       )}
+      <Switch
+        checked={includeScenarioAttacks}
+        onChange={(_event, data) => setFilter('includeScenarioAttacks', data.checked)}
+        label="Include scanner attacks"
+        data-testid="include-scanner-attacks"
+      />
       <SearchableMultiCombobox
         className={styles.filterDropdown}
         placeholder="All attack types"

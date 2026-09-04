@@ -39,6 +39,7 @@ describe('HistoryFiltersBar', () => {
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Include scanner attacks' })).not.toBeChecked()
   })
 
   it('should not show reset button when no filters are active', () => {
@@ -75,6 +76,22 @@ describe('HistoryFiltersBar', () => {
 
     fireEvent.click(screen.getByTestId('reset-filters-btn'))
     expect(onFiltersChange).toHaveBeenCalledWith(DEFAULT_HISTORY_FILTERS)
+  })
+
+  it('should include scanner attacks when the switch is enabled', () => {
+    const onFiltersChange = jest.fn()
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...defaultProps} onFiltersChange={onFiltersChange} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Include scanner attacks' }))
+
+    expect(onFiltersChange).toHaveBeenCalledWith({
+      ...DEFAULT_HISTORY_FILTERS,
+      includeScenarioAttacks: true,
+    })
   })
 
   it('should call onFiltersChange when attack type filter is selected', async () => {

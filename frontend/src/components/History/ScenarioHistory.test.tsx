@@ -98,7 +98,7 @@ describe('ScenarioHistory', () => {
     await user.click(row)
     expect(onOpenRun).toHaveBeenLastCalledWith('run-1')
     const link = screen.getByRole('link', { name: 'Open foundry.red_team scenario run' })
-    expect(link).toHaveAttribute('href', '/scenario-history/run-1')
+    expect(link).toHaveAttribute('href', '/scanner-history/run-1')
     link.focus()
     await user.keyboard('{Enter}')
     expect(onOpenRun).toHaveBeenCalledTimes(2)
@@ -264,7 +264,7 @@ describe('ScenarioHistory', () => {
     )
 
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
-    expect(screen.getByText('Loading scenario history...')).toBeInTheDocument()
+    expect(screen.getByText('Loading scanner history...')).toBeInTheDocument()
     await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
     expect(mockedScenariosApi.listRuns).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: undefined, run_statuses: ['FAILED'] }),

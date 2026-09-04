@@ -47,6 +47,7 @@ interface ScenarioHistoryProps {
   onFiltersChange: (filters: ScenarioHistoryFilters) => void
   onOpenRun: (scenarioResultId: string) => void
   onNavigate: (view: ViewName) => void
+  showTitle?: boolean
 }
 
 interface MultiFilterProps {
@@ -89,6 +90,7 @@ export default function ScenarioHistory({
   onFiltersChange,
   onOpenRun,
   onNavigate,
+  showTitle = true,
 }: ScenarioHistoryProps) {
   const styles = useScenarioHistoryStyles()
   const [runs, setRuns] = useState<ScenarioRunListItem[]>([])
@@ -218,7 +220,7 @@ export default function ScenarioHistory({
     <main className={styles.root}>
       <header className={styles.header}>
         <div className={styles.headerRow}>
-          <Text as="h1" size={500} weight="semibold">Scenario History</Text>
+          {showTitle && <Text as="h1" size={500} weight="semibold">Scanner History</Text>}
           <Button
             className={styles.touchTargetHeight}
             appearance="subtle"
@@ -297,7 +299,7 @@ export default function ScenarioHistory({
 
       <div className={styles.content}>
         {displayLoading ? (
-          <div className={styles.emptyState}><Spinner label="Loading scenario history..." /></div>
+          <div className={styles.emptyState}><Spinner label="Loading scanner history..." /></div>
         ) : error ? (
           <div className={styles.emptyState} data-testid="scenario-history-error">
             <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>
@@ -361,7 +363,7 @@ interface ScenarioHistoryTableProps {
 function ScenarioHistoryTable({ runs, onOpenRun }: ScenarioHistoryTableProps) {
   const styles = useScenarioHistoryStyles()
   return (
-    <Table className={styles.table} aria-label="Scenario history" data-testid="scenario-history-table">
+    <Table className={styles.table} aria-label="Scanner history" data-testid="scenario-history-table">
       <TableHeader>
         <TableRow>
           <TableHeaderCell>Scenario</TableHeaderCell>
@@ -385,7 +387,7 @@ function ScenarioHistoryTable({ runs, onOpenRun }: ScenarioHistoryTableProps) {
           >
             <TableCell>
               <a
-                href={`/scenario-history/${run.scenario_result_id}`}
+                href={`/scanner-history/${run.scenario_result_id}`}
                 className={styles.rowLink}
                 aria-label={`Open ${run.scenario_registry_name ?? run.scenario_name} scenario run`}
                 onClick={(event) => {

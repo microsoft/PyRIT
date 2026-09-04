@@ -119,12 +119,12 @@ function ScenarioRunPageContent({ scenarioResultId, attackResultId }: ScenarioRu
     scenarioName?: string
   } | null
   const backPath = navigationState?.fromScenarioHistory
-    ? `/scenario-history${navigationState.scenarioHistorySearch ?? ''}`
+    ? `/history/scanner${navigationState.scenarioHistorySearch ?? ''}`
     : navigationState?.scenarioName
       ? `/scanner/${encodeURIComponent(navigationState.scenarioName)}`
       : '/scanner'
   const backLabel = navigationState?.fromScenarioHistory
-    ? 'Back to scenario history'
+    ? 'Back to scanner history'
     : navigationState?.scenarioName
       ? 'Back to scenario'
       : 'Back to scanners'

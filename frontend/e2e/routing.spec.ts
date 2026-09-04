@@ -276,7 +276,7 @@ test.describe("URL-driven routing", () => {
     await expect(page).toHaveURL(/\/attacks\/atk-success$/);
 
     await page.goBack();
-    await expect(page).toHaveURL(/\/history$/);
+    await expect(page).toHaveURL(/\/history\/attacks$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
   });
 
@@ -296,8 +296,8 @@ test.describe("URL-driven routing", () => {
       )
       .toBe("markdown");
 
-    await page.getByTitle("Attack History").click();
-    await expect(page).toHaveURL(/\/history$/);
+    await page.getByTitle("History").click();
+    await expect(page).toHaveURL(/\/history\/attacks$/);
     await expect(page.getByTestId("attacks-table")).toBeVisible();
 
     await page.getByTitle("Chat").click();

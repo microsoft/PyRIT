@@ -337,6 +337,7 @@ export const attacksApi = {
     converter_types?: string[]
     converter_types_match?: 'any' | 'all'
     has_converters?: boolean
+    include_scenario_attacks?: boolean
     outcome?: string
     label?: string[]
     min_turns?: number

@@ -20,6 +20,7 @@ from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
     ScenarioRunListResponse,
 )
+from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service
 from pyrit.backend.services.scenario_service import get_scenario_service
 from pyrit.models import ScenarioResult, ScenarioRunState
@@ -33,25 +34,6 @@ from pyrit.models.catalog.scenario import (
 from pyrit.models.scenario_progress import ScenarioRunProgress
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
-
-
-def _parse_labels(label_params: list[str] | None) -> dict[str, list[str]] | None:
-    """
-    Parse repeated key:value label filters with OR-within-key semantics.
-
-    Returns:
-        dict[str, str | list[str]] | None: Grouped effective label filters.
-    """
-    labels: dict[str, list[str]] = {}
-    for param in label_params or []:
-        if ":" not in param:
-            continue
-        key, value = param.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if key and value:
-            labels.setdefault(key, []).append(value)
-    return labels or None
 
 
 # ============================================================================
@@ -222,17 +204,14 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         ScenarioRunListResponse: Runs, most recent first.
     """
     service = get_scenario_run_service()
-    try:
-        return await run_in_threadpool(
-            service.list_runs,
-            scenario_names=scenario_names,
-            statuses=run_statuses,
-            labels=_parse_labels(label),
-            limit=limit,
-            cursor=cursor,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    return await run_in_threadpool(
+        service.list_runs,
+        scenario_names=scenario_names,
+        statuses=run_statuses,
+        labels=parse_label_query_params(label),
+        limit=limit,
+        cursor=cursor,
+    )
 
 
 @router.get(

@@ -23,6 +23,7 @@ interface AttackHistoryProps {
   onFiltersChange: (filters: HistoryFilters) => void
   activeTarget: TargetInstance | null
   onNavigate: (view: ViewName) => void
+  showTitle?: boolean
 }
 
 const PAGE_SIZE = 25
@@ -43,6 +44,7 @@ function buildListParams(filters: HistoryFilters, pageCursor: string | undefined
   // Match mode is only meaningful with >=2 converters selected.
   if (filters.converter.length >= 2) params.converter_types_match = filters.converterMatchMode
   if (filters.hasConverters !== undefined) params.has_converters = filters.hasConverters
+  params.include_scenario_attacks = filters.includeScenarioAttacks
   if (labelParams.length > 0) params.label = labelParams
   return params
 }
@@ -53,6 +55,7 @@ export default function AttackHistory({
   onFiltersChange,
   activeTarget,
   onNavigate,
+  showTitle = true,
 }: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
@@ -151,6 +154,7 @@ export default function AttackHistory({
     filters.converter,
     filters.converterMatchMode,
     filters.hasConverters,
+    filters.includeScenarioAttacks,
     filters.operator,
     filters.operation,
     filters.otherLabels,
@@ -183,6 +187,7 @@ export default function AttackHistory({
   const hasActiveFilters =
     filters.attackTypes.length > 0 || filters.outcome || filters.converter.length > 0 ||
     filters.hasConverters !== undefined ||
+    filters.includeScenarioAttacks ||
     filters.operator.length > 0 || filters.operation.length > 0 || filters.otherLabels.length > 0
   const emptyStateGuidance = activeTarget
     ? {
@@ -202,7 +207,7 @@ export default function AttackHistory({
     <div className={styles.root}>
       <div className={styles.header} data-tour="history-filters">
         <div className={styles.headerRow}>
-          <Text as="h1" size={500} weight="semibold">Attack History</Text>
+          {showTitle && <Text as="h1" size={500} weight="semibold">Attack History</Text>}
           <Button
             className={styles.touchTargetHeight}
             appearance="subtle"

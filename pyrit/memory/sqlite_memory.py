@@ -3,6 +3,7 @@
 
 import logging
 import threading
+import uuid
 import weakref
 from collections.abc import Mapping, Sequence
 from contextlib import closing
@@ -10,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from sqlalchemy import and_, create_engine, exists, func, or_, select, text
+from sqlalchemy import and_, case, create_engine, exists, func, or_, select, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
@@ -509,18 +510,32 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     def _get_scenario_history_plan_expressions(self) -> tuple[Any, Any, Any]:
         """Return compact SQLite run-plan fields without objective-bearing seed groups."""
+        seed_groups = case(
+            (
+                func.json_type(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.seed_groups",
+                )
+                == "array",
+                func.json_extract(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.seed_groups",
+                ),
+            ),
+            else_="[]",
+        )
         seed_rows = func.json_each(
-            ScenarioResultEntry.scenario_metadata,
-            "$.run_plan.seed_groups",
-        ).table_valued("value")
+            seed_groups,
+        ).table_valued("value", "type")
+        seed_json = case((seed_rows.c.type == "object", seed_rows.c.value), else_="{}")
         compact_seed_map = (
             select(
                 func.json_group_array(
                     func.json_object(
                         "id",
-                        func.json_extract(seed_rows.c.value, "$.id"),
+                        func.json_extract(seed_json, "$.id"),
                         "objective_sha256",
-                        func.json_extract(seed_rows.c.value, "$.objective_sha256"),
+                        func.json_extract(seed_json, "$.objective_sha256"),
                     )
                 )
             )
@@ -555,3 +570,67 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             "",
         )
         return atomic_name, technique_hash, seed_group_id
+
+    def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
+        """Return SQLite run-plan expansions for planned units and planned seed groups."""
+        atomic_groups = case(
+            (
+                func.json_type(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.atomic_groups",
+                )
+                == "array",
+                func.json_extract(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.atomic_groups",
+                ),
+            ),
+            else_="[]",
+        )
+        groups = func.json_each(
+            atomic_groups,
+        ).table_valued("key", "value", "type", joins_implicitly=True)
+        group_json = case((groups.c.type == "object", groups.c.value), else_="{}")
+        group_seeds = func.json_each(group_json, "$.seed_group_ids").table_valued("value", joins_implicitly=True)
+        seed_groups = case(
+            (
+                func.json_type(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.seed_groups",
+                )
+                == "array",
+                func.json_extract(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.seed_groups",
+                ),
+            ),
+            else_="[]",
+        )
+        seeds = func.json_each(
+            seed_groups,
+        ).table_valued("value", "type", joins_implicitly=True)
+        seed_json = case((seeds.c.type == "object", seeds.c.value), else_="{}")
+        planned_units = (
+            select(
+                ScenarioResultEntry.id.label("scenario_result_id"),
+                groups.c.key.label("group_ordinal"),
+                func.json_extract(group_json, "$.id").label("atomic_group_id"),
+                func.json_extract(group_json, "$.atomic_attack_name").label("atomic_attack_name"),
+                func.json_extract(group_json, "$.technique_eval_hash").label("technique_eval_hash"),
+                group_seeds.c.value.label("seed_group_id"),
+            )
+            .select_from(ScenarioResultEntry, groups, group_seeds)
+            .where(ScenarioResultEntry.id.in_(scenario_result_ids))
+            .subquery("plan_units")
+        )
+        plan_seeds = (
+            select(
+                ScenarioResultEntry.id.label("scenario_result_id"),
+                func.json_extract(seed_json, "$.id").label("seed_group_id"),
+                func.json_extract(seed_json, "$.objective_sha256").label("objective_sha256"),
+            )
+            .select_from(ScenarioResultEntry, seeds)
+            .where(ScenarioResultEntry.id.in_(scenario_result_ids))
+            .subquery("plan_seeds")
+        )
+        return planned_units, plan_seeds

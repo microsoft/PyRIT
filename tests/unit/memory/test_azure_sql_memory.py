@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import inspect, or_, select, text
+from sqlalchemy.dialects import mssql
 
 from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
@@ -469,6 +470,32 @@ def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
         )
     )
     assert "scenario_registry_name_1" in combined_statement.compile().params
+
+
+def test_scenario_history_seed_projection_defaults_to_empty_json(memory_interface: AzureSQLMemory) -> None:
+    """The SQL Server seed projection returns an empty JSON array for runs without seed groups."""
+    _, _, seed_projection = memory_interface._get_scenario_history_plan_expressions()
+
+    assert "isnull" in str(seed_projection).lower()
+    assert "'[]'" in str(seed_projection)
+    assert "INCLUDE_NULL_VALUES" in str(seed_projection)
+
+
+def test_scenario_plan_unit_subqueries_expand_plan_json_server_side(memory_interface: AzureSQLMemory) -> None:
+    """The SQL Server plan expansion uses CROSS APPLY OPENJSON and binds scenario IDs."""
+    scenario_result_id = uuid.uuid4()
+    plan_units, plan_seeds = memory_interface._get_scenario_plan_unit_subqueries(
+        scenario_result_ids=[scenario_result_id]
+    )
+
+    statement = select(plan_units.c.atomic_group_id, plan_seeds.c.seed_group_id).join(
+        plan_seeds, plan_units.c.atomic_group_id == plan_seeds.c.seed_group_id
+    )
+    compiled = statement.compile(dialect=mssql.dialect())
+
+    assert "CROSS APPLY OPENJSON" in str(compiled)
+    assert "JOIN LATERAL" not in str(compiled)
+    assert str(scenario_result_id) in str(compiled.params)
 
 
 @pytest.mark.parametrize(

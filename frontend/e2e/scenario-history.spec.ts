@@ -408,14 +408,13 @@ test.describe("Scenario catalog, history, and live run routing", () => {
 
     const primaryNavigation = page.getByRole("navigation", { name: "Primary" });
     const primaryButtons = primaryNavigation.getByRole("button");
-    await expect(primaryButtons).toHaveCount(7);
+    await expect(primaryButtons).toHaveCount(6);
     expect(await primaryButtons.evaluateAll((buttons) =>
       buttons.map((button) => button.getAttribute("aria-label")))).toEqual([
       "Home",
       "Chat",
-      "Attack History",
+      "History",
       "Scenarios",
-      "Scenario History",
       "Configuration",
       "Initializers",
     ]);
@@ -433,9 +432,11 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(description.locator("img")).toHaveCount(0);
     await expect(description).toContainText(RAW_IMAGE_HTML);
 
-    await page.getByTitle("Scenario History").click();
-    await expect(page).toHaveURL("/scenario-history");
-    await expect(page.getByTitle("Scenario History")).toHaveAttribute("aria-current", "page");
+    await page.getByTitle("History").click();
+    await expect(page).toHaveURL("/history/attacks");
+    await page.getByRole("tab", { name: "Scanner" }).click();
+    await expect(page).toHaveURL("/history/scanner");
+    await expect(page.getByTitle("History")).toHaveAttribute("aria-current", "page");
     await page.getByTitle("Scenarios").click();
     await expect(page).toHaveURL("/scanner");
     await expect(page.getByTitle("Scenarios")).toHaveAttribute("aria-current", "page");
@@ -493,7 +494,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     expect(mocks.getLaunchRequest()?.techniques).not.toContain("default");
     expect(mocks.getLaunchRequest()?.techniques).not.toContain("context_compliance");
 
-    await expect(page).toHaveURL(`/scenario-history/${RUN_ID}`);
+    await expect(page).toHaveURL(`/scanner-history/${RUN_ID}`);
     await expect(page.getByTestId("run-state-badge")).toHaveText("In progress");
     await expect(page.getByText("gpt-4o").first()).toBeVisible();
     await expect(page.getByText("harmbench")).toBeVisible();
@@ -528,18 +529,18 @@ test.describe("Scenario catalog, history, and live run routing", () => {
 
   test("preserves filtered history and scenario provenance through native attempt navigation", async ({ page }) => {
     await mockScenarioAPIs(page);
-    await page.goto("/scenario-history?operator=alice&status=COMPLETED");
+    await page.goto("/history/scanner?operator=alice&status=COMPLETED");
 
-    await expect(page.getByTitle("Attack History")).toBeVisible();
-    await expect(page.getByTitle("Scenario History")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTitle("History")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByRole("tab", { name: "Scanner" })).toHaveAttribute("aria-selected", "true");
     const row = page.getByTestId(`scenario-history-row-${RUN_ID}`);
     await expect(row).toBeVisible();
     await page.getByTestId("scenario-history-refresh").click();
     await expect(row).toBeVisible();
     await row.getByRole("link", { name: new RegExp(`Open ${SCENARIO_NAME.replace(".", "\\.")} scenario run`, "i") }).press("Enter");
-    await expect(page).toHaveURL(`/scenario-history/${RUN_ID}`);
+    await expect(page).toHaveURL(`/scanner-history/${RUN_ID}`);
     await page.goBack();
-    await expect(page).toHaveURL("/scenario-history?operator=alice&status=COMPLETED");
+    await expect(page).toHaveURL("/history/scanner?operator=alice&status=COMPLETED");
     await page.getByTestId(`scenario-history-row-${RUN_ID}`).click();
 
     await page.reload();
@@ -562,7 +563,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     const breadcrumb = page.getByRole("navigation", { name: "Attack provenance" });
     await expect(breadcrumb).toBeVisible();
     await breadcrumb.getByRole("link", { name: `Return to scenario run ${RUN_ID}` }).click();
-    await expect(page).toHaveURL(`/scenario-history/${RUN_ID}`);
+    await expect(page).toHaveURL(`/scanner-history/${RUN_ID}`);
     await page.goBack();
     await expect(page).toHaveURL(`/attacks/${ATTACK_ID}?scenarioResultId=${RUN_ID}`);
 
@@ -576,7 +577,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     const client = await page.context().newCDPSession(page);
     await client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/scenario-history");
+    await page.goto("/history/scanner");
 
     const refresh = page.getByTestId("scenario-history-refresh");
     const row = page.getByTestId(`scenario-history-row-${RUN_ID}`);

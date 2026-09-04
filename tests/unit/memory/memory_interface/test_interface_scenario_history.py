@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
+from pyrit.common.utils import to_sha256
 from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
@@ -30,6 +31,7 @@ from pyrit.models import (
         ("_get_scenario_registry_name_condition", {"scenario_names": ["test.scenario"]}),
         ("_get_scenario_history_plan_expressions", {}),
         ("_get_scenario_attempt_unit_expressions", {}),
+        ("_get_scenario_plan_unit_subqueries", {"scenario_result_ids": [uuid.uuid4()]}),
     ],
 )
 def test_scenario_history_dialect_hooks_are_optional_until_used(
@@ -178,7 +180,7 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
         MagicMock(side_effect=AssertionError("history hydrated an AttackResult")),
     )
 
-    rows, units, has_more = sqlite_instance.get_scenario_run_history_page(
+    rows, aggregates, has_more = sqlite_instance.get_scenario_run_history_page(
         scenario_names=["registered.scenario"],
         statuses=[ScenarioRunState.IN_PROGRESS.value],
         labels={
@@ -204,17 +206,227 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
             "display_group": "Attack",
             "technique_eval_hash": "eval-1",
             "seed_group_ids": ["seed-1"],
+            "tags": [],
         }
     ]
     compact_seed_map = (
         json.loads(rows[0].plan_seed_id_map) if isinstance(rows[0].plan_seed_id_map, str) else rows[0].plan_seed_id_map
     )
     assert compact_seed_map == [{"id": "seed-1", "objective_sha256": "objective-hash"}]
-    assert len(units[str(included.id)]) == 1
-    assert units[str(included.id)][0].latest_outcome == AttackOutcome.SUCCESS.value
-    assert units[str(included.id)][0].error_count == 1
-    assert units[str(included.id)][0].total_retries == 3
+    aggregate = aggregates[str(included.id)]
+    assert aggregate.unit_count == 1
+    assert aggregate.completed_units == 1
+    assert aggregate.successful_units == 1
+    assert aggregate.error_attempts == 1
+    assert aggregate.total_retries == 3
+    assert aggregate.atomic_attack_names == ("attack",)
+    assert aggregate.latest_attempt_timestamp == timestamp + timedelta(seconds=1)
     assert has_more is False
+
+
+def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """Plan-aware aggregation folds hash-attributed attempts into their planned unit."""
+    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    planned = make_scenario_result(
+        id=uuid.UUID(int=20),
+        scenario_name="PlannedScenario",
+        scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        labels={},
+        creation_time=timestamp,
+        completion_time=timestamp + timedelta(minutes=1),
+        metadata={
+            SCENARIO_RUN_PLAN_METADATA_KEY: ScenarioRunPlan(
+                scenario_registry_name="registered.scenario",
+                atomic_groups=[
+                    ScenarioRunPlanAtomicGroup(
+                        id="group-1",
+                        atomic_attack_name="attack",
+                        display_group="Attack",
+                        technique_eval_hash="eval-1",
+                        seed_group_ids=["seed-1"],
+                    )
+                ],
+                seed_groups=[
+                    ScenarioRunPlanSeedGroup(
+                        id="seed-1",
+                        objective_sha256=to_sha256("objective"),
+                        objective="objective",
+                    )
+                ],
+            ).model_dump(mode="json", exclude_none=True)
+        },
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+    )
+    unplanned = _make_scenario(
+        result_id=uuid.UUID(int=21),
+        timestamp=timestamp - timedelta(minutes=1),
+        name="LegacyScenario",
+        state=ScenarioRunState.COMPLETED,
+        labels={},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[planned, unplanned])
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=22)),
+                conversation_id="conversation-22",
+                objective="objective",
+                outcome=AttackOutcome.FAILURE,
+                execution_time_ms=1,
+                timestamp=timestamp,
+                attribution_parent_id=str(planned.id),
+                attribution_data={"parent_collection": "attack", "parent_eval_hash": "eval-1"},
+            ),
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=23)),
+                conversation_id="conversation-23",
+                objective="unplanned",
+                outcome=AttackOutcome.SUCCESS,
+                execution_time_ms=1,
+                timestamp=timestamp + timedelta(seconds=1),
+                attribution_parent_id=str(planned.id),
+                attribution_data={"parent_collection": "other-attack", "seed_group_id": "seed-9"},
+            ),
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=24)),
+                conversation_id="conversation-24",
+                objective="objective",
+                outcome=AttackOutcome.SUCCESS,
+                execution_time_ms=1,
+                timestamp=timestamp,
+                attribution_parent_id=str(unplanned.id),
+                attribution_data={"parent_collection": "legacy-attack", "seed_group_id": "seed-legacy"},
+            ),
+        ]
+    )
+
+    _, aggregates, _ = sqlite_instance.get_scenario_run_history_page(limit=25)
+
+    planned_aggregate = aggregates[str(planned.id)]
+    assert planned_aggregate.unit_count == 1
+    assert planned_aggregate.successful_units == 0
+    assert planned_aggregate.atomic_attack_names == ("attack", "other-attack")
+    assert planned_aggregate.latest_attempt_timestamp == timestamp + timedelta(seconds=1)
+    legacy_aggregate = aggregates[str(unplanned.id)]
+    assert legacy_aggregate.unit_count == 1
+    assert legacy_aggregate.successful_units == 1
+
+
+def test_history_aggregates_keep_explicitly_attributed_seed_groups_separate(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """An attempt carrying an unplanned seed group ID is never remapped onto a planned unit."""
+    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    scenario = make_scenario_result(
+        id=uuid.UUID(int=40),
+        scenario_name="AttributedScenario",
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        labels={},
+        creation_time=timestamp,
+        completion_time=timestamp + timedelta(minutes=1),
+        metadata={
+            SCENARIO_RUN_PLAN_METADATA_KEY: ScenarioRunPlan(
+                scenario_registry_name="registered.scenario",
+                atomic_groups=[
+                    ScenarioRunPlanAtomicGroup(
+                        id="group-1",
+                        atomic_attack_name="attack",
+                        display_group="Attack",
+                        technique_eval_hash="eval-1",
+                        seed_group_ids=["planned-seed"],
+                    )
+                ],
+                seed_groups=[
+                    ScenarioRunPlanSeedGroup(
+                        id="planned-seed",
+                        objective_sha256=to_sha256("objective"),
+                        objective="objective",
+                    )
+                ],
+            ).model_dump(mode="json", exclude_none=True)
+        },
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=41)),
+                conversation_id="conversation-41",
+                objective="objective",
+                outcome=AttackOutcome.SUCCESS,
+                execution_time_ms=1,
+                timestamp=timestamp,
+                attribution_parent_id=str(scenario.id),
+                attribution_data={
+                    "parent_collection": "attack",
+                    "parent_eval_hash": "eval-1",
+                    "seed_group_id": "persisted-seed",
+                },
+            )
+        ]
+    )
+
+    _, aggregates, _ = sqlite_instance.get_scenario_run_history_page(limit=25)
+
+    assert aggregates[str(scenario.id)].unit_count == 0
+
+
+def test_history_aggregates_tolerate_malformed_plan_shapes(sqlite_instance: MemoryInterface) -> None:
+    """Malformed plan collections fall back to legacy aggregation instead of breaking history."""
+    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    scenario = make_scenario_result(
+        id=uuid.UUID(int=50),
+        scenario_name="MalformedPlanScenario",
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        labels={},
+        creation_time=timestamp,
+        completion_time=timestamp + timedelta(minutes=1),
+        metadata={
+            SCENARIO_RUN_PLAN_METADATA_KEY: {
+                "scenario_registry_name": "registered.scenario",
+                "atomic_groups": "malformed",
+                "seed_groups": "malformed",
+            }
+        },
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=51)),
+                conversation_id="conversation-51",
+                objective="objective",
+                outcome=AttackOutcome.SUCCESS,
+                execution_time_ms=1,
+                timestamp=timestamp,
+                attribution_parent_id=str(scenario.id),
+                attribution_data={"parent_collection": "attack", "seed_group_id": "seed"},
+            )
+        ]
+    )
+
+    _, aggregates, _ = sqlite_instance.get_scenario_run_history_page(limit=25)
+
+    assert aggregates[str(scenario.id)].unit_count == 0
+    legacy_aggregates = sqlite_instance.get_scenario_history_aggregates(scenario_result_ids=[str(scenario.id)])
+    assert legacy_aggregates[str(scenario.id)].unit_count == 1
+
+
+def test_history_aggregates_fill_zero_for_runs_without_attempts(sqlite_instance: MemoryInterface) -> None:
+    """Runs without persisted attempts still receive an aggregate entry."""
+    scenario_result_id = str(uuid.UUID(int=30))
+
+    aggregates = sqlite_instance.get_scenario_history_aggregates(scenario_result_ids=[scenario_result_id])
+
+    assert aggregates[scenario_result_id].unit_count == 0
+    assert aggregates[scenario_result_id].latest_attempt_timestamp is None
 
 
 def test_unique_scenario_labels_are_grouped_for_filter_options(sqlite_instance: MemoryInterface) -> None:

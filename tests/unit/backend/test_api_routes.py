@@ -113,6 +113,7 @@ class TestAttackRoutes:
                 converter_types=None,
                 converter_types_match="all",
                 has_converters=None,
+                include_scenario_attacks=True,
                 outcome="success",
                 labels=None,
                 min_turns=None,
@@ -177,6 +178,23 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args.kwargs
             assert call_kwargs["has_converters"] is False
+
+    def test_list_attacks_excludes_scenario_attacks_when_requested(self, client: TestClient) -> None:
+        """?include_scenario_attacks=false is parsed and forwarded."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks", params={"include_scenario_attacks": "false"})
+
+            assert response.status_code == status.HTTP_200_OK
+            assert mock_service.list_attacks_async.call_args.kwargs["include_scenario_attacks"] is False
 
     def test_create_attack_success(self, client: TestClient) -> None:
         """Test successful attack creation."""

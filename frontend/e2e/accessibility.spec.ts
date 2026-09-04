@@ -288,7 +288,7 @@ test.describe("Accessibility", () => {
     );
 
     const views = [
-      { button: "Attack History", heading: "Attack History" },
+      { button: "History", heading: "History" },
       { button: "Targets", heading: "Target Configuration" },
       { button: "Chat", heading: "Chat" },
     ];
