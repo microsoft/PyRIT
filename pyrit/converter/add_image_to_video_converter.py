@@ -4,6 +4,7 @@
 import asyncio
 import contextlib
 import logging
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -38,8 +39,7 @@ class AddImageVideoConverter(Converter):
     def __init__(
         self,
         *,
-        video_path: str,
-        output_path: str | None = None,
+        video_path: Path,
         img_position: tuple[int, int] = (10, 10),
         img_resize_size: tuple[int, int] = (500, 500),
     ) -> None:
@@ -47,18 +47,10 @@ class AddImageVideoConverter(Converter):
         Initialize the converter with the video path and image properties.
 
         Args:
-            video_path (str): File path of video to add image to.
-            output_path (str, Optional): File path of output video. Defaults to None.
+            video_path (Path): File path of video to add image to.
             img_position (tuple): Position to place image in video. Defaults to (10, 10).
             img_resize_size (tuple): Size to resize image to. Defaults to (500, 500).
-
-        Raises:
-            ValueError: If ``video_path`` is empty or invalid.
         """
-        if not video_path:
-            raise ValueError("Please provide valid video path")
-
-        self._output_path = output_path
         self._img_position = img_position
         self._img_resize_size = img_resize_size
         self._video_path = video_path
@@ -78,16 +70,15 @@ class AddImageVideoConverter(Converter):
             }
         )
 
-    async def _add_image_to_video_async(self, image_path: str, output_path: str) -> str:
+    async def _add_image_to_video_async(self, image_path: str) -> bytes:
         """
         Add an image to video.
 
         Args:
             image_path (str): The image path to add to video.
-            output_path (str): The output video path.
 
         Returns:
-            str: The output video path.
+            bytes: The converted video data.
 
         Raises:
             ModuleNotFoundError: If OpenCV is not installed.
@@ -106,39 +97,32 @@ class AddImageVideoConverter(Converter):
             category="prompt-memory-entries", data_type="image_path", value=image_path
         )
         input_video_data = data_serializer_factory(
-            category="prompt-memory-entries", data_type="video_path", value=self._video_path
+            category="prompt-memory-entries", data_type="video_path", value=str(self._video_path)
         )
 
         # Open the video to ensure it exists
         video_bytes = await input_video_data.read_data_async()
         input_image_bytes = await input_image_data.read_data_async()
 
-        azure_storage_flag = input_video_data._is_azure_storage_url(self._video_path)
-
-        await asyncio.to_thread(
+        return await asyncio.to_thread(
             self._add_image_to_video_sync,
             video_bytes=video_bytes,
             image_bytes=input_image_bytes,
-            output_path=output_path,
-            azure_storage_flag=azure_storage_flag,
         )
-
-        logger.info(f"Video saved as {output_path}")
-
-        return output_path
 
     def _add_image_to_video_sync(
         self,
         *,
         video_bytes: bytes,
         image_bytes: bytes,
-        output_path: str,
-        azure_storage_flag: bool,
-    ) -> None:
+    ) -> bytes:
         """
         Run the blocking cv2 pipeline and temp-file I/O on a worker thread.
 
         Designed to be invoked via ``asyncio.to_thread`` so the event loop is not blocked.
+
+        Returns:
+            bytes: The converted video data.
 
         Raises:
             ValueError: If the input video format is unsupported or the overlay image cannot
@@ -146,81 +130,78 @@ class AddImageVideoConverter(Converter):
         """
         import cv2
 
-        video_path = self._video_path
-        local_temp_path: Path | None = None
+        file_extension = self._video_path.suffix.removeprefix(".").lower()
+        if file_extension not in video_encoding_map:
+            raise ValueError(f"Unsupported video format: {file_extension}")
+
+        with tempfile.NamedTemporaryFile(suffix=f".{file_extension}", dir=DB_DATA_PATH, delete=False) as input_file:
+            input_file.write(video_bytes)
+            input_path = Path(input_file.name)
+        with tempfile.NamedTemporaryFile(suffix=f".{file_extension}", dir=DB_DATA_PATH, delete=False) as output_file:
+            output_path = Path(output_file.name)
+
         cap: cv2.VideoCapture | None = None
         output_video: cv2.VideoWriter | None = None
 
         try:
-            if azure_storage_flag:
-                # If the video is in Azure storage, download it first
+            try:
+                cap = cv2.VideoCapture(str(input_path))
 
-                # Save the video bytes to a temporary file
-                local_temp_path = Path(DB_DATA_PATH, "temp_video.mp4")
-                with open(local_temp_path, "wb") as f:
-                    f.write(video_bytes)
-                video_path = str(local_temp_path)
-
-            cap = cv2.VideoCapture(video_path)
-
-            # Get video properties
-            fps = int(cap.get(cv2.CAP_PROP_FPS))
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            file_extension = video_path.split(".")[-1].lower()
-            if file_extension in video_encoding_map:
+                # Get video properties
+                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 video_char_code = cv2.VideoWriter.fourcc(*video_encoding_map[file_extension])
-                output_video = cv2.VideoWriter(output_path, video_char_code, fps, (width, height))
-            else:
-                raise ValueError(f"Unsupported video format: {file_extension}")
+                output_video = cv2.VideoWriter(str(output_path), video_char_code, fps, (width, height))
 
-            # Load and resize the overlay image
+                # Load and resize the overlay image
 
-            image_np_arr = np.frombuffer(image_bytes, np.uint8)
-            decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
-            if decoded is None:
-                raise ValueError("Failed to decode overlay image")
-            overlay = cv2.resize(decoded, self._img_resize_size)
+                image_np_arr = np.frombuffer(image_bytes, np.uint8)
+                decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
+                if decoded is None:
+                    raise ValueError("Failed to decode overlay image")
+                overlay = cv2.resize(decoded, self._img_resize_size)
 
-            # Get overlay image dimensions
-            image_height, image_width, _ = overlay.shape
-            x, y = self._img_position  # Position where the overlay will be placed
+                # Get overlay image dimensions
+                image_height, image_width, _ = overlay.shape
+                x, y = self._img_position  # Position where the overlay will be placed
 
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-                # Ensure overlay fits within the frame boundaries
-                if x + image_width > width or y + image_height > height:
-                    logger.info("Overlay image is too large for the video frame. Resizing to fit.")
-                    overlay = cv2.resize(overlay, (width - x, height - y))
-                    image_height, image_width, _ = overlay.shape
+                    # Ensure overlay fits within the frame boundaries
+                    if x + image_width > width or y + image_height > height:
+                        logger.info("Overlay image is too large for the video frame. Resizing to fit.")
+                        overlay = cv2.resize(overlay, (width - x, height - y))
+                        image_height, image_width, _ = overlay.shape
 
-                # Blend overlay with frame
-                if overlay.shape[2] == 4:  # Check number of channels on image
-                    alpha_overlay = overlay[:, :, 3] / 255.0
-                    for c in range(3):
-                        frame[y : y + image_height, x : x + image_width, c] = (
-                            alpha_overlay * overlay[:, :, c]
-                            + (1 - alpha_overlay) * frame[y : y + image_height, x : x + image_width, c]
-                        )
-                else:
-                    frame[y : y + image_height, x : x + image_width] = overlay
+                    # Blend overlay with frame
+                    if overlay.shape[2] == 4:  # Check number of channels on image
+                        alpha_overlay = overlay[:, :, 3] / 255.0
+                        for c in range(3):
+                            frame[y : y + image_height, x : x + image_width, c] = (
+                                alpha_overlay * overlay[:, :, c]
+                                + (1 - alpha_overlay) * frame[y : y + image_height, x : x + image_width, c]
+                            )
+                    else:
+                        frame[y : y + image_height, x : x + image_width] = overlay
 
-                # Write the modified frame to the output video
-                output_video.write(frame)
+                    # Write the modified frame to the output video
+                    output_video.write(frame)
+            finally:
+                if cap is not None:
+                    cap.release()
+                if output_video is not None:
+                    output_video.release()
+                with contextlib.suppress(cv2.error):
+                    cv2.destroyAllWindows()  # Not available in headless OpenCV builds
 
+            return output_path.read_bytes()
         finally:
-            # Release everything (guarded — early raises may leave cap/output_video unbound)
-            if cap is not None:
-                cap.release()
-            if output_video is not None:
-                output_video.release()
-            with contextlib.suppress(cv2.error):
-                cv2.destroyAllWindows()  # Not available in headless OpenCV builds
-            if azure_storage_flag and local_temp_path is not None:
-                local_temp_path.unlink()
+            input_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """
@@ -239,15 +220,13 @@ class AddImageVideoConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        output_video_serializer = data_serializer_factory(category="prompt-memory-entries", data_type="video_path")
-
-        if not self._output_path:
-            output_video_serializer.value = str(await output_video_serializer.get_data_filename_async())
-        else:
-            output_video_serializer.value = self._output_path
-
-        # Add video to the image
-        updated_video = await self._add_image_to_video_async(
-            image_path=prompt, output_path=output_video_serializer.value
+        output_video_serializer = data_serializer_factory(
+            category="prompt-memory-entries",
+            data_type="video_path",
+            extension=self._video_path.suffix.removeprefix("."),
         )
-        return ConverterResult(output_text=str(updated_video), output_type="video_path")
+        updated_video = await self._add_image_to_video_async(image_path=prompt)
+        await output_video_serializer.save_data_async(data=updated_video)
+        logger.info(f"Video saved as {output_video_serializer.value}")
+
+        return ConverterResult(output_text=str(output_video_serializer.value), output_type="video_path")

@@ -4,6 +4,7 @@
 """Unit tests for the unified Parameter model and its coercion methods."""
 
 from enum import Enum
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -134,11 +135,20 @@ class TestParameterSerialization:
 
         assert dumped["type_name"] == "int"
 
+    def test_path_round_trips_with_live_type(self) -> None:
+        dumped = Parameter(name="input_path", description="d", param_type=Path).model_dump()
+
+        restored = Parameter.model_validate(dumped)
+
+        assert dumped["type_name"] == "Path"
+        assert restored.param_type is Path
+        assert restored.coerce_value("input.txt") == Path("input.txt")
+
 
 class TestIsScalarParamType:
     """``_is_scalar_param_type`` recognizes plain and constrained scalars."""
 
-    @pytest.mark.parametrize("annotation", [str, int, float, bool, Literal["a", "b"], _Speed])
+    @pytest.mark.parametrize("annotation", [str, int, float, bool, Path, Literal["a", "b"], _Speed])
     def test_scalar_forms(self, annotation: object) -> None:
         assert _is_scalar_param_type(annotation) is True
 
@@ -173,7 +183,7 @@ class TestIsStringCoercible:
 
     @pytest.mark.parametrize(
         "param_type",
-        [str, int, float, bool, Literal["a", "b"], _Speed, int | None, _Speed | None],
+        [str, int, float, bool, Path, Literal["a", "b"], _Speed, int | None, _Speed | None],
     )
     def test_coercible_value_types(self, param_type: object) -> None:
         p = Parameter(name="x", description="d", param_type=param_type)
@@ -227,6 +237,10 @@ class TestCoerceValueScalars:
     def test_int(self) -> None:
         p = Parameter(name="n", description="d", param_type=int)
         assert p.coerce_value("5") == 5
+
+    def test_path(self) -> None:
+        p = Parameter(name="input_path", description="d", param_type=Path)
+        assert p.coerce_value("input.txt") == Path("input.txt")
 
     def test_float(self) -> None:
         p = Parameter(name="r", description="d", param_type=float)
