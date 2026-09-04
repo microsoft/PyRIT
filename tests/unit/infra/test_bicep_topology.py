@@ -94,6 +94,7 @@ class TestBicepTopology(unittest.TestCase):
         assert template["parameters"]["disableContainerAppsPublicAccess"]["defaultValue"] is False
         assert "adminGroupObjectId" in template["parameters"]
         assert template["parameters"]["pyritConfigFileUri"]["defaultValue"] == ""
+        assert template["parameters"]["pyritInitializer"]["defaultValue"] == "target,technique"
         assert "fail(" in template["variables"]["validatedAllowedGroupObjectIds"]
         assert "fail(" in template["variables"]["validatedAdminGroupObjectId"]
 

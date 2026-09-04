@@ -87,8 +87,8 @@ param sqlDatabaseName string
 // Note: operator and operation are per-user settings configured in the GUI,
 // not deployment-level config.
 
-@description('PyRIT initializer to run. Default "target" registers target configs.')
-param pyritInitializer string = 'target'
+@description('Comma-separated PyRIT initializers to run. Defaults register target configs and attack techniques.')
+param pyritInitializer string = 'target,technique'
 
 @secure()
 @description('Optional Azure Blob HTTPS URI for the backend .pyrit_conf. The deployment helper accepts credential-free managed-identity URIs only. When empty, start.sh generates config from the SQL and initializer parameters.')
