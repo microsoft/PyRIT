@@ -159,6 +159,7 @@ def test_json_schema_describes_registered_condition_subtypes():
     assert condition_items["discriminator"] == {"propertyName": "condition_type"}
     condition_schemas = condition_items["oneOf"]
     condition_types = {schema["properties"]["condition_type"]["const"]: schema for schema in condition_schemas}
+    assert all("condition_type" in schema["required"] for schema in condition_schemas)
     assert "matches_objective" in condition_types
     assert "test_expectation_beta" in condition_types
     assert condition_types["test_expectation_beta"]["properties"]["label"]["type"] == "string"

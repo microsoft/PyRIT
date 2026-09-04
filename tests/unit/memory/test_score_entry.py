@@ -2,8 +2,10 @@
 # Licensed under the MIT license.
 
 import uuid
+from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.memory.memory_models import ScoreEntry
 from pyrit.models import ComponentIdentifier, MatchesObjective, Score, ScoringExpectation
@@ -213,6 +215,15 @@ class TestScoreEntryRoundtrip:
         assert entry.scored_expectation is None
         assert entry.get_score().scored_expectation is None
         assert entry.to_dict()["objective"] is None
+
+    @pytest.mark.parametrize("stored_expectation", [{}, []])
+    def test_score_entry_rejects_falsey_malformed_expectation(self, stored_expectation: Any):
+        """Any non-NULL stored expectation must pass strict schema validation."""
+        entry = ScoreEntry(entry=Score(score_value="true", score_type="true_false"))
+        entry.scored_expectation = stored_expectation
+
+        with pytest.raises(ValidationError, match="requires an explicit schema_version"):
+            entry.get_score()
 
     def test_score_entry_to_dict_derives_objective_from_expectation(self):
         """to_dict emits both the stored expectation and the derived objective view."""

@@ -1212,7 +1212,7 @@ class ScoreEntry(Base):
             timestamp=self.timestamp,
             scored_expectation=(
                 ScoringExpectation.model_validate_persisted(self.scored_expectation)
-                if self.scored_expectation
+                if self.scored_expectation is not None
                 else None
             ),
         )

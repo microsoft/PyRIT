@@ -139,6 +139,10 @@ class ScoringExpectation(BaseModel):
         condition_schemas = [
             handler(TypeAdapter(condition_class).core_schema) for _, condition_class in sorted(_CONDITION_TYPES.items())
         ]
+        for condition_schema in condition_schemas:
+            required_fields = condition_schema.setdefault("required", [])
+            if "condition_type" not in required_fields:
+                required_fields.append("condition_type")
         resolved_schema["properties"]["conditions"]["items"] = {
             "discriminator": {"propertyName": "condition_type"},
             "oneOf": condition_schemas,
