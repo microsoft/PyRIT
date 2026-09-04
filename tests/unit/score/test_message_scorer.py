@@ -20,6 +20,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Score,
+    ScoreStatus,
     ScoringExpectation,
 )
 from pyrit.score import (
@@ -32,7 +33,7 @@ from pyrit.score import (
     ScorerPromptValidator,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
-from pyrit.score.message_scorer import MessageScoringOptions, extract_objective_from_previous_turn
+from pyrit.score.message_scorer import extract_objective_from_previous_turn
 
 
 class UnsupportedScorable(Scorable):
@@ -42,8 +43,8 @@ class UnsupportedScorable(Scorable):
 
 
 class PermissiveValidator(ScorerPromptValidator):
-    def __init__(self, *, is_objective_required: bool = False) -> None:
-        super().__init__(is_objective_required=is_objective_required)
+    def __init__(self, *, is_objective_required: bool = False, supported_roles=None) -> None:
+        super().__init__(is_objective_required=is_objective_required, supported_roles=supported_roles)
 
     def validate(self, message, objective=None):
         pass
@@ -60,9 +61,13 @@ class RecordingScorer(MessageTrueFalseScorer):
         *,
         message_resolver: MessageScorableResolver | None = None,
         is_objective_required: bool = False,
+        supported_roles=None,
     ) -> None:
         super().__init__(
-            validator=PermissiveValidator(is_objective_required=is_objective_required),
+            validator=PermissiveValidator(
+                is_objective_required=is_objective_required,
+                supported_roles=supported_roles,
+            ),
             message_resolver=message_resolver,
         )
         self.scored_messages: list[Message] = []
@@ -287,45 +292,70 @@ class TestScorerBaseIsScorableAgnostic:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScorableFilters:
-    """Message policy is separate from the scorable's evidence identity."""
+    """Role policy is a scorer capability, applied after the scorer acquires its evidence."""
 
-    async def test_role_filter_mismatch_skips_scoring(self):
-        scorer = RecordingScorer()
+    async def test_unread_role_produces_no_score(self):
+        scorer = RecordingScorer(supported_roles=["user"])
         message = _assistant_message()
 
-        scores = await scorer.score_async(
-            scorable=MessageScorable.from_message(message),
-            message_options=MessageScoringOptions(role_filter="user"),
-        )
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert scores == []
         assert scorer.scored_messages == []
 
-    async def test_role_filter_match_scores(self):
-        scorer = RecordingScorer()
+    async def test_read_role_scores(self):
+        scorer = RecordingScorer(supported_roles=["assistant"])
         message = _assistant_message()
 
-        scores = await scorer.score_async(
-            scorable=MessageScorable.from_message(message),
-            message_options=MessageScoringOptions(role_filter="assistant"),
-        )
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert len(scores) == 1
 
-    async def test_skip_on_error_result_skips_error_message(self):
+    async def test_simulated_assistant_is_unread_by_default(self):
+        """A prepended turn is fabricated history, so a scorer must opt in to read it."""
         scorer = RecordingScorer()
-        message = _error_message()
+        message = MessagePiece(
+            role="simulated_assistant",
+            original_value="prepended text",
+            conversation_id=str(uuid.uuid4()),
+        ).to_message()
+        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
 
-        scores = await scorer.score_async(
-            scorable=MessageScorable.from_message(message),
-            message_options=MessageScoringOptions(skip_on_error_result=True),
-        )
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert scores == []
         assert scorer.scored_messages == []
 
-    @pytest.mark.parametrize("skip_on_error_result", [True, False])
-    async def test_partly_errored_message_scores_only_readable_pieces(self, skip_on_error_result):
+    async def test_transport_error_message_produces_undetermined_score(self):
+        """An error is not the target's answer, so no verdict was reachable."""
+        scorer = RecordingScorer()
+        message = MessagePiece(
+            role="assistant",
+            original_value="connection reset",
+            original_value_data_type="error",
+            response_error="processing",
+            conversation_id=str(uuid.uuid4()),
+        ).to_message()
+        CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
+
+        assert len(scores) == 1
+        assert scores[0].status == ScoreStatus.UNDETERMINED
+        assert scorer.scored_messages == []
+
+    async def test_blocked_message_stays_false_safe(self):
+        """A fully blocked response reaches the scorer's family and keeps its neutral verdict."""
+        scorer = RecordingScorer()
+        message = _error_message()
+
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
+
+        assert len(scores) == 1
+        assert scores[0].score_value == "false"
+        assert scorer.scored_messages == []
+
+    async def test_partly_errored_message_scores_only_readable_pieces(self):
         """One bad piece must neither discard nor reach the scorer beside readable content."""
         scorer = RecordingScorer()
         conversation_id = str(uuid.uuid4())
@@ -343,24 +373,34 @@ class TestScorableFilters:
         )
         CentralMemory.get_memory_instance().add_message_to_memory(request=message)
 
-        scores = await scorer.score_async(
-            scorable=MessageScorable.from_message(message),
-            message_options=MessageScoringOptions(skip_on_error_result=skip_on_error_result),
-        )
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
         assert len(scores) == 1
         assert len(scorer.scored_messages) == 1
         assert [piece.original_value for piece in scorer.scored_messages[0].message_pieces] == ["usable text"]
 
-    async def test_error_message_uses_fallback_when_not_skipping(self):
+    async def test_explicit_legacy_role_filter_still_applies(self):
         scorer = RecordingScorer()
-        message = _error_message()
+        message = _assistant_message()
 
-        scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(message),
+                role_filter="user",
+            )
 
-        assert len(scores) == 1
-        assert scores[0].score_value == "false"
-        assert scorer.scored_messages == []
+        assert scores == []
+
+    async def test_explicit_legacy_skip_on_error_still_applies(self):
+        scorer = RecordingScorer()
+
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(_error_message()),
+                skip_on_error_result=True,
+            )
+
+        assert scores == []
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -453,37 +493,35 @@ class TestDeprecatedParameters:
 
         assert scorer.scored_objectives == ["legacy objective"]
 
-    async def test_legacy_role_filter_maps_to_message_options(self):
+    async def test_retired_role_filter_is_preserved(self):
         scorer = RecordingScorer()
 
-        with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
-            scores = await scorer.score_async(_assistant_message(), role_filter="user")
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(_assistant_message()),
+                role_filter="user",
+            )
 
         assert scores == []
 
-    async def test_legacy_skip_on_error_result_maps_to_message_options(self):
+    async def test_retired_skip_on_error_result_is_preserved(self):
         scorer = RecordingScorer()
-        message = _error_message()
 
-        with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
-            scores = await scorer.score_async(message, skip_on_error_result=True)
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            scores = await scorer.score_async(
+                scorable=MessageScorable.from_message(_error_message()),
+                skip_on_error_result=True,
+            )
 
         assert scores == []
 
-    @pytest.mark.parametrize(
-        "kwargs",
-        [
-            {"skip_on_error_result": False},
-            {"infer_objective_from_request": False},
-        ],
-    )
-    async def test_explicit_false_legacy_boolean_emits_warning(self, kwargs):
+    async def test_explicit_false_legacy_boolean_emits_warning(self):
         scorer = RecordingScorer()
 
         with pytest.warns(DeprecationWarning, match="Scorer.score_async"):
             await scorer.score_async(
                 scorable=MessageScorable.from_message(_assistant_message()),
-                **kwargs,
+                infer_objective_from_request=False,
             )
 
     async def test_infer_objective_from_request_reads_the_previous_turn(self, sqlite_instance: MemoryInterface):
@@ -540,17 +578,6 @@ class TestConflictingInputs:
                 scorable=MessageScorable.from_message(_assistant_message()),
                 objective="one",
                 expectation=ScoringExpectation(objective="two"),
-            )
-
-    @pytest.mark.parametrize("kwargs", [{"role_filter": "assistant"}, {"skip_on_error_result": True}])
-    async def test_message_options_and_legacy_policy_raise(self, kwargs):
-        scorer = RecordingScorer()
-
-        with pytest.raises(ValueError, match="either 'message_options' or legacy"):
-            await scorer.score_async(
-                scorable=MessageScorable.from_message(_assistant_message()),
-                message_options=MessageScoringOptions(),
-                **kwargs,
             )
 
 
@@ -656,13 +683,10 @@ class TestInHandMessages:
         assert score.message_piece_id is None
         assert score.scorable is None
 
-    async def test_score_message_async_applies_message_options(self):
-        scorer = RecordingScorer()
+    async def test_score_message_async_applies_declared_roles(self):
+        scorer = RecordingScorer(supported_roles=["user"])
 
-        scores = await scorer.score_message_async(
-            message=_assistant_message(),
-            message_options=MessageScoringOptions(role_filter="user"),
-        )
+        scores = await scorer.score_message_async(message=_assistant_message())
 
         assert scores == []
 

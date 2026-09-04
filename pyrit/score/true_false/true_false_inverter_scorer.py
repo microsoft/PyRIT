@@ -92,9 +92,12 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             expectation (ScoringExpectation | None): What the wrapped scorer should look for.
 
         Returns:
-            list[Score]: A list containing a single Score object with the inverted true/false value.
+            list[Score]: ``[]`` when the wrapped scorer is non-applicable; otherwise, a list
+                containing its completed inverted score or unchanged undetermined score.
         """
         scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
+        if not scores:
+            return []
         return self._invert(scores)
 
     def _invert(self, scores: list[Score]) -> list[Score]:

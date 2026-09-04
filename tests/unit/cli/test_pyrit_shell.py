@@ -617,7 +617,47 @@ class TestDoRun:
             return_value={"scenario_name": "foo", "target": "t"},
         ):
             s.do_run("foo --target t")
-        assert "Error starting scenario: nope" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "The scenario could not be started." in out
+        assert "Error (RuntimeError): nope" in out
+
+    def test_run_start_failure_read_timeout_reports_type_and_hint(self, shell, capsys):
+        """A ReadTimeout stringifies to '', so the type and a hint have to carry the message."""
+        import httpx
+
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        with patch(
+            "pyrit.cli._cli_args.parse_run_arguments",
+            return_value={"scenario_name": "foo", "target": "t"},
+        ):
+            s.do_run("foo --target t")
+        out = capsys.readouterr().out
+        assert "ReadTimeout" in out
+        assert "blocked event loop" in out
+        assert "unknown whether the run started" in out
+        assert "could not be started" not in out
+        assert "scenario-history" in out
+        # The shell has no --request-timeout option, so it must not advise passing one.
+        assert "--request-timeout" not in out
+
+    def test_run_results_failure_read_timeout_omits_unsupported_flag(self, shell, capsys):
+        """The results fetch uses the request timeout, so it needs its own shell-specific hint."""
+        import httpx
+
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(return_value=self._run_payload())
+        client.get_scenario_run_async = AsyncMock(return_value=self._run_payload("COMPLETED"))
+        client.get_scenario_run_results_async = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        with patch(
+            "pyrit.cli._cli_args.parse_run_arguments",
+            return_value={"scenario_name": "foo", "target": "t"},
+        ):
+            s.do_run("foo --target t")
+        out = capsys.readouterr().out
+        assert "ReadTimeout" in out
+        assert "scenario-results" in out
+        assert "--request-timeout" not in out
 
     def test_run_completed_path_with_results(self, shell, capsys):
         s, client = shell
@@ -780,7 +820,29 @@ class TestPrintScenarioAndHelp:
         s, client = shell
         client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("oops"))
         s.do_print_scenario("rid-1")
-        assert "Error: oops" in capsys.readouterr().out
+        assert "Error (RuntimeError): oops" in capsys.readouterr().out
+
+    def test_scenario_history_read_timeout_is_not_blank(self, shell, capsys):
+        """The run hints send users here, so a bare ReadTimeout must not print an empty error."""
+        import httpx
+
+        s, client = shell
+        client.list_scenario_runs_async = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        s.do_scenario_history("")
+        out = capsys.readouterr().out
+        assert "ReadTimeout" in out
+        assert "--request-timeout" not in out
+
+    def test_scenario_results_read_timeout_is_not_blank(self, shell, capsys):
+        """Same for the results command the completed-run hint points at."""
+        import httpx
+
+        s, client = shell
+        client.get_scenario_run_results_async = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        s.do_scenario_results("rid-1")
+        out = capsys.readouterr().out
+        assert "ReadTimeout" in out
+        assert "--request-timeout" not in out
 
     def test_do_help_with_arg_normalizes_hyphen(self, shell):
         s, _ = shell
@@ -1019,13 +1081,13 @@ class TestDoScenarioResults:
         client.get_scenario_run_results_async = AsyncMock(return_value=_attacks_scenario_result())
         client.get_conversation_messages_async = AsyncMock(side_effect=RuntimeError("nope"))
         s.do_scenario_results("rid-1 --view conversations")
-        assert "Error: nope" in capsys.readouterr().out
+        assert "Error (RuntimeError): nope" in capsys.readouterr().out
 
     def test_fetch_error_is_reported(self, shell, capsys):
         s, client = shell
         client.get_scenario_run_results_async = AsyncMock(side_effect=RuntimeError("nope"))
         s.do_scenario_results("rid-1")
-        assert "Error: nope" in capsys.readouterr().out
+        assert "Error (RuntimeError): nope" in capsys.readouterr().out
 
     def test_print_scenario_alias_warns_and_delegates(self, shell, capsys):
         s, client = shell

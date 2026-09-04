@@ -153,7 +153,7 @@ describe("MessageList", () => {
       name: /score 0.9 from selfaskscalescorer, objective score/i,
     });
     expect(scoreButton).toBeInTheDocument();
-    expect(scoreButton).toHaveTextContent("0.9");
+    expect(scoreButton).toHaveTextContent("Score: 0.9");
 
     await user.click(scoreButton);
 
@@ -198,10 +198,10 @@ describe("MessageList", () => {
     const scoreButton = screen.getByRole("button", {
       name: /score undetermined from selfaskscalescorer, piece 1 · text/i,
     });
-    expect(scoreButton).toHaveTextContent("undetermined");
+    expect(scoreButton).toHaveTextContent("Score: undetermined");
 
     await user.hover(scoreButton);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("undetermined");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Score: undetermined");
 
     await user.unhover(scoreButton);
     await user.click(scoreButton);
@@ -306,12 +306,15 @@ describe("MessageList", () => {
     });
     expect(screen.getAllByRole("tab")).toEqual([objectiveTab, auxiliaryTab]);
     expect(objectiveTab).toHaveTextContent("False");
+    expect(objectiveTab).not.toHaveTextContent("Score:");
     expect(objectiveTab).not.toHaveTextContent("OldScorer");
     expect(objectiveTab).not.toHaveTextContent("Objective");
     expect(auxiliaryTab).toHaveTextContent("0.9");
+    expect(auxiliaryTab).not.toHaveTextContent("Score:");
     expect(auxiliaryTab).not.toHaveTextContent("NewScorer");
     expect(objectiveTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", objectiveTab.id);
+    expect(screen.getByText("Score:")).toBeInTheDocument();
     expect(screen.getByText("true_false")).toBeInTheDocument();
     expect(screen.getByText("OldScorer")).toBeInTheDocument();
     expect(screen.getByText("Yes")).toBeInTheDocument();
@@ -334,7 +337,7 @@ describe("MessageList", () => {
         name: /view 2 scores, displayed score false from oldscorer, objective score/i,
       })
     ).toBeInTheDocument();
-    expect(stackedScoreButton).toHaveTextContent("False");
+    expect(stackedScoreButton).toHaveTextContent("Score: False");
   });
 
   it("should preserve a long stacked-score value outside its ellipsized chip", async () => {
@@ -499,7 +502,7 @@ describe("MessageList", () => {
     const stackedScoreButton = screen.getByRole("button", {
       name: /view 2 scores, displayed score 0.9 from newscorer/i,
     });
-    expect(stackedScoreButton).toHaveTextContent("0.9");
+    expect(stackedScoreButton).toHaveTextContent("Score: 0.9");
 
     await user.click(stackedScoreButton);
     await user.click(screen.getByRole("tab", {
@@ -507,7 +510,7 @@ describe("MessageList", () => {
     }));
 
     expect(screen.getByText("OldScorer")).toBeInTheDocument();
-    expect(stackedScoreButton).toHaveTextContent("0.9");
+    expect(stackedScoreButton).toHaveTextContent("Score: 0.9");
   });
 
   it("should not show a stacked control when the message has only one score", () => {
