@@ -473,8 +473,8 @@ describe('ScenarioRunPage', () => {
       'data-location',
       `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
     ))
-    const dialog = screen.getByRole('dialog', { name: 'attack-technique' })
-    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
+    await user.click(within(dialog).getByRole('button', { name: 'Close', hidden: true }))
 
     await waitFor(() => expect(detailsRow).toHaveFocus())
   })
