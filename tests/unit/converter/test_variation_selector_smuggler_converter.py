@@ -43,6 +43,23 @@ def test_variation_selector_invalid_action():
         VariationSelectorSmugglerConverter(action="invalid")
 
 
+@pytest.mark.parametrize("base_char", ["", "ab", "😊x"])
+def test_variation_selector_invalid_base_char(base_char):
+    with pytest.raises(ValueError, match="base_char_utf8 must be exactly one character"):
+        VariationSelectorSmugglerConverter(base_char_utf8=base_char)
+
+
+async def test_variation_selector_custom_base_char_roundtrip():
+    encoder = VariationSelectorSmugglerConverter(action="encode", base_char_utf8="A")
+    encoded = await encoder.convert_async(prompt="test", input_type="text")
+
+    decoder = VariationSelectorSmugglerConverter(action="decode", base_char_utf8="A")
+    decoded = await decoder.convert_async(prompt=encoded.output_text, input_type="text")
+
+    assert encoded.output_text.startswith("A")
+    assert decoded.output_text == "test"
+
+
 async def test_variation_selector_input_not_supported():
     converter = VariationSelectorSmugglerConverter(action="encode")
     with pytest.raises(ValueError, match="Input type not supported"):
