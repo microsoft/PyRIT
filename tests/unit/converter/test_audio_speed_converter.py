@@ -117,14 +117,21 @@ async def test_convert_async_file_not_found():
 
 def test_invalid_speed_factor_zero():
     """speed_factor of 0 should raise ValueError."""
-    with pytest.raises(ValueError, match="speed_factor must be greater than 0"):
+    with pytest.raises(ValueError, match="speed_factor must be finite, greater than 0"):
         AudioSpeedConverter(speed_factor=0)
 
 
 def test_invalid_speed_factor_negative():
     """Negative speed_factor should raise ValueError."""
-    with pytest.raises(ValueError, match="speed_factor must be greater than 0"):
+    with pytest.raises(ValueError, match="speed_factor must be finite, greater than 0"):
         AudioSpeedConverter(speed_factor=-1.0)
+
+
+@pytest.mark.parametrize("speed_factor", [float("nan"), float("inf"), float("-inf")])
+def test_invalid_speed_factor_non_finite(speed_factor):
+    """Non-finite speed factors should fail during converter construction."""
+    with pytest.raises(ValueError, match="speed_factor must be finite"):
+        AudioSpeedConverter(speed_factor=speed_factor)
 
 
 async def test_unsupported_input_type(sqlite_instance):
