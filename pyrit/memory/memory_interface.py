@@ -4371,22 +4371,20 @@ class MemoryInterface(abc.ABC):
             .over(
                 partition_by=unit_partition,
                 order_by=(
-                    case((is_error, 0), else_=1).desc(),
                     units.c.timestamp.desc(),
                     units.c.attempt_id.desc(),
                 ),
             )
             .label("unit_rank"),
         ).subquery("history_ranked_units")
-
         counted = and_(ranked.c.unit_rank == 1, ranked.c.is_planned == 1)
-        latest_outcome_is_error = ranked.c.latest_outcome == AttackOutcome.ERROR.value
+        counted = and_(ranked.c.unit_rank == 1, ranked.c.is_planned == 1)
         return (
             select(
                 ranked.c.scenario_result_id,
                 func.max(ranked.c.timestamp).label("latest_attempt_timestamp"),
                 func.sum(case((counted, 1), else_=0)).label("unit_count"),
-                func.sum(case((and_(counted, not_(latest_outcome_is_error)), 1), else_=0)).label("completed_units"),
+                func.sum(case((counted, 1), else_=0)).label("completed_units"),
                 func.sum(
                     case((and_(counted, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
                 ).label("successful_units"),

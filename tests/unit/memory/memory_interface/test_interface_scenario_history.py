@@ -224,6 +224,61 @@ def test_history_filters_names_statuses_and_labels_without_hydration(
     assert has_more is False
 
 
+def test_history_aggregate_uses_latest_attempt_outcome(sqlite_instance: MemoryInterface) -> None:
+    """History uses the same latest-attempt semantics as scenario run details."""
+    timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    scenario = _make_scenario(
+        result_id=uuid.UUID(int=18),
+        timestamp=timestamp,
+        name="LatestOutcomeScenario",
+        registry_name="registered.scenario",
+        state=ScenarioRunState.COMPLETED,
+        labels={},
+    )
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=19)),
+                conversation_id="conversation-19",
+                objective="objective",
+                outcome=AttackOutcome.SUCCESS,
+                execution_time_ms=1,
+                timestamp=timestamp,
+                attribution_parent_id=str(scenario.id),
+                attribution_data={
+                    "parent_collection": "attack",
+                    "parent_eval_hash": "eval-1",
+                    "seed_group_id": "seed-1",
+                },
+            ),
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=20)),
+                conversation_id="conversation-20",
+                objective="objective",
+                outcome=AttackOutcome.ERROR,
+                execution_time_ms=1,
+                timestamp=timestamp + timedelta(seconds=1),
+                attribution_parent_id=str(scenario.id),
+                attribution_data={
+                    "parent_collection": "attack",
+                    "parent_eval_hash": "eval-1",
+                    "seed_group_id": "seed-1",
+                },
+            ),
+        ]
+    )
+
+    _, aggregates, _ = sqlite_instance.get_scenario_run_history_page(limit=25)
+
+    aggregate = aggregates[str(scenario.id)]
+    assert aggregate.unit_count == 1
+    assert aggregate.completed_units == 1
+    assert aggregate.successful_units == 0
+    assert aggregate.error_attempts == 1
+    assert aggregate.latest_attempt_timestamp == timestamp + timedelta(seconds=1)
+
+
 def test_history_aggregates_ignore_unplanned_units_and_remap_hash_seeds(
     sqlite_instance: MemoryInterface,
 ) -> None:
