@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import ComponentIdentifier, MessageScorable, Score
+from pyrit.models import ComponentIdentifier, MatchesObjective, MessageScorable, Score, ScoringExpectation
 from pyrit.models.score import UnvalidatedScore
 
 
@@ -228,3 +228,125 @@ def test_unvalidated_score_to_score():
     assert score.score_type == "float_scale"
     assert score.score_category == ["hate"]
     assert score.objective == "obj"
+
+
+def _make_unvalidated(**overrides) -> UnvalidatedScore:
+    defaults: dict = {
+        "raw_score_value": "3",
+        "score_value_description": "middle",
+        "score_category": ["hate"],
+        "score_rationale": "because",
+        "score_metadata": {"likert_value": 3},
+        "scorer_class_identifier": ComponentIdentifier(class_name="LikertScorer", class_module="pyrit.score"),
+        "message_piece_id": str(uuid.uuid4()),
+    }
+    defaults.update(overrides)
+    return UnvalidatedScore(**defaults)
+
+
+def test_unvalidated_score_syncs_objective_from_expectation():
+    unvalidated = _make_unvalidated(scored_expectation=ScoringExpectation(objective="synced"))
+
+    assert unvalidated.objective == "synced"
+
+
+def test_unvalidated_score_carries_full_expectation_to_score():
+    expectation = ScoringExpectation(objective="obj-u", conditions=(MatchesObjective(),))
+    unvalidated = _make_unvalidated(scored_expectation=expectation)
+
+    score = unvalidated.to_score(score_value="0.5", score_type="float_scale")
+
+    assert score.scored_expectation == expectation
+    assert score.objective == "obj-u"
+
+
+def test_unvalidated_score_conflicting_objective_rejected():
+    with pytest.raises(ValueError, match="conflicts"):
+        _make_unvalidated(objective="a", scored_expectation=ScoringExpectation(objective="b"))
+
+
+# --------------------------------------------------------------------------- #
+# scored_expectation / derived objective
+# --------------------------------------------------------------------------- #
+def test_objective_input_becomes_objective_only_expectation():
+    score = _make_score(objective="obj-a")
+
+    assert score.objective == "obj-a"
+    assert score.scored_expectation == ScoringExpectation(objective="obj-a")
+
+
+def test_objective_is_derived_from_scored_expectation():
+    expectation = ScoringExpectation(objective="obj-b", conditions=(MatchesObjective(),))
+    score = _make_score(scored_expectation=expectation)
+
+    assert score.objective == "obj-b"
+    assert score.scored_expectation.conditions == (MatchesObjective(),)
+
+
+def test_no_objective_leaves_expectation_none():
+    score = _make_score()
+
+    assert score.scored_expectation is None
+    assert score.objective is None
+
+
+def test_score_objective_is_read_only():
+    score = _make_score(objective="obj-a")
+
+    with pytest.raises(ValidationError):
+        score.objective = "obj-z"
+
+
+def test_score_scored_expectation_is_read_only():
+    score = _make_score(scored_expectation=ScoringExpectation(objective="obj-a"))
+
+    with pytest.raises(ValidationError):
+        score.scored_expectation = ScoringExpectation(objective="obj-z")
+
+    assert score.objective == "obj-a"
+
+
+def test_conflicting_objective_and_expectation_rejected():
+    with pytest.raises(ValidationError, match="conflicts"):
+        _make_score(objective="a", scored_expectation=ScoringExpectation(objective="b"))
+
+
+def test_explicit_null_objective_conflicting_with_expectation_rejected():
+    with pytest.raises(ValidationError, match="conflicts"):
+        _make_score(objective=None, scored_expectation=ScoringExpectation(objective="non-null"))
+
+
+def test_matching_objective_and_expectation_allowed():
+    score = _make_score(objective="same", scored_expectation=ScoringExpectation(objective="same"))
+
+    assert score.objective == "same"
+
+
+def test_scored_expectation_round_trips_through_model_dump():
+    expectation = ScoringExpectation(objective="obj", conditions=(MatchesObjective(),))
+    score = _make_score(scored_expectation=expectation)
+
+    dumped = score.model_dump(mode="json")
+
+    assert dumped["scored_expectation"] == {
+        "schema_version": 1,
+        "objective": "obj",
+        "conditions": [{"condition_type": "matches_objective"}],
+    }
+    restored = Score.model_validate(dumped)
+    assert restored.scored_expectation == expectation
+    assert restored.objective == "obj"
+
+
+def test_score_rejects_unversioned_persisted_expectation():
+    with pytest.raises(ValidationError, match="requires an explicit schema_version"):
+        _make_score(scored_expectation={"objective": "obj", "conditions": []})
+
+
+def test_model_validate_does_not_mutate_input_dict():
+    dumped = _make_score(objective="obj-a").model_dump()
+
+    Score.model_validate(dumped)
+
+    assert dumped["objective"] == "obj-a"
+    assert dumped["scored_expectation"]["objective"] == "obj-a"

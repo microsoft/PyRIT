@@ -2522,3 +2522,112 @@ def test_migrations_do_not_use_unbounded_string_primary_keys() -> None:
     assert not violations, "Found unbounded string primary keys in migrations (SQL Server incompatible):\n" + "\n".join(
         violations
     )
+
+
+# --------------------------------------------------------------------------- #
+# scored_expectation migration (1b3d5f7a9c2e)
+# --------------------------------------------------------------------------- #
+_SCORED_EXPECTATION_REV = "1b3d5f7a9c2e"
+_SCORED_EXPECTATION_PREV_REV = "0f2e4d6c8b1a"
+
+
+def _seed_pre_scored_expectation_score(connection, *, score_id, objective):
+    connection.execute(
+        text(
+            'INSERT INTO "ScoreEntries" '
+            "(id, score_value, status, score_type, score_metadata, scorer_class_identifier, timestamp, objective) "
+            "VALUES (:id, 'true', 'complete', 'true_false', '{}', '{}', '2026-01-01 00:00:00', :objective)"
+        ),
+        {"id": score_id, "objective": objective},
+    )
+
+
+def test_scored_expectation_migration_script_metadata():
+    """The scored_expectation migration declares the expected revision chain."""
+    import importlib
+
+    mig = importlib.import_module("pyrit.memory.alembic.versions.1b3d5f7a9c2e_persist_scored_expectation")
+
+    assert mig.revision == _SCORED_EXPECTATION_REV
+    assert mig.down_revision == _SCORED_EXPECTATION_PREV_REV
+    assert mig.branch_labels is None
+    assert mig.depends_on is None
+
+
+def test_scored_expectation_upgrade_backfills_objective_into_expectation():
+    """Upgrading folds a non-null objective into a versioned expectation and leaves NULLs NULL."""
+    id_with = str(uuid.uuid4())
+    id_without = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scored-exp-up.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _SCORED_EXPECTATION_PREV_REV)
+                _seed_pre_scored_expectation_score(connection, score_id=id_with, objective="legacy objective")
+                _seed_pre_scored_expectation_score(connection, score_id=id_without, objective=None)
+
+                command.upgrade(config, _SCORED_EXPECTATION_REV)
+
+                columns = {column["name"] for column in inspect(connection).get_columns("ScoreEntries")}
+                assert "scored_expectation" in columns
+                assert "objective" not in columns
+
+                rows = dict(connection.execute(text('SELECT id, scored_expectation FROM "ScoreEntries"')).fetchall())
+                assert json.loads(rows[id_with]) == {
+                    "schema_version": 1,
+                    "objective": "legacy objective",
+                    "conditions": [],
+                }
+                assert rows[id_without] is None
+        finally:
+            engine.dispose()
+
+
+def test_scored_expectation_downgrade_recovers_objective_and_drops_conditions():
+    """Downgrading recovers the objective string and drops condition-only expectations."""
+    id_objective = str(uuid.uuid4())
+    id_condition_only = str(uuid.uuid4())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'scored-exp-down.db')}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, _SCORED_EXPECTATION_REV)
+
+                objective_expectation = json.dumps({"schema_version": 1, "objective": "recover me", "conditions": []})
+                condition_only_expectation = json.dumps(
+                    {
+                        "schema_version": 1,
+                        "objective": None,
+                        "conditions": [{"condition_type": "matches_objective"}],
+                    }
+                )
+                insert = (
+                    'INSERT INTO "ScoreEntries" '
+                    "(id, score_value, status, score_type, score_metadata, scorer_class_identifier, timestamp, "
+                    "scored_expectation) "
+                    "VALUES (:id, 'true', 'complete', 'true_false', '{}', '{}', '2026-01-01 00:00:00', :exp)"
+                )
+                connection.execute(
+                    text(insert),
+                    [
+                        {"id": id_objective, "exp": objective_expectation},
+                        {"id": id_condition_only, "exp": condition_only_expectation},
+                    ],
+                )
+
+                command.downgrade(config, _SCORED_EXPECTATION_PREV_REV)
+
+                columns = {column["name"] for column in inspect(connection).get_columns("ScoreEntries")}
+                assert "objective" in columns
+                assert "scored_expectation" not in columns
+
+                objectives = dict(connection.execute(text('SELECT id, objective FROM "ScoreEntries"')).fetchall())
+                assert objectives[id_objective] == "recover me"
+                # A condition-only expectation has no objective the old schema can hold, so it is dropped.
+                assert objectives[id_condition_only] is None
+        finally:
+            engine.dispose()

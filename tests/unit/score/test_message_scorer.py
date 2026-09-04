@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import dataclasses
 import inspect
 import uuid
 from pathlib import Path
+from typing import Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -715,9 +715,8 @@ class TestConditionRouting:
             )
 
     async def test_unconsumed_condition_raises_instead_of_being_dropped(self):
-        @dataclasses.dataclass(frozen=True)
         class UnroutedCondition(Condition):
-            pass
+            condition_type: Literal["test_unrouted"] = "test_unrouted"
 
         scorer = RecordingScorer()
 
