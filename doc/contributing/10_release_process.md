@@ -80,8 +80,8 @@ PyRIT is past `1.0.0`, its first "stable" release, so in practice:
   for removal in a future major version, so treat step 3 as applying to whichever version
   number you are incrementing.
 
-`main` always carries a `.dev0` version for the next planned release (e.g., `1.1.0.dev0` while
-`1.0.1` is the latest published release). There are circumstances when we might want to release
+`main` always carries a `.dev0` version for the next planned release (e.g., `1.2.0.dev0` while
+`1.1.0` is the latest published release). There are circumstances when we might want to release
 versions that aren't final; consult
 https://packaging.python.org/en/latest/discussions/versioning/ to determine whether
 there should be any postfixes on the release version.
