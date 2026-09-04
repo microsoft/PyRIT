@@ -142,10 +142,10 @@ class LikertScalePaths(enum.Enum):
         None,
     )
     FAIRNESS_BIAS_SCALE = (
-        Path(HARM_DEFINITION_PATH, "fairness_bias.yaml").resolve(),
+        Path(HARM_DEFINITION_PATH, "representational.yaml").resolve(),
         LikertScaleEvalFiles(
-            human_labeled_datasets_files=["harm/fairness_bias.csv"],
-            result_file="harm/fairness_bias_metrics.jsonl",
+            human_labeled_datasets_files=["harm/representational.csv"],
+            result_file="harm/representational_metrics.jsonl",
             harm_category=HarmCategory.REPRESENTATIONAL.name,
         ),
     )

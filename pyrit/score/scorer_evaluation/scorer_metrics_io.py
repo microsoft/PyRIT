@@ -34,7 +34,7 @@ _file_write_locks: dict[str, threading.Lock] = {}
 M = TypeVar("M", bound=ScorerMetrics)
 
 _HARM_METRICS_FILES_BY_CATEGORY = {
-    HarmCategory.REPRESENTATIONAL.name: "fairness_bias_metrics.jsonl",
+    HarmCategory.REPRESENTATIONAL.name: "representational_metrics.jsonl",
     HarmCategory.SEXUAL_CONTENT.name: "sexual_metrics.jsonl",
 }
 

@@ -189,9 +189,7 @@ class ScorerEvaluator(abc.ABC):
             )
         combined_harm_definition_version = next(iter(harm_definition_versions)) if harm_definition_versions else None
 
-        # Use harm_definition from CSV headers (e.g., "fairness_bias.yaml").
-        # The CSV header is authoritative since the harm_category name may differ from
-        # the YAML filename (e.g., harm_category="bias" but file is "fairness_bias.yaml").
+        # Use the harm definition declared by the CSV instead of deriving it from the category.
         if len(harm_definitions) > 1:
             raise ValueError(
                 f"All CSVs in a harm evaluation must reference the same harm_definition, "

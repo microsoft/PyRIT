@@ -243,10 +243,10 @@ def test_get_scorer_metrics_uses_configured_result_file(patch_central_database, 
     )
     scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
         human_labeled_datasets_files=["harm/*.csv"],
-        result_file="harm/fairness_bias_metrics.jsonl",
+        result_file="harm/representational_metrics.jsonl",
         harm_category="REPRESENTATIONAL",
     )
-    result_file = tmp_path / "harm" / "fairness_bias_metrics.jsonl"
+    result_file = tmp_path / "harm" / "representational_metrics.jsonl"
     result_file.parent.mkdir()
     result_file.touch()
     mock_identifier = MagicMock(eval_hash="abc123")

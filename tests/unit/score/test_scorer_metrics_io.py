@@ -231,7 +231,7 @@ def test_find_harm_metrics_by_eval_hash_uses_explicit_file_path(tmp_path):
 @pytest.mark.parametrize(
     ("harm_category", "expected_file_name"),
     [
-        ("REPRESENTATIONAL", "fairness_bias_metrics.jsonl"),
+        ("REPRESENTATIONAL", "representational_metrics.jsonl"),
         ("SEXUAL_CONTENT", "sexual_metrics.jsonl"),
     ],
 )
