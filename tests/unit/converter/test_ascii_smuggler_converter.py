@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
+
 import pytest
 
 from pyrit.converter import AsciiSmugglerConverter, ConverterResult
@@ -22,6 +24,27 @@ async def test_ascii_smuggler_decode_roundtrip():
     decoder = AsciiSmugglerConverter(action="decode")
     decoded = await decoder.convert_async(prompt=encoded.output_text, input_type="text")
     assert decoded.output_text == "hello"
+
+
+async def test_ascii_smuggler_decode_reports_hidden_tags(caplog):
+    encoder = AsciiSmugglerConverter(action="encode")
+    encoded = await encoder.convert_async(prompt="hello", input_type="text")
+
+    caplog.set_level(logging.INFO)
+    decoder = AsciiSmugglerConverter(action="decode")
+    await decoder.convert_async(prompt=encoded.output_text, input_type="text")
+
+    assert "Hidden Unicode Tags discovered." in caplog.messages
+    assert "No hidden Unicode Tag characters discovered." not in caplog.messages
+
+
+async def test_ascii_smuggler_decode_reports_no_hidden_tags_for_plain_text(caplog):
+    caplog.set_level(logging.INFO)
+    decoder = AsciiSmugglerConverter(action="decode")
+    await decoder.convert_async(prompt="hello", input_type="text")
+
+    assert "No hidden Unicode Tag characters discovered." in caplog.messages
+    assert "Hidden Unicode Tags discovered." not in caplog.messages
 
 
 async def test_ascii_smuggler_with_unicode_tags():
