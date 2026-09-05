@@ -18,9 +18,10 @@
 # data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
-# target recommends non-existent packages that an attacker could squat), an audio probe (which
-# delivers spoken jailbreaks to multimodal targets), and FigStep visual jailbreaks (which place
-# harmful instructions in images).
+# target recommends non-existent packages that an attacker could squat), latent-injection probes
+# (which bury instructions inside carrier documents like reports, resumes, and WHOIS records), an
+# audio probe (which delivers spoken jailbreaks to multimodal targets), and FigStep visual
+# jailbreaks (which place harmful instructions in images).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -36,6 +37,8 @@ from pyrit.scenario.garak import (
     Encoding,
     EncodingTechnique,
     FigStep,
+    LatentInjection,
+    LatentInjectionTechnique,
     PackageHallucination,
     PackageHallucinationTechnique,
     SystemPromptExtraction,
@@ -177,6 +180,50 @@ web_injection_result = await web_injection_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(web_injection_result)
+
+# %% [markdown]
+# ## LatentInjection
+#
+# Ports Garak's `latentinjection` probe family: instructions buried inside an otherwise innocuous
+# carrier document — translation requests (English to French or Chinese), equity / earnings reports,
+# resumes, fact snippets, or WHOIS records. Carrier documents, task instructions, injection
+# instructions, payload templates, and expected triggers live in five local datasets; the scenario
+# renders their cross-product deterministically (capped per expected trigger) using a
+# technique-specific delimiter around the injected instruction. Each expected trigger gets its own
+# atomic attack scored with `SubStringScorer`, so success means the target emitted the trigger
+# verbatim. The `latent_jailbreak` family instead tries to make the target write harmful content
+# about a demographic group under a disguised translation or paraphrase task, and is scored with a
+# harm scorer since it has no exact-trigger success contract.
+#
+# **CLI example:**
+#
+# ```bash
+# pyrit_scan run garak.latent_injection --target openai_chat --techniques default
+# ```
+#
+# **Available techniques** (14 delimiter styles): Bare, Newline, Blockquote, BlockquoteInline,
+# HorizontalRule, SystemTag, SystemBracket, SystemBracketFlood, SystemPrefix, InstructionTag,
+# EndOfText, AdminRequest, CoreInstruction, LegalAmendment.
+#
+# **Aggregate techniques:** `ALL` (all 14) and `DEFAULT` (a representative subset: Bare, Newline,
+# Blockquote, HorizontalRule, SystemTag, InstructionTag). Carrier family and language are dataset
+# metadata, not techniques; use `carrier_families` (constructor) to narrow the scan.
+
+# %%
+latent_injection_scenario = LatentInjection(carrier_families=["report"], max_prompts_per_trigger=2)
+latent_injection_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [LatentInjectionTechnique.DEFAULT],
+        "include_baseline": False,
+    }
+)
+await latent_injection_scenario.initialize_async()  # type: ignore
+
+latent_injection_result = await latent_injection_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(latent_injection_result)
 
 # %% [markdown]
 # ## Doctor
