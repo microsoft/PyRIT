@@ -552,7 +552,7 @@ The backend can load `.pyrit_conf` directly from Azure Blob Storage. Set `pyritC
 | .pyrit_conf field | Bicep param | Env var | Notes |
 | --- | --- | --- | --- |
 | Complete file | `pyritConfigFileUri` | `PYRIT_CONFIG_FILE` | Optional Azure Blob URI loaded with managed identity |
-| `initializers` | `pyritInitializer` | `PYRIT_INITIALIZER` | Default `target`: `target` populates the TargetRegistry (read by the GUI); |
+| `initializers` | `pyritInitializer` | `PYRIT_INITIALIZER` | Default `target,technique`: populates the target and attack technique registries used by the GUI and scenarios |
 | `operator` | — | Set per-user in the GUI |  |
 | `operation` | — | Set per-user in the GUI |  |
 

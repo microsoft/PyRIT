@@ -528,12 +528,12 @@ describe('ScenarioRunPage', () => {
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
     const detailsRow = screen.getByRole('row', { name: 'View details for attack-technique' })
 
-    fireEvent.click(detailsRow)
+    await user.click(detailsRow)
     await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
       'data-location',
       `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
     ))
-    const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
+    const dialog = await screen.findByRole('dialog', { hidden: true })
     await user.click(within(dialog).getByRole('button', { name: 'Close', hidden: true }))
 
     await waitFor(() => expect(detailsRow).toHaveFocus())

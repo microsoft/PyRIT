@@ -381,13 +381,11 @@ def test_print_scenario_run_progress_with_known_totals(capsys):
         objective_achieved_rate=30,
         techniques_used=["s1", "s2"],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=4)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 2/4 (50%)" in captured.out
+    assert "units: 5/10 (50%)" in captured.out
     assert "IN_PROGRESS" in captured.out
     assert "30%" in captured.out
-    # Attacks are no longer surfaced in the progress line.
-    assert "attacks" not in captured.out
 
 
 def test_print_scenario_run_progress_uses_ascii_for_limited_console():
@@ -402,13 +400,13 @@ def test_print_scenario_run_progress_uses_ascii_for_limited_console():
     stdout.encoding = "cp1252"
 
     with patch.object(_output.sys, "stdout", stdout):
-        _output.print_scenario_run_progress(run=run, total_techniques=2)
+        _output.print_scenario_run_progress(run=run)
 
     line = stdout.write.call_args.args[0]
     assert "[###############---------------]" in line
 
 
-def test_print_scenario_run_progress_no_techniques(capsys):
+def test_print_scenario_run_progress_no_units(capsys):
     run = _make_run(
         status=ScenarioRunState.CREATED,
         total_attacks=0,
@@ -416,23 +414,23 @@ def test_print_scenario_run_progress_no_techniques(capsys):
         objective_achieved_rate=0,
         techniques_used=[],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=0)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 0" in captured.out
+    assert "units: 0" in captured.out
     assert "CREATED" in captured.out
 
 
-def test_print_scenario_run_progress_techniques_done_only(capsys):
+def test_print_scenario_run_progress_completed_units_without_plan(capsys):
     run = _make_run(
         status=ScenarioRunState.IN_PROGRESS,
         total_attacks=0,
-        completed_attacks=0,
+        completed_attacks=1,
         objective_achieved_rate=0,
         techniques_used=["s1"],
     )
-    _output.print_scenario_run_progress(run=run, total_techniques=0)
+    _output.print_scenario_run_progress(run=run)
     captured = capsys.readouterr()
-    assert "techniques: 1" in captured.out
+    assert "units: 1" in captured.out
 
 
 # ---------------------------------------------------------------------------

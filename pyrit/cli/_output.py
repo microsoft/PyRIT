@@ -324,36 +324,26 @@ def print_scenario_retry_warnings(*, run: ScenarioRunSummary, seen_attack_ids: s
             )
 
 
-def print_scenario_run_progress(*, run: ScenarioRunSummary, total_techniques: int = 0) -> None:
+def print_scenario_run_progress(*, run: ScenarioRunSummary) -> None:
     """
     Print a single-line progress update (overwrites the current line).
 
     Args:
         run: ``ScenarioRunSummary`` from ``GET /api/scenarios/runs/{id}``.
-        total_techniques: Total number of techniques expected (0 if unknown).
     """
-    techniques_done = len(run.techniques_used)
-    # Techniques the user passed may be aggregates that expand on the server
-    # (e.g. `single_turn` -> N concrete techniques). Trust whichever count is larger.
-    effective_total = max(total_techniques, techniques_done)
-
     parts: list[str] = []
-
-    # The bar tracks techniques completed / total, which is the only ratio we can
-    # honestly compute mid-run: the server only knows about attacks already persisted,
-    # so an attacks-based bar would always read 100%.
-    if effective_total > 0:
-        pct = int((techniques_done / effective_total) * 100)
+    if run.total_attacks > 0:
+        pct = int((run.completed_attacks / run.total_attacks) * 100)
         bar_width = 30
-        filled = int(bar_width * techniques_done / effective_total)
+        filled = int(bar_width * run.completed_attacks / run.total_attacks)
         bar = "█" * filled + "░" * (bar_width - filled)
         try:
             bar.encode(sys.stdout.encoding or "utf-8")
         except (LookupError, UnicodeEncodeError):
             bar = "#" * filled + "-" * (bar_width - filled)
-        parts.append(f"[{bar}] techniques: {techniques_done}/{effective_total} ({pct}%)")
+        parts.append(f"[{bar}] units: {run.completed_attacks}/{run.total_attacks} ({pct}%)")
     else:
-        parts.append(f"techniques: {techniques_done}")
+        parts.append(f"units: {run.completed_attacks}")
 
     parts.append(f"success rate: {run.objective_achieved_rate}%")
     parts.append(run.status.value)

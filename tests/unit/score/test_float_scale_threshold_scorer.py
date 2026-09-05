@@ -41,6 +41,52 @@ def create_mock_float_scorer(score_value: float):
     return scorer
 
 
+@pytest.mark.parametrize("empty_rationale", ["", "   ", None])
+async def test_float_scale_threshold_scorer_omits_label_when_no_scale_rationale(empty_rationale):
+    """A wrapped scorer with no rationale must not leave a dangling heading."""
+    memory = MagicMock(MemoryInterface)
+
+    mock_identifier = ComponentIdentifier(class_name="MockScorer", class_module="test.mock")
+    scorer = MagicMock(spec=MessageFloatScaleScorer)
+    scorer._score_nested_async = AsyncMock(
+        return_value=[
+            Score(
+                score_value="0.9",
+                score_type="float_scale",
+                score_category=["mock category"],
+                score_rationale=empty_rationale,
+                score_metadata=None,
+                message_piece_id=uuid.uuid4(),
+                score_value_description="A mock description",
+                scorer_class_identifier=mock_identifier,
+                id=uuid.uuid4(),
+            )
+        ]
+    )
+    scorer.get_identifier = MagicMock(return_value=mock_identifier)
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+
+        binary_score = (await threshold_scorer.score_text_async(text="mock example"))[0]
+
+        assert "Rationale for scale score" not in binary_score.score_rationale
+        assert not binary_score.score_rationale.endswith("\n")
+        assert "Normalized scale score: 0.9" in binary_score.score_rationale
+
+
+async def test_float_scale_threshold_scorer_keeps_scale_rationale_when_present():
+    memory = MagicMock(MemoryInterface)
+
+    scorer = create_mock_float_scorer(0.9)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.5)
+
+        binary_score = (await threshold_scorer.score_text_async(text="mock example"))[0]
+
+        assert "Rationale for scale score: A mock rationale" in binary_score.score_rationale
+
+
 @pytest.mark.parametrize("threshold", [0.3, 0.5, 0.7])
 @pytest.mark.parametrize("score_value", [0.1, 0.3, 0.5, 0.7, 0.9])
 async def test_float_scale_threshold_scorer_adds_to_memory(threshold, score_value):
