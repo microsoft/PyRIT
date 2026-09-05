@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, computed_field, field_serializer, model_v
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     AttackResult,
     ChatMessageRole,
@@ -358,12 +359,54 @@ class PrependedMessageRequest(BaseModel):
     pieces: list[MessagePieceRequest] = Field(..., description="Message pieces (supports multimodal)", max_length=50)
 
 
+class _AttackAttributionInput(BaseModel):
+    """Shared first-class attribution input with temporary legacy label aliases."""
+
+    operator: str | None = Field(None, max_length=128, description="Operator responsible for the attack")
+    operation: str | None = Field(None, max_length=128, description="Operation associated with the attack")
+    labels: dict[str, str] | None = Field(None, description="Arbitrary user-defined labels for filtering")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_attribution_labels(cls, data: Any) -> Any:
+        """
+        Normalize deprecated label aliases without mutating the caller's dictionaries.
+
+        Returns:
+            The normalized model input.
+
+        Raises:
+            ValueError: If an alias is not a string or conflicts with a dedicated field.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("labels"), dict):
+            return data
+        normalized = dict(data)
+        labels = dict(normalized["labels"])
+        for field_name in ("operator", "operation"):
+            if field_name not in labels:
+                continue
+            legacy_value = labels.pop(field_name)
+            if not isinstance(legacy_value, str):
+                raise ValueError(f"labels.{field_name} must be a string")
+            dedicated_value = normalized.get(field_name)
+            if dedicated_value is not None and dedicated_value != legacy_value:
+                raise ValueError(f"{field_name} conflicts with legacy labels.{field_name}")
+            print_deprecation_message(
+                old_item=f"labels.{field_name}",
+                new_item=field_name,
+                removed_in="1.4.0",
+            )
+            normalized[field_name] = legacy_value
+        normalized["labels"] = labels
+        return normalized
+
+
 # ============================================================================
 # Create Attack
 # ============================================================================
 
 
-class CreateAttackRequest(BaseModel):
+class CreateAttackRequest(_AttackAttributionInput):
     """
     Request to create a new attack.
 
@@ -388,7 +431,6 @@ class CreateAttackRequest(BaseModel):
     prepended_conversation: list[PrependedMessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
-    labels: dict[str, str] | None = Field(None, description="User-defined labels for filtering")
 
 
 class CreateAttackResponse(BaseModel):
@@ -530,11 +572,6 @@ class AddMessageRequest(BaseModel):
         ...,
         description="The conversation_id to store and send messages under. "
         "Usually the attack's main conversation, but can be a related conversation.",
-    )
-    labels: dict[str, str] | None = Field(
-        None,
-        description="Request labels used for attack-level consistency checks. "
-        "When present, the operator must match the attack result's operator.",
     )
 
     @model_validator(mode="after")

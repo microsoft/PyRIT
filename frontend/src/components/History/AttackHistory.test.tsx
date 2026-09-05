@@ -687,9 +687,9 @@ describe('AttackHistory', () => {
     })
     mockedLabelsApi.getLabels.mockResolvedValue({
       source: 'attacks',
+      operators: ['alice', 'bob'],
+      operations: ['op_one'],
       labels: {
-        operator: ['alice', 'bob'],
-        operation: ['op_one'],
         custom_tag: ['val1', 'val2'],
       },
     })

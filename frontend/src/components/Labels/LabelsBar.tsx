@@ -22,6 +22,7 @@ import { useLabelsBarStyles } from './LabelsBar.styles'
 
 const validateValue = (value: string): string | null => {
   if (!value) return 'Value is required'
+  if (value.length > 128) return 'Values must be 128 characters or fewer'
   if (value !== value.toLowerCase()) return 'Values must be lowercase'
   if (!/^[a-z0-9_]+$/.test(value)) return 'Only lowercase letters, numbers, underscores'
   return null
@@ -218,7 +219,8 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       // so keep anything already collected rather than replacing outright.
       .then(resp => setExistingLabels(prev => ({
         ...resp.labels,
-        operation: [...new Set([...(resp.labels.operation || []), ...(prev.operation || [])])],
+        operator: [...new Set([...(resp.operators ?? resp.labels.operator ?? []), ...(prev.operator || [])])],
+        operation: [...new Set([...(resp.operations ?? resp.labels.operation ?? []), ...(prev.operation || [])])],
       })))
       .catch(() => setLabelsFailed(true))
       .finally(() => setLabelsLoading(false))

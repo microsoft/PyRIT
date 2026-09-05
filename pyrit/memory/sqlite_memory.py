@@ -433,27 +433,46 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         sql = text(
             f"""
+            WITH filtered AS (
+                SELECT
+                    conversation_id,
+                    sequence,
+                    id,
+                    timestamp,
+                    converted_value,
+                    converted_value_data_type
+                FROM "PromptMemoryEntries"
+                WHERE conversation_id IN ({placeholders})
+            ),
+            aggregate_rows AS (
+                SELECT
+                    conversation_id,
+                    COUNT(DISTINCT sequence) AS msg_count,
+                    MIN(timestamp) AS created_at
+                FROM filtered
+                GROUP BY conversation_id
+            ),
+            latest_rows AS (
+                SELECT
+                    conversation_id,
+                    SUBSTR(converted_value, 1, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
+                    converted_value_data_type AS last_data_type,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY conversation_id
+                        ORDER BY sequence DESC, id DESC
+                    ) AS row_number
+                FROM filtered
+            )
             SELECT
-                pme.conversation_id,
-                COUNT(DISTINCT pme.sequence) AS msg_count,
-                (
-                    SELECT SUBSTR(p2.converted_value, 1, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
-                    FROM "PromptMemoryEntries" p2
-                    WHERE p2.conversation_id = pme.conversation_id
-                    ORDER BY p2.sequence DESC, p2.id DESC
-                    LIMIT 1
-                ) AS last_preview,
-                (
-                    SELECT p2b.converted_value_data_type
-                    FROM "PromptMemoryEntries" p2b
-                    WHERE p2b.conversation_id = pme.conversation_id
-                    ORDER BY p2b.sequence DESC, p2b.id DESC
-                    LIMIT 1
-                ) AS last_data_type,
-                MIN(pme.timestamp) AS created_at
-            FROM "PromptMemoryEntries" pme
-            WHERE pme.conversation_id IN ({placeholders})
-            GROUP BY pme.conversation_id
+                aggregate_rows.conversation_id,
+                aggregate_rows.msg_count,
+                latest_rows.last_preview,
+                latest_rows.last_data_type,
+                aggregate_rows.created_at
+            FROM aggregate_rows
+            LEFT JOIN latest_rows
+                ON latest_rows.conversation_id = aggregate_rows.conversation_id
+                AND latest_rows.row_number = 1
             """
         )
 

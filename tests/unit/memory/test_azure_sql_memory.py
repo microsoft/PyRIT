@@ -439,6 +439,23 @@ def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: A
     assert not any("label_" in k for k in params)
 
 
+def test_get_conversation_stats_uses_one_latest_row_apply(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The SQL Server query fetches preview and data type through one latest-row lookup."""
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+
+    with patch.object(uninitialized_memory_interface, "get_session", return_value=session):
+        result = uninitialized_memory_interface.get_conversation_stats(conversation_ids=["conversation"])
+
+    sql = str(session.execute.call_args.args[0])
+    assert result == {}
+    assert sql.upper().count("SELECT TOP 1") == 1
+    assert "OUTER APPLY" in sql.upper()
+    assert "p2.converted_value_data_type AS last_data_type" in sql
+
+
 def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
     memory_interface: AzureSQLMemory,
 ) -> None:

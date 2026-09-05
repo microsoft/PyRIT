@@ -106,6 +106,8 @@ class AttackService:
         include_scenario_attacks: bool = True,
         outcome: Literal["undetermined", "success", "failure", "error"] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
+        operator: Sequence[str] | None = None,
+        operation: Sequence[str] | None = None,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int = 20,
@@ -134,6 +136,8 @@ class AttackService:
             include_scenario_attacks: Whether to include attacks created as part of scenario
                 runs. Defaults to ``True`` for API compatibility.
             outcome: Filter by attack outcome.
+            operator: Filter by dedicated operator values.
+            operation: Filter by dedicated operation values.
             labels: Filter by labels. See ``MemoryInterface.get_attack_results`` for
                 semantics (AND across label names; string equality or sequence OR within
                 each name).
@@ -162,19 +166,22 @@ class AttackService:
         # past the anchor, and limits in SQL, so only one page's worth of rows is materialized
         # instead of the full table.
         normalized_labels = normalize_label_filters(labels=labels)
-        filter_fingerprint = fingerprint_filters(
-            filters={
-                "attack_types": effective_attack_types,
-                "converter_types": effective_converter_types,
-                "converter_types_match": converter_types_match,
-                "has_converters": has_converters,
-                "include_scenario_attacks": include_scenario_attacks,
-                "outcome": outcome,
-                "labels": normalized_labels,
-                "min_turns": min_turns,
-                "max_turns": max_turns,
-            }
-        )
+        fingerprint_values: dict[str, Any] = {
+            "attack_types": effective_attack_types,
+            "converter_types": effective_converter_types,
+            "converter_types_match": converter_types_match,
+            "has_converters": has_converters,
+            "include_scenario_attacks": include_scenario_attacks,
+            "outcome": outcome,
+            "labels": normalized_labels,
+            "min_turns": min_turns,
+            "max_turns": max_turns,
+        }
+        if operator is not None:
+            fingerprint_values["operator"] = operator
+        if operation is not None:
+            fingerprint_values["operation"] = operation
+        filter_fingerprint = fingerprint_filters(filters=fingerprint_values)
         decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=filter_fingerprint)
         after = (
             AttackResultKeysetCursor(
@@ -186,6 +193,8 @@ class AttackService:
         )
         results = self._memory.get_attack_results(
             outcome=outcome,
+            operator=operator,
+            operation=operation,
             labels=normalized_labels,
             attack_classes=effective_attack_types,
             converter_classes=effective_converter_types,
@@ -392,6 +401,8 @@ class AttackService:
                 "created_at": now.isoformat(),
                 "target_registry_name": request.target_registry_name,
             },
+            operator=request.operator,
+            operation=request.operation,
             labels=labels,
         )
 
@@ -649,7 +660,6 @@ class AttackService:
         main_conversation_id = ar.conversation_id
 
         self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), request=request)
-        self._validate_operator_match(attack_result=ar, request=request)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -761,28 +771,6 @@ class AttackService:
                 f"Target mismatch: attack was created with {stored_target_id.unique_name} "
                 f"but request uses {request_target_id.unique_name}. "
                 f"Create a new attack to use a different target."
-            )
-
-    def _validate_operator_match(self, *, attack_result: AttackResult, request: AddMessageRequest) -> None:
-        """
-        Validate that the request operator matches the attack result's operator.
-
-        Raises:
-            ValueError: If the operator in the request doesn't match the attack result.
-        """
-        if not request.labels:
-            return
-
-        attack_operator = attack_result.labels.get("operator")
-        if not attack_operator:
-            return
-
-        request_operator = request.labels.get("operator")
-        if request_operator and request_operator != attack_operator:
-            raise ValueError(
-                f"Operator mismatch: attack belongs to operator '{attack_operator}' "
-                f"but request is from '{request_operator}'. "
-                f"Create a new attack to continue."
             )
 
     async def _update_attack_after_message_async(

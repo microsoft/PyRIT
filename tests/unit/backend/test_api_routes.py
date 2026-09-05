@@ -115,6 +115,8 @@ class TestAttackRoutes:
                 has_converters=None,
                 include_scenario_attacks=True,
                 outcome="success",
+                operator=None,
+                operation=None,
                 labels=None,
                 min_turns=None,
                 max_turns=None,
@@ -579,6 +581,53 @@ class TestAttackRoutes:
             call_kwargs = mock_service.list_attacks_async.call_args[1]
             assert call_kwargs["labels"] == {"env": ["prod"], "team": ["red"]}
 
+    def test_list_attacks_with_dedicated_attribution_filters(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks?operator=alice&operation=nightly")
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args.kwargs
+            assert call_kwargs["operator"] == ["alice"]
+            assert call_kwargs["operation"] == ["nightly"]
+
+    def test_list_attacks_legacy_attribution_label_warns_and_normalizes(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+                response = client.get("/api/attacks?label=operator:alice")
+
+            assert response.status_code == status.HTTP_200_OK
+            call_kwargs = mock_service.list_attacks_async.call_args.kwargs
+            assert call_kwargs["operator"] == ["alice"]
+            assert call_kwargs["labels"] is None
+
+    def test_list_attacks_rejects_conflicting_attribution_filters(self, client: TestClient) -> None:
+        response = client.get("/api/attacks?operator=alice&label=operator:bob")
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    def test_list_attacks_rejects_overlength_operator(self, client: TestClient) -> None:
+        response = client.get("/api/attacks", params={"operator": "x" * 129})
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
     def test_get_attack_options(self, client: TestClient) -> None:
         """Test getting attack type options from attack results."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
@@ -660,8 +709,8 @@ class TestAttackRoutes:
             call_kwargs = mock_service.list_attacks_async.call_args[1]
             assert call_kwargs["labels"] == {"url": ["http://example.com:8080"]}
 
-    def test_parse_labels_passes_keys_through_without_normalization(self, client: TestClient) -> None:
-        """Test that label keys are passed through as-is (DB stores canonical keys after migration)."""
+    def test_parse_labels_normalizes_legacy_attribution_aliases(self, client: TestClient) -> None:
+        """Legacy attribution label filters are routed to dedicated columns."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.list_attacks_async = AsyncMock(
@@ -676,7 +725,9 @@ class TestAttackRoutes:
 
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args[1]
-            assert call_kwargs["labels"] == {"operator": ["alice"], "operation": ["redteam"]}
+            assert call_kwargs["operator"] == ["alice"]
+            assert call_kwargs["operation"] == ["redteam"]
+            assert call_kwargs["labels"] is None
 
     def test_list_attacks_forwards_converter_types_param(self, client: TestClient) -> None:
         """Test that converter_types query params are forwarded to service."""
@@ -730,7 +781,8 @@ class TestAttackRoutes:
 
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args[1]
-            assert call_kwargs["labels"] == {"operator": ["alice", "bob"]}
+            assert call_kwargs["operator"] == ["alice", "bob"]
+            assert call_kwargs["labels"] is None
 
     def test_list_attacks_forwards_converter_types_match(self, client: TestClient) -> None:
         """converter_types_match query param is forwarded verbatim to service."""
@@ -1388,6 +1440,7 @@ class TestLabelsRoutes:
         with patch("pyrit.backend.routes.labels.CentralMemory") as mock_memory_class:
             mock_memory = MagicMock()
             mock_memory.get_unique_attack_labels.return_value = {"env": ["prod"], "team": ["red"]}
+            mock_memory.get_unique_attack_attribution.return_value = {"operators": [], "operations": []}
             mock_memory_class.get_memory_instance.return_value = mock_memory
 
             response = client.get("/api/labels?source=attacks")
@@ -1396,6 +1449,8 @@ class TestLabelsRoutes:
             data = response.json()
             assert data["source"] == "attacks"
             assert data["labels"] == {"env": ["prod"], "team": ["red"]}
+            assert data["operators"] == []
+            assert data["operations"] == []
             mock_memory.get_unique_attack_labels.assert_called_once()
 
     def test_get_labels_empty(self, client: TestClient) -> None:
@@ -1403,6 +1458,7 @@ class TestLabelsRoutes:
         with patch("pyrit.backend.routes.labels.CentralMemory") as mock_memory_class:
             mock_memory = MagicMock()
             mock_memory.get_unique_attack_labels.return_value = {}
+            mock_memory.get_unique_attack_attribution.return_value = {"operators": [], "operations": []}
             mock_memory_class.get_memory_instance.return_value = mock_memory
 
             response = client.get("/api/labels?source=attacks")
@@ -1420,6 +1476,7 @@ class TestLabelsRoutes:
                 "env": ["prod", "staging"],
                 "team": ["blue"],
             }
+            mock_memory.get_unique_attack_attribution.return_value = {"operators": [], "operations": []}
             mock_memory_class.get_memory_instance.return_value = mock_memory
 
             response = client.get("/api/labels")
@@ -1430,12 +1487,13 @@ class TestLabelsRoutes:
             assert data["labels"]["team"] == ["blue"]
 
     def test_get_labels_returns_keys_without_normalization(self, client: TestClient) -> None:
-        """Test that label keys are returned as-is from the DB (canonical after migration)."""
+        """Attack attribution options are separate from arbitrary labels."""
         with patch("pyrit.backend.routes.labels.CentralMemory") as mock_memory_class:
             mock_memory = MagicMock()
-            mock_memory.get_unique_attack_labels.return_value = {
-                "operator": ["alice", "bob"],
-                "operation": ["hunt", "scan"],
+            mock_memory.get_unique_attack_labels.return_value = {"team": ["red"]}
+            mock_memory.get_unique_attack_attribution.return_value = {
+                "operators": ["alice", "bob"],
+                "operations": ["hunt", "scan"],
             }
             mock_memory_class.get_memory_instance.return_value = mock_memory
 
@@ -1443,8 +1501,9 @@ class TestLabelsRoutes:
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert set(data["labels"]["operator"]) == {"alice", "bob"}
-            assert set(data["labels"]["operation"]) == {"hunt", "scan"}
+            assert data["labels"] == {"team": ["red"]}
+            assert set(data["operators"]) == {"alice", "bob"}
+            assert set(data["operations"]) == {"hunt", "scan"}
 
     async def test_get_label_options_rejects_unsupported_source(self, client: TestClient) -> None:
         """Test that unsupported label source types are rejected."""

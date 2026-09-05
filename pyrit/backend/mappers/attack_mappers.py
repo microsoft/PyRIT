@@ -226,6 +226,8 @@ async def attack_result_to_summary_async(
     """
     labels = dict(ar.labels) if ar.labels else {}
     labels.update(stats.labels or {})
+    labels.pop("operator", None)
+    labels.pop("operation", None)
     created_at, updated_at = _resolve_summary_timestamps(ar)
 
     data = {name: getattr(ar, name) for name in AttackResult.model_fields}

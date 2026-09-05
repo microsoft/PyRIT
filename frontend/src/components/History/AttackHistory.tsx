@@ -31,15 +31,14 @@ const PAGE_SIZE = 25
 type ListParams = Parameters<typeof attacksApi.listAttacks>[0]
 
 function buildListParams(filters: HistoryFilters, pageCursor: string | undefined): ListParams {
-  const labelParams: string[] = []
-  for (const op of filters.operator) { labelParams.push(`operator:${op}`) }
-  for (const op of filters.operation) { labelParams.push(`operation:${op}`) }
-  labelParams.push(...filters.otherLabels)
+  const labelParams = [...filters.otherLabels]
 
   const params: ListParams = { limit: PAGE_SIZE }
   if (pageCursor) params.cursor = pageCursor
   if (filters.attackTypes.length > 0) params.attack_types = filters.attackTypes
   if (filters.outcome) params.outcome = filters.outcome
+  if (filters.operator.length > 0) params.operator = filters.operator
+  if (filters.operation.length > 0) params.operation = filters.operation
   if (filters.converter.length > 0) params.converter_types = filters.converter
   // Match mode is only meaningful with >=2 converters selected.
   if (filters.converter.length >= 2) params.converter_types_match = filters.converterMatchMode
@@ -110,22 +109,16 @@ export default function AttackHistory({
       .catch(() => { /* ignore */ })
     labelsApi.getLabels()
       .then(resp => {
-        const operators: string[] = []
-        const operations: string[] = []
         const others: string[] = []
         for (const [key, values] of Object.entries(resp.labels)) {
-          if (key === 'operator') {
-            operators.push(...values)
-          } else if (key === 'operation') {
-            operations.push(...values)
-          } else if (key !== 'source') {
+          if (key !== 'source') {
             for (const val of values) {
               others.push(`${key}:${val}`)
             }
           }
         }
-        setOperatorOptions(operators.sort())
-        setOperationOptions(operations.sort())
+        setOperatorOptions([...(resp.operators ?? resp.labels.operator ?? [])].sort())
+        setOperationOptions([...(resp.operations ?? resp.labels.operation ?? [])].sort())
         setOtherLabelOptions(others.sort())
       })
       .catch(() => { /* ignore */ })

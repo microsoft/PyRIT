@@ -223,6 +223,24 @@ class TestAttackResultErrorRoundTrip:
         assert hydrated.retry_events == []
         assert hydrated.total_retries == 0
 
+    def test_attribution_fields_roundtrip_without_labels(self) -> None:
+        original = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            operator="alice",
+            operation="nightly",
+            labels={"team": "red"},
+        )
+
+        entry = AttackResultEntry(entry=original)
+        hydrated = entry.get_attack_result()
+
+        assert entry.operator == "alice"
+        assert entry.operation == "nightly"
+        assert hydrated.operator == "alice"
+        assert hydrated.operation == "nightly"
+        assert hydrated.labels == {"team": "red"}
+
     def test_traceback_truncation(self) -> None:
         """Very long tracebacks are truncated to 10KB."""
         long_traceback = "x" * 20000
@@ -334,6 +352,50 @@ class TestAttackResultValidation:
         """An ISO string carrying an offset is parsed without altering the instant."""
         result = AttackResult(conversation_id="c1", objective="test", timestamp="2026-01-01T12:00:00+00:00")
         assert result.timestamp == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_legacy_attribution_labels_are_normalized_without_mutation(self) -> None:
+        labels = {"operator": "alice", "operation": "nightly", "team": "red"}
+
+        with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+            result = AttackResult(conversation_id="c1", objective="test", labels=labels)
+
+        assert result.operator == "alice"
+        assert result.operation == "nightly"
+        assert result.labels == {"team": "red"}
+        assert labels == {"operator": "alice", "operation": "nightly", "team": "red"}
+        assert result.model_dump(mode="json")["labels"] == {"team": "red"}
+
+    def test_conflicting_legacy_attribution_label_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="operator conflicts"):
+            AttackResult(
+                conversation_id="c1",
+                objective="test",
+                operator="alice",
+                labels={"operator": "bob"},
+            )
+
+    @pytest.mark.parametrize("field_name", ["operator", "operation"])
+    def test_attribution_value_longer_than_128_is_rejected(self, field_name: str) -> None:
+        with pytest.raises(ValueError, match="at most 128"):
+            AttackResult(conversation_id="c1", objective="test", **{field_name: "x" * 129})
+
+    def test_dedicated_attribution_is_canonical(self) -> None:
+        result = AttackResult(
+            conversation_id="c1",
+            objective="test",
+            operator="alice",
+            operation="nightly",
+            labels={"team": "red"},
+        )
+
+        dumped = result.model_dump(mode="json")
+
+        assert dumped["operator"] == "alice"
+        assert dumped["operation"] == "nightly"
+        assert dumped["labels"] == {"team": "red"}
+
+        result.labels["operator"] = "legacy-mutation"
+        assert result.model_dump(mode="json")["labels"] == {"team": "red"}
 
 
 class TestAttackResultDuplicate:

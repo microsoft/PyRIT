@@ -23,11 +23,14 @@ class LabelOptionsResponse(BaseModel):
 
     source: str = Field(..., description="Source type (e.g., 'attacks')")
     labels: dict[str, list[str]] = Field(..., description="Map of label keys to their unique values")
+    operators: list[str] | None = Field(None, description="Unique attack operators")
+    operations: list[str] | None = Field(None, description="Unique attack operations")
 
 
 @router.get(
     "",
     response_model=LabelOptionsResponse,
+    response_model_exclude_none=True,
 )
 async def get_label_options(  # pyrit-async-suffix-exempt
     source: Literal["attacks", "scenarios"] = Query(
@@ -49,7 +52,10 @@ async def get_label_options(  # pyrit-async-suffix-exempt
     """
     memory = CentralMemory.get_memory_instance()
 
-    label_loader = memory.get_unique_attack_labels if source == "attacks" else memory.get_unique_scenario_labels
-    labels = await run_in_threadpool(label_loader)
+    if source == "attacks":
+        labels = await run_in_threadpool(memory.get_unique_attack_labels)
+        attribution = await run_in_threadpool(memory.get_unique_attack_attribution)
+        return LabelOptionsResponse(source=source, labels=labels, **attribution)
 
+    labels = await run_in_threadpool(memory.get_unique_scenario_labels)
     return LabelOptionsResponse(source=source, labels=labels)
