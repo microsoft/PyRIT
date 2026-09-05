@@ -3,7 +3,6 @@
 
 """Tests for typed optimization-iteration state in the GCG attack loop."""
 
-import random
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -114,9 +113,10 @@ class TestMultiPromptRunStateTracking:
 
     def test_rejected_candidate_keeps_active_suffix_and_loss(self) -> None:
         attack = _bare_multi_prompt_attack([("better", 1.0), ("worse", 5.0)])
-        random.seed(2026)
 
-        control, loss, steps = attack.run(n_steps=2, prev_loss=2.0, stop_on_success=False, anneal=True)
+        control, loss, steps = attack.run(
+            n_steps=2, prev_loss=2.0, stop_on_success=False, anneal=True, random_seed=2026
+        )
 
         # The worse candidate must be rejected by annealing with overwhelming
         # probability under this seed; the active suffix stays "better" and the
@@ -171,9 +171,8 @@ class TestMultiPromptRunStateTracking:
     def test_seeded_runs_produce_identical_trajectories(self) -> None:
         results = []
         for _ in range(2):
-            random.seed(1234)
             attack = _bare_multi_prompt_attack([("a", 3.0), ("b", 2.0), ("c", 1.5)])
-            results.append(attack.run(n_steps=3, prev_loss=4.0, stop_on_success=False, anneal=True))
+            results.append(attack.run(n_steps=3, prev_loss=4.0, stop_on_success=False, anneal=True, random_seed=1234))
 
         assert results[0] == results[1]
         assert results[0] == ("c", 1.5, 3)
@@ -270,6 +269,7 @@ class TestProgressiveRunScheduleState:
             test_steps=50,
             filter_cand=True,
             verbose=True,
+            random_seed=42,
         )
 
     def test_schedule_loss_carried_on_schedule_object(self) -> None:

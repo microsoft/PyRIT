@@ -1016,6 +1016,7 @@ class MultiPromptAttack:
         log_first: bool = False,
         filter_cand: bool = True,
         verbose: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, float, int]:
         """
         Run iterative optimization.
@@ -1023,10 +1024,14 @@ class MultiPromptAttack:
         Returns:
             tuple[str, float, int]: The final control, loss, and step count.
         """
+        py_rng = random.Random(random_seed)
+        models = getattr(self, "models", None)
+        device = models[0].device if models else "cpu"
+        self._torch_gen = torch.Generator(device=device).manual_seed(random_seed)
 
         def acceptance_probability(e: float, e_prime: float, k: int) -> bool:
             temperature = max(1 - float(k + 1) / (n_steps + anneal_from), 1.0e-7)
-            return e_prime < e or math.exp(-(e_prime - e) / temperature) >= random.random()
+            return e_prime < e or math.exp(-(e_prime - e) / temperature) >= py_rng.random()
 
         if target_weight is None:
 
@@ -1400,6 +1405,7 @@ class ProgressiveMultiPromptAttack:
         stop_on_success: bool = True,
         verbose: bool = True,
         filter_cand: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, int]:
         """
         Execute the progressive multi-prompt attack.
@@ -1431,6 +1437,8 @@ class ProgressiveMultiPromptAttack:
                 Whether to print verbose output (default is True)
             filter_cand (bool, optional):
                 Whether to filter candidates whose lengths changed after re-tokenization (default is True)
+            random_seed (int, optional):
+                Seed for deterministic random number generation (default is 42)
 
         Returns:
             tuple[str, int]: The final control suffix and completed step count.
@@ -1499,6 +1507,7 @@ class ProgressiveMultiPromptAttack:
                 test_steps=test_steps,
                 filter_cand=filter_cand,
                 verbose=verbose,
+                random_seed=random_seed,
             )
             control, inner_loss, inner_steps = inner_result
             schedule.loss = inner_loss
@@ -1656,6 +1665,7 @@ class IndividualPromptAttack:
         stop_on_success: bool = True,
         verbose: bool = True,
         filter_cand: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, int]:
         """
         Execute the individual-prompt attack.
@@ -1687,6 +1697,8 @@ class IndividualPromptAttack:
                 Whether to print verbose output (default is True)
             filter_cand (bool, optional):
                 Whether to filter candidates (default is True)
+            random_seed (int, optional):
+                Seed for deterministic random number generation (default is 42)
 
         Returns:
             tuple[str, int]: The final control suffix and configured step count.
@@ -1741,6 +1753,7 @@ class IndividualPromptAttack:
                 log_first=True,
                 filter_cand=filter_cand,
                 verbose=verbose,
+                random_seed=random_seed,
             )
 
         return self.control, n_steps
