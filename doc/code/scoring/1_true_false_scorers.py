@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -232,7 +232,7 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #
 # ## External classifier integrations
 #
-# Four true/false scorers wrap hosted services rather than reasoning with a generative LLM:
+# Five true/false scorers wrap hosted services rather than reasoning with a generative LLM:
 #
 # - **`PromptShieldScorer`** — wraps `PromptShieldTarget` (Azure Prompt Shield jailbreak
 #   classifier); returns True if an attack is detected in the prompt or any document.
@@ -246,8 +246,13 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #   `TrueFalseCompositeScorer` to cover a whole policy. Prompt classification judges a user turn,
 #   while the default response classification judges a model turn on its own so prompt content
 #   cannot bias the verdict.
+# - **`WildGuardScorer`** — sends a prompt and response pair to a `PromptTarget` serving
+#   WildGuard, which judges in one call whether the request is harmful, whether the response is
+#   a refusal, and whether the response is harmful. `WildGuardLabel` selects which judgement
+#   becomes the boolean; the other two are kept in the score metadata, so reading them costs no
+#   extra request. The prompt is read from the latest earlier user turn of the scored conversation.
 #
-# All four need their respective endpoints/credentials even though they are not "self-ask".
+# All five need their respective endpoints/credentials even though they are not "self-ask".
 # %% [markdown]
 # ## Multimodal scorers
 #

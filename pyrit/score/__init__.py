@@ -130,6 +130,8 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
     from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
     from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
+    from pyrit.score.true_false.wildguard_parser import WildGuardLabel, parse_wildguard_response
+    from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",
@@ -189,6 +191,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PackageHallucinationScorer": "pyrit.score.true_false.regex.package_hallucination_scorer",
     "parse_llamaguard_response": "pyrit.score.true_false.llamaguard_parser",
     "parse_shieldgemma_response": "pyrit.score.true_false.shieldgemma_parser",
+    "parse_wildguard_response": "pyrit.score.true_false.wildguard_parser",
     "PathTraversalOutputScorer": "pyrit.score.true_false.regex.path_traversal_output_scorer",
     "PlagiarismMetric": "pyrit.score.float_scale.plagiarism_scorer",
     "PlagiarismScorer": "pyrit.score.float_scale.plagiarism_scorer",
@@ -203,6 +206,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "render_scale_system_prompt": "pyrit.score.float_scale.self_ask_scale_scorer",
     "render_shieldgemma_prompt": "pyrit.score.true_false.shieldgemma_scorer",
     "render_true_false_system_prompt": "pyrit.score.true_false.self_ask_true_false_scorer",
+    "render_wildguard_prompt": "pyrit.score.true_false.wildguard_scorer",
     "ResponseHandler": "pyrit.score.response_handler",
     "RobloxPiiCategory": "pyrit.score.float_scale.roblox_pii_scorer",
     "RobloxPiiScorer": "pyrit.score.float_scale.roblox_pii_scorer",
@@ -248,6 +252,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "VideoFloatScaleScorer": "pyrit.score.float_scale.video_float_scale_scorer",
     "VideoTrueFalseScorer": "pyrit.score.true_false.video_true_false_scorer",
+    "WildGuardLabel": "pyrit.score.true_false.wildguard_parser",
+    "WildGuardScorer": "pyrit.score.true_false.wildguard_scorer",
     "XSSOutputScorer": "pyrit.score.true_false.regex.xss_output_scorer",
     "XXEOutputScorer": "pyrit.score.true_false.regex.xxe_output_scorer",
 }
