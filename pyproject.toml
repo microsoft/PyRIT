@@ -131,6 +131,9 @@ speech = [
     "azure-cognitiveservices-speech>=1.44.0",
 ]
 
+mcp = [
+    "mcp>=1.10.0",
+]
 litellm = [
     # Cap below 1.92.0: 1.92.0+ replaced the universal py3-none-any wheel with a
     # Rust (PyO3) extension and only publishes manylinux_2_28 (x86_64/aarch64) and
@@ -153,6 +156,7 @@ all = [
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
     "litellm>=1.84.0,<1.99.0",  # 1.92.0+ drops the universal wheel (no mac/musl/old-glibc/win-arm64); see litellm group
+    "mcp>=1.10.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
