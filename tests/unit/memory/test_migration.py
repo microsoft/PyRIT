@@ -2437,6 +2437,136 @@ def test_attack_recency_downgrade_restores_updated_at_and_drops_indexes():
             engine.dispose()
 
 
+# =============================================================================
+# First-class attack attribution and history indexes (a4c6e8f0b2d1)
+# =============================================================================
+
+
+_ATTACK_ATTRIBUTION_REV = "a4c6e8f0b2d1"
+_ATTACK_ATTRIBUTION_PREV_REV = "8d1e3f5a7b9c"
+
+
+def _seed_attack_result_with_labels(connection, *, attack_id: str, labels: dict[str, object]) -> None:
+    connection.execute(
+        text(
+            'INSERT INTO "AttackResultEntries" '
+            "(id, conversation_id, objective, executed_turns, execution_time_ms, outcome, timestamp, labels) "
+            "VALUES (:id, :conv, 'obj', 1, 0, 'success', '2026-09-04', :labels)"
+        ),
+        {"id": attack_id, "conv": f"conv-{attack_id}", "labels": json.dumps(labels)},
+    )
+
+
+def test_attack_attribution_migration_backfills_labels_and_indexes() -> None:
+    engine = create_engine("sqlite://")
+    attack_id = str(uuid.uuid4())
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, _ATTACK_ATTRIBUTION_PREV_REV)
+            _seed_attack_result_with_labels(
+                connection,
+                attack_id=attack_id,
+                labels={"operator": "alice", "operation": "nightly", "op": "keep", "team": "red"},
+            )
+
+            command.upgrade(config, _ATTACK_ATTRIBUTION_REV)
+
+            row = connection.execute(
+                text('SELECT operator, operation, labels FROM "AttackResultEntries" WHERE id = :attack_id'),
+                {"attack_id": attack_id},
+            ).one()
+            attack_indexes = {
+                index["name"]: index["column_names"] for index in inspect(connection).get_indexes("AttackResultEntries")
+            }
+            prompt_indexes = {
+                index["name"]: index["column_names"] for index in inspect(connection).get_indexes("PromptMemoryEntries")
+            }
+            scenario_indexes = {
+                index["name"]: index["column_names"]
+                for index in inspect(connection).get_indexes("ScenarioResultEntries")
+            }
+
+        assert row.operator == "alice"
+        assert row.operation == "nightly"
+        assert json.loads(row.labels) == {"op": "keep", "team": "red"}
+        assert attack_indexes["ix_AttackResultEntries_conversation_timestamp_id"] == [
+            "conversation_id",
+            "timestamp",
+            "id",
+        ]
+        assert attack_indexes["ix_AttackResultEntries_operator_conversation_timestamp_id"][0] == "operator"
+        assert attack_indexes["ix_AttackResultEntries_operation_conversation_timestamp_id"][0] == "operation"
+        assert prompt_indexes["ix_PromptMemoryEntries_conversation_sequence_id"] == [
+            "conversation_id",
+            "sequence",
+            "id",
+        ]
+        assert scenario_indexes["ix_ScenarioResultEntries_scenario_name_timestamp_id"] == [
+            "scenario_name",
+            "timestamp",
+            "id",
+        ]
+        assert scenario_indexes["ix_ScenarioResultEntries_scenario_run_state_timestamp_id"] == [
+            "scenario_run_state",
+            "timestamp",
+            "id",
+        ]
+    finally:
+        engine.dispose()
+
+
+def test_attack_attribution_migration_rejects_overlength_value() -> None:
+    engine = create_engine("sqlite://")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, _ATTACK_ATTRIBUTION_PREV_REV)
+            _seed_attack_result_with_labels(
+                connection,
+                attack_id=str(uuid.uuid4()),
+                labels={"operator": "x" * 129},
+            )
+
+            with pytest.raises(ValueError, match="will not truncate"):
+                command.upgrade(config, _ATTACK_ATTRIBUTION_REV)
+    finally:
+        engine.dispose()
+
+
+def test_attack_attribution_downgrade_restores_legacy_labels() -> None:
+    engine = create_engine("sqlite://")
+    attack_id = str(uuid.uuid4())
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, _ATTACK_ATTRIBUTION_REV)
+            connection.execute(
+                text(
+                    'INSERT INTO "AttackResultEntries" '
+                    "(id, conversation_id, objective, executed_turns, execution_time_ms, outcome, "
+                    "timestamp, operator, operation, labels) "
+                    "VALUES (:id, :conv, 'obj', 1, 0, 'success', '2026-09-04', "
+                    "'alice', 'nightly', :labels)"
+                ),
+                {"id": attack_id, "conv": f"conv-{attack_id}", "labels": json.dumps({"team": "red"})},
+            )
+
+            command.downgrade(config, _ATTACK_ATTRIBUTION_PREV_REV)
+
+            labels = connection.execute(
+                text('SELECT labels FROM "AttackResultEntries" WHERE id = :attack_id'),
+                {"attack_id": attack_id},
+            ).scalar_one()
+            columns = {column["name"] for column in inspect(connection).get_columns("AttackResultEntries")}
+
+        assert json.loads(labels) == {"team": "red", "operator": "alice", "operation": "nightly"}
+        assert "operator" not in columns
+        assert "operation" not in columns
+    finally:
+        engine.dispose()
+
+
 _STRING_TYPES_REQUIRING_LENGTH = {"String", "VARCHAR", "NVARCHAR", "Unicode"}
 
 

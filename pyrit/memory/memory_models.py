@@ -35,6 +35,7 @@ from sqlalchemy.types import Uuid
 from typing_extensions import Self
 
 import pyrit
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
@@ -249,7 +250,7 @@ class PromptMemoryEntry(Base):
         converted_value_data_type (PromptDataType): The data type of the converted prompt (text, image)
         converted_value (str): The text of the converted prompt. If prompt is an image, it's a link.
         converted_value_sha256 (str): The SHA256 hash of the original prompt data.
-        idx_conversation_id (Index): The index for the conversation ID.
+        ix_PromptMemoryEntries_conversation_sequence_id (Index): Composite conversation ordering index.
         original_prompt_id (UUID): The original prompt id. It is equal to id unless it is a duplicate.
         scores (list[ScoreEntry]): The list of scores associated with the prompt.
 
@@ -258,12 +259,21 @@ class PromptMemoryEntry(Base):
     """
 
     __tablename__ = "PromptMemoryEntries"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        Index(
+            "ix_PromptMemoryEntries_conversation_sequence_id",
+            "conversation_id",
+            "sequence",
+            "id",
+            mssql_include=["timestamp", "converted_value_data_type"],
+        ),
+        {"extend_existing": True},
+    )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     role: Mapped[Literal["system", "user", "assistant", "simulated_assistant", "tool", "developer"]] = mapped_column(
         String, nullable=False
     )
-    conversation_id = mapped_column(String, nullable=False)
+    conversation_id = mapped_column(String(36), nullable=False)
     sequence = mapped_column(INTEGER, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
@@ -277,8 +287,6 @@ class PromptMemoryEntry(Base):
     converted_value_data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
     converted_value = mapped_column(Unicode)
     converted_value_sha256 = mapped_column(String)
-
-    idx_conversation_id = Index("idx_conversation_id", "conversation_id")
 
     original_prompt_id = mapped_column(CustomUUID, nullable=False)
 
@@ -1543,6 +1551,8 @@ class AttackResultEntry(Base):
         outcome (AttackOutcome): The outcome of the attack, indicating success, failure, or undetermined.
         outcome_reason (str): Optional reason for the outcome, providing additional context.
         attack_metadata (dict[str, Any]): Metadata can be included as key-value pairs to provide extra context.
+        operator (str | None): Operator responsible for the attack.
+        operation (str | None): Operation associated with the attack.
         labels (dict[str, str]): Optional labels associated with the attack result entry.
         targeted_harm_categories (list[str]): Harm categories this attack targeted.
         pruned_conversation_ids (list[str]): List of conversation IDs that were pruned from the attack.
@@ -1558,9 +1568,28 @@ class AttackResultEntry(Base):
     __tablename__ = "AttackResultEntries"
     __table_args__ = (
         # Serves the PARTITION BY conversation_id dedup window in _query_paginated_attack_results.
-        Index("ix_AttackResultEntries_conversation_id", "conversation_id"),
+        Index(
+            "ix_AttackResultEntries_conversation_timestamp_id",
+            "conversation_id",
+            "timestamp",
+            "id",
+        ),
         # Serves the History recency ORDER BY timestamp DESC, id DESC and its keyset seek.
         Index("ix_AttackResultEntries_timestamp_id", "timestamp", "id"),
+        Index(
+            "ix_AttackResultEntries_operator_conversation_timestamp_id",
+            "operator",
+            "conversation_id",
+            "timestamp",
+            "id",
+        ),
+        Index(
+            "ix_AttackResultEntries_operation_conversation_timestamp_id",
+            "operation",
+            "conversation_id",
+            "timestamp",
+            "id",
+        ),
         # Serves scenario progress deltas scoped by parent and ordered oldest-first.
         Index(
             "ix_AttackResultEntries_attribution_parent_timestamp_id",
@@ -1591,6 +1620,8 @@ class AttackResultEntry(Base):
     )
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
+    operator: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
+    operation: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -1641,6 +1672,9 @@ class AttackResultEntry(Base):
 
         Args:
             entry (AttackResult): The attack result object to convert into a database entry.
+
+        Raises:
+            ValueError: If mutated legacy attribution labels are invalid or conflict.
         """
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
@@ -1667,7 +1701,29 @@ class AttackResultEntry(Base):
         self.outcome = entry.outcome.value
         self.outcome_reason = entry.outcome_reason
         self.attack_metadata = self.filter_json_serializable_metadata(entry.metadata)
-        self.labels = entry.labels or {}
+        labels = dict(entry.labels or {})
+        attribution = {"operator": entry.operator, "operation": entry.operation}
+        for field_name in ("operator", "operation"):
+            if field_name not in labels:
+                continue
+            legacy_value = labels.pop(field_name)
+            dedicated_value = attribution[field_name]
+            if not isinstance(legacy_value, str):
+                raise ValueError(f"labels.{field_name} must be a string")
+            if dedicated_value is not None and dedicated_value != legacy_value:
+                raise ValueError(f"{field_name} conflicts with legacy labels.{field_name}")
+            print_deprecation_message(
+                old_item=f"AttackResult.labels['{field_name}']",
+                new_item=f"AttackResult.{field_name}",
+                removed_in="1.4.0",
+            )
+            attribution[field_name] = legacy_value
+        for field_name, value in attribution.items():
+            if value is not None and len(value) > AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH:
+                raise ValueError(f"{field_name} must be at most {AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH} characters")
+        self.operator = attribution["operator"]
+        self.operation = attribution["operation"]
+        self.labels = labels
         self.targeted_harm_categories = entry.targeted_harm_categories or None
 
         # Persist conversation references by type
@@ -1799,6 +1855,8 @@ class AttackResultEntry(Base):
             related_conversations=related_conversations,
             metadata=self.attack_metadata or {},
             timestamp=self.timestamp or datetime.now(tz=timezone.utc),
+            operator=self.operator,
+            operation=self.operation,
             labels=self.labels or {},
             targeted_harm_categories=self.targeted_harm_categories or [],
             error_message=self.error_message,
@@ -1850,10 +1908,17 @@ class ScenarioResultEntry(Base):
     __tablename__ = "ScenarioResultEntries"
     __table_args__ = (
         Index("ix_ScenarioResultEntries_timestamp_id", "timestamp", "id"),
+        Index("ix_ScenarioResultEntries_scenario_name_timestamp_id", "scenario_name", "timestamp", "id"),
+        Index(
+            "ix_ScenarioResultEntries_scenario_run_state_timestamp_id",
+            "scenario_run_state",
+            "timestamp",
+            "id",
+        ),
         {"extend_existing": True},
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    scenario_name = mapped_column(String, nullable=False)
+    scenario_name = mapped_column(String(256), nullable=False)
     scenario_description = mapped_column(Unicode, nullable=True)
     scenario_version = mapped_column(INTEGER, nullable=False, default=1)
     pyrit_version = mapped_column(String, nullable=False)
@@ -1869,7 +1934,7 @@ class ScenarioResultEntry(Base):
     )
     objective_target_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
+    scenario_run_state: Mapped[str] = mapped_column(String(32), nullable=False, default="CREATED")
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     number_tries: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)

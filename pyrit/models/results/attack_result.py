@@ -6,10 +6,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 
-from pydantic import AwareDatetime, Field, field_serializer
+from pydantic import AwareDatetime, Field, field_serializer, model_validator
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
@@ -43,6 +44,9 @@ class AttackOutcome(str, Enum):
 
 class AttackResult(StrategyResult):
     """Base class for all attack results."""
+
+    ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = 128
+    _LEGACY_ATTRIBUTION_FIELDS: ClassVar[tuple[str, str]] = ("operator", "operation")
 
     # Identity
     # Unique identifier of the conversation that produced this result
@@ -90,6 +94,11 @@ class AttackResult(StrategyResult):
     # Arbitrary metadata
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    # First-class attribution fields. These are deliberately separate from
+    # arbitrary labels so they can be indexed and queried efficiently.
+    operator: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+    operation: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+
     # labels associated with this attack result
     labels: dict[str, str] = Field(default_factory=dict)
 
@@ -114,6 +123,60 @@ class AttackResult(StrategyResult):
     # and the corresponding DB columns remain NULL.
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_attribution_labels(cls, data: Any) -> Any:
+        """
+        Move legacy attribution label aliases to their dedicated fields.
+
+        Returns:
+            The normalized model input.
+
+        Raises:
+            ValueError: If an alias is not a string or conflicts with a dedicated field.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        labels_value = normalized.get("labels")
+        if labels_value is None:
+            return normalized
+        if not isinstance(labels_value, dict):
+            return normalized
+
+        labels = dict(labels_value)
+        for field_name in cls._LEGACY_ATTRIBUTION_FIELDS:
+            if field_name not in labels:
+                continue
+            legacy_value = labels.pop(field_name)
+            if not isinstance(legacy_value, str):
+                raise ValueError(f"labels.{field_name} must be a string")
+            dedicated_value = normalized.get(field_name)
+            if dedicated_value is not None and dedicated_value != legacy_value:
+                raise ValueError(
+                    f"{field_name} conflicts with legacy labels.{field_name}: {dedicated_value!r} != {legacy_value!r}"
+                )
+            print_deprecation_message(
+                old_item=f"AttackResult.labels['{field_name}']",
+                new_item=f"AttackResult.{field_name}",
+                removed_in="1.4.0",
+            )
+            normalized[field_name] = legacy_value
+
+        normalized["labels"] = labels
+        return normalized
+
+    @field_serializer("labels")
+    def _serialize_arbitrary_labels(self, labels: dict[str, str]) -> dict[str, str]:
+        """
+        Serialize only arbitrary labels, even if the mutable mapping was modified later.
+
+        Returns:
+            The labels without attribution aliases.
+        """
+        return {key: value for key, value in labels.items() if key not in self._LEGACY_ATTRIBUTION_FIELDS}
 
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """

@@ -39,6 +39,8 @@ def create_attack_result(
     outcome: AttackOutcome = AttackOutcome.SUCCESS,
     labels: dict[str, str] | None = None,
     targeted_harm_categories: list[str] | None = None,
+    operator: str | None = None,
+    operation: str | None = None,
 ):
     """Helper function to create AttackResult."""
     return AttackResult(
@@ -46,6 +48,8 @@ def create_attack_result(
         objective=f"Objective {objective_num}",
         outcome=outcome,
         labels=labels or {},
+        operator=operator,
+        operation=operation,
         targeted_harm_categories=targeted_harm_categories or [],
     )
 
@@ -108,14 +112,17 @@ def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list
 def test_attack_result_query_snapshots_mutable_inputs():
     """The internal query remains stable when caller-owned containers change."""
     attack_classes = ["CrescendoAttack"]
-    labels = {"operator": ["alice"]}
-    query = _AttackResultQuery(attack_classes=attack_classes, labels=labels)
+    operators = ["alice"]
+    labels = {"team": ["red"]}
+    query = _AttackResultQuery(attack_classes=attack_classes, operator=operators, labels=labels)
 
     attack_classes.append("ManualAttack")
-    labels["operator"].append("bob")
+    operators.append("bob")
+    labels["team"].append("blue")
 
     assert query.attack_classes == ("CrescendoAttack",)
-    assert query.labels == {"operator": ("alice",)}
+    assert query.operator == ("alice",)
+    assert query.labels == {"team": ("red",)}
     field_name = "limit"
     with pytest.raises(FrozenInstanceError):
         setattr(query, field_name, 10)
@@ -149,7 +156,9 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
             converter_classes_match="any",
             has_converters=True,
             include_scenario_attacks=False,
-            labels={"operator": ["alice"]},
+            operator=["alice"],
+            operation=["nightly"],
+            labels={"team": ["red"]},
             targeted_harm_categories=["violence"],
             identifier_filters=[identifier_filter],
             scenario_result_id=str(uuid.uuid4()),
@@ -172,7 +181,9 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
     assert query.converter_classes_match == "any"
     assert query.has_converters is True
     assert query.include_scenario_attacks is False
-    assert query.labels == {"operator": ("alice",)}
+    assert query.operator == ("alice",)
+    assert query.operation == ("nightly",)
+    assert query.labels == {"team": ("red",)}
     assert query.targeted_harm_categories == ("violence",)
     assert query.identifier_filters == (identifier_filter,)
     assert query.scenario_result_id is not None
@@ -1268,6 +1279,48 @@ def test_get_unique_attack_labels_deduplicates_across_attacks(sqlite_instance: M
 
     result = sqlite_instance.get_unique_attack_labels()
     assert result == {"env": ["prod"]}
+
+
+def test_get_attack_results_filters_dedicated_attribution_columns(sqlite_instance: MemoryInterface):
+    attack_results = [
+        create_attack_result("conv_1", 1, operator="alice", operation="nightly"),
+        create_attack_result("conv_2", 2, operator="bob", operation="nightly"),
+        create_attack_result("conv_3", 3, operator="alice", operation="daytime"),
+    ]
+    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+
+    results = sqlite_instance.get_attack_results(operator=["alice"], operation="nightly")
+
+    assert [result.conversation_id for result in results] == ["conv_1"]
+
+
+def test_get_attack_results_legacy_attribution_filter_warns_and_normalizes(sqlite_instance: MemoryInterface):
+    sqlite_instance.add_attack_results_to_memory(attack_results=[create_attack_result("conv_1", 1, operator="alice")])
+
+    with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+        results = sqlite_instance.get_attack_results(labels={"operator": "alice"})
+
+    assert [result.conversation_id for result in results] == ["conv_1"]
+
+
+def test_get_attack_results_rejects_conflicting_attribution_filters(sqlite_instance: MemoryInterface):
+    with pytest.raises(ValueError, match="operator conflicts"):
+        sqlite_instance.get_attack_results(operator="alice", labels={"operator": "bob"})
+
+
+def test_unique_attack_attribution_uses_dedicated_columns(sqlite_instance: MemoryInterface):
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            create_attack_result("conv_1", 1, operator="bob", operation="nightly", labels={"team": "red"}),
+            create_attack_result("conv_2", 2, operator="alice", operation="nightly", labels={"team": "blue"}),
+        ]
+    )
+
+    assert sqlite_instance.get_unique_attack_attribution() == {
+        "operators": ["alice", "bob"],
+        "operations": ["nightly"],
+    }
+    assert sqlite_instance.get_unique_attack_labels() == {"team": ["blue", "red"]}
 
 
 # ============================================================================

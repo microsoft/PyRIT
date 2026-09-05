@@ -564,24 +564,28 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         sql = text(
             f"""
             SELECT
-                pme.conversation_id,
-                COUNT(DISTINCT pme.sequence) AS msg_count,
-                (
-                    SELECT TOP 1 LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN})
-                    FROM "PromptMemoryEntries" p2
-                    WHERE p2.conversation_id = pme.conversation_id
-                    ORDER BY p2.sequence DESC, p2.id DESC
-                ) AS last_preview,
-                (
-                    SELECT TOP 1 p2b.converted_value_data_type
-                    FROM "PromptMemoryEntries" p2b
-                    WHERE p2b.conversation_id = pme.conversation_id
-                    ORDER BY p2b.sequence DESC, p2b.id DESC
-                ) AS last_data_type,
-                MIN(pme.timestamp) AS created_at
-            FROM "PromptMemoryEntries" pme
-            WHERE pme.conversation_id IN ({placeholders})
-            GROUP BY pme.conversation_id
+                aggregate_rows.conversation_id,
+                aggregate_rows.msg_count,
+                latest.last_preview,
+                latest.last_data_type,
+                aggregate_rows.created_at
+            FROM (
+                SELECT
+                    pme.conversation_id,
+                    COUNT(DISTINCT pme.sequence) AS msg_count,
+                    MIN(pme.timestamp) AS created_at
+                FROM "PromptMemoryEntries" pme
+                WHERE pme.conversation_id IN ({placeholders})
+                GROUP BY pme.conversation_id
+            ) AS aggregate_rows
+            OUTER APPLY (
+                SELECT TOP 1
+                    LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
+                    p2.converted_value_data_type AS last_data_type
+                FROM "PromptMemoryEntries" p2
+                WHERE p2.conversation_id = aggregate_rows.conversation_id
+                ORDER BY p2.sequence DESC, p2.id DESC
+            ) AS latest
             """
         )
 

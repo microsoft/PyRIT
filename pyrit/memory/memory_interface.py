@@ -25,6 +25,8 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.session import Session
 
+from pyrit.common.deprecation import print_deprecation_message
+
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
@@ -227,6 +229,8 @@ class _AttackResultQuery:
         "converter_classes",
         "targeted_harm_categories",
         "identifier_filters",
+        "operator",
+        "operation",
     )
 
     attack_result_ids: Sequence[str] | None = None
@@ -241,6 +245,8 @@ class _AttackResultQuery:
     has_converters: bool | None = None
     include_scenario_attacks: bool = True
     labels: Mapping[str, str | Sequence[str]] | None = None
+    operator: Sequence[str] | None = None
+    operation: Sequence[str] | None = None
     targeted_harm_categories: Sequence[str] | None = None
     identifier_filters: Sequence[IdentifierFilter] | None = None
     scenario_result_id: str | None = None
@@ -250,15 +256,49 @@ class _AttackResultQuery:
     after: AttackResultKeysetCursor | None = None
 
     def __post_init__(self) -> None:
-        """Snapshot mutable sequence and mapping inputs."""
+        """
+        Snapshot mutable inputs and normalize legacy attribution aliases.
+
+        Raises:
+            ValueError: If attribution aliases conflict or exceed their maximum length.
+        """
         for field_name in self._SEQUENCE_FIELDS:
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(self, field_name, tuple(value))
 
+        for field_name in ("operator", "operation"):
+            values = getattr(self, field_name)
+            if values is not None and any(not isinstance(value, str) for value in values):
+                raise ValueError(f"{field_name} values must be strings")
+            if values is not None and any(len(value) > AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
+                raise ValueError(
+                    f"{field_name} values must be at most {AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH} characters"
+                )
+
         if self.labels is not None:
             labels = {key: value if isinstance(value, str) else tuple(value) for key, value in self.labels.items()}
-            object.__setattr__(self, "labels", MappingProxyType(labels))
+            for name in ("operator", "operation"):
+                if name not in labels:
+                    continue
+                legacy_raw = labels.pop(name)
+                legacy_values = (legacy_raw,) if isinstance(legacy_raw, str) else tuple(legacy_raw)
+                if any(not isinstance(value, str) for value in legacy_values):
+                    raise ValueError(f"labels.{name} values must be strings")
+                if any(len(value) > AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH for value in legacy_values):
+                    raise ValueError(
+                        f"labels.{name} values must be at most {AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH} characters"
+                    )
+                dedicated_values = getattr(self, name)
+                if dedicated_values is not None and set(dedicated_values) != set(legacy_values):
+                    raise ValueError(f"{name} conflicts with legacy labels.{name}")
+                print_deprecation_message(
+                    old_item=f"_AttackResultQuery.labels['{name}']",
+                    new_item=f"_AttackResultQuery.{name}",
+                    removed_in="1.4.0",
+                )
+                object.__setattr__(self, name, legacy_values)
+            object.__setattr__(self, "labels", MappingProxyType(labels) if labels else None)
 
 
 class MemoryInterface(abc.ABC):
@@ -3470,6 +3510,8 @@ class MemoryInterface(abc.ABC):
         has_converters: bool | None = None,
         include_scenario_attacks: bool = True,
         labels: Mapping[str, str | Sequence[str]] | None = None,
+        operator: str | Sequence[str] | None = None,
+        operation: str | Sequence[str] | None = None,
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
@@ -3513,13 +3555,14 @@ class MemoryInterface(abc.ABC):
             include_scenario_attacks (bool, optional): Whether to include attacks created as part
                 of scenario runs. Defaults to ``True``.
             labels (Mapping[str, str | Sequence[str]] | None, optional): Filter results
-                by attack labels. Entries are AND-combined across label names; within a
+                by arbitrary attack labels. The legacy ``operator`` and ``operation`` aliases
+                are accepted through PyRIT 1.3 and normalized to dedicated filters. Entries
+                are AND-combined across label names; within a
                 single entry, a string value is an equality match and a sequence value is
                 an OR match over the listed values. An empty sequence applies no filter
-                for that label. Example: ``{"operator": "roakey", "operation":
-                ["roakey_op_a", "roakey_op_b"]}`` matches attacks where ``operator ==
-                "roakey"`` AND (``operation == "roakey_op_a"`` OR ``operation ==
-                "roakey_op_b"``). Defaults to None.
+                for that label. Defaults to None.
+            operator (str | Sequence[str] | None, optional): Filter by dedicated operator values.
+            operation (str | Sequence[str] | None, optional): Filter by dedicated operation values.
             targeted_harm_categories (Sequence[str] | None, optional): Filter results by the
                 harm categories targeted by the attack (stored on
                 ``AttackResultEntry.targeted_harm_categories``, auto-populated from the
@@ -3558,6 +3601,11 @@ class MemoryInterface(abc.ABC):
             ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
                 ``objective_sha256`` (id-batched lookups do not support SQL pagination).
         """
+        labels, operator_values, operation_values = self._normalize_attack_attribution_filters(
+            labels=labels,
+            operator=operator,
+            operation=operation,
+        )
         query = _AttackResultQuery(
             attack_result_ids=attack_result_ids,
             conversation_id=conversation_id,
@@ -3571,6 +3619,8 @@ class MemoryInterface(abc.ABC):
             has_converters=has_converters,
             include_scenario_attacks=include_scenario_attacks,
             labels=labels,
+            operator=operator_values,
+            operation=operation_values,
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
@@ -3580,6 +3630,55 @@ class MemoryInterface(abc.ABC):
             after=after,
         )
         return self._query_attack_results(query=query)
+
+    @staticmethod
+    def _normalize_attack_attribution_filters(
+        *,
+        labels: Mapping[str, str | Sequence[str]] | None,
+        operator: str | Sequence[str] | None,
+        operation: str | Sequence[str] | None,
+    ) -> tuple[Mapping[str, str | Sequence[str]] | None, Sequence[str] | None, Sequence[str] | None]:
+        """
+        Normalize deprecated attribution label aliases without mutating caller input.
+
+        Returns:
+            The arbitrary labels, operator values, and operation values.
+
+        Raises:
+            ValueError: If a legacy alias conflicts with its dedicated filter.
+        """
+        operator_values = [operator] if isinstance(operator, str) else operator
+        operation_values = [operation] if isinstance(operation, str) else operation
+        for field_name, values in (("operator", operator_values), ("operation", operation_values)):
+            if values is not None and any(len(value) > AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
+                raise ValueError(
+                    f"{field_name} values must be at most {AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH} characters"
+                )
+        if not labels:
+            return labels, operator_values, operation_values
+
+        normalized_labels = dict(labels)
+        normalized_dedicated = {"operator": operator_values, "operation": operation_values}
+        for name in ("operator", "operation"):
+            if name not in normalized_labels:
+                continue
+            legacy_raw = normalized_labels.pop(name)
+            legacy_values = [legacy_raw] if isinstance(legacy_raw, str) else list(legacy_raw)
+            dedicated_values = normalized_dedicated[name]
+            if dedicated_values is not None and set(dedicated_values) != set(legacy_values):
+                raise ValueError(f"{name} conflicts with legacy labels.{name}")
+            print_deprecation_message(
+                old_item=f"get_attack_results(labels={{'{name}': ...}})",
+                new_item=f"get_attack_results({name}=...)",
+                removed_in="1.4.0",
+            )
+            normalized_dedicated[name] = legacy_values
+
+        return (
+            normalized_labels or None,
+            normalized_dedicated["operator"],
+            normalized_dedicated["operation"],
+        )
 
     def _query_attack_results(self, *, query: _AttackResultQuery) -> Sequence[AttackResult]:
         """
@@ -3665,6 +3764,10 @@ class MemoryInterface(abc.ABC):
             conditions.append(AttackResultEntry.objective.contains(query.objective))
         if query.outcome:
             conditions.append(AttackResultEntry.outcome == query.outcome)
+        if query.operator:
+            conditions.append(AttackResultEntry.operator.in_(query.operator))
+        if query.operation:
+            conditions.append(AttackResultEntry.operation.in_(query.operation))
         if query.scenario_result_id:
             conditions.append(AttackResultEntry.attribution_parent_id == uuid.UUID(query.scenario_result_id))
         elif not query.include_scenario_attacks:
@@ -3954,12 +4057,33 @@ class MemoryInterface(abc.ABC):
             if not isinstance(labels, dict):
                 continue
             for key, value in labels.items():
+                if key in {"operator", "operation"}:
+                    continue
                 if isinstance(value, str):
                     if key not in label_values:
                         label_values[key] = set()
                     label_values[key].add(value)
 
         return {key: sorted(values) for key, values in sorted(label_values.items())}
+
+    def get_unique_attack_attribution(self) -> dict[str, list[str]]:
+        """Return unique dedicated operator and operation values from indexed columns."""
+        with closing(self.get_session()) as session:
+            operators = [
+                value
+                for (value,) in session.query(AttackResultEntry.operator)
+                .filter(AttackResultEntry.operator.isnot(None))
+                .distinct()
+                .all()
+            ]
+            operations = [
+                value
+                for (value,) in session.query(AttackResultEntry.operation)
+                .filter(AttackResultEntry.operation.isnot(None))
+                .distinct()
+                .all()
+            ]
+        return {"operators": sorted(operators), "operations": sorted(operations)}
 
     def add_scenario_results_to_memory(self, *, scenario_results: Sequence[ScenarioResult]) -> None:
         """
