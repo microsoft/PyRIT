@@ -1,6 +1,6 @@
 import type { RegisteredInitializer } from '@/types'
 
-import { resolveRegisteredInitializer } from './initializerLookup'
+import { findRegisteredInitializer, initializerFallbackDescription } from './initializerLookup'
 
 const registered: RegisteredInitializer[] = [
   {
@@ -19,29 +19,36 @@ const registered: RegisteredInitializer[] = [
   },
 ]
 
-describe('resolveRegisteredInitializer', () => {
+describe('findRegisteredInitializer', () => {
   it('returns the matching catalog entry by name', () => {
-    const result = resolveRegisteredInitializer('scorer', registered)
+    const result = findRegisteredInitializer('scorer', registered)
 
     expect(result).toBe(registered[1])
   })
 
-  it('returns an "no longer registered" placeholder when the name is unknown', () => {
-    const result = resolveRegisteredInitializer('ghost', registered)
+  it('returns undefined when the name is not in a loaded catalog', () => {
+    const result = findRegisteredInitializer('ghost', registered)
 
-    expect(result).toEqual({
-      initializer_name: 'ghost',
-      initializer_type: 'UnknownInitializer',
-      description: 'Initializer is no longer registered.',
-      required_env_vars: [],
-      supported_parameters: [],
-    })
+    expect(result).toBeUndefined()
   })
 
-  it('returns a placeholder when the catalog is empty', () => {
-    const result = resolveRegisteredInitializer('target', [])
+  it('returns undefined when the catalog is empty', () => {
+    const result = findRegisteredInitializer('target', [])
 
-    expect(result.initializer_name).toBe('target')
-    expect(result.initializer_type).toBe('UnknownInitializer')
+    expect(result).toBeUndefined()
+  })
+})
+
+describe('initializerFallbackDescription', () => {
+  it('reports a definitive unregistration once the catalog has loaded', () => {
+    expect(initializerFallbackDescription('loaded')).toBe('Initializer is no longer registered.')
+  })
+
+  it('reports a temporary outage when the catalog request failed', () => {
+    expect(initializerFallbackDescription('error')).toBe('Catalog metadata temporarily unavailable.')
+  })
+
+  it('does not claim unregistration while the catalog is still loading', () => {
+    expect(initializerFallbackDescription('loading')).toBe('Catalog metadata temporarily unavailable.')
   })
 })

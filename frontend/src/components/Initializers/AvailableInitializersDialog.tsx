@@ -16,15 +16,18 @@ import { AppsListRegular } from '@fluentui/react-icons'
 import type { RegisteredInitializer } from '@/types'
 
 import { formatSupportedParameterSummary } from './initializerFormatting'
+import type { CatalogStatus } from './initializerLookup'
 import { useInitializersStyles } from './Initializers.styles'
 
 interface AvailableInitializersDialogProps {
   registeredInitializers: RegisteredInitializer[]
+  catalogStatus?: CatalogStatus
   disabled?: boolean
 }
 
 export default function AvailableInitializersDialog({
   registeredInitializers,
+  catalogStatus = 'loaded',
   disabled = false,
 }: AvailableInitializersDialogProps) {
   const styles = useInitializersStyles()
@@ -50,7 +53,11 @@ export default function AvailableInitializersDialog({
               Every initializer registered with PyRIT. This is a read-only reference of what exists and the
               parameters each one accepts.
             </Text>
-            {registeredInitializers.length === 0 ? (
+            {registeredInitializers.length === 0 && catalogStatus === 'error' ? (
+              <Text className={styles.emptyState}>
+                Initializer catalog is unavailable. The list cannot be shown until the catalog loads.
+              </Text>
+            ) : registeredInitializers.length === 0 ? (
               <Text className={styles.emptyState}>No registered initializers were found.</Text>
             ) : (
               <div className={styles.dialogList} role="list" aria-label="Available initializers">

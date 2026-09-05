@@ -121,4 +121,25 @@ describe('Initializers', () => {
     expect(await screen.findByTestId('configured-initializer-row-0')).toBeInTheDocument()
     expect(screen.getByText('Service Unavailable')).toBeInTheDocument()
   })
+
+  it('should drop the loaded catalog and disable the dialog when a refresh fails after a successful load', async () => {
+    const user = userEvent.setup()
+    renderInitializers()
+
+    const loadedRow = await screen.findByTestId('configured-initializer-row-0')
+    await waitFor(() => expect(loadedRow).toHaveTextContent('Registers targets.'))
+    expect(loadedRow).toHaveTextContent('Required env vars: AZURE_OPENAI_ENDPOINT')
+    expect(screen.getByRole('button', { name: 'Browse available initializers' })).toBeEnabled()
+
+    mockedInitializersApi.listRegistered.mockRejectedValueOnce(new Error('Service Unavailable'))
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    await waitFor(() => expect(mockedInitializersApi.listRegistered).toHaveBeenCalledTimes(2))
+    const refreshedRow = await screen.findByTestId('configured-initializer-row-0')
+    await waitFor(() => expect(refreshedRow).toHaveTextContent('Catalog metadata temporarily unavailable.'))
+    expect(refreshedRow).not.toHaveTextContent('Registers targets.')
+    expect(refreshedRow).not.toHaveTextContent('Required env vars')
+    expect(screen.getByRole('button', { name: 'Browse available initializers' })).toBeDisabled()
+    expect(screen.getByText('Service Unavailable')).toBeInTheDocument()
+  })
 })

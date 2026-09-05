@@ -76,6 +76,27 @@ describe('ConfiguredInitializers', () => {
 
     const row = screen.getByTestId('configured-initializer-row-1')
     expect(within(row).getByText('Initializer is no longer registered.')).toBeInTheDocument()
-    expect(within(row).getByText(/Required env vars: None/)).toBeInTheDocument()
+    expect(within(row).queryByText(/Required env vars/)).not.toBeInTheDocument()
+  })
+
+  it('reports catalog metadata as unavailable instead of unregistered while the catalog is in error', () => {
+    const items: ConfiguredInitializerSetting[] = [
+      { initializer_name: 'ghost', parameters: null, order_index: 1 },
+    ]
+
+    render(
+      <TestWrapper>
+        <ConfiguredInitializers
+          items={items}
+          registeredInitializers={[]}
+          catalogStatus="error"
+        />
+      </TestWrapper>,
+    )
+
+    const row = screen.getByTestId('configured-initializer-row-1')
+    expect(within(row).getByText('Catalog metadata temporarily unavailable.')).toBeInTheDocument()
+    expect(within(row).queryByText('Initializer is no longer registered.')).not.toBeInTheDocument()
+    expect(within(row).queryByText(/Required env vars/)).not.toBeInTheDocument()
   })
 })
