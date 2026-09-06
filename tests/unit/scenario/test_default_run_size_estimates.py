@@ -21,11 +21,14 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core import (
+    AtomicAttack,
     BaselineAttackPolicy,
     DatasetAttackConfiguration,
+    DatasetConfiguration,
     Scenario,
     ScenarioTechnique,
 )
+from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial
@@ -107,6 +110,22 @@ class _CompatibilityMatrixEstimateScenario(_MatrixEstimateScenario):
     RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = True
 
 
+class _NamedDatasetEstimateScenario(Scenario):
+    """Minimal estimate scenario that resolves a named dataset."""
+
+    def __init__(self, *, objective_scorer: TrueFalseScorer) -> None:
+        super().__init__(
+            version=1,
+            technique_class=_TwoTechniqueDefault,
+            default_dataset_config=DatasetAttackConfiguration(dataset_names=["sample"]),
+            objective_scorer=objective_scorer,
+        )
+
+    async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """Return no attacks; only estimation is exercised."""
+        return []
+
+
 def _scorer() -> MagicMock:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.get_identifier.return_value = ComponentIdentifier(class_name="MockScorer", class_module="test")
@@ -159,6 +178,38 @@ async def test_configured_estimate_reuses_technique_and_baseline_resolution_with
     assert estimate.estimated_attack_count == 2
     assert [component.count for component in estimate.components] == [2]
     assert patch_central_database.return_value.get_scenario_results() == []
+
+
+async def test_configured_estimate_auto_fetches_selected_named_dataset() -> None:
+    """A configured estimate loads its selected dataset through DatasetConfiguration."""
+    memory = MagicMock()
+    memory.get_seeds.return_value = []
+
+    async def populate_memory_async(*, dataset_name: str) -> None:
+        assert dataset_name == "sample"
+        memory.get_seeds.return_value = [
+            SeedObjective(value="one", dataset_name="sample"),
+            SeedObjective(value="two", dataset_name="sample"),
+        ]
+
+    with (
+        patch(
+            "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
+            return_value=memory,
+        ),
+        patch.object(
+            DatasetConfiguration,
+            "_fetch_dataset_async",
+            new_callable=AsyncMock,
+            side_effect=populate_memory_async,
+        ) as fetch_dataset,
+    ):
+        scenario = _NamedDatasetEstimateScenario(objective_scorer=_scorer())
+        scenario.set_params_from_args(args={})
+        estimate = await scenario.get_run_size_estimate_async()
+
+    assert estimate.estimated_attack_count == 6
+    fetch_dataset.assert_awaited_once_with(dataset_name="sample")
 
 
 @pytest.mark.usefixtures("patch_central_database")

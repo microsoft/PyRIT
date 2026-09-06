@@ -8,11 +8,13 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, or_, select, text
+from sqlalchemy.dialects import mssql
 
 from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece
 from pyrit.prompt_target.text_target import TextTarget
@@ -435,6 +437,65 @@ def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: A
     condition = memory_interface._get_attack_result_label_condition(labels={})
     params = condition.compile().params
     assert not any("label_" in k for k in params)
+
+
+def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    """Scenario-history SQL Server conditions bind repeated values without interpolation."""
+    label_condition = memory_interface._get_scenario_result_label_condition(
+        labels={"team.name": ["alice", "bob"], "operation": "nightly"}
+    )
+    registry_condition = memory_interface._get_scenario_registry_name_condition(
+        scenario_names=["first.scenario", "second.scenario"]
+    )
+
+    assert label_condition.compile().params == {
+        "scenario_label_path_0": '$."team.name"',
+        "scenario_label_value_0_0": "alice",
+        "scenario_label_value_0_1": "bob",
+        "scenario_label_path_1": '$."operation"',
+        "scenario_label_value_1_0": "nightly",
+    }
+    assert registry_condition.compile().params == {
+        "scenario_registry_name_0": "first.scenario",
+        "scenario_registry_name_1": "second.scenario",
+    }
+    assert " IN (" in str(label_condition)
+    assert " AND " in str(label_condition)
+    combined_statement = select(ScenarioResultEntry.id).where(
+        or_(
+            ScenarioResultEntry.scenario_name.in_(["first.scenario", "second.scenario"]),
+            registry_condition,
+        )
+    )
+    assert "scenario_registry_name_1" in combined_statement.compile().params
+
+
+def test_scenario_history_seed_projection_defaults_to_empty_json(memory_interface: AzureSQLMemory) -> None:
+    """The SQL Server seed projection returns an empty JSON array for runs without seed groups."""
+    _, _, seed_projection = memory_interface._get_scenario_history_plan_expressions()
+
+    assert "isnull" in str(seed_projection).lower()
+    assert "'[]'" in str(seed_projection)
+    assert "INCLUDE_NULL_VALUES" in str(seed_projection)
+
+
+def test_scenario_plan_unit_subqueries_expand_plan_json_server_side(memory_interface: AzureSQLMemory) -> None:
+    """The SQL Server plan expansion uses CROSS APPLY OPENJSON and binds scenario IDs."""
+    scenario_result_id = uuid.uuid4()
+    plan_units, plan_seeds = memory_interface._get_scenario_plan_unit_subqueries(
+        scenario_result_ids=[scenario_result_id]
+    )
+
+    statement = select(plan_units.c.atomic_group_id, plan_seeds.c.seed_group_id).join(
+        plan_seeds, plan_units.c.atomic_group_id == plan_seeds.c.seed_group_id
+    )
+    compiled = statement.compile(dialect=mssql.dialect())
+
+    assert "CROSS APPLY OPENJSON" in str(compiled)
+    assert "JOIN LATERAL" not in str(compiled)
+    assert str(scenario_result_id) in str(compiled.params)
 
 
 @pytest.mark.parametrize(

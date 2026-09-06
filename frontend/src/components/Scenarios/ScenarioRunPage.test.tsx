@@ -262,10 +262,13 @@ function ScenarioRunPageProbe() {
   )
 }
 
-function renderPage(path = `/scanner-history/${SCENARIO_RESULT_ID}`) {
+function renderPage(
+  path = `/scanner-history/${SCENARIO_RESULT_ID}`,
+  navigationState?: Record<string, unknown>,
+) {
   return render(
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={[path]}>
+      <MemoryRouter initialEntries={[{ pathname: path, state: navigationState }]}>
         <Routes>
           <Route path="/scanner-history/:scenarioResultId/:attackResultId" element={<ScenarioRunPageProbe />} />
           <Route path="/scanner-history/:scenarioResultId" element={<ScenarioRunPageProbe />} />
@@ -319,12 +322,69 @@ describe('ScenarioRunPage', () => {
 
     const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)
     expect(headings).toEqual([
+      'Run configuration',
       'Overall progress',
       'Atomic attack groups',
       'Objective Scorer',
       'Techniques',
       'Objectives',
     ])
+  })
+
+  it('renders contract-backed safe target and run configuration metadata', () => {
+    mockHookState(makeState({
+      run: {
+        ...makeState().run!,
+        target: {
+          target_type: 'OpenAIChatTarget',
+          endpoint: 'https://example.test/v1',
+          model_name: 'gpt-4o',
+          identifier_hash: 'safe-hash',
+        },
+        techniques_used: ['Technique One'],
+        datasets_used: ['harmbench'],
+        scenario_parameters: { max_turns: 5 },
+        labels: { operator: 'alice' },
+        pyrit_version: '0.10.0',
+      },
+    }))
+
+    renderPage()
+
+    expect(screen.getByText('gpt-4o')).toBeInTheDocument()
+    expect(screen.getByText('https://example.test/v1')).toBeInTheDocument()
+    expect(screen.queryByText('safe-hash')).not.toBeInTheDocument()
+    expect(screen.getByText('harmbench')).toBeInTheDocument()
+    expect(screen.getByText('max_turns: 5')).toBeInTheDocument()
+    expect(screen.getByText('operator: alice')).toBeInTheDocument()
+    expect(screen.getByText('0.10.0')).toBeInTheDocument()
+  })
+
+  it('collapses long objective scorer parameter values', async () => {
+    const user = userEvent.setup()
+    const longInstructions = 'Evaluate the response against the objective. '.repeat(20).trim()
+    mockHookState(makeState({
+      summary: {
+        ...SUMMARY,
+        objective_scorer: {
+          ...SUMMARY.objective_scorer!,
+          parameters: {
+            ...SUMMARY.objective_scorer!.parameters,
+            instructions: longInstructions,
+          },
+        },
+      },
+    }))
+
+    renderPage()
+
+    const expand = screen.getByRole('button', { name: 'Show full Instructions' })
+    expect(expand).toHaveAttribute('aria-expanded', 'false')
+    await user.click(expand)
+    expect(screen.getByRole('button', { name: 'Collapse Instructions' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
   })
 
   it('keeps legacy runs useful without misleading totals, ETA, or a progress bar', () => {
@@ -468,12 +528,12 @@ describe('ScenarioRunPage', () => {
     await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
     const detailsRow = screen.getByRole('row', { name: 'View details for attack-technique' })
 
-    fireEvent.click(detailsRow)
+    await user.click(detailsRow)
     await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
       'data-location',
       `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
     ))
-    const dialog = await screen.findByRole('dialog', { name: 'attack-technique' })
+    const dialog = await screen.findByRole('dialog', { hidden: true })
     await user.click(within(dialog).getByRole('button', { name: 'Close', hidden: true }))
 
     await waitFor(() => expect(detailsRow).toHaveFocus())
@@ -529,6 +589,31 @@ describe('ScenarioRunPage', () => {
       'data-location',
       `/scanner-history/${SCENARIO_RESULT_ID}/attack-result-1`,
     ))
+  })
+
+  it('preserves scanner history context through attempt detail navigation', async () => {
+    const user = userEvent.setup()
+    renderPage(
+      `/scanner-history/${SCENARIO_RESULT_ID}`,
+      {
+        fromScenarioHistory: true,
+        scenarioHistorySearch: '?operator=alice',
+      },
+    )
+    await user.click(screen.getByRole('button', { name: 'Expand attacks in Technique One' }))
+    const executionsTable = screen.getByRole('table', { name: 'Attack executions' })
+
+    await user.click(within(executionsTable).getAllByRole('row')[1])
+
+    expect(screen.getByRole('link', { name: 'Back to scanner history' })).toHaveAttribute(
+      'href',
+      '/history/scanner?operator=alice',
+    )
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.getByRole('link', { name: 'Back to scanner history' })).toHaveAttribute(
+      'href',
+      '/history/scanner?operator=alice',
+    )
   })
 
   it('renders one expandable parent for attacks that share a display group', async () => {

@@ -1808,9 +1808,7 @@ class TestPollStreamsRetryWarnings:
         )
 
         with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
-            final = await pyrit_scan._poll_until_terminal_async(
-                client=client, scenario_result_id="sr-1", total_techniques=1
-            )
+            final = await pyrit_scan._poll_until_terminal_async(client=client, scenario_result_id="sr-1")
 
         assert final.status == ScenarioRunState.COMPLETED
         out = capsys.readouterr().out

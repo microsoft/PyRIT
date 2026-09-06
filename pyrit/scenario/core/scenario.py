@@ -57,7 +57,7 @@ from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, read_only_dataset_resolution
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -789,12 +789,11 @@ class Scenario(ABC):
             tuple: Selected groups keyed by population and their catalog summaries.
         """
         configured_dataset = self._dataset_config
-        with read_only_dataset_resolution():
-            self._dataset_config = configured_dataset
-            full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
-            self._estimate_full_groups_by_dataset = full_groups
-            self._dataset_config = configured_dataset
-            selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
+        self._dataset_config = configured_dataset
+        full_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        self._estimate_full_groups_by_dataset = full_groups
+        self._dataset_config = configured_dataset
+        selected_groups = await self._resolve_seed_groups_by_dataset_async(apply_sampling=True)
 
         configured_caps = self._dataset_config.size_caps_by_dataset()
         datasets: list[ScenarioDatasetSummary] = []

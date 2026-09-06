@@ -32,7 +32,7 @@
       "value": "REPLACE_SQL_DATABASE"
     },
     "pyritInitializer": {
-      "value": "target"
+      "value": "target,technique"
     },
     "pyritConfigFileUri": {
       "value": ""
