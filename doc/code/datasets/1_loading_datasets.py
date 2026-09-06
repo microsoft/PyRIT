@@ -68,8 +68,9 @@
 # (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
 # `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
-# `garak_tm_system_prompts`), an audio jailbreak set
-# (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
+# `garak_tm_system_prompts`), exploitation echo corpora (`garak_exploitation_sql_injection`,
+# `garak_exploitation_python_code_execution`, `garak_exploitation_templates`), an audio
+# jailbreak set (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
