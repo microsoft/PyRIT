@@ -371,6 +371,39 @@ class TestMetadataParsingRemote:
             dataset_filter=SeedDatasetFilter(modalities={"audio"}),
         )
 
+    def test_undeclared_axis_does_not_match(self):
+        """A dataset silent on a filtered axis does not satisfy that axis."""
+        metadata = SeedDatasetMetadata(tags={"safety"}, size={"small"}, source_type={"local"})
+        assert not SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata,
+            dataset_filter=SeedDatasetFilter(modalities={"audio"}),
+        )
+        assert not SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata,
+            dataset_filter=SeedDatasetFilter(harm_categories={"violence"}),
+        )
+        # An axis the dataset does declare is still matched normally.
+        assert SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata,
+            dataset_filter=SeedDatasetFilter(tags={"safety"}),
+        )
+
+    def test_undeclared_axis_does_not_match_strict(self):
+        """strict_match also rejects a dataset silent on the filtered axis."""
+        metadata = SeedDatasetMetadata(tags={"safety"}, size={"small"}, source_type={"local"})
+        assert not SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata,
+            dataset_filter=SeedDatasetFilter(modalities={"audio"}, strict_match=True),
+        )
+
+    def test_undeclared_axis_does_not_mask_a_declared_mismatch(self):
+        """Two filtered axes, one declared and mismatching: still no match."""
+        metadata = SeedDatasetMetadata(modalities={"text"})
+        assert not SeedDatasetProvider._match_filter_to_metadata(
+            metadata=metadata,
+            dataset_filter=SeedDatasetFilter(modalities={"text"}, harm_categories={"violence"}),
+        )
+
     def test_sources(self):
         """Source filter checks membership."""
         metadata = SeedDatasetMetadata(source_type={"remote"})
