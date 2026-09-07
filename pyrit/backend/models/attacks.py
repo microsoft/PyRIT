@@ -405,9 +405,29 @@ class CreateAttackResponse(BaseModel):
 
 
 class UpdateAttackRequest(BaseModel):
-    """Request to update an attack's outcome."""
+    """Request to update mutable attack fields."""
 
-    outcome: Literal["undetermined", "success", "failure", "error"] = Field(..., description="Updated attack outcome")
+    outcome: Literal["undetermined", "success", "failure", "error"] | None = Field(
+        default=None,
+        description="Updated attack outcome",
+    )
+    objective: str | None = Field(default=None, description="Shared objective for all conversations in the attack")
+
+    @model_validator(mode="after")
+    def _validate_update(self) -> "UpdateAttackRequest":
+        """
+        Validate that the request contains a supported update.
+
+        Returns:
+            UpdateAttackRequest: The validated request.
+        """
+        if self.outcome is None and self.objective is None:
+            raise ValueError("At least one mutable attack field must be supplied")
+        if self.objective is not None:
+            self.objective = self.objective.strip()
+            if not self.objective:
+                raise ValueError("objective must not be empty")
+        return self
 
 
 # ============================================================================

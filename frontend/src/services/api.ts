@@ -40,6 +40,7 @@ import type {
   AuthAccess,
   BackendScore,
   ManualScoreRequest,
+  UpdateAttackRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -282,6 +283,11 @@ export const attacksApi = {
 
   getAttack: async (attackResultId: string): Promise<AttackSummary> => {
     const response = await apiClient.get(`/attacks/${encodeURIComponent(attackResultId)}`)
+    return response.data
+  },
+
+  updateAttack: async (attackResultId: string, request: UpdateAttackRequest): Promise<AttackSummary> => {
+    const response = await apiClient.patch(`/attacks/${encodeURIComponent(attackResultId)}`, request)
     return response.data
   },
 

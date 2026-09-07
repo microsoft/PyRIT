@@ -34,6 +34,13 @@ export const useObjectiveHeaderStyles = makeStyles({
     maxHeight: '30vh',
     overflowY: 'auto',
   },
+  input: {
+    flexGrow: 1,
+    minWidth: 0,
+  },
+  addButton: {
+    ...mobileTouchTargetHeight,
+  },
   toggle: {
     flexShrink: 0,
     minWidth: 'auto',

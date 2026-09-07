@@ -375,7 +375,7 @@ function App() {
     navigate(VIEW_PATHS.chat)
   }, [navigate])
 
-  const handleConversationCreated = useCallback((arId: string, convId: string) => {
+  const handleConversationCreated = useCallback((arId: string, convId: string, objective?: string) => {
     // Seed the freshly-created attack synchronously and tell the loader to skip
     // its next fetch for this id, so the attack opens without a redundant load.
     if (activeTarget) {
@@ -404,13 +404,17 @@ function App() {
       labels: null,
       target,
       relatedConversationIds: [],
-      objective: '',
+      objective: objective ?? '',
       status: 'success',
     })
     // Replace when promoting an empty /chat to its attack url (first message);
     // push when branching from an existing attack so Back returns to the source.
     navigate(attackRoutePath(arId), { replace: routeAttackId === null })
   }, [activeTarget, handleSetActiveTarget, routeAttackId, navigate])
+
+  const handleObjectiveChange = useCallback((objective: string) => {
+    setLoadedAttack((current) => current ? { ...current, objective } : current)
+  }, [])
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
@@ -437,6 +441,7 @@ function App() {
       activeConversationId={activeConversationId}
       onConversationCreated={handleConversationCreated}
       onSelectConversation={handleSelectConversation}
+      onObjectiveChange={handleObjectiveChange}
       labels={globalLabels}
       onLabelsChange={handleGlobalLabelsChange}
       onNavigate={handleNavigate}

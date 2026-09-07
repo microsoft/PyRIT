@@ -17,6 +17,9 @@ import {
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  Radio,
+  RadioGroup,
+  Slider,
   Tab,
   TabList,
   Tooltip,
@@ -30,13 +33,20 @@ import {
   ArrowReplyRegular,
   BranchForkRegular,
   ChatAddRegular,
-  GaugeRegular,
+  DataTrendingRegular,
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 
-import type { DisplayScore, Message, MessageAttachment, MessageDisplayPiece } from '../../types'
+import type {
+  DisplayScore,
+  ManualScoreInput,
+  ManualScoreType,
+  Message,
+  MessageAttachment,
+  MessageDisplayPiece,
+} from '../../types'
 import { useMessageListStyles } from './MessageList.styles'
 
 interface MessageListProps {
@@ -62,7 +72,11 @@ interface MessageListProps {
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
   /** Persist a manual score for a message piece. */
-  onManualScore?: (messageId: string, value: number, rationale: string) => Promise<void>
+  onManualScore?: (messageId: string, score: ManualScoreInput) => Promise<void>
+  /** Whether the attack has the objective required for manual scoring. */
+  canManualScore?: boolean
+  /** Prompt the user to add the missing attack objective. */
+  onManualScoreObjectiveRequired?: () => void
 }
 
 /** Image that shows a spinner while loading. */
@@ -119,31 +133,68 @@ function scoreDisplayLabel(score: DisplayScore): string {
   return `Score: ${scoreDisplayValue(score)}`
 }
 
-const MANUAL_SCORE_PRESETS = [0, 0.25, 0.33, 0.5, 0.66, 0.75, 1]
-
 interface ManualScorePopoverProps {
   messageId: string
-  onSave: (messageId: string, value: number, rationale: string) => Promise<void>
+  onSave: (messageId: string, score: ManualScoreInput) => Promise<void>
+  canManualScore: boolean
+  onObjectiveRequired?: () => void
 }
 
-function ManualScorePopover({ messageId, onSave }: ManualScorePopoverProps) {
+function ManualScorePopover({
+  messageId,
+  onSave,
+  canManualScore,
+  onObjectiveRequired,
+}: ManualScorePopoverProps) {
   const styles = useMessageListStyles()
   const [isOpen, setIsOpen] = useState(false)
-  const [value, setValue] = useState('0.5')
+  const [scoreType, setScoreType] = useState<ManualScoreType | ''>('')
+  const [value, setValue] = useState('')
+  const [successThreshold, setSuccessThreshold] = useState('0.5')
+  const [booleanValue, setBooleanValue] = useState<boolean | null>(null)
   const [rationale, setRationale] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState('')
   const numericValue = Number(value)
-  const isValueValid = value.trim() !== '' && Number.isFinite(numericValue) && numericValue >= 0 && numericValue <= 1
+  const numericSuccessThreshold = Number(successThreshold)
+  const isSuccessThresholdValid = successThreshold.trim() !== ''
+    && Number.isFinite(numericSuccessThreshold)
+    && numericSuccessThreshold >= 0
+    && numericSuccessThreshold <= 1
+  const isValueValid = scoreType === 'true_false'
+    ? booleanValue !== null
+    : scoreType === 'float_scale'
+      && value.trim() !== ''
+      && Number.isFinite(numericValue)
+      && numericValue >= 0
+      && numericValue <= 1
+  const isFormValid = isValueValid && (scoreType !== 'float_scale' || isSuccessThresholdValid)
 
   const handleSave = async () => {
-    if (!isValueValid) return
+    if (!isFormValid) return
 
     setIsSaving(true)
     setError('')
     try {
-      await onSave(messageId, numericValue, rationale)
+      let score: ManualScoreInput
+      if (scoreType === 'true_false' && booleanValue !== null) {
+        score = { score_type: 'true_false', value: booleanValue, rationale }
+      } else if (scoreType === 'float_scale') {
+        score = {
+          score_type: 'float_scale',
+          value: numericValue,
+          success_threshold: numericSuccessThreshold,
+          rationale,
+        }
+      } else {
+        return
+      }
+      await onSave(messageId, score)
       setIsOpen(false)
+      setScoreType('')
+      setValue('')
+      setSuccessThreshold('0.5')
+      setBooleanValue(null)
       setRationale('')
     } catch {
       setError('Unable to save the manual score.')
@@ -157,16 +208,40 @@ function ManualScorePopover({ messageId, onSave }: ManualScorePopoverProps) {
       withArrow
       open={isOpen}
       onOpenChange={(_event: unknown, data: { open: boolean }) => {
+        if (data.open && !canManualScore) {
+          onObjectiveRequired?.()
+          return
+        }
         setIsOpen(data.open)
         if (!data.open) setError('')
       }}
     >
-      <Tooltip content="Add manual score" relationship="label">
+      <Tooltip
+        content={
+          canManualScore
+            ? 'Add manual score'
+            : 'Manual scoring requires an objective. Click to add one.'
+        }
+        relationship="label"
+      >
         <PopoverTrigger disableButtonEnhancement>
           <Button
             appearance="subtle"
             size="small"
-            icon={<GaugeRegular />}
+            icon={
+              <span className={styles.manualScoreIcon}>
+                <DataTrendingRegular />
+                {!canManualScore && (
+                  <span
+                    className={styles.manualScoreWarningIcon}
+                    data-testid="manual-score-objective-warning-icon"
+                    aria-hidden="true"
+                  >
+                    !
+                  </span>
+                )}
+              </span>
+            }
             aria-label="Add manual score"
             className={styles.messageActionButton}
           />
@@ -174,33 +249,82 @@ function ManualScorePopover({ messageId, onSave }: ManualScorePopoverProps) {
       </Tooltip>
       <PopoverSurface className={styles.manualScorePopover}>
         <Text weight="semibold">Manual score</Text>
-        <div className={styles.manualScorePresets} aria-label="Score presets">
-          {MANUAL_SCORE_PRESETS.map((preset) => (
-            <Button key={preset} size="small" onClick={() => setValue(String(preset))}>
-              {preset}
-            </Button>
-          ))}
-        </div>
-        <Field
-          label="Value"
-          validationState={value && !isValueValid ? 'error' : 'none'}
-          validationMessage={value && !isValueValid ? 'Enter a number from 0 to 1.' : undefined}
-        >
-          <Input
-            type="number"
-            min={0}
-            max={1}
-            step="any"
-            value={value}
-            onChange={(_event, data) => setValue(data.value)}
-            aria-label="Manual score value"
-          />
+        <Field label="Score type" required>
+          <RadioGroup
+            layout="horizontal"
+            value={scoreType}
+            onChange={(_event, data) => setScoreType(data.value as ManualScoreType)}
+          >
+            <Radio value="true_false" label="True / false" />
+            <Radio value="float_scale" label="Float scale" />
+          </RadioGroup>
         </Field>
-        <Field label="Rationale">
+        {scoreType === 'true_false' ? (
+          <Field label="Value" required>
+            <RadioGroup
+              layout="horizontal"
+              value={booleanValue === null ? '' : String(booleanValue)}
+              onChange={(_event, data) => setBooleanValue(data.value === 'true')}
+            >
+              <Radio value="true" label="True" />
+              <Radio value="false" label="False" />
+            </RadioGroup>
+          </Field>
+        ) : (
+          <>
+            <Field
+              label="Value"
+              required
+              validationState={value && !isValueValid ? 'error' : 'none'}
+              validationMessage={value && !isValueValid ? 'Enter a number from 0 to 1.' : undefined}
+            >
+              <Input
+                type="number"
+                min={0}
+                max={1}
+                step="any"
+                value={value}
+                onChange={(_event, data) => setValue(data.value)}
+                aria-label="Manual score value"
+              />
+            </Field>
+            {scoreType === 'float_scale' && (
+              <Field
+                label="Success threshold"
+                required
+                validationState={!isSuccessThresholdValid ? 'error' : 'none'}
+                validationMessage={!isSuccessThresholdValid ? 'Enter a number from 0 to 1.' : undefined}
+              >
+                <div className={styles.thresholdControls}>
+                  <Input
+                    className={styles.thresholdInput}
+                    type="number"
+                    min={0}
+                    max={1}
+                    step="0.01"
+                    value={successThreshold}
+                    onChange={(_event, data) => setSuccessThreshold(data.value)}
+                    aria-label="Success threshold"
+                  />
+                  <Slider
+                    className={styles.thresholdSlider}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={isSuccessThresholdValid ? numericSuccessThreshold : 0.5}
+                    onChange={(_event, data) => setSuccessThreshold(String(data.value))}
+                    aria-label="Success threshold slider"
+                  />
+                </div>
+              </Field>
+            )}
+          </>
+        )}
+        <Field label="Rationale (optional)">
           <Textarea
             value={rationale}
             onChange={(_event, data) => setRationale(data.value)}
-            aria-label="Manual score rationale"
+            aria-label="Rationale (optional)"
             resize="vertical"
           />
         </Field>
@@ -209,7 +333,7 @@ function ManualScorePopover({ messageId, onSave }: ManualScorePopoverProps) {
           <Button appearance="secondary" onClick={() => setIsOpen(false)} disabled={isSaving}>
             Cancel
           </Button>
-          <Button appearance="primary" onClick={handleSave} disabled={!isValueValid || isSaving}>
+          <Button appearance="primary" onClick={handleSave} disabled={!isFormValid || isSaving}>
             {isSaving ? 'Saving...' : 'Save'}
           </Button>
         </div>
@@ -646,7 +770,7 @@ function getRenderMessagePieces(message: Message, messageIndex: number): RenderM
   return pieces
 }
 
-export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false, onManualScore }: MessageListProps) {
+export default function MessageList({ messages, onCopyToInput, onCopyToNewConversation, onBranchConversation, onBranchAttack, isLoading, isSingleTurn, isOperatorLocked, isCrossTarget, noTargetSelected, globalMarkdown = false, onManualScore, canManualScore = true, onManualScoreObjectiveRequired }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -807,9 +931,6 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                             {piece.scores && piece.scores.length > 0 && (
                               <MessageScores scores={piece.scores} groupId={groupId} />
                             )}
-                            {message.displayPieces && onManualScore && (
-                              <ManualScorePopover messageId={piece.pieceId} onSave={onManualScore} />
-                            )}
                           </div>
                         </div>
                       )
@@ -860,9 +981,6 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         <div className={styles.scoreControls}>
                           {piece.scores && piece.scores.length > 0 && (
                             <MessageScores scores={piece.scores} groupId={groupId} />
-                          )}
-                          {message.displayPieces && onManualScore && (
-                            <ManualScorePopover messageId={piece.pieceId} onSave={onManualScore} />
                           )}
                         </div>
                       </div>
@@ -1003,6 +1121,17 @@ export default function MessageList({ messages, onCopyToInput, onCopyToNewConver
                         className={styles.messageActionButton}
                       />
                     </Tooltip>
+                  ))}
+
+                  {/* Manual score: one control per persisted message piece */}
+                  {message.displayPieces && onManualScore && renderPieces.map(({ piece }) => (
+                    <ManualScorePopover
+                      key={piece.pieceId}
+                      messageId={piece.pieceId}
+                      onSave={onManualScore}
+                      canManualScore={canManualScore}
+                      onObjectiveRequired={onManualScoreObjectiveRequired}
+                    />
                   ))}
                 </div>
               )}

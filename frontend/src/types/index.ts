@@ -321,6 +321,11 @@ export interface CreateAttackRequest {
   prepended_conversation?: PrependedMessageRequest[]
 }
 
+export interface UpdateAttackRequest {
+  outcome?: 'undetermined' | 'success' | 'failure' | 'error'
+  objective?: string
+}
+
 export interface CreateAttackResponse {
   attack_result_id: string
   conversation_id: string
@@ -343,10 +348,27 @@ export interface BackendScore {
   timestamp: string
 }
 
-export interface ManualScoreRequest {
-  message_id: string
-  value: number
+export type ManualScoreType = 'true_false' | 'float_scale'
+
+interface ManualScoreBase {
   rationale: string
+}
+
+export type ManualScoreInput = ManualScoreBase & (
+  | {
+    score_type: 'true_false'
+    value: boolean
+  }
+  | {
+    score_type: 'float_scale'
+    value: number
+    success_threshold: number
+  }
+)
+
+export type ManualScoreRequest = ManualScoreInput & {
+  attack_result_id: string
+  message_id: string
 }
 
 /** Score enriched with message-piece presentation fields for transcript rendering. */

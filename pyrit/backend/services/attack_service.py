@@ -60,6 +60,7 @@ from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -404,7 +405,7 @@ class AttackService:
 
     async def update_attack_async(self, *, attack_result_id: str, request: UpdateAttackRequest) -> AttackSummary | None:
         """
-        Update an attack's outcome.
+        Update an attack's mutable fields.
 
         Updates the AttackResult in the database.
 
@@ -415,21 +416,22 @@ class AttackService:
         if not results:
             return None
 
-        # Map outcome
-        outcome_map = {
-            "undetermined": AttackOutcome.UNDETERMINED,
-            "success": AttackOutcome.SUCCESS,
-            "failure": AttackOutcome.FAILURE,
-            "error": AttackOutcome.ERROR,
-        }
-        new_outcome = outcome_map.get(request.outcome, AttackOutcome.UNDETERMINED)
+        update_fields: dict[str, Any] = {"timestamp": datetime.now(timezone.utc)}
+        if request.outcome is not None:
+            outcome_map = {
+                "undetermined": AttackOutcome.UNDETERMINED,
+                "success": AttackOutcome.SUCCESS,
+                "failure": AttackOutcome.FAILURE,
+                "error": AttackOutcome.ERROR,
+            }
+            update_fields["outcome"] = outcome_map[request.outcome].value
+        if request.objective is not None:
+            update_fields["objective"] = request.objective
+            update_fields["objective_sha256"] = to_sha256(request.objective)
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
-            update_fields={
-                "outcome": new_outcome.value,
-                "timestamp": datetime.now(timezone.utc),
-            },
+            update_fields=update_fields,
         )
 
         return await self.get_attack_async(attack_result_id=attack_result_id)

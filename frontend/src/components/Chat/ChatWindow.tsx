@@ -40,6 +40,7 @@ import { exportConversation } from '../../utils/conversationExport'
 import type { ExportFormat } from '../../utils/conversationExport'
 import type {
   AttackTargetResolutionStatus,
+  ManualScoreInput,
   Message,
   MessageAttachment,
   TargetInstance,
@@ -84,8 +85,9 @@ interface ChatWindowProps {
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
-  onConversationCreated: (attackResultId: string, conversationId: string) => void
+  onConversationCreated: (attackResultId: string, conversationId: string, objective?: string) => void
   onSelectConversation: (conversationId: string) => void
+  onObjectiveChange?: (objective: string) => void
   labels?: Record<string, string>
   onLabelsChange?: (labels: Record<string, string>) => void
   onNavigate?: (view: ViewName) => void
@@ -115,6 +117,7 @@ export default function ChatWindow({
   activeConversationId,
   onConversationCreated,
   onSelectConversation,
+  onObjectiveChange,
   labels,
   onLabelsChange,
   onNavigate,
@@ -131,6 +134,8 @@ export default function ChatWindow({
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
+  const [pendingObjective, setPendingObjective] = useState('')
+  const [objectiveEditRequestId, setObjectiveEditRequestId] = useState(0)
   // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   /** True while an async message fetch is in-flight */
@@ -264,6 +269,7 @@ export default function ChatWindow({
       setMessages([])
       setLoadedConversationId(null)
       setSystemPrompt('')
+      setPendingObjective('')
     }
   }
 
@@ -430,6 +436,7 @@ export default function ChatWindow({
       if (!currentAttackResultId) {
         const createResponse = await attacksApi.createAttack({
           target_registry_name: activeTarget.target_registry_name,
+          name: pendingObjective || undefined,
           labels: labels,
           system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
         })
@@ -446,7 +453,7 @@ export default function ChatWindow({
           pendingUserMessagesRef.current.delete('__pending__')
           pendingUserMessagesRef.current.set(currentConversationId!, pendingMsgs)
         }
-        onConversationCreated(currentAttackResultId, currentConversationId)
+        onConversationCreated(currentAttackResultId, currentConversationId, pendingObjective || undefined)
         // Update the viewed-conversation ref so the success/error guards
         // below recognise this as the active conversation.
         viewedConvRef.current = currentConversationId!
@@ -690,16 +697,26 @@ export default function ChatWindow({
     isMutationLocked,
   ])
 
-  const handleManualScore = useCallback(async (messageId: string, value: number, rationale: string) => {
-    if (!attackResultId || !activeConversationId || isMutationLocked) return
+  const handleManualScore = useCallback(async (messageId: string, score: ManualScoreInput) => {
+    if (!attackResultId || !activeConversationId || !(objective || pendingObjective).trim()) return
 
     await scoresApi.createManualScore({
+      attack_result_id: attackResultId,
       message_id: messageId,
-      value,
-      rationale,
+      ...score,
     })
     await loadConversation(attackResultId, activeConversationId)
-  }, [activeConversationId, attackResultId, isMutationLocked, loadConversation])
+  }, [activeConversationId, attackResultId, loadConversation, objective, pendingObjective])
+
+  const handleAddObjective = useCallback(async (newObjective: string): Promise<void> => {
+    if (!attackResultId) {
+      setPendingObjective(newObjective)
+      return
+    }
+
+    const updatedAttack = await attacksApi.updateAttack(attackResultId, { objective: newObjective })
+    onObjectiveChange?.(updatedAttack.objective)
+  }, [attackResultId, onObjectiveChange])
 
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
 
@@ -880,7 +897,19 @@ export default function ChatWindow({
             </Tooltip>
           </div>
         </div>
-        <ObjectiveHeader key={objective} objective={objective} />
+        <ObjectiveHeader
+          key={`${attackResultId ?? 'new'}-${objective}-${pendingObjective}`}
+          objective={objective || pendingObjective}
+          canAdd={
+            Boolean(activeTarget)
+            && !isLoadingAttack
+            && !isLoadingMessages
+            && !awaitingConversationLoad
+            && messages.length === 0
+          }
+          onAdd={handleAddObjective}
+          editRequestId={objectiveEditRequestId}
+        />
         {systemMessage && <SystemPromptBanner content={systemMessage.content} />}
         <MessageList
           messages={messages}
@@ -894,7 +923,9 @@ export default function ChatWindow({
           isCrossTarget={isCrossTargetLocked || isTargetResolutionLocked}
           noTargetSelected={!activeTarget}
           globalMarkdown={globalMarkdown}
-          onManualScore={!isMutationLocked && attackResultId ? handleManualScore : undefined}
+          onManualScore={attackResultId ? handleManualScore : undefined}
+          canManualScore={Boolean((objective || pendingObjective).trim())}
+          onManualScoreObjectiveRequired={() => setObjectiveEditRequestId(requestId => requestId + 1)}
         />
         <ChatInputArea
           ref={inputBoxRef}

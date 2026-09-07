@@ -114,15 +114,23 @@ export const useMessageListStyles = makeStyles({
     gap: tokens.spacingVerticalS,
     width: 'min(320px, calc(100vw - 32px))',
   },
-  manualScorePresets: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: tokens.spacingHorizontalXXS,
-  },
   manualScoreActions: {
     display: 'flex',
     justifyContent: 'flex-end',
     gap: tokens.spacingHorizontalS,
+  },
+  thresholdControls: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: tokens.spacingVerticalXXS,
+    width: '100%',
+  },
+  thresholdInput: {
+    width: '72px',
+  },
+  thresholdSlider: {
+    width: '100%',
   },
   scoreChip: {
     minWidth: '32px',
@@ -429,6 +437,29 @@ export const useMessageListStyles = makeStyles({
     minWidth: 'auto',
     padding: '2px',
     ...mobileTouchTarget,
+  },
+  manualScoreIcon: {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '20px',
+    lineHeight: 0,
+  },
+  manualScoreWarningIcon: {
+    position: 'absolute',
+    top: '-3px',
+    right: '-3px',
+    width: '12px',
+    height: '12px',
+    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorPaletteYellowBackground3,
+    borderRadius: tokens.borderRadiusCircular,
+    fontSize: '9px',
+    fontWeight: tokens.fontWeightBold,
+    lineHeight: '12px',
+    textAlign: 'center',
   },
   reasoningContainer: {
     backgroundColor: tokens.colorNeutralBackground1,

@@ -117,7 +117,61 @@ describe("MessageList", () => {
     expect(screen.getByText("Assistant message test")).toBeInTheDocument();
   });
 
-  it("should submit a manual score for a persisted message piece", async () => {
+  it("should submit a float manual score for a persisted message piece", async () => {
+    const user = userEvent.setup();
+    const onManualScore = jest.fn().mockResolvedValue(undefined);
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: "Response to score",
+        timestamp: new Date().toISOString(),
+        displayPieces: [
+          {
+            type: "text",
+            pieceId: "piece-manual",
+            pieceIndex: 0,
+            content: "Response to score",
+            scores: [],
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList messages={messages} onManualScore={onManualScore} />
+      </TestWrapper>
+    );
+
+    const messageActions = screen.getByTestId("message-actions-0");
+    await user.click(within(messageActions).getByRole("button", { name: "Add manual score" }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.click(screen.getByRole("radio", { name: "Float scale" }));
+    await user.clear(screen.getByLabelText("Manual score value"));
+    await user.type(screen.getByLabelText("Manual score value"), "0.33");
+    expect(screen.getByLabelText("Success threshold")).toHaveValue(0.5);
+    await user.clear(screen.getByLabelText("Success threshold"));
+    await user.type(screen.getByLabelText("Success threshold"), "0.4");
+    expect(screen.getByRole("slider", { name: "Success threshold slider" })).toHaveValue("0.4");
+    fireEvent.change(screen.getByRole("slider", { name: "Success threshold slider" }), {
+      target: { value: "0.6" },
+    });
+    expect(screen.getByLabelText("Success threshold")).toHaveValue(0.6);
+    await user.type(screen.getByLabelText("Rationale (optional)"), "Partially satisfied");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(onManualScore).toHaveBeenCalledWith("piece-manual", {
+        score_type: "float_scale",
+        value: 0.33,
+        success_threshold: 0.6,
+        rationale: "Partially satisfied",
+      });
+    });
+    expect(screen.queryByText("Manual score")).not.toBeInTheDocument();
+  });
+
+  it("should submit a true false manual score for a persisted message piece", async () => {
     const user = userEvent.setup();
     const onManualScore = jest.fn().mockResolvedValue(undefined);
     const messages: Message[] = [
@@ -144,13 +198,58 @@ describe("MessageList", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Add manual score" }));
-    await user.click(screen.getByRole("button", { name: "0.33" }));
-    await user.type(screen.getByLabelText("Manual score rationale"), "Partially satisfied");
+    await user.click(screen.getByRole("radio", { name: "True / false" }));
+    await user.click(screen.getByRole("radio", { name: "True" }));
+    await user.type(screen.getByLabelText("Rationale (optional)"), "Objective achieved");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
-      expect(onManualScore).toHaveBeenCalledWith("piece-manual", 0.33, "Partially satisfied");
+      expect(onManualScore).toHaveBeenCalledWith("piece-manual", {
+        score_type: "true_false",
+        value: true,
+        rationale: "Objective achieved",
+      });
     });
+  });
+
+  it("should request an objective instead of opening manual scoring when one is missing", async () => {
+    const user = userEvent.setup();
+    const onObjectiveRequired = jest.fn();
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: "Response to score",
+        timestamp: new Date().toISOString(),
+        displayPieces: [
+          {
+            type: "text",
+            pieceId: "piece-manual",
+            pieceIndex: 0,
+            content: "Response to score",
+            scores: [],
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={messages}
+          onManualScore={jest.fn().mockResolvedValue(undefined)}
+          canManualScore={false}
+          onManualScoreObjectiveRequired={onObjectiveRequired}
+        />
+      </TestWrapper>
+    );
+
+    const manualScoreButton = screen.getByRole("button", { name: "Add manual score" });
+    expect(within(manualScoreButton).getByTestId("manual-score-objective-warning-icon")).toBeInTheDocument();
+    await user.hover(manualScoreButton);
+    expect(await screen.findByText("Manual scoring requires an objective. Click to add one.")).toBeInTheDocument();
+    await user.click(manualScoreButton);
+
+    expect(onObjectiveRequired).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Manual score")).not.toBeInTheDocument();
   });
 
@@ -200,6 +299,46 @@ describe("MessageList", () => {
     expect(screen.getByText("Piece 1 · text")).toBeInTheDocument();
     expect(screen.getByText("harmful")).toBeInTheDocument();
     expect(screen.getByText("The response contains harmful content.")).toBeInTheDocument();
+  });
+
+  it("should allow adding another manual score when a response already has a score", () => {
+    const scoredMessage: Message = {
+      role: "assistant",
+      content: "Scored response",
+      timestamp: new Date().toISOString(),
+      displayPieces: [
+        {
+          type: "text",
+          pieceId: "already-scored-piece",
+          pieceIndex: 0,
+          content: "Scored response",
+          scores: [
+            {
+              id: "existing-score",
+              message_piece_id: "already-scored-piece",
+              scorer_type: "ExistingScorer",
+              score_type: "true_false",
+              score_value: "True",
+              pieceIndex: 0,
+              pieceType: "text",
+              sourceLabel: "Piece 1 · text",
+              timestamp: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[scoredMessage]}
+          onManualScore={jest.fn().mockResolvedValue(undefined)}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.getByRole("button", { name: "Add manual score" })).toBeInTheDocument();
   });
 
   it("should show an undetermined score in the chip, tooltip, label, and details", async () => {
@@ -1601,6 +1740,34 @@ describe("MessageList", () => {
 
     expect(screen.queryByTestId("copy-to-input-btn-0")).not.toBeInTheDocument();
     expect(screen.queryByTestId("download-btn-0-0")).not.toBeInTheDocument();
+  });
+
+  it("should not show manual score controls on user messages", () => {
+    const userMessage: Message = {
+      role: "user",
+      content: "User prompt",
+      timestamp: new Date().toISOString(),
+      displayPieces: [
+        {
+          type: "text",
+          pieceId: "user-piece",
+          pieceIndex: 0,
+          content: "User prompt",
+          scores: [],
+        },
+      ],
+    };
+
+    render(
+      <TestWrapper>
+        <MessageList
+          messages={[userMessage]}
+          onManualScore={jest.fn().mockResolvedValue(undefined)}
+        />
+      </TestWrapper>
+    );
+
+    expect(screen.queryByRole("button", { name: "Add manual score" })).not.toBeInTheDocument();
   });
 
   it("should call onCopyToInput when 'Copy to input' button is clicked", async () => {

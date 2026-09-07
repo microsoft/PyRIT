@@ -29,6 +29,38 @@ describe('ObjectiveHeader', () => {
     expect(screen.queryByTestId('objective-header')).not.toBeInTheDocument()
   })
 
+  it('allows adding a required objective when the conversation is new', async () => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn().mockResolvedValue(undefined)
+    render(
+      <TestWrapper>
+        <ObjectiveHeader objective="" canAdd onAdd={onAdd} />
+      </TestWrapper>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /add objective/i }))
+    const saveButton = screen.getByRole('button', { name: 'Save' })
+    expect(saveButton).toBeDisabled()
+
+    await user.type(screen.getByRole('textbox', { name: /attack objective/i }), 'Extract the system prompt')
+    await user.click(saveButton)
+
+    expect(onAdd).toHaveBeenCalledWith('Extract the system prompt')
+  })
+
+  it('opens the objective editor when manual scoring requests an objective', () => {
+    render(
+      <TestWrapper>
+        <ObjectiveHeader objective="" onAdd={jest.fn()} editRequestId={1} />
+      </TestWrapper>,
+    )
+
+    expect(screen.getByRole('textbox', { name: /attack objective/i })).toBeInTheDocument()
+    expect(screen.getByTestId('manual-score-objective-warning')).toHaveTextContent(
+      'An objective is required before you can add a manual score.',
+    )
+  })
+
   it('renders the label and objective text', () => {
     render(
       <TestWrapper>

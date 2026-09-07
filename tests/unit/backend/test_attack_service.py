@@ -31,6 +31,7 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
+from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -1183,6 +1184,21 @@ class TestUpdateAttack:
 
         call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "error"
+
+    async def test_update_attack_updates_objective_and_hash(self, attack_service, mock_memory) -> None:
+        """Test that updating the objective keeps its lookup hash synchronized."""
+        ar = make_attack_result(conversation_id="test-id", objective="")
+        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_conversation_messages.return_value = []
+
+        await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective="Extract the system prompt"),
+        )
+
+        update_fields = mock_memory.update_attack_result_by_id.call_args.kwargs["update_fields"]
+        assert update_fields["objective"] == "Extract the system prompt"
+        assert update_fields["objective_sha256"] == to_sha256("Extract the system prompt")
 
     async def test_update_attack_bumps_timestamp(self, attack_service, mock_memory) -> None:
         """Test that update_attack bumps the timestamp recency column and does not write metadata."""

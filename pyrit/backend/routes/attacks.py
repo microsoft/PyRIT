@@ -253,9 +253,7 @@ async def update_attack(  # pyrit-async-suffix-exempt
     request: UpdateAttackRequest,
 ) -> AttackSummary:
     """
-    Update an attack's outcome.
-
-    Used to mark attacks as success/failure/undetermined.
+    Update mutable attack fields.
 
     Returns:
         AttackSummary: Updated attack details.
