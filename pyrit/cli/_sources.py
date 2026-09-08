@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
-
 from pyrit.models import Message, MessagePiece, Score
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from pyrit.cli.api_client import PyRITApiClient
 
 
