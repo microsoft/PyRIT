@@ -605,11 +605,12 @@ describe('ScenarioRunPage', () => {
 
     await user.click(within(executionsTable).getAllByRole('row')[1])
 
-    expect(screen.getByRole('link', { name: 'Back to scanner history' })).toHaveAttribute(
-      'href',
-      '/history/scanner?operator=alice',
-    )
-    await user.click(screen.getByRole('button', { name: 'Close' }))
+    const dialog = await screen.findByRole('dialog', { hidden: true })
+    await user.click(within(dialog).getByRole('button', { name: 'Close', hidden: true }))
+    await waitFor(() => expect(screen.getByTestId('scanner-route')).toHaveAttribute(
+      'data-location',
+      `/scanner-history/${SCENARIO_RESULT_ID}`,
+    ))
     expect(screen.getByRole('link', { name: 'Back to scanner history' })).toHaveAttribute(
       'href',
       '/history/scanner?operator=alice',
