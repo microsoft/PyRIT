@@ -231,4 +231,32 @@ describe("MainLayout", () => {
       expect(mockedVersionApi.getVersion).toHaveBeenCalled();
     });
   });
+
+  it("renders a skip link as the first focusable element that targets the main landmark", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+
+    const { container } = renderWithProvider(
+      <MainLayout {...defaultProps}>
+        <div>Content</div>
+      </MainLayout>
+    );
+
+    const skipLink = screen.getByRole("link", { name: /skip to main content/i });
+    expect(skipLink).toHaveAttribute("href", "#main-content");
+
+    const main = container.querySelector("main");
+    expect(main).toHaveAttribute("id", "main-content");
+    expect(main).toHaveAttribute("tabIndex", "-1");
+
+    // The skip link must be the first focusable element in the shell so
+    // keyboard users reach it on the very first Tab press.
+    const focusable = container.querySelectorAll<HTMLElement>(
+      'a[href], button, [tabindex]:not([tabindex="-1"])'
+    );
+    expect(focusable[0]).toBe(skipLink);
+
+    await waitFor(() => {
+      expect(mockedVersionApi.getVersion).toHaveBeenCalled();
+    });
+  });
 });

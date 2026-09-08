@@ -44,6 +44,9 @@ export default function MainLayout({
 
   return (
     <div className={styles.root}>
+      <a href="#main-content" className={styles.skipLink}>
+        Skip to main content
+      </a>
       <div className={styles.topBar}>
         <Tooltip
           content={
@@ -86,7 +89,9 @@ export default function MainLayout({
             canManageConfiguration={canManageConfiguration}
           />
         </aside>
-        <main className={styles.main}>{children}</main>
+        <main id="main-content" tabIndex={-1} className={styles.main}>
+          {children}
+        </main>
       </div>
     </div>
   )
