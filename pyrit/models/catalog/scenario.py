@@ -90,6 +90,14 @@ class ScenarioDatasetSummary(BaseModel):
     selection_note: str | None = None
 
 
+class ScenarioTechniqueSummary(BaseModel):
+    """One concrete attack technique available to a scenario."""
+
+    name: str = Field(..., min_length=1)
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
 class ScenarioRunSizeEstimate(BaseModel):
     """
     Structured estimate of default planned scenario execution units.
@@ -99,8 +107,14 @@ class ScenarioRunSizeEstimate(BaseModel):
     """
 
     estimated_attack_count: int | None = Field(default=None, ge=0)
+    minimum_attack_count: int | None = Field(default=None, ge=0)
+    maximum_attack_count: int | None = Field(default=None, ge=0)
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
+    effective_parameters: dict[str, bool | int | float | str | list[str]] = Field(
+        default_factory=dict,
+        description="Scenario parameter values used by this estimate, including implicit runtime defaults.",
+    )
     note: str | None = None
 
     @model_validator(mode="after")
@@ -114,6 +128,13 @@ class ScenarioRunSizeEstimate(BaseModel):
         Raises:
             ValueError: If an available estimate misstates its total.
         """
+        if (
+            self.minimum_attack_count is not None
+            and self.maximum_attack_count is not None
+            and self.minimum_attack_count > self.maximum_attack_count
+        ):
+            raise ValueError("Minimum attack count cannot exceed maximum attack count")
+
         if self.estimated_attack_count is not None:
             component_total = sum(component.count for component in self.components)
             if component_total != self.estimated_attack_count:
@@ -160,11 +181,11 @@ class RegisteredScenario(BaseModel):
         description="Concrete ordered technique expansion for every aggregate selector",
     )
     all_techniques: list[str] = Field(..., description="All available concrete technique names")
-    default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
-    default_dataset_summaries: list[ScenarioDatasetSummary] = Field(
+    technique_summaries: list[ScenarioTechniqueSummary] = Field(
         default_factory=list,
-        description="Logical and effectively selected attack-group counts for the default configuration",
+        description="Descriptions and tags for the available concrete techniques",
     )
+    default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
     baseline_policy: Literal["enabled", "disabled", "forbidden"] = Field(
         "enabled", description="Whether baseline execution is enabled, disabled, or forbidden"
     )
@@ -302,8 +323,10 @@ class ScenarioRunSummary(BaseModel):
     error: str | None = Field(None, description="Error message if status is FAILED")
     error_type: str | None = Field(None, description="Exception class name if status is FAILED")
     techniques_used: list[str] = Field(default_factory=list, description="Technique names that were executed")
-    total_attacks: int = Field(0, ge=0, description="Total number of attack results persisted for this run")
-    completed_attacks: int = Field(0, ge=0, description="Number of attacks that reached a terminal outcome")
+    total_attacks: int = Field(
+        0, ge=0, description="Planned execution units, or the observed units when no plan is persisted"
+    )
+    completed_attacks: int = Field(0, ge=0, description="Planned execution units that reached a terminal outcome")
     objective_achieved_rate: int = Field(0, ge=0, le=100, description="Success rate as percentage (0-100)")
     failed_attacks: list[AttackErrorSummary] = Field(
         default_factory=list,
@@ -318,6 +341,23 @@ class ScenarioRunSummary(BaseModel):
     )
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     completed_at: datetime | None = Field(None, description="When the scenario finished")
+    pyrit_version: str | None = Field(None, description="PyRIT version that created the run")
+    target: "ScenarioTargetSummary | None" = Field(None, description="Safe objective-target identity")
+    datasets_used: list[str] = Field(default_factory=list, description="Resolved datasets selected for the run")
+    scenario_parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Safe resolved scenario parameters; sensitive fields are removed",
+    )
+    planned_total_available: bool = Field(
+        True,
+        description="Whether total_attacks comes from a complete persisted run plan",
+    )
+    successful_attacks: int = Field(0, ge=0, description="Latest successful planned units")
+    error_attacks: int = Field(0, ge=0, description="Persisted error attempts")
+    attack_details_available: bool = Field(
+        True,
+        description="Whether failed_attacks and attack_retries contain per-attempt details",
+    )
 
 
 class ScenarioRunListItem(BaseModel):
@@ -334,5 +374,38 @@ class ScenarioRunListItem(BaseModel):
     error_type: str | None = Field(None, description="Persisted run-level exception class")
     techniques_used: list[str] = Field(default_factory=list, description="Planned technique display groups")
     total_attacks: int | None = Field(None, ge=0, description="Number of planned execution units when known")
+    completed_attacks: int = Field(0, ge=0, description="Latest completed planned units")
+    objective_achieved_rate: int = Field(0, ge=0, le=100, description="Success rate as percentage (0-100)")
+    total_retries: int = Field(0, ge=0, description="Retry attempts recorded across projected work units")
     labels: dict[str, str] = Field(default_factory=dict, description="Labels attached to this run")
     completed_at: datetime | None = Field(None, description="When the scenario finished")
+    pyrit_version: str | None = Field(None, description="PyRIT version that created the run")
+    target: "ScenarioTargetSummary | None" = Field(None, description="Safe objective-target identity")
+    datasets_used: list[str] = Field(default_factory=list, description="Resolved datasets selected for the run")
+    scenario_parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Safe resolved scenario parameters; sensitive fields are removed",
+    )
+    planned_total_available: bool = Field(
+        True,
+        description="Whether total_attacks comes from a complete persisted run plan",
+    )
+    successful_attacks: int = Field(0, ge=0, description="Latest successful planned units")
+    error_attacks: int = Field(0, ge=0, description="Persisted error attempts")
+    attack_details_available: bool = Field(
+        True,
+        description="Whether failed_attacks and attack_retries contain per-attempt details",
+    )
+
+
+class ScenarioTargetSummary(BaseModel):
+    """Safe target identity suitable for scenario history and run headers."""
+
+    target_type: str = Field(..., description="Target implementation type")
+    endpoint: str | None = Field(None, description="Configured endpoint, when present")
+    model_name: str | None = Field(None, description="Configured model or deployment name")
+    identifier_hash: str | None = Field(None, description="Canonical target identifier hash")
+
+
+ScenarioRunSummary.model_rebuild()
+ScenarioRunListItem.model_rebuild()

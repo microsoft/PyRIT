@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from unit.mocks import get_mock_scorer_identifier, make_scenario_result
@@ -903,6 +904,85 @@ def test_update_scenario_run_state_updates_state_and_error_fields(
     assert hydrated.scenario_run_state == ScenarioRunState.COMPLETED
     assert hydrated.error_message is None
     assert hydrated.error_type is None
+
+
+def test_try_update_scenario_run_state_updates_when_the_state_matches(
+    sqlite_instance: MemoryInterface,
+):
+    """The compare-and-set applies when the row is still in one of the expected states."""
+    scenario_result = create_scenario_result(name="CAS Match", attack_results={"a": []})
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    sid = str(scenario_result.id)
+    sqlite_instance.update_scenario_run_state(scenario_result_id=sid, scenario_run_state=ScenarioRunState.CREATED)
+
+    updated = sqlite_instance.try_update_scenario_run_state(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        error_message="boom",
+        error_type="RuntimeError",
+    )
+
+    assert updated is True
+    [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
+    assert hydrated.error_message == "boom"
+    assert hydrated.error_type == "RuntimeError"
+
+
+def test_try_update_scenario_run_state_preserves_a_terminal_state(
+    sqlite_instance: MemoryInterface,
+):
+    """A run cancelled while preparation was draining must keep its cancellation."""
+    scenario_result = create_scenario_result(name="CAS Mismatch", attack_results={"a": []})
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    sid = str(scenario_result.id)
+    sqlite_instance.update_scenario_run_state(
+        scenario_result_id=sid,
+        scenario_run_state=ScenarioRunState.CANCELLED,
+        error_message="Run was cancelled by user",
+        error_type="CancelledError",
+    )
+
+    updated = sqlite_instance.try_update_scenario_run_state(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        error_message="boom",
+        error_type="RuntimeError",
+    )
+
+    assert updated is False
+    [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.CANCELLED
+    assert hydrated.error_message == "Run was cancelled by user"
+    assert hydrated.error_type == "CancelledError"
+
+
+def test_try_update_scenario_run_state_reports_a_missing_row(
+    sqlite_instance: MemoryInterface,
+):
+    """A run that is gone is not an error here; the caller only needs to know nothing changed."""
+    assert (
+        sqlite_instance.try_update_scenario_run_state(
+            scenario_result_id=str(uuid4()),
+            expected_states={ScenarioRunState.CREATED},
+            scenario_run_state=ScenarioRunState.FAILED,
+        )
+        is False
+    )
+
+
+def test_try_update_scenario_run_state_rejects_empty_expected_states(
+    sqlite_instance: MemoryInterface,
+):
+    """An empty set would silently never match, which would hide the bug it exists to prevent."""
+    with pytest.raises(ValueError, match="expected_states"):
+        sqlite_instance.try_update_scenario_run_state(
+            scenario_result_id=str(uuid4()),
+            expected_states=set(),
+            scenario_run_state=ScenarioRunState.FAILED,
+        )
 
 
 def test_get_scenario_results_by_target_identifier_filter_hash(

@@ -138,6 +138,10 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/auth/access") {
+      await route.fulfill(jsonResponse({ isAdmin: true }));
+      return;
+    }
     if (apiPath === "/version") {
       await route.fulfill(
         jsonResponse({
@@ -164,11 +168,20 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/config" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          content: "initializers: []\n",
+          source: "C:/Users/test/.pyrit/.pyrit_conf",
+          version: "touch-target-config-v1",
+        })
+      );
+      return;
+    }
     if (apiPath === "/initializers/settings" && method === "GET") {
       await route.fulfill(
         jsonResponse({
-          baseline: [],
-          additional: [],
+          configured: [],
         })
       );
       return;
@@ -359,7 +372,7 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function startChatWithMessages(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Configuration", exact: true }).click();
+  await page.getByRole("button", { name: "Targets", exact: true }).click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
   await page.getByRole("button", { name: "Set Active" }).first().click();
   await page.getByRole("button", { name: "Chat", exact: true }).click();
@@ -379,7 +392,7 @@ test.beforeEach(async ({ page }) => {
 test.describe("Mobile touch targets", () => {
   test.use({ viewport: MOBILE_VIEWPORT, hasTouch: true });
 
-  test("keeps Home, Configuration, and History controls at least 44px", async ({
+  test("keeps Home, Targets, and History controls at least 44px", async ({
     page,
   }) => {
     await page.goto("/");
@@ -401,7 +414,7 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
 
     await page
-      .getByRole("button", { name: "Configuration", exact: true })
+      .getByRole("button", { name: "Targets", exact: true })
       .click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
 
@@ -451,10 +464,11 @@ test.describe("Mobile touch targets", () => {
   });
 
   test("keeps the Initializer selector at least 44px", async ({ page }) => {
-    await page.goto("/initializers");
+    await page.goto("/config");
+    await page.getByRole("tab", { name: "Initializers", exact: true }).click();
 
     await expectMinimumTouchTarget(
-      page.getByRole("combobox", { name: "Initializer to add" })
+      page.getByRole("button", { name: "Browse available initializers" })
     );
     await expectNoDocumentOverflow(page);
   });
@@ -476,7 +490,7 @@ test.describe("Mobile touch targets", () => {
       page.getByTestId("toggle-objective-header-btn")
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "Configuration", exact: true }).click();
+    await page.getByRole("button", { name: "Targets", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
     await page.getByRole("button", { name: "Set Active" }).first().click();
     await page.goBack();
@@ -641,7 +655,7 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   );
 
   await page
-    .getByRole("button", { name: "Configuration", exact: true })
+    .getByRole("button", { name: "Targets", exact: true })
     .click();
   await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
   await expectCompactDesktopTarget(
@@ -655,9 +669,10 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
     page.getByRole("button", { name: "Expand inner targets" })
   );
 
-  await page.goto("/initializers");
+  await page.goto("/config");
+  await page.getByRole("tab", { name: "Initializers", exact: true }).click();
   await expectCompactDesktopTarget(
-    page.getByRole("combobox", { name: "Initializer to add" })
+    page.getByRole("button", { name: "Browse available initializers" })
   );
 
   await startChatWithMessages(page);

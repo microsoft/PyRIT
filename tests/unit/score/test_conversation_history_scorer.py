@@ -14,7 +14,6 @@ from pyrit.score import (
     FloatScaleThresholdScorer,
     MessageScorable,
     MessageScorer,
-    MessageScoringOptions,
     Scorer,
     SelfAskGeneralFloatScaleScorer,
     TrueFalseCompositeScorer,
@@ -668,27 +667,113 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
     mock_scorer._score_nested_async.assert_awaited_once()
 
 
-async def test_conversation_scorer_skip_on_error_omits_blocked_trigger(patch_central_database):
+async def test_conversation_scorer_errored_trigger_still_reads_the_conversation(patch_central_database):
+    """A ConversationScorer reads the conversation, so an errored trigger must not silence it."""
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
+    prior_piece = MessagePiece(
+        role="assistant",
+        original_value="an earlier answer",
+        conversation_id=conversation_id,
+        sequence=1,
+    )
     blocked_piece = MessagePiece(
         role="assistant",
         original_value='{"message": "content_filter"}',
         original_value_data_type="error",
         converted_value_data_type="error",
         conversation_id=conversation_id,
+        sequence=2,
         response_error="blocked",
     )
-    memory.add_message_pieces_to_memory(message_pieces=[blocked_piece])
+    memory.add_message_pieces_to_memory(message_pieces=[prior_piece, blocked_piece])
 
     wrapped_scorer = MockFloatScaleScorer()
-    wrapped_scorer._score_nested_async = AsyncMock()
+    wrapped_scorer._score_nested_async = AsyncMock(wraps=wrapped_scorer._score_nested_async)
     scorer = create_conversation_scorer(scorer=wrapped_scorer)
 
-    scores = await scorer.score_async(
-        scorable=MessageScorable.from_message(blocked_piece.to_message()),
-        message_options=MessageScoringOptions(skip_on_error_result=True),
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(blocked_piece.to_message()))
+
+    assert scores == []
+    wrapped_scorer._score_nested_async.assert_awaited_once()
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"]
+    assert "an earlier answer" in rendered.value
+    assert "content_filter" in rendered.value
+
+
+async def test_conversation_scorer_excludes_simulated_history_by_default(patch_central_database):
+    """Conversation role policy checks stored history roles, not API role aliases."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    pieces = [
+        MessagePiece(role="user", original_value="real request", conversation_id=conversation_id, sequence=1),
+        MessagePiece(
+            role="simulated_assistant",
+            original_value="fabricated answer",
+            conversation_id=conversation_id,
+            sequence=2,
+        ),
+        MessagePiece(role="assistant", original_value="real answer", conversation_id=conversation_id, sequence=3),
+    ]
+    memory.add_message_pieces_to_memory(message_pieces=pieces)
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer._score_nested_async = AsyncMock(return_value=[])
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    scorer = create_conversation_scorer(scorer=wrapped_scorer)
+
+    await scorer.score_async(scorable=MessageScorable.from_message(pieces[-1].to_message()))
+
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"].value
+    assert "real request" in rendered
+    assert "real answer" in rendered
+    assert "fabricated answer" not in rendered
+
+
+async def test_conversation_scorer_does_not_apply_role_policy_to_trigger(patch_central_database):
+    """A simulated trigger is only a locator, so valid stored history can still be scored."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    user_piece = MessagePiece(role="user", original_value="real request", conversation_id=conversation_id, sequence=1)
+    trigger = MessagePiece(
+        role="simulated_assistant",
+        original_value="fabricated locator",
+        conversation_id=conversation_id,
+        sequence=2,
     )
+    memory.add_message_pieces_to_memory(message_pieces=[user_piece, trigger])
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer._score_nested_async = AsyncMock(return_value=[])
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    validator = ScorerPromptValidator(
+        supported_roles=["user"],
+        enforce_all_pieces_valid=True,
+        raise_on_no_valid_pieces=True,
+    )
+    scorer = create_conversation_scorer(scorer=wrapped_scorer, validator=validator)
+
+    await scorer.score_async(scorable=MessageScorable.from_message(trigger.to_message()))
+
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"].value
+    assert "real request" in rendered
+    assert "fabricated locator" not in rendered
+
+
+async def test_conversation_scorer_is_silent_when_all_history_roles_are_excluded(patch_central_database):
+    """No role-supported history means the conversation scorer makes no verdict."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    trigger = MessagePiece(
+        role="simulated_assistant",
+        original_value="fabricated locator",
+        conversation_id=conversation_id,
+        sequence=1,
+    )
+    memory.add_message_pieces_to_memory(message_pieces=[trigger])
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    scorer = create_conversation_scorer(scorer=wrapped_scorer)
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(trigger.to_message()))
 
     assert scores == []
     wrapped_scorer._score_nested_async.assert_not_awaited()

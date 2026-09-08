@@ -34,6 +34,11 @@ SUBSCRIPTION_ID = "11111111-1111-1111-1111-111111111111"
 RESOURCE_GROUP = f"copyrit-{INSTANCE}"
 RESOURCE_GROUP_ID = f"/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/{RESOURCE_GROUP}"
 GROUP_ID = "22222222-2222-2222-2222-222222222222"
+CONFIG_URI = "https://configstore.blob.core.windows.net/config/.pyrit_conf"
+CONFIG_SCOPE = (
+    f"/subscriptions/{SUBSCRIPTION_ID}/resourceGroups/config-rg/providers/"
+    "Microsoft.Storage/storageAccounts/configstore/blobServices/default/containers/config"
+)
 
 
 class TestDeployInstanceContract(unittest.TestCase):
@@ -64,6 +69,8 @@ class TestDeployInstanceContract(unittest.TestCase):
                     "sharedacr.azurecr.io/pyrit:abc123",
                     "--allowed-groups",
                     GROUP_ID,
+                    "--admin-group",
+                    GROUP_ID,
                 ]
             )
 
@@ -88,6 +95,8 @@ class TestDeployInstanceContract(unittest.TestCase):
                     "sharedacr.azurecr.io/pyrit:abc123",
                     "--allowed-groups",
                     GROUP_ID,
+                    "--admin-group",
+                    GROUP_ID,
                     "--dry-run",
                 ]
             )
@@ -110,6 +119,8 @@ class TestDeployInstanceContract(unittest.TestCase):
                     "sharedacr.azurecr.io/pyrit:abc123",
                     "--allowed-groups",
                     GROUP_ID,
+                    "--admin-group",
+                    GROUP_ID,
                     "--allowed-cidr",
                     "999.1.1.1/24",
                 ]
@@ -117,6 +128,84 @@ class TestDeployInstanceContract(unittest.TestCase):
 
         self.assertEqual(result, 1)
         run_az.assert_not_called()
+
+    def test_external_config_requires_rbac_scope(self):
+        with patch.object(DEPLOY, "run_az") as run_az:
+            result = DEPLOY.main(
+                [
+                    "--instance-name",
+                    INSTANCE,
+                    "--env-file",
+                    "missing.env",
+                    "--subscription",
+                    SUBSCRIPTION_ID,
+                    "--acr-name",
+                    "sharedacr",
+                    "--container-image",
+                    "sharedacr.azurecr.io/pyrit:abc123",
+                    "--allowed-groups",
+                    GROUP_ID,
+                    "--admin-group",
+                    GROUP_ID,
+                    "--pyrit-config-file-uri",
+                    CONFIG_URI,
+                ]
+            )
+
+        self.assertEqual(result, 1)
+        run_az.assert_not_called()
+
+    def test_external_config_rejects_mismatched_rbac_scope(self):
+        mismatched_scope = CONFIG_SCOPE.replace("storageAccounts/configstore", "storageAccounts/otherstore")
+        with patch.object(DEPLOY, "run_az") as run_az:
+            result = DEPLOY.main(
+                [
+                    "--instance-name",
+                    INSTANCE,
+                    "--env-file",
+                    "missing.env",
+                    "--subscription",
+                    SUBSCRIPTION_ID,
+                    "--acr-name",
+                    "sharedacr",
+                    "--container-image",
+                    "sharedacr.azurecr.io/pyrit:abc123",
+                    "--allowed-groups",
+                    GROUP_ID,
+                    "--admin-group",
+                    GROUP_ID,
+                    "--pyrit-config-file-uri",
+                    CONFIG_URI,
+                    "--pyrit-config-rbac-scope",
+                    mismatched_scope,
+                ]
+            )
+
+        self.assertEqual(result, 1)
+        run_az.assert_not_called()
+
+    def test_external_config_scope_receives_blob_contributor_role(self):
+        acr_id = f"{RESOURCE_GROUP_ID}/providers/Microsoft.ContainerRegistry/registries/sharedacr"
+        with (
+            patch.object(DEPLOY, "run_az") as run_az,
+            patch.object(DEPLOY, "run_az_json", side_effect=[GROUP_ID, acr_id]),
+        ):
+            DEPLOY.create_managed_identity_and_grant_roles(
+                resource_group=RESOURCE_GROUP,
+                location="eastus2",
+                identity_name=f"{RESOURCE_GROUP}-identity",
+                acr_name="sharedacr",
+                storage_account_id=f"{RESOURCE_GROUP_ID}/providers/Microsoft.Storage/storageAccounts/instance",
+                config_blob_scope=CONFIG_SCOPE,
+            )
+
+        role_commands = [
+            call.kwargs["args"]
+            for call in run_az.call_args_list
+            if call.kwargs["args"][:3] == ["role", "assignment", "create"]
+        ]
+        self.assertEqual(len(role_commands), 3)
+        self.assertEqual(role_commands[-1][role_commands[-1].index("--scope") + 1], CONFIG_SCOPE)
 
     def test_group_assignment_uses_resource_service_principal_relationship(self):
         with patch.object(DEPLOY, "run_az") as run_az:

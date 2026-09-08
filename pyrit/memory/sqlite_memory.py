@@ -2,13 +2,16 @@
 # Licensed under the MIT license.
 
 import logging
-from collections.abc import Sequence
+import threading
+import uuid
+import weakref
+from collections.abc import Mapping, Sequence
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from sqlalchemy import and_, create_engine, exists, func, or_, text
+from sqlalchemy import and_, case, create_engine, exists, func, or_, select, text
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
@@ -71,6 +74,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         else:
             self.db_path = Path(db_path or Path(DB_DATA_PATH, self.DEFAULT_DB_FILE_NAME)).resolve()
         self.results_path = str(DB_DATA_PATH)
+
+        # An in-memory database shares a single DBAPI connection across every thread (see
+        # ``_create_engine``), so concurrent sessions would interleave on it. Serialize session
+        # lifetimes for that backend only; file-backed databases get a connection per checkout.
+        self._connection_lock: threading.RLock | None = threading.RLock() if self.db_path == ":memory:" else None
 
         self.engine = self._create_engine(has_echo=verbose)
         self.SessionFactory = sessionmaker(bind=self.engine)
@@ -285,10 +293,43 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """
         Provide a SQLAlchemy session for transactional operations.
 
+        For an in-memory database every session borrows the same DBAPI connection, so the
+        session is handed out under a lock that is only released when it is closed. That keeps
+        a whole transaction, not just a single statement, isolated from the other threads.
+
         Returns:
             Session: A SQLAlchemy session bound to the engine.
         """
-        return self.SessionFactory()
+        session = self.SessionFactory()
+        connection_lock = self._connection_lock
+        if connection_lock is None:
+            return session
+
+        connection_lock.acquire()
+        close_session = session.close
+        released = False
+
+        def release_once() -> None:
+            # Also runs if the session is discarded without being closed, so one caller that
+            # forgets cannot leave the lock held and stall every other thread forever.
+            nonlocal released
+            if released:
+                return
+            released = True
+            try:
+                connection_lock.release()
+            except RuntimeError:
+                logger.warning("An in-memory session was discarded by a thread that did not open it.")
+
+        def close_and_release() -> None:
+            try:
+                close_session()
+            finally:
+                release_once()
+
+        session.close = close_and_release  # type: ignore[ty:invalid-assignment]
+        weakref.finalize(session, release_once)
+        return session
 
     def print_schema(self) -> None:
         """
@@ -439,7 +480,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         return result
 
-    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
         """
         SQLite implementation for filtering ScenarioResults by labels.
         Uses json_extract() function specific to SQLite.
@@ -447,6 +488,149 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Any: A SQLAlchemy exists subquery condition.
         """
-        return and_(
-            *[func.json_extract(ScenarioResultEntry.labels, f"$.{key}") == value for key, value in labels.items()]
+        conditions = []
+        for key, raw_value in labels.items():
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if values:
+                conditions.append(func.json_extract(ScenarioResultEntry.labels, f'$."{key}"').in_(values))
+        return and_(*conditions)
+
+    def _get_scenario_registry_name_condition(self, *, scenario_names: Sequence[str]) -> Any:
+        """
+        Match requested scenario registry names inside the persisted run plan.
+
+        Returns:
+            Any: SQLite JSON condition for the requested names.
+        """
+        registry_name = func.json_extract(
+            ScenarioResultEntry.scenario_metadata,
+            "$.run_plan.scenario_registry_name",
         )
+        return registry_name.in_(scenario_names)
+
+    def _get_scenario_history_plan_expressions(self) -> tuple[Any, Any, Any]:
+        """Return compact SQLite run-plan fields without objective-bearing seed groups."""
+        seed_groups = case(
+            (
+                func.json_type(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.seed_groups",
+                )
+                == "array",
+                func.json_extract(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.seed_groups",
+                ),
+            ),
+            else_="[]",
+        )
+        seed_rows = func.json_each(
+            seed_groups,
+        ).table_valued("value", "type")
+        seed_json = case((seed_rows.c.type == "object", seed_rows.c.value), else_="{}")
+        compact_seed_map = (
+            select(
+                func.json_group_array(
+                    func.json_object(
+                        "id",
+                        func.json_extract(seed_json, "$.id"),
+                        "objective_sha256",
+                        func.json_extract(seed_json, "$.objective_sha256"),
+                    )
+                )
+            )
+            .select_from(seed_rows)
+            .scalar_subquery()
+        )
+        return (
+            func.json_extract(
+                ScenarioResultEntry.scenario_metadata,
+                "$.run_plan.scenario_registry_name",
+            ),
+            func.json_extract(
+                ScenarioResultEntry.scenario_metadata,
+                "$.run_plan.atomic_groups",
+            ),
+            compact_seed_map,
+        )
+
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+        """Return SQLite JSON expressions for persisted scenario attempt attribution."""
+        atomic_name = func.coalesce(
+            func.json_extract(AttackResultEntry.attribution_data, '$."parent_collection"'),
+            "",
+        )
+        technique_hash = func.coalesce(
+            func.json_extract(AttackResultEntry.attribution_data, '$."parent_eval_hash"'),
+            "",
+        )
+        seed_group_id = func.coalesce(
+            func.json_extract(AttackResultEntry.attribution_data, '$."seed_group_id"'),
+            AttackResultEntry.objective_sha256,
+            "",
+        )
+        return atomic_name, technique_hash, seed_group_id
+
+    def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
+        """Return SQLite run-plan expansions for planned units and planned seed groups."""
+        atomic_groups = case(
+            (
+                func.json_type(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.atomic_groups",
+                )
+                == "array",
+                func.json_extract(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.atomic_groups",
+                ),
+            ),
+            else_="[]",
+        )
+        groups = func.json_each(
+            atomic_groups,
+        ).table_valued("key", "value", "type", joins_implicitly=True)
+        group_json = case((groups.c.type == "object", groups.c.value), else_="{}")
+        group_seeds = func.json_each(group_json, "$.seed_group_ids").table_valued("value", joins_implicitly=True)
+        seed_groups = case(
+            (
+                func.json_type(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.seed_groups",
+                )
+                == "array",
+                func.json_extract(
+                    ScenarioResultEntry.scenario_metadata,
+                    "$.run_plan.seed_groups",
+                ),
+            ),
+            else_="[]",
+        )
+        seeds = func.json_each(
+            seed_groups,
+        ).table_valued("value", "type", joins_implicitly=True)
+        seed_json = case((seeds.c.type == "object", seeds.c.value), else_="{}")
+        planned_units = (
+            select(
+                ScenarioResultEntry.id.label("scenario_result_id"),
+                groups.c.key.label("group_ordinal"),
+                func.json_extract(group_json, "$.id").label("atomic_group_id"),
+                func.json_extract(group_json, "$.atomic_attack_name").label("atomic_attack_name"),
+                func.json_extract(group_json, "$.technique_eval_hash").label("technique_eval_hash"),
+                group_seeds.c.value.label("seed_group_id"),
+            )
+            .select_from(ScenarioResultEntry, groups, group_seeds)
+            .where(ScenarioResultEntry.id.in_(scenario_result_ids))
+            .subquery("plan_units")
+        )
+        plan_seeds = (
+            select(
+                ScenarioResultEntry.id.label("scenario_result_id"),
+                func.json_extract(seed_json, "$.id").label("seed_group_id"),
+                func.json_extract(seed_json, "$.objective_sha256").label("objective_sha256"),
+            )
+            .select_from(ScenarioResultEntry, seeds)
+            .where(ScenarioResultEntry.id.in_(scenario_result_ids))
+            .subquery("plan_seeds")
+        )
+        return planned_units, plan_seeds

@@ -73,7 +73,7 @@ class _MyDataset(_RemoteDatasetLoader):
     HF_DATASET_NAME: str = "owner/my-dataset"
     harm_categories: list[str] = ["harassment", "violence"]
     modalities: list[str] = ["text"]
-    size: str = "medium"   # tiny <10, small 10-99, medium 100-499, large 500-4999, huge 5000+
+    size: str = "medium"  # tiny <10, small 10-99, medium 100-499, large 500-4999, huge 5000+
     tags: set[str] = {"default", "safety"}
 ```
 

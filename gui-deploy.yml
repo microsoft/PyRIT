@@ -2,6 +2,8 @@
 #
 # Every deployment uses the single topology defined by infra/main.bicep:
 # public ACA-managed HTTPS ingress plus VNet-integrated fixed NAT egress.
+# Environment variable groups also provide adminGroupObjectId for configuration
+# authorization and optional pyritConfigFileUri for blob-backed configuration.
 
 trigger:
   branches:
@@ -160,6 +162,8 @@ stages:
                     PYRIT_ENTRA_TENANT_ID: $(entraTenantId)
                     PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
                     PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
+                    PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
+                    PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
                     PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
                     PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
                     PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)
@@ -255,6 +259,8 @@ stages:
                     PYRIT_ENTRA_TENANT_ID: $(entraTenantId)
                     PYRIT_ENTRA_CLIENT_ID: $(entraClientId)
                     PYRIT_ALLOWED_GROUP_OBJECT_IDS: $(allowedGroupObjectIds)
+                    PYRIT_ADMIN_GROUP_OBJECT_ID: $(adminGroupObjectId)
+                    PYRIT_CONFIG_FILE_URI: $(pyritConfigFileUri)
                     PYRIT_SQL_SERVER_FQDN: $(sqlServerFqdn)
                     PYRIT_SQL_DATABASE_NAME: $(sqlDatabaseName)
                     PYRIT_KEY_VAULT_RESOURCE_ID: $(keyVaultResourceId)

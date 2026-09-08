@@ -27,7 +27,7 @@ class _MetadataTechnique(ScenarioTechnique):
 
     ALL = ("all", {"all"})
     DEFAULT = ("default", {"default"})
-    ONE = ("one", {"default"})
+    ONE = ("one", {"default"}, "Runs the first attack.")
     TWO = ("two", {"default"})
 
     @classmethod
@@ -88,6 +88,16 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
 
     assert metadata.default_technique == "default"
     assert metadata.default_techniques == ("one", "two")
+    assert metadata.technique_summaries[0].model_dump() == {
+        "name": "one",
+        "description": "Runs the first attack.",
+        "tags": ["default"],
+    }
+    assert metadata.technique_summaries[1].model_dump() == {
+        "name": "two",
+        "description": None,
+        "tags": ["default"],
+    }
     assert dict(metadata.aggregate_technique_expansions) == {
         "all": ("one", "two"),
         "default": ("one", "two"),

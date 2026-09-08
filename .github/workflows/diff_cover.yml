@@ -1,5 +1,9 @@
 # Single place for all coverage checks: overall threshold + diff coverage on PRs.
 # Runs once on Ubuntu/Python 3.12 instead of across the full OS x Python matrix.
+#
+# Release branches run on push only, for the overall coverage threshold. The diff-coverage
+# step is deliberately limited to pull requests targeting main, because it compares against
+# origin/main and a release branch differs from main by the entire release delta.
 
 name: coverage
 
@@ -7,14 +11,15 @@ on:
   push:
     branches:
       - "main"
+      - "releases/v*"
   pull_request:
     branches:
       - "main"
-      - "release/**"
   merge_group:
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:

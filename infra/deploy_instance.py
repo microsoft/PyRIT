@@ -43,6 +43,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -56,9 +57,45 @@ _ACR_NAME_RE = re.compile(r"^[a-z0-9]{5,50}$")
 _GROUP_ID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _IMAGE_REPOSITORY_RE = r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*"
 _IMAGE_VERSION_RE = r"(?:[A-Za-z0-9_][A-Za-z0-9_.-]*|sha256:[0-9a-fA-F]{64})"
+_CONFIG_BLOB_SCOPE_RE = re.compile(
+    rf"^/subscriptions/{_GROUP_ID_RE.pattern[1:-1]}/resourceGroups/[^/]+/providers/"
+    r"Microsoft\.Storage/storageAccounts/(?P<account>[a-z0-9]{3,24})"
+    r"(?:/blobServices/default/containers/(?P<container>[^/]+))?$",
+    re.IGNORECASE,
+)
+_AZURE_BLOB_HOST_SUFFIXES = (
+    ".blob.core.windows.net",
+    ".blob.core.chinacloudapi.cn",
+    ".blob.core.usgovcloudapi.net",
+    ".blob.core.cloudapi.de",
+)
 
 # On Windows, az CLI is a .cmd script that requires shell=True for subprocess to find it.
 _SHELL = platform.system() == "Windows"
+
+
+def _managed_identity_blob_uri(value: str) -> str:
+    """Validate a credential-free Azure Blob URI for managed-identity access."""
+    if not value:
+        return value
+
+    parsed_uri = urlparse(value)
+    hostname = parsed_uri.hostname or ""
+    valid_hostname = any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in _AZURE_BLOB_HOST_SUFFIXES)
+    if (
+        parsed_uri.scheme != "https"
+        or not valid_hostname
+        or parsed_uri.username is not None
+        or parsed_uri.password is not None
+        or parsed_uri.port is not None
+        or parsed_uri.query
+        or parsed_uri.fragment
+        or len(parsed_uri.path.strip("/").split("/")) < 2
+    ):
+        raise argparse.ArgumentTypeError(
+            "--pyrit-config-file-uri must be a credential-free Azure Blob HTTPS URI; SAS URLs are not supported"
+        )
+    return value
 
 
 def _deployment_tags(*, instance: str, owner: str) -> dict[str, str]:
@@ -848,12 +885,14 @@ def deploy_bicep(
     tenant_id: str,
     client_id: str,
     group_ids: str,
+    admin_group_id: str,
     allowed_cidr: str,
     sql_server_fqdn: str,
     sql_database_name: str,
     kv_resource_id: str,
     acr_name: str,
     env_file_contents: str,
+    pyrit_config_file_uri: str,
     tags: dict[str, str],
 ) -> dict[str, object]:
     """
@@ -872,6 +911,7 @@ def deploy_bicep(
         tenant_id (str): The Entra tenant ID.
         client_id (str): The Entra app registration client ID.
         group_ids (str): Comma-separated group object IDs.
+        admin_group_id (str): Admin group object ID.
         allowed_cidr (str): Optional public ingress IPv4 CIDR.
         sql_server_fqdn (str): The SQL server FQDN.
         sql_database_name (str): The SQL database name.
@@ -880,6 +920,8 @@ def deploy_bicep(
         acr_name (str): The ACR name.
         env_file_contents (str): The prepared .env content to inject as
             the Container App's `env-file` secret.
+        pyrit_config_file_uri (str): Optional Azure Blob URI for the backend
+            configuration file.
         tags (dict[str, str]): Ownership and governance tags for Bicep-managed resources.
 
     Returns:
@@ -893,12 +935,14 @@ def deploy_bicep(
         "entraTenantId": {"value": tenant_id},
         "entraClientId": {"value": client_id},
         "allowedGroupObjectIds": {"value": group_ids},
+        "adminGroupObjectId": {"value": admin_group_id},
         "allowedCidr": {"value": allowed_cidr},
         "sqlServerFqdn": {"value": sql_server_fqdn},
         "sqlDatabaseName": {"value": sql_database_name},
         "keyVaultResourceId": {"value": kv_resource_id},
         "acrName": {"value": acr_name},
         "envFileContents": {"value": env_file_contents},
+        "pyritConfigFileUri": {"value": pyrit_config_file_uri},
         "tags": {"value": tags},
     }
 
@@ -975,6 +1019,7 @@ def create_managed_identity_and_grant_roles(
     identity_name: str,
     acr_name: str,
     storage_account_id: str,
+    config_blob_scope: str = "",
     tags: list[str] | None = None,
 ) -> str:
     """
@@ -986,7 +1031,7 @@ def create_managed_identity_and_grant_roles(
     before Bicep avoids the race condition of Bicep creating the MI but the
     container needing roles that don't exist yet.
 
-    Note: Key Vault Secrets User is intentionally NOT granted. The Container
+    Note: Key Vault Secrets Officer is intentionally NOT granted. The Container
     App reads its .env contents from an inline secret passed via the Bicep
     `envFileContents` parameter, not from a Key Vault secret reference.
 
@@ -999,6 +1044,8 @@ def create_managed_identity_and_grant_roles(
         acr_name (str): The ACR name for AcrPull role.
         storage_account_id (str): The storage account resource ID for Storage
             Blob Data Contributor role.
+        config_blob_scope (str): Optional external storage account or blob
+            container resource ID for configuration access.
         tags (list[str] | None): Tags in 'Key=Value' format.
 
     Returns:
@@ -1083,6 +1130,24 @@ def create_managed_identity_and_grant_roles(
             storage_account_id,
         ]
     )
+
+    if config_blob_scope:
+        logger.info("Granting Storage Blob Data Contributor on external configuration scope")
+        run_az(
+            args=[
+                "role",
+                "assignment",
+                "create",
+                "--assignee-object-id",
+                mi_principal_id,
+                "--assignee-principal-type",
+                "ServicePrincipal",
+                "--role",
+                "Storage Blob Data Contributor",
+                "--scope",
+                config_blob_scope,
+            ]
+        )
 
     return mi_principal_id
 
@@ -1202,9 +1267,25 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Container image reference (e.g., myacr.azurecr.io/pyrit:abc1234)",
     )
     parser.add_argument(
+        "--pyrit-config-file-uri",
+        default="",
+        type=_managed_identity_blob_uri,
+        help="Credential-free Azure Blob HTTPS URI for .pyrit_conf using managed identity (optional)",
+    )
+    parser.add_argument(
+        "--pyrit-config-rbac-scope",
+        default="",
+        help="Storage account or blob container resource ID containing --pyrit-config-file-uri",
+    )
+    parser.add_argument(
         "--allowed-groups",
         required=True,
         help="Comma-separated Entra group object IDs to grant access",
+    )
+    parser.add_argument(
+        "--admin-group",
+        required=True,
+        help="Entra group object ID allowed to manage backend configuration",
     )
     parser.add_argument(
         "--allowed-cidr",
@@ -1269,6 +1350,29 @@ def main(args: list[str] | None = None) -> int:
         logger.error("--acr-name must be 5-50 lowercase alphanumeric characters")
         return 1
 
+    config_blob_scope = parsed.pyrit_config_rbac_scope.strip()
+    if parsed.pyrit_config_file_uri:
+        scope_match = _CONFIG_BLOB_SCOPE_RE.fullmatch(config_blob_scope)
+        config_uri = urlparse(parsed.pyrit_config_file_uri)
+        config_account = (config_uri.hostname or "").split(".", maxsplit=1)[0]
+        config_container = config_uri.path.strip("/").split("/", maxsplit=1)[0]
+        if (
+            scope_match is None
+            or scope_match.group("account").casefold() != config_account.casefold()
+            or (
+                scope_match.group("container") is not None
+                and scope_match.group("container").casefold() != config_container.casefold()
+            )
+        ):
+            logger.error(
+                "--pyrit-config-rbac-scope must identify the Azure storage account or blob container "
+                "containing --pyrit-config-file-uri"
+            )
+            return 1
+    if config_blob_scope and not parsed.pyrit_config_file_uri:
+        logger.error("--pyrit-config-rbac-scope requires --pyrit-config-file-uri")
+        return 1
+
     expected_image = re.compile(
         rf"^{re.escape(parsed.acr_name)}\.azurecr\.io/{_IMAGE_REPOSITORY_RE}(?::|@){_IMAGE_VERSION_RE}$"
     )
@@ -1305,9 +1409,13 @@ def main(args: list[str] | None = None) -> int:
     storage_account_name = _storage_account_name(instance)
     entra_app_name = f"CoPyRIT GUI ({instance})"
     group_ids = [g.strip() for g in parsed.allowed_groups.split(",") if g.strip()]
+    admin_group_id = parsed.admin_group.strip()
 
     if not group_ids or any(not _GROUP_ID_RE.fullmatch(group_id) for group_id in group_ids):
         logger.error("--allowed-groups must contain one or more comma-separated Entra group object IDs")
+        return 1
+    if not _GROUP_ID_RE.fullmatch(admin_group_id):
+        logger.error("--admin-group must contain one Entra group object ID")
         return 1
 
     # Validate Azure resource name length constraints
@@ -1348,9 +1456,16 @@ def main(args: list[str] | None = None) -> int:
         logger.info("Storage account: %s (container: %s)", storage_account_name, _STORAGE_CONTAINER_NAME)
         logger.info("Entra app: %s", entra_app_name)
         logger.info("Allowed groups: %s", group_ids)
+        logger.info("Admin group: %s", admin_group_id)
         logger.info("Allowed ingress CIDR: %s", parsed.allowed_cidr or "(unrestricted source IPs)")
         logger.info("Env file: %s", env_file)
         logger.info("Container image: %s", parsed.container_image)
+        logger.info(
+            "PyRIT config file URI: %s",
+            "(configured; managed identity)" if parsed.pyrit_config_file_uri else "(generated at startup)",
+        )
+        if config_blob_scope:
+            logger.info("PyRIT config RBAC scope: %s", config_blob_scope)
         logger.info("ACR: %s", parsed.acr_name)
         logger.info("Location: %s", parsed.location)
         logger.info("Subscription: %s", parsed.subscription)
@@ -1382,7 +1497,7 @@ def main(args: list[str] | None = None) -> int:
         )
 
         # Step 4: Assign groups to enterprise app
-        assign_groups_to_app(sp_id=entra["sp_id"], group_ids=group_ids)
+        assign_groups_to_app(sp_id=entra["sp_id"], group_ids=list(dict.fromkeys([*group_ids, admin_group_id])))
 
         # Step 5: Create SQL server + database
         sql = create_sql_server_and_db(
@@ -1426,6 +1541,7 @@ def main(args: list[str] | None = None) -> int:
             identity_name=mi_name,
             acr_name=parsed.acr_name,
             storage_account_id=storage["account_id"],
+            config_blob_scope=config_blob_scope,
             tags=resource_tags,
         )
 
@@ -1448,12 +1564,14 @@ def main(args: list[str] | None = None) -> int:
             tenant_id=entra["tenant_id"],
             client_id=entra["app_id"],
             group_ids=",".join(group_ids),
+            admin_group_id=admin_group_id,
             allowed_cidr=parsed.allowed_cidr,
             sql_server_fqdn=sql["server_fqdn"],
             sql_database_name=sql["database_name"],
             kv_resource_id=kv_id,
             acr_name=parsed.acr_name,
             env_file_contents=env_content,
+            pyrit_config_file_uri=parsed.pyrit_config_file_uri,
             tags=deployment_tags,
         )
 

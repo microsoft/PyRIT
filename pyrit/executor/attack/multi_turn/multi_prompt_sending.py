@@ -408,9 +408,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                 response=response,
                 auxiliary_scorers=self._auxiliary_scorers,
                 objective_scorer=self._objective_scorer if self._objective_scorer else None,
-                role_filter="assistant",
                 objective=objective,
-                skip_on_error_result=True,
             )
 
         objective_scores = scoring_results["objective_scores"]

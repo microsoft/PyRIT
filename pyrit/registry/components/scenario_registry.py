@@ -18,7 +18,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pyrit.models import ScenarioRunSizeEstimate, class_name_to_snake_case
+from pyrit.models import ScenarioRunSizeEstimate, ScenarioTechniqueSummary, class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -52,6 +52,9 @@ class ScenarioMetadata(RegistryMetadata):
 
     # All available technique names for this scenario.
     all_techniques: tuple[str, ...] = field(kw_only=True)
+
+    # Descriptions and tags for each available concrete technique.
+    technique_summaries: tuple[ScenarioTechniqueSummary, ...] = field(kw_only=True, default=())
 
     # Aggregate techniques that combine multiple attack approaches.
     aggregate_techniques: tuple[str, ...] = field(kw_only=True)
@@ -173,6 +176,14 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             technique.value for technique in instance._resolve_scenario_techniques(scenario_techniques=None)
         )
         all_techniques = tuple(s.value for s in technique_class.get_all_techniques())
+        technique_summaries = tuple(
+            ScenarioTechniqueSummary(
+                name=technique.value,
+                description=technique.description,
+                tags=sorted(technique.tags),
+            )
+            for technique in technique_class.get_all_techniques()
+        )
         aggregate_techniques = tuple(s.value for s in technique_class.get_aggregate_techniques())
         aggregate_technique_expansions = tuple(
             (
@@ -193,6 +204,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             default_techniques=default_techniques,
             description_markdown=description_markdown,
             all_techniques=all_techniques,
+            technique_summaries=technique_summaries,
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,

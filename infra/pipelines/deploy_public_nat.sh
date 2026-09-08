@@ -22,6 +22,7 @@ required_variables=(
   PYRIT_ENTRA_TENANT_ID
   PYRIT_ENTRA_CLIENT_ID
   PYRIT_ALLOWED_GROUP_OBJECT_IDS
+  PYRIT_ADMIN_GROUP_OBJECT_ID
   PYRIT_SQL_SERVER_FQDN
   PYRIT_SQL_DATABASE_NAME
   PYRIT_KEY_VAULT_RESOURCE_ID
@@ -39,6 +40,10 @@ done
 
 if [[ "${PYRIT_ALLOWED_CLIENT_CIDR:-}" == '$('* ]]; then
   echo "##vso[task.logissue type=error]Optional deployment value is unresolved: PYRIT_ALLOWED_CLIENT_CIDR"
+  exit 1
+fi
+if [[ "${PYRIT_CONFIG_FILE_URI:-}" == '$('* ]]; then
+  echo "##vso[task.logissue type=error]Optional deployment value is unresolved: PYRIT_CONFIG_FILE_URI"
   exit 1
 fi
 if [[ -n "${PYRIT_ALLOWED_CLIENT_CIDR:-}" ]]; then
@@ -73,10 +78,13 @@ if ! python3 - \
   "${PYRIT_ALLOWED_CLIENT_CIDR:-}" \
   "$PYRIT_ENTRA_TENANT_ID" \
   "$PYRIT_ENTRA_CLIENT_ID" \
-  "$PYRIT_ALLOWED_GROUP_OBJECT_IDS" <<'PY'
+  "$PYRIT_ALLOWED_GROUP_OBJECT_IDS" \
+  "$PYRIT_ADMIN_GROUP_OBJECT_ID" \
+  "${PYRIT_CONFIG_FILE_URI:-}" <<'PY'
 import ipaddress
 import sys
 import uuid
+from urllib.parse import urlparse
 
 try:
     vnet = ipaddress.ip_network(sys.argv[1], strict=True)
@@ -93,11 +101,32 @@ try:
         raise ValueError
     for group in groups:
         uuid.UUID(group)
+    uuid.UUID(sys.argv[7])
+    if sys.argv[8]:
+      parsed = urlparse(sys.argv[8])
+      hostname = parsed.hostname or ""
+      suffixes = (
+        ".blob.core.windows.net",
+        ".blob.core.chinacloudapi.cn",
+        ".blob.core.usgovcloudapi.net",
+        ".blob.core.cloudapi.de",
+      )
+      if (
+        parsed.scheme != "https"
+        or not any(hostname.endswith(suffix) and hostname != suffix[1:] for suffix in suffixes)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or len(parsed.path.strip("/").split("/")) < 2
+      ):
+        raise ValueError
 except (ValueError, IndexError):
     raise SystemExit(1)
 PY
 then
-  echo "##vso[task.logissue type=error]Invalid network prefix, subnet sizing, Entra ID, or allowed group ID"
+    echo "##vso[task.logissue type=error]Invalid network prefix, subnet sizing, Entra ID, group ID, or config URI"
   exit 1
 fi
 
@@ -255,6 +284,7 @@ parameters=(
   "entraTenantId=$PYRIT_ENTRA_TENANT_ID"
   "entraClientId=$PYRIT_ENTRA_CLIENT_ID"
   "allowedGroupObjectIds=$PYRIT_ALLOWED_GROUP_OBJECT_IDS"
+  "adminGroupObjectId=$PYRIT_ADMIN_GROUP_OBJECT_ID"
   "allowedCidr=${PYRIT_ALLOWED_CLIENT_CIDR:-}"
   "sqlServerFqdn=$PYRIT_SQL_SERVER_FQDN"
   "sqlDatabaseName=$PYRIT_SQL_DATABASE_NAME"
@@ -263,6 +293,7 @@ parameters=(
   "existingManagedIdentityResourceId=$PYRIT_MANAGED_IDENTITY_RESOURCE_ID"
   "enableOtel=$PYRIT_ENABLE_OTEL"
   "envSecretName=$PYRIT_ENV_SECRET_NAME"
+  "pyritConfigFileUri=${PYRIT_CONFIG_FILE_URI:-}"
   "enableFrontDoor=true"
   "enableFrontDoorPrivateLink=true"
   "frontDoorPrivateLinkRequestMessage=$private_link_request_message"

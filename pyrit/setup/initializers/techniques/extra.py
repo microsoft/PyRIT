@@ -46,6 +46,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="skeleton_key",
             attack_class=SkeletonKeyAttack,
+            description="Builds a multi-step context that asks the target to operate without its usual safety rules.",
             technique_tags=["single_turn"],
         ),
         AttackTechniqueFactory(
@@ -82,6 +83,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
         AttackTechniqueFactory(
             name="split_payload",
             attack_class=CrescendoAttack,
+            description="Splits the objective across an escalating conversation to conceal the complete request.",
             technique_tags=["multi_turn"],
             adversarial_system_prompt=SeedPrompt.from_yaml_file(
                 EXECUTOR_SEED_PROMPT_PATH / "crescendo" / "split_payload.yaml"
