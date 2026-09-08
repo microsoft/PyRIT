@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
+import pyrit.prompt_target
 from pyrit.exceptions import InvalidJsonException, RateLimitException, pyrit_target_retry
 from pyrit.exceptions.retry_collector import get_retry_collector
 from pyrit.executor.attack import (
@@ -23,7 +24,6 @@ from pyrit.executor.attack import (
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import TargetCapabilities
 from pyrit.score import MessageScorer, TrueFalseScorer
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
@@ -404,7 +404,7 @@ class TestCrescendoSeededModalityTransitions:
         adversarial_target = _ScriptedTarget(name="adversarial", script=[], event_log=event_log)
         objective_target = _ScriptedTarget(name="objective", script=[], event_log=event_log)
         objective_target.apply_capabilities(
-            capabilities=TargetCapabilities(
+            capabilities=pyrit.prompt_target.TargetCapabilities(
                 supports_editable_history=True,
                 input_modalities=frozenset({frozenset({"text"})}),
             )
@@ -434,7 +434,7 @@ class TestCrescendoSeededModalityTransitions:
             event_log=event_log,
         )
         objective_target.apply_capabilities(
-            capabilities=TargetCapabilities(
+            capabilities=pyrit.prompt_target.TargetCapabilities(
                 supports_multi_turn=True,
                 supports_multi_message_pieces=True,
                 supports_system_prompt=True,
@@ -602,7 +602,7 @@ class TestCrescendoSeededModalityTransitions:
             event_log=event_log,
         )
         objective_target.apply_capabilities(
-            capabilities=TargetCapabilities(
+            capabilities=pyrit.prompt_target.TargetCapabilities(
                 supports_multi_turn=True,
                 supports_multi_message_pieces=True,
                 supports_system_prompt=True,
