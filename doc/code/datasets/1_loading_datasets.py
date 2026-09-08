@@ -46,6 +46,7 @@
 # OR-Bench [@cui2024orbench],
 # PKU-SafeRLHF [@ji2024pkusaferlhf],
 # SALAD-Bench [@li2024saladbench],
+# SemGuard [@abughallous2026semguard],
 # SimpleSafetyTests [@vidgen2023simplesafetytests],
 # SIUO [@wang2025siuo],
 # SORRY-Bench [@xie2024sorrybench],
