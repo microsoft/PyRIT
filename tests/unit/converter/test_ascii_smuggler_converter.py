@@ -49,9 +49,18 @@ async def test_ascii_smuggler_input_not_supported():
 
 
 @pytest.mark.parametrize(
-    "prompt", ["caf\u00e9", "\u4f60\u597d\u4e16\u754c", "na\u00efve r\u00e9sum\u00e9", "\U0001f600", "line1\nline2"]
+    "prompt",
+    [
+        "\x1f",
+        "\x7f",
+        "caf\u00e9",
+        "\u4f60\u597d\u4e16\u754c",
+        "na\u00efve r\u00e9sum\u00e9",
+        "\U0001f600",
+        "line1\nline2",
+    ],
 )
-async def test_ascii_smuggler_encode_unrepresentable_chars_raise(prompt: str):
+async def test_ascii_smuggler_encode_unrepresentable_chars_raise(prompt: str) -> None:
     # Only the ASCII printable range (0x20-0x7E) maps to Unicode tags. Characters outside it used to be
     # logged and dropped while convert_async still returned a success result, so a non-ASCII (or multi-line)
     # objective was smuggled as a corrupted payload and an attack could be scored against a target that was
@@ -61,7 +70,7 @@ async def test_ascii_smuggler_encode_unrepresentable_chars_raise(prompt: str):
         await converter.convert_async(prompt=prompt, input_type="text")
 
 
-async def test_ascii_smuggler_encode_printable_boundaries_do_not_raise():
+async def test_ascii_smuggler_encode_printable_boundaries_do_not_raise() -> None:
     # 0x20 (space) and 0x7E (~) are the inclusive edges of the representable range and must still encode.
     converter = AsciiSmugglerConverter(action="encode")
     result = await converter.convert_async(prompt=" ~", input_type="text")
