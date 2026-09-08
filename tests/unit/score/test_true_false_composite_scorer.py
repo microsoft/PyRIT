@@ -7,14 +7,21 @@ import pytest
 from unit.mocks import store_message
 
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import ComponentIdentifier, MatchesObjective, Message, MessagePiece, Score, ScoringExpectation
+from pyrit.models import (
+    ComponentIdentifier,
+    MatchesObjective,
+    Message,
+    MessagePiece,
+    Score,
+    ScoringExpectation,
+)
 from pyrit.score import (
-    FloatScaleScorer,
+    MessageFloatScaleScorer,
     MessageScorable,
+    MessageTrueFalseScorer,
     ScorerPromptValidator,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
-    TrueFalseScorer,
 )
 
 
@@ -26,7 +33,7 @@ def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
     )
 
 
-class MockScorer(TrueFalseScorer):
+class MockScorer(MessageTrueFalseScorer):
     """A mock scorer for testing purposes."""
 
     def _score_aggregator(self, score_list):
@@ -169,7 +176,7 @@ async def test_composite_scorer_majority_false(mock_request, true_scorer, false_
 
 
 def test_composite_scorer_invalid_scorer_type():
-    class InvalidScorer(FloatScaleScorer):
+    class InvalidScorer(MessageFloatScaleScorer):
         def __init__(self):
             self._validator = MagicMock()
 
@@ -193,6 +200,28 @@ async def test_composite_scorer_with_task(mock_request, true_scorer):
     )
     assert len(scores) == 1
     assert scores[0].objective == task
+
+
+async def test_composite_scorer_is_silent_when_all_children_are_not_applicable(mock_request, true_scorer):
+    true_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[true_scorer])
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+    assert scores == []
+
+
+async def test_composite_scorer_ignores_non_applicable_child(mock_request, true_scorer, false_scorer):
+    false_scorer._validator = ScorerPromptValidator(supported_roles=["assistant"])
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.OR,
+        scorers=[false_scorer, true_scorer],
+    )
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(mock_request)))
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is True
 
 
 async def test_composite_routes_full_expectation_to_matching_and_nonmatching_leaves(mock_request):

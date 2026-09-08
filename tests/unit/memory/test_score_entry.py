@@ -13,6 +13,13 @@ from pyrit.models import ComponentIdentifier, Score
 class TestScoreEntryRoundtrip:
     """Tests for ScoreEntry roundtrip with nested scorer identifiers."""
 
+    def test_score_entry_revalidates_mutated_score(self):
+        score = Score(score_value="True", score_type="true_false")
+        score.score_value = None
+
+        with pytest.raises(ValueError, match="complete score requires a score_value"):
+            ScoreEntry(entry=score)
+
     def test_score_entry_roundtrip_simple_identifier(self):
         """Test that a Score with a simple ComponentIdentifier can be stored and retrieved."""
         scorer_identifier = ComponentIdentifier(

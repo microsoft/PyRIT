@@ -101,7 +101,7 @@ describe("Home", () => {
     const onNavigate = jest.fn();
     render(<TestWrapper><Home {...defaultProps} onNavigate={onNavigate} /></TestWrapper>);
     await user.click(screen.getByTestId("home-configure-target-btn"));
-    expect(onNavigate).toHaveBeenCalledWith("config");
+    expect(onNavigate).toHaveBeenCalledWith("targets");
   });
 
   it("shows the empty state when there are no attacks", async () => {

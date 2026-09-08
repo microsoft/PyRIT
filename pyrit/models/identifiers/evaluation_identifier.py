@@ -24,14 +24,26 @@ This module provides:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.identifiers.attack_identifier import AttackIdentifier
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, config_hash
-from pyrit.models.identifiers.evaluation_markers import EvalMarker, Exclude, Include, Unwrap
+from pyrit.models.identifiers.evaluation_markers import Exclude, Include
+from pyrit.models.identifiers.identifier_projection import (
+    field_marker as _field_marker,
+)
+from pyrit.models.identifiers.identifier_projection import (
+    resolve_child_type as _resolve_child_type,
+)
+from pyrit.models.identifiers.identifier_projection import (
+    type_param_projection as _type_param_projection,
+)
+from pyrit.models.identifiers.identifier_projection import (
+    type_unwrap_field as _type_unwrap_field,
+)
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
@@ -266,78 +278,6 @@ def compute_eval_hash(
 # name-keyed ``ChildEvalRule`` dict (+ ``own_rule`` and root-unwrap slot), so the
 # strongly-typed identifiers are the single source of truth and the proven engine
 # is reused unchanged.
-
-
-def _resolve_child_type(annotation: Any) -> type[ComponentIdentifier]:
-    """
-    Resolve the ``ComponentIdentifier`` subclass a child field annotation denotes.
-
-    Args:
-        annotation (Any): A resolved child field annotation, e.g.
-            ``TargetIdentifier | None`` or ``list[TargetIdentifier]``.
-
-    Returns:
-        type[ComponentIdentifier]: The referenced identifier subclass.
-
-    Raises:
-        TypeError: If no ``ComponentIdentifier`` subclass can be resolved.
-    """
-    if get_origin(annotation) is list:
-        args = get_args(annotation)
-        inner = args[0] if args else None
-        if isinstance(inner, type) and issubclass(inner, ComponentIdentifier):
-            return inner
-
-    for candidate in get_args(annotation) or (annotation,):
-        if isinstance(candidate, type) and issubclass(candidate, ComponentIdentifier):
-            return candidate
-
-    raise TypeError(f"Could not resolve a child identifier type from annotation {annotation!r}")
-
-
-def _field_marker(model_cls: type[ComponentIdentifier], field_name: str) -> EvalMarker | None:
-    """Return the ``EvalMarker`` attached to a field, or ``None`` if unmarked."""
-    for meta in model_cls.model_fields[field_name].metadata:
-        if isinstance(meta, EvalMarker):
-            return meta
-    return None
-
-
-def _type_param_projection(
-    model_cls: type[ComponentIdentifier],
-) -> tuple[frozenset[str] | None, dict[str, str] | None]:
-    """
-    Project a type's own param-field markers into ``(included_params, fallbacks)``.
-
-    An unmarked or ``Include`` param is kept; ``Exclude`` drops it. When the type
-    has no excluded params, ``included_params`` is ``None`` (full include).
-
-    Returns:
-        tuple[frozenset[str] | None, dict[str, str] | None]: The included param
-            names (``None`` for full include) and the per-param fallbacks (``None``
-            when there are none).
-    """
-    included: list[str] = []
-    fallbacks: dict[str, str] = {}
-    has_exclude = False
-    for name in model_cls._promoted_param_fields():
-        marker = _field_marker(model_cls, name)
-        if isinstance(marker, Exclude):
-            has_exclude = True
-            continue
-        included.append(name)
-        if isinstance(marker, Include) and marker.fallback is not None:
-            fallbacks[name] = marker.fallback
-    included_params = frozenset(included) if has_exclude else None
-    return included_params, (fallbacks or None)
-
-
-def _type_unwrap_field(model_cls: type[ComponentIdentifier]) -> str | None:
-    """Return the name of the type's ``Evaluate.Unwrap()`` child field, if any."""
-    for name in model_cls._promoted_child_fields():
-        if isinstance(_field_marker(model_cls, name), Unwrap):
-            return name
-    return None
 
 
 def _slot_rule(

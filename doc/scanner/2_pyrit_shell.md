@@ -23,7 +23,16 @@ pyrit_shell --config-file ./.pyrit_conf
 
 # Set default log level
 pyrit_shell --log-level DEBUG
+
+# Connect to an authenticated remote backend
+pyrit_shell --config-file ./.pyrit_conf --auth-mode auto
 ```
+
+Authentication defaults to `auto`. The shell uses exact-scope device-code login and stores the
+result in an encrypted persistent token cache. The configuration file can set
+`server.auth_mode` to `device_code` or `none` when automatic selection is not appropriate.
+`azure_cli` remains an explicit compatibility mode, but its Graph token can contain permissions
+beyond `User.Read`.
 
 ## Available Commands
 

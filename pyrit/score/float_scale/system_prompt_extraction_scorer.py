@@ -6,11 +6,11 @@ import re
 from pyrit.analytics.text_matching import ApproximateTextMatching
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
-class SystemPromptExtractionScorer(FloatScaleScorer):
+class SystemPromptExtractionScorer(MessageFloatScaleScorer):
     """
     Deterministic scorer that measures how much of a target's system prompt leaked into a response.
 

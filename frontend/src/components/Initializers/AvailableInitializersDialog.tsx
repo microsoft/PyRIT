@@ -57,7 +57,7 @@ export default function AvailableInitializersDialog({
                 {registeredInitializers.map((initializer: RegisteredInitializer) => (
                   <div
                     key={initializer.initializer_name}
-                    className={styles.baselineCard}
+                    className={styles.availableCard}
                     role="listitem"
                     data-testid={`available-initializer-row-${initializer.initializer_name}`}
                   >

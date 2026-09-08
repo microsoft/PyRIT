@@ -15,12 +15,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pyrit.cli._auth import AUTH_MODES, AuthMode
+
 # Mirror the default path from pyrit.common.path without importing it.
 _DEFAULT_CONFIG_DIR = Path.home() / ".pyrit"
 _DEFAULT_CONFIG_FILE = _DEFAULT_CONFIG_DIR / ".pyrit_conf"
 
 DEFAULT_SERVER_URL = "http://localhost:8000"
 DEFAULT_SERVER_STARTUP_TIMEOUT = 120.0
+DEFAULT_AUTH_MODE: AuthMode = "auto"
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,7 @@ class ServerSettings:
 
     url: str | None = None
     startup_timeout: float = DEFAULT_SERVER_STARTUP_TIMEOUT
+    auth_mode: AuthMode = DEFAULT_AUTH_MODE
 
 
 class ConfigError(Exception):
@@ -106,7 +110,7 @@ def read_server_settings(*, config_file: Path | None = None) -> ServerSettings:
         config_file: Optional explicit config path.
 
     Returns:
-        ServerSettings: The resolved URL and startup timeout.
+        ServerSettings: The resolved URL, startup timeout, and authentication mode.
 
     Raises:
         ConfigError: If a config file exists but is malformed.
@@ -198,4 +202,12 @@ def _merge_server_settings(*, settings: ServerSettings, data: dict[str, Any], pa
             raise ConfigError(f"Config file {path}: 'server.startup_timeout' must be a finite number greater than 0.")
         startup_timeout = float(raw_timeout)
 
-    return ServerSettings(url=url, startup_timeout=startup_timeout)
+    auth_mode = settings.auth_mode
+    if "auth_mode" in server_block:
+        raw_auth_mode = server_block["auth_mode"]
+        if not isinstance(raw_auth_mode, str) or raw_auth_mode not in AUTH_MODES:
+            supported_modes = ", ".join(AUTH_MODES)
+            raise ConfigError(f"Config file {path}: 'server.auth_mode' must be one of: {supported_modes}.")
+        auth_mode = raw_auth_mode
+
+    return ServerSettings(url=url, startup_timeout=startup_timeout, auth_mode=auth_mode)

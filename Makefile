@@ -7,6 +7,7 @@ UNIT_TESTS:=tests/unit
 INTEGRATION_TESTS:=tests/integration
 PARTNER_INTEGRATION_TESTS:=tests/partner_integration
 END_TO_END_TESTS:=tests/end_to_end
+JUNIT_XML?=junit/test-results.xml
 
 all: pre-commit
 
@@ -67,7 +68,7 @@ unit-test-diff-cover:
 	uv run python -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --diff-range-notation=.. --fail-under=90
 
 integration-test:
-	$(CMD) pytest $(INTEGRATION_TESTS) --cov=$(PYMODULE) $(INTEGRATION_TESTS) --cov-report xml --junitxml=junit/test-results.xml --doctest-modules
+	$(CMD) pytest $(INTEGRATION_TESTS) --cov=$(PYMODULE) --cov-report xml --junitxml=$(JUNIT_XML) --doctest-modules
 
 end-to-end-test:
 	$(CMD) pytest $(END_TO_END_TESTS) -v --junitxml=junit/test-results.xml

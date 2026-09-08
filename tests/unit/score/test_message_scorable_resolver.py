@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.memory import MemoryInterface
-from pyrit.models import ContentScorable, Message, MessagePiece, MessageScorable
+from pyrit.models import ContentEntryScorable, ContentScorable, Message, MessagePiece, MessageScorable, Score
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
 
@@ -93,3 +93,23 @@ def test_resolver_adapts_content_to_ephemeral_message():
     assert piece.converted_value == "loose text"
     assert piece.role == "user"
     assert piece.not_in_memory is True
+
+
+def test_resolver_reads_persisted_content_reference(sqlite_instance: MemoryInterface):
+    score = Score(score_value="true", score_type="true_false", scorable=ContentScorable(value="stored loose text"))
+    sqlite_instance.add_scores_to_memory(scores=[score])
+    assert isinstance(score.scorable, ContentEntryScorable)
+
+    resolved = MessageScorableResolver().resolve(scorable=score.scorable, memory=sqlite_instance)
+
+    assert resolved.get_value() == "stored loose text"
+
+
+def test_resolver_reports_missing_content_reference(sqlite_instance: MemoryInterface):
+    content_id = uuid.uuid4()
+
+    with pytest.raises(ValueError, match=f"No stored scorable content found for id {content_id}"):
+        MessageScorableResolver().resolve(
+            scorable=ContentEntryScorable(content_id=content_id),
+            memory=sqlite_instance,
+        )

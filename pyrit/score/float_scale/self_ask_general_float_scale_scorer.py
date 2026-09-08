@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.numeric_scale import NumericRange
 
 
-class SelfAskGeneralFloatScaleScorer(FloatScaleScorer):
+class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
     """
     A general-purpose self-ask float-scale scorer that uses a chat target and a configurable
     system prompt and prompt format. The final score is normalized to [0, 1].

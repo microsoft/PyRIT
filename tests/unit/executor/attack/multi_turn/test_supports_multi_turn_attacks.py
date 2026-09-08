@@ -491,6 +491,7 @@ class TestTAPNodeDuplicateSystemMessages:
                 adversarial_chat=adversarial_chat,
                 objective_target=target,
             ),
+            record_objective_conversation=lambda *, conversation_id: None,
         )
 
     def test_single_turn_target_duplicates_logical_history_without_seed_boundary(self):
@@ -877,6 +878,7 @@ class TestTAPBranchingPreservesSystemPrompts:
                 adversarial_chat=adversarial_chat,
                 objective_target=target,
             ),
+            record_objective_conversation=lambda *, conversation_id: None,
         )
 
     def test_branching_single_turn_target_preserves_system_across_depths(self):
