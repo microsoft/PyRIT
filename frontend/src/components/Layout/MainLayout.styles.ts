@@ -10,7 +10,7 @@ export const useMainLayoutStyles = makeStyles({
   },
   skipLink: {
     position: 'absolute',
-    top: '-40px',
+    top: '0',
     left: '0',
     zIndex: 1000,
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
@@ -19,10 +19,17 @@ export const useMainLayoutStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
     textDecorationLine: 'none',
     borderBottomRightRadius: tokens.borderRadiusMedium,
-    transitionProperty: 'top',
+    // translateY(-100%) hides the link above the viewport regardless of its
+    // own rendered height (text zoom, a different font, or longer copy can
+    // all change that height), unlike a fixed 'top' offset.
+    transform: 'translateY(-100%)',
+    transitionProperty: 'transform',
     transitionDuration: tokens.durationFast,
+    '@media (prefers-reduced-motion: reduce)': {
+      transitionDuration: '0s',
+    },
     ':focus-visible': {
-      top: '0',
+      transform: 'translateY(0)',
     },
   },
   topBar: {
