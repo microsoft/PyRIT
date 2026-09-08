@@ -128,7 +128,7 @@ def test_invalid_speed_factor_negative():
 
 
 @pytest.mark.parametrize("speed_factor", [float("nan"), float("inf"), float("-inf")])
-def test_invalid_speed_factor_non_finite(speed_factor):
+def test_invalid_speed_factor_non_finite(speed_factor: float) -> None:
     """Non-finite speed factors should fail during converter construction."""
     with pytest.raises(ValueError, match="speed_factor must be finite"):
         AudioSpeedConverter(speed_factor=speed_factor)
