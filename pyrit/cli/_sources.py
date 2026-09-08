@@ -15,18 +15,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
 from pyrit.models import Message, MessagePiece, Score
 
 if TYPE_CHECKING:
     from pyrit.cli.api_client import PyRITApiClient
 
 
-def _only_known(model_cls: type, data: dict[str, Any]) -> dict[str, Any]:
+def _only_known(model_cls: type[BaseModel], data: dict[str, Any]) -> dict[str, Any]:
     """
     Keep only the fields the domain model declares (drops view-only extras).
 
     Args:
-        model_cls (type): The pydantic model whose fields to keep.
+        model_cls (type[BaseModel]): The pydantic model whose fields to keep.
         data (dict[str, Any]): The raw view JSON.
 
     Returns:
