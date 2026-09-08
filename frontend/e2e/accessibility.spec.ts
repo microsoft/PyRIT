@@ -231,12 +231,13 @@ test.describe("Accessibility", () => {
     await expect(page.getByTitle("Home")).toBeVisible();
 
     const skipLink = page.getByRole("link", { name: "Skip to main content" });
+    await expect(skipLink).not.toBeInViewport();
 
     // See the note on "should be navigable with keyboard" above: dispatch
     // through `body` to guarantee the document has focus when Tab fires.
     await page.locator("body").press("Tab");
     await expect(skipLink).toBeFocused();
-    await expect(skipLink).toBeVisible();
+    await expect(skipLink).toBeInViewport({ ratio: 1 });
 
     await page.keyboard.press("Enter");
     await expect(page.locator("#main-content")).toBeFocused();
