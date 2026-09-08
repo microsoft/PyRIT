@@ -141,7 +141,12 @@ async function selectTargetType(value: string): Promise<void> {
   await waitFor(() => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
-  restoreDialogAccessibility();
+  await waitFor(() => {
+    restoreDialogAccessibility();
+    expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent(
+      TARGET_DISPLAY_NAMES[value]
+    );
+  });
 }
 
 // The catalog fetch mock (see beforeEach) resolves on mount, and its

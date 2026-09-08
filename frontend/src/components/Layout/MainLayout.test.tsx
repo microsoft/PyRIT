@@ -26,7 +26,7 @@ jest.mock("../Sidebar/Navigation", () => {
   }) => {
     return (
       <div data-testid="navigation" data-current-view={currentView}>
-        <button onClick={() => onNavigate("config")}>Config</button>
+        <button onClick={() => onNavigate("targets")}>Targets</button>
       </div>
     );
   };
@@ -53,6 +53,8 @@ describe("MainLayout", () => {
   const defaultProps = {
     currentView: 'chat' as const,
     onNavigate: jest.fn(),
+    onOpenFeedback: jest.fn(),
+    canManageConfiguration: true,
   };
 
   it("renders the header with title and subtitle", async () => {

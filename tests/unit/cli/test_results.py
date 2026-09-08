@@ -16,6 +16,7 @@ from pyrit.cli._cli_args import (
     build_scenario_results_parser,
 )
 from pyrit.cli._results import (
+    _to_transcript_score,
     apply_view_limit_policy,
     build_attacks_table_payload,
     build_conversations_payload_async,
@@ -47,6 +48,18 @@ def _attack(*, outcome=AttackOutcome.SUCCESS, objective="obj", turns=1, with_sco
 
 def _result(attack_results, *, objective_scorer=None):
     return make_scenario_result(attack_results=attack_results, objective_scorer_identifier=objective_scorer)
+
+
+def test_to_transcript_score_uses_status_for_null_value():
+    score = _to_transcript_score(
+        score={
+            "score_value": None,
+            "status": "undetermined",
+            "score_type": "TrueFalseCompositeScorer",
+        }
+    )
+
+    assert score.value == "undetermined"
 
 
 class _FakeMessagesClient:

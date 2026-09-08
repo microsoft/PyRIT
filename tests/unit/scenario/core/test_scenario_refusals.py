@@ -26,7 +26,7 @@ from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.score import ScorerPromptValidator, TrueFalseScorer
+from pyrit.score import MessageTrueFalseScorer, ScorerPromptValidator, TrueFalseScorer
 
 _ATOMIC_ATTACK_NAME = "structured_refusal"
 _REFUSAL = "I cannot assist with that request."
@@ -43,7 +43,7 @@ class _RefusalScenarioTechnique(ScenarioTechnique):
         return {"all"}
 
 
-class _RecordingObjectiveScorer(TrueFalseScorer):
+class _RecordingObjectiveScorer(MessageTrueFalseScorer):
     def __init__(self) -> None:
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
         self.scored_pieces: list[MessagePiece] = []

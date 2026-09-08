@@ -166,7 +166,7 @@ export default function ConverterPanel({ onClose, previewText = '', attachmentDa
     const newConverter = converters.find((c) => c.converter_type === type)
     const defaults: Record<string, string> = {}
     for (const p of newConverter?.parameters ?? []) {
-      if (p.default != null) {
+      if (typeof p.default === 'string') {
         defaults[p.name] = p.default
       }
     }

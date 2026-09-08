@@ -13,12 +13,12 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
 
-class PromptShieldScorer(TrueFalseScorer):
+class PromptShieldScorer(MessageTrueFalseScorer):
     """
     Returns true if an attack or jailbreak has been detected by Prompt Shield.
     """

@@ -18,10 +18,11 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_args, get_origin
+from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
 
 import aiofiles
 
+from pyrit.cli._auth import AUTH_MODES, AuthMode
 from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
@@ -38,11 +39,41 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pyrit.models.catalog import (
-        RegisteredScenario,
         RunScenarioRequest,
         ScenarioRunSummary,
     )
     from pyrit.models.parameter import Parameter
+
+
+def _is_read_timeout(exc: BaseException) -> bool:
+    """
+    Report whether an exception is an ``httpx.ReadTimeout``.
+
+    Args:
+        exc (BaseException): The exception to classify.
+
+    Returns:
+        bool: True when httpx is importable and the exception is a read timeout.
+    """
+    try:
+        import httpx
+
+        return isinstance(exc, httpx.ReadTimeout)
+    except Exception:
+        return False
+
+
+def _print_debug_traceback(exc: BaseException) -> None:
+    """
+    Print the traceback for an exception when the log level is ``DEBUG``.
+
+    Args:
+        exc (BaseException): The exception caught by the CLI.
+    """
+    if logging.getLogger().isEnabledFor(logging.DEBUG):
+        import traceback
+
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
 def _print_cli_exception(*, exc: BaseException) -> None:
@@ -55,32 +86,24 @@ def _print_cli_exception(*, exc: BaseException) -> None:
     the server is taking longer than ``--request-timeout`` to respond and the
     default bare ``str(exc)`` is empty.
 
+    Only ``pyrit_scan`` verbs reach this with a timeout; ``pyrit_shell`` has no
+    ``--request-timeout`` and handles that case before it gets here.
+
     Args:
         exc (BaseException): The exception caught by the CLI.
     """
-    import traceback
-
-    try:
-        import httpx
-
-        is_read_timeout = isinstance(exc, httpx.ReadTimeout)
-    except Exception:
-        is_read_timeout = False
-
     cls_name = type(exc).__name__
     detail = str(exc) or repr(exc)
 
-    if is_read_timeout:
+    if _is_read_timeout(exc):
         print(
-            "\nError (ReadTimeout): server did not respond in time. "
-            "Pass '--request-timeout <seconds>' to wait longer, or check the "
-            "server logs for a blocked event loop."
+            "\nError (ReadTimeout): server did not respond in time. Pass '--request-timeout "
+            "<seconds>' to wait longer, or check the server logs for a blocked event loop."
         )
     else:
         print(f"\nError ({cls_name}): {detail}")
 
-    if logging.getLogger().isEnabledFor(logging.DEBUG):
-        traceback.print_exception(type(exc), exc, exc.__traceback__)
+    _print_debug_traceback(exc)
 
 
 _DESCRIPTION = """PyRIT Scanner - Run AI security scenarios from the command line.
@@ -160,6 +183,10 @@ _REQUEST_TIMEOUT_HELP = (
     "(catalog/results/cancel/etc). Defaults to 60. Polling a live "
     "scenario run always waits indefinitely regardless of this value."
 )
+_AUTH_MODE_HELP = (
+    "Backend authentication mode (default: server.auth_mode or auto). "
+    "Auto uses exact-scope device-code authentication in an interactive terminal."
+)
 
 
 def _add_common_options(*, parser: ArgumentParser, suppress_defaults: bool) -> None:
@@ -181,6 +208,7 @@ def _add_common_options(*, parser: ArgumentParser, suppress_defaults: bool) -> N
     group = parser.add_argument_group("global options")
     group.add_argument("--server-url", type=str, default=default, help=_SERVER_URL_HELP)
     group.add_argument("--config-file", type=Path, default=default, help=_CONFIG_FILE_HELP)
+    group.add_argument("--auth-mode", choices=AUTH_MODES, default=default, help=_AUTH_MODE_HELP)
     group.add_argument("--log-level", type=validate_log_level_argparse, default=log_default, help=_LOG_LEVEL_HELP)
 
 
@@ -700,6 +728,27 @@ def _resolve_configured_server_url(*, parsed_args: Namespace) -> str:
     return server_url
 
 
+def _resolve_auth_mode(*, parsed_args: Namespace) -> AuthMode:
+    """
+    Resolve the authentication mode from CLI and layered configuration.
+
+    Returns:
+        The selected authentication mode.
+
+    Raises:
+        ValueError: If an unsupported mode is supplied programmatically.
+    """
+    from pyrit.cli._config_reader import read_server_settings
+
+    configured_mode = read_server_settings(config_file=parsed_args.config_file).auth_mode
+    raw_auth_mode = getattr(parsed_args, "auth_mode", None)
+    if raw_auth_mode is None:
+        return configured_mode
+    if raw_auth_mode not in AUTH_MODES:
+        raise ValueError(f"Unsupported authentication mode: {raw_auth_mode}")
+    return cast("AuthMode", raw_auth_mode)
+
+
 async def _handle_stop_server_async(*, parsed_args: Namespace) -> int:
     """
     Handle ``stop-server``: probe, then terminate the listening process.
@@ -940,7 +989,6 @@ async def _poll_until_terminal_async(
     *,
     client: Any,
     scenario_result_id: str,
-    total_techniques: int,
 ) -> ScenarioRunSummary:
     """
     Poll the server until the run reaches a terminal status.
@@ -957,7 +1005,7 @@ async def _poll_until_terminal_async(
     while True:
         run: ScenarioRunSummary = await client.get_scenario_run_async(scenario_result_id=scenario_result_id)
         _output.print_scenario_retry_warnings(run=run, seen_attack_ids=seen_retry_attack_ids)
-        _output.print_scenario_run_progress(run=run, total_techniques=total_techniques)
+        _output.print_scenario_run_progress(run=run)
         if run.status in terminal_states:
             return run
         await asyncio.sleep(0.5)
@@ -967,7 +1015,6 @@ async def _run_scenario_async(
     *,
     client: Any,
     parsed_args: Namespace,
-    scenario_meta: RegisteredScenario,
 ) -> int:
     """
     Start a scenario run, poll for completion, and print results.
@@ -981,14 +1028,21 @@ async def _run_scenario_async(
     scenario_name = parsed_args.scenario_name
     request = _build_run_request(parsed_args=parsed_args, scenario_name=scenario_name)
 
-    total_techniques = len(request.techniques or scenario_meta.all_techniques or [])
     print(f"\nRunning scenario: {scenario_name}")
     sys.stdout.flush()
 
     try:
         run = await client.start_scenario_run_async(request=request)
     except Exception as exc:
-        print(f"Error starting scenario: {exc}")
+        if _is_read_timeout(exc):
+            # The server keeps initializing after the client stops waiting, so whether the run
+            # started is genuinely unknown here and must not be reported as a failure to start.
+            print("\nERROR: The scenario start request timed out, so it is unknown whether the run started.")
+            _print_cli_exception(exc=exc)
+            print("Check 'pyrit_scan scenario-history' before retrying, or the run may be started twice.")
+        else:
+            print("\nERROR: The scenario could not be started.")
+            _print_cli_exception(exc=exc)
         return 1
 
     scenario_result_id = run.scenario_result_id
@@ -997,7 +1051,6 @@ async def _run_scenario_async(
         run = await _poll_until_terminal_async(
             client=client,
             scenario_result_id=scenario_result_id,
-            total_techniques=total_techniques,
         )
     except KeyboardInterrupt:
         print("\n\nCancelling scenario run...")
@@ -1018,6 +1071,8 @@ async def _run_scenario_async(
                 "retrieved or parsed from the server."
             )
             _print_cli_exception(exc=exc)
+            if _is_read_timeout(exc):
+                print(f"Retry with 'pyrit_scan scenario-results {scenario_result_id}'.")
             _output.print_scenario_run_summary(run=run)
             return 1
         return 0
@@ -1050,7 +1105,7 @@ async def _handle_run_async(*, client: Any, parsed_args: Namespace) -> int:
     if reparsed is None:
         return 1
 
-    return await _run_scenario_async(client=client, parsed_args=reparsed, scenario_meta=scenario_meta)
+    return await _run_scenario_async(client=client, parsed_args=reparsed)
 
 
 #: Post-client verbs, each a uniform ``(*, client, parsed_args) -> int`` handler. Reached
@@ -1121,6 +1176,7 @@ async def _run_async(*, parsed_args: Namespace) -> int:
         async with PyRITApiClient(
             base_url=base_url_result,
             request_timeout=getattr(parsed_args, "request_timeout", None),
+            auth_mode=_resolve_auth_mode(parsed_args=parsed_args),
         ) as client:
             return await _dispatch_with_client_async(client=client, parsed_args=parsed_args)
     except ServerNotAvailableError as exc:

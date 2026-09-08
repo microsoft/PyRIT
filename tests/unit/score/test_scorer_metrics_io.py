@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from pyrit.models import ComponentIdentifier
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
@@ -215,6 +217,35 @@ def test_find_harm_metrics_by_eval_hash_not_found():
     with patch("pyrit.score.scorer_evaluation.scorer_metrics_io._load_jsonl", return_value=[]):
         result = find_harm_metrics_by_eval_hash(eval_hash="missing", harm_category="violence")
     assert result is None
+
+
+def test_find_harm_metrics_by_eval_hash_uses_explicit_file_path(tmp_path):
+    path = tmp_path / "custom_metrics.jsonl"
+    with patch("pyrit.score.scorer_evaluation.scorer_metrics_io._load_jsonl", return_value=[]) as mock_load:
+        result = find_harm_metrics_by_eval_hash(eval_hash="missing", file_path=path)
+
+    assert result is None
+    assert mock_load.call_args[0][0] == path
+
+
+@pytest.mark.parametrize(
+    ("harm_category", "expected_file_name"),
+    [
+        ("REPRESENTATIONAL", "representational_metrics.jsonl"),
+        ("SEXUAL_CONTENT", "sexual_metrics.jsonl"),
+    ],
+)
+def test_find_harm_metrics_by_eval_hash_maps_canonical_category(harm_category, expected_file_name):
+    with patch("pyrit.score.scorer_evaluation.scorer_metrics_io._load_jsonl", return_value=[]) as mock_load:
+        result = find_harm_metrics_by_eval_hash(eval_hash="missing", harm_category=harm_category)
+
+    assert result is None
+    assert mock_load.call_args[0][0].name == expected_file_name
+
+
+def test_find_harm_metrics_by_eval_hash_requires_path_or_category():
+    with pytest.raises(ValueError, match="Either harm_category or file_path must be provided"):
+        find_harm_metrics_by_eval_hash(eval_hash="missing")
 
 
 # --- get_all_objective_metrics tests ---

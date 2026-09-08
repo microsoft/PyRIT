@@ -1,5 +1,9 @@
 # Single place for all coverage checks: overall threshold + diff coverage on PRs.
 # Runs once on Ubuntu/Python 3.12 instead of across the full OS x Python matrix.
+#
+# Release branches run on push only, for the overall coverage threshold. The diff-coverage
+# step is deliberately limited to pull requests targeting main, because it compares against
+# origin/main and a release branch differs from main by the entire release delta.
 
 name: coverage
 
@@ -7,14 +11,15 @@ on:
   push:
     branches:
       - "main"
+      - "releases/v*"
   pull_request:
     branches:
       - "main"
-      - "release/**"
   merge_group:
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,7 +37,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.9.17"
           enable-cache: true

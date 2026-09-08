@@ -19,20 +19,24 @@ async def _send_async(self):
     with open(self.file_path, "rb") as fp:
         return fp.read()
 
+
 # CORRECT — async file read
 async def _send_async(self):
     async with aiofiles.open(self.file_path, "rb") as fp:
         return await fp.read()
+
 
 # WRONG — sync-only library called directly
 async def _read_audio_async(self, path):
     with wave.open(path, "rb") as wav:
         return wav.readframes(wav.getnframes())
 
+
 # CORRECT — wrap blocking lib in to_thread
 def _read_wav_sync(path):
     with wave.open(path, "rb") as wav:
         return wav.readframes(wav.getnframes())
+
 
 async def _read_audio_async(self, path):
     return await asyncio.to_thread(_read_wav_sync, path)
@@ -47,8 +51,8 @@ async def _read_audio_async(self, path):
 
 ```python
 # CORRECT
-async def send_prompt_async(self, prompt: str) -> Message:
-    ...
+async def send_prompt_async(self, prompt: str) -> Message: ...
+
 
 # INCORRECT
 async def send_prompt(self, prompt: str) -> Message:  # Missing _async suffix
@@ -68,8 +72,8 @@ async def send_prompt(self, prompt: str) -> Message:  # Missing _async suffix
 
 ```python
 # CORRECT
-def _validate_input(self, data: dict) -> None:
-    ...
+def _validate_input(self, data: dict) -> None: ...
+
 
 # INCORRECT
 def validate_input(self, data: dict) -> None:  # Should be private
@@ -94,11 +98,11 @@ def validate_input(self, data: dict) -> None:  # Should be private
 
 ```python
 # CORRECT
-def process_data(self, *, data: list[str], threshold: float = 0.5) -> dict[str, Any]:
-    ...
+def process_data(self, *, data: list[str], threshold: float = 0.5) -> dict[str, Any]: ...
 
-def get_name(self) -> str | None:
-    ...
+
+def get_name(self) -> str | None: ...
+
 
 # INCORRECT
 def process_data(self, data, threshold=0.5):  # Missing all type annotations
@@ -113,18 +117,11 @@ def process_data(self, data, threshold=0.5):  # Missing all type annotations
 
 ```python
 # CORRECT
-def __init__(
-    self,
-    *,
-    target: PromptTarget,
-    scorer: Scorer | None = None,
-    max_retries: int = 3
-) -> None:
-    ...
+def __init__(self, *, target: PromptTarget, scorer: Scorer | None = None, max_retries: int = 3) -> None: ...
+
 
 # INCORRECT
-def __init__(self, target: PromptTarget, scorer: Scorer | None = None, max_retries: int = 3):
-    ...
+def __init__(self, target: PromptTarget, scorer: Scorer | None = None, max_retries: int = 3): ...
 ```
 
 ### Forwarded Constructor Parameters
@@ -140,8 +137,7 @@ def __init__(self, target: PromptTarget, scorer: Scorer | None = None, max_retri
 
 ```python
 # CORRECT
-def process(self, data: str) -> str:
-    ...
+def process(self, data: str) -> str: ...
 ```
 
 ## Imports
@@ -163,10 +159,13 @@ third-party packages (`transformers`, `azure.storage.blob`, `alembic`, `openai`,
 def main() -> int:
     parsed_args = parse_args()
     from pyrit.cli import frontend_core  # deferred: heavy
+
     ...
+
 
 async def _create_container_client_async(self):
     from azure.storage.blob.aio import ContainerClient  # deferred: heavy
+
     ...
 ```
 
@@ -237,12 +236,7 @@ from typing import Self, override
 
 ```python
 def calculate_score(
-    self,
-    *,
-    response: str,
-    objective: str,
-    threshold: float = 0.8,
-    max_attempts: int | None = None
+    self, *, response: str, objective: str, threshold: float = 0.8, max_attempts: int | None = None
 ) -> Score:
     """
     Calculate the score for a response against an objective.
@@ -281,6 +275,7 @@ navigation in the rendered docs without any extra markup.
 # WRONG — reST roles render as literal `:class:\`SeedPrompt\`` under MyST,
 # and the pre-commit guard will reject them
 """Returns a :class:`SeedPrompt` instance."""
+
 """Delegate to :func:`download_files_async` (deprecated alias)."""
 """See :meth:`PromptTarget.apply_capabilities` for details."""
 
@@ -318,6 +313,7 @@ class TreeOfAttacksAttack(AttackStrategy):
     DEFAULT_TREE_DEPTH: int = 5
     MIN_CONFIDENCE_THRESHOLD: float = 0.7
 
+
 # INCORRECT
 DEFAULT_TREE_WIDTH = 3  # Should be inside class
 DEFAULT_TREE_DEPTH = 5
@@ -343,10 +339,12 @@ async def execute_attack_async(self, *, context: AttackContext) -> AttackResult:
 
     return result
 
+
 def _validate_context(self, context: AttackContext) -> None:
     """Validate the attack context."""
     if not context.objective:
         raise ValueError("Context must have an objective")
+
 
 # INCORRECT - Too long and doing too many things
 async def execute_attack_async(self, *, context: AttackContext) -> AttackResult:
@@ -372,9 +370,7 @@ async def execute_attack_async(self, *, context: AttackContext) -> AttackResult:
 ```python
 # CORRECT
 if not self._model:
-    raise ValueError(
-        "Model not initialized. Call initialize_model() before executing attack."
-    )
+    raise ValueError("Model not initialized. Call initialize_model() before executing attack.")
 
 # INCORRECT
 if not self._model:
@@ -397,6 +393,7 @@ def process_items(self, *, items: list[str]) -> list[str]:
     # Main logic for multiple items
     return [self._process_single(item) for item in items]
 
+
 # INCORRECT - Excessive nesting
 def process_items(self, *, items: list[str]) -> list[str]:
     if items:
@@ -417,6 +414,7 @@ Set `removed_in` to **current version + 2 minor versions** (e.g. `0.14.x` → `r
 ```python
 from pyrit.common.deprecation import print_deprecation_message
 
+
 def old_method(self, *, foo: str) -> None:
     print_deprecation_message(
         old_item="MyClass.old_method",
@@ -431,6 +429,7 @@ def old_method(self, *, foo: str) -> None:
 ```python
 # INCORRECT - bypasses the helper, breaks consistent formatting and filtering
 import warnings
+
 warnings.warn("foo is deprecated, use bar", DeprecationWarning, stacklevel=2)
 ```
 
@@ -484,6 +483,7 @@ async with self._get_client() as client:
 # For custom resources
 from contextlib import asynccontextmanager
 
+
 @asynccontextmanager
 async def temporary_config(self, **kwargs):
     old_config = self._config.copy()
@@ -508,11 +508,13 @@ def is_complete(self) -> bool:
     """Whether the attack is complete."""
     return self._status == AttackStatus.COMPLETE
 
+
 # INCORRECT - verb-phrase docstring, flagged by Ruff D421
 @property
 def is_complete(self) -> bool:
     """Check if the attack is complete."""
     return self._status == AttackStatus.COMPLETE
+
 
 # INCORRECT - Too complex for property
 @property
@@ -531,16 +533,11 @@ def analysis_report(self) -> str:
 ```python
 # CORRECT
 class AttackExecutor:
-    def __init__(
-        self,
-        *,
-        target: PromptTarget,
-        scorer: Scorer,
-        logger: logging.Logger | None = None
-    ) -> None:
+    def __init__(self, *, target: PromptTarget, scorer: Scorer, logger: logging.Logger | None = None) -> None:
         self._target = target
         self._scorer = scorer
         self._logger = logger or logging.getLogger(__name__)
+
 
 # INCORRECT
 class AttackExecutor:
@@ -559,6 +556,7 @@ def calculate_score(response: str, objective: str) -> float:
     """Pure function for score calculation."""
     # Logic without side effects
     return score
+
 
 async def evaluate_response_async(self, *, response: str) -> Score:
     """I/O function that uses the pure function."""
@@ -579,6 +577,7 @@ def process_large_dataset(self, *, file_path: Path) -> Generator[Result, None, N
     with open(file_path) as f:
         for line in f:
             yield self._process_line(line)
+
 
 # INCORRECT
 def process_large_dataset(self, *, file_path: Path) -> list[Result]:

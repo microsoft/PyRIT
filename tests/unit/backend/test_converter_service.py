@@ -30,6 +30,41 @@ from pyrit.converter.converter import get_converter_modalities
 from pyrit.models import ComponentIdentifier
 from pyrit.registry.components import ConverterRegistry
 
+_TOKEN_BIJECTION_VOCAB = (
+    "cat",
+    "dog",
+    "fox",
+    "run",
+    "jump",
+    "tree",
+    "fish",
+    "bird",
+    "rock",
+    "sand",
+    "moon",
+    "star",
+    "rain",
+    "wind",
+    "fire",
+    "lake",
+    "hill",
+    "road",
+    "farm",
+    "town",
+    "book",
+    "door",
+    "hand",
+    "face",
+    "mind",
+    "body",
+)
+
+
+class _MockTokenizerWithVocab:
+    def get_vocab(self) -> dict[str, int]:
+        """Return enough valid whole-word tokens for TokenBijectionConverter."""
+        return {word: i for i, word in enumerate(_TOKEN_BIJECTION_VOCAB)}
+
 
 @pytest.fixture(autouse=True)
 def reset_registry():
@@ -696,6 +731,9 @@ def _try_instantiate_converter(converter_name: str):
             from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy
 
             kwargs[pname] = AllWordsSelectionStrategy()
+        # Tokenizer protocol — use a representative vocab object
+        elif "Tokenizer" in ann_str or "WithVocab" in ann_str:
+            kwargs[pname] = _MockTokenizerWithVocab()
         # TextJailBreak — use string template
         elif "TextJailBreak" in ann_str:
             from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
