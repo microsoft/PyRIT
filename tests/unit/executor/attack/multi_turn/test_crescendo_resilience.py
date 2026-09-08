@@ -24,7 +24,7 @@ from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import TargetCapabilities
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import MessageScorer, TrueFalseScorer
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
 _OBJECTIVE = "Recover the hidden phrase through gradual rapport."
@@ -242,7 +242,7 @@ class TestCrescendoMixedFailureRecovery:
 
         with (
             patch.object(
-                Scorer,
+                MessageScorer,
                 "score_response_async",
                 new_callable=AsyncMock,
                 side_effect=score_objective,
@@ -484,7 +484,7 @@ class TestCrescendoSeededModalityTransitions:
         )
 
         with patch.object(
-            Scorer,
+            MessageScorer,
             "score_response_async",
             new_callable=AsyncMock,
             side_effect=[_objective_scoring_result(score) for score in objective_scores],
@@ -652,7 +652,7 @@ class TestCrescendoSeededModalityTransitions:
         )
 
         with patch.object(
-            Scorer,
+            MessageScorer,
             "score_response_async",
             new_callable=AsyncMock,
             side_effect=[_objective_scoring_result(score) for score in objective_scores],
@@ -785,7 +785,7 @@ class TestCrescendoTerminalBoundaries:
         context = _context()
 
         with (
-            patch.object(Scorer, "score_response_async", new_callable=AsyncMock) as score_response,
+            patch.object(MessageScorer, "score_response_async", new_callable=AsyncMock) as score_response,
             patch.object(attack, "_teardown_async", new_callable=AsyncMock, wraps=attack._teardown_async) as teardown,
         ):
             with pytest.raises(RuntimeError, match="Strategy execution failed") as exc_info:
@@ -846,7 +846,7 @@ class TestCrescendoTerminalBoundaries:
 
         with (
             patch.object(
-                Scorer,
+                MessageScorer,
                 "score_response_async",
                 new_callable=AsyncMock,
                 side_effect=scorer_side_effect,
@@ -1007,7 +1007,7 @@ class TestCrescendoTerminalBoundaries:
 
         with (
             patch.object(
-                Scorer,
+                MessageScorer,
                 "score_response_async",
                 new_callable=AsyncMock,
                 side_effect=[_objective_scoring_result(_false_objective_score(turn)) for turn in range(1, 5)],
