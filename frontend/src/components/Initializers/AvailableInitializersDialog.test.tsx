@@ -74,4 +74,21 @@ describe('AvailableInitializersDialog', () => {
     const dialog = await screen.findByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('No registered initializers were found.')).toBeInTheDocument()
   })
+
+  it('reports the catalog as unavailable instead of an empty registry when the request failed', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <AvailableInitializersDialog registeredInitializers={[]} catalogStatus="error" />
+      </TestWrapper>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /browse available initializers/i }))
+
+    const dialog = await screen.findByRole('dialog', { hidden: true })
+    expect(
+      within(dialog).getByText('Initializer catalog is unavailable. The list cannot be shown until the catalog loads.'),
+    ).toBeInTheDocument()
+    expect(within(dialog).queryByText('No registered initializers were found.')).not.toBeInTheDocument()
+  })
 })
