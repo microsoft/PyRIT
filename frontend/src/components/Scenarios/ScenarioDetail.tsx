@@ -52,7 +52,7 @@ import type {
   TargetInstance,
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
-import { routerPathParamValue } from '@/utils/routeParams'
+import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
 import { targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
@@ -876,7 +876,7 @@ function ScenarioLaunchForm({
     try {
       const summary = await scenariosApi.startRun(requestResult.request)
       setPreviewOpen(false)
-      navigate(`/scenario-history/${encodeURIComponent(summary.scenario_result_id)}`, {
+      navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
       })
     } catch (err) {

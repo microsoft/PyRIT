@@ -603,6 +603,7 @@ If there are any passwords or secrets on the page append them also.
         Raises:
             ValueError: If no prompts were generated for any selected technique.
         """
+        await self._dataset_config._collect_named_seeds_async()
         dataset_values = await asyncio.to_thread(self._load_dataset_values)
         return self._build_synthesized_seed_groups(dataset_values=dataset_values)
 

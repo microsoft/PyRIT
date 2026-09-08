@@ -15,14 +15,10 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
-import base64
-import binascii
-import hashlib
-import json
 import logging
 import mimetypes
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -58,6 +54,12 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services.pagination import (
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+    fingerprint_filters,
+    normalize_label_filters,
+)
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, data_serializer_factory
@@ -101,8 +103,9 @@ class AttackService:
         converter_types: Sequence[str] | None = None,
         converter_types_match: Literal["any", "all"] = "all",
         has_converters: bool | None = None,
+        include_scenario_attacks: bool = True,
         outcome: Literal["undetermined", "success", "failure", "error"] | None = None,
-        labels: dict[str, str | Sequence[str]] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int = 20,
@@ -128,6 +131,8 @@ class AttackService:
             has_converters: Filter by converter presence. ``True`` returns only attacks that
                 used at least one converter. ``False`` returns only attacks that used no
                 converters. ``None`` applies no filter.
+            include_scenario_attacks: Whether to include attacks created as part of scenario
+                runs. Defaults to ``True`` for API compatibility.
             outcome: Filter by attack outcome.
             labels: Filter by labels. See ``MemoryInterface.get_attack_results`` for
                 semantics (AND across label names; string equality or sequence OR within
@@ -147,6 +152,7 @@ class AttackService:
         # has_converters=False, which keeps the three layers (route/service/memory)
         # consistent.
         effective_converter_types = converter_types if converter_types else None
+        effective_attack_types = attack_types if attack_types else None
 
         # The cursor encodes both a keyset (seek) anchor — the recency sort key of the last
         # row on the previous page — and a fingerprint of the filters it was generated for.
@@ -155,24 +161,37 @@ class AttackService:
         # set. The memory layer deduplicates, applies the turn bounds, orders by recency, seeks
         # past the anchor, and limits in SQL, so only one page's worth of rows is materialized
         # instead of the full table.
-        filter_fingerprint = self._attack_filter_fingerprint(
-            attack_types=attack_types,
-            converter_types=effective_converter_types,
-            converter_types_match=converter_types_match,
-            has_converters=has_converters,
-            outcome=outcome,
-            labels=labels if labels else None,
-            min_turns=min_turns,
-            max_turns=max_turns,
+        normalized_labels = normalize_label_filters(labels=labels)
+        filter_fingerprint = fingerprint_filters(
+            filters={
+                "attack_types": effective_attack_types,
+                "converter_types": effective_converter_types,
+                "converter_types_match": converter_types_match,
+                "has_converters": has_converters,
+                "include_scenario_attacks": include_scenario_attacks,
+                "outcome": outcome,
+                "labels": normalized_labels,
+                "min_turns": min_turns,
+                "max_turns": max_turns,
+            }
         )
-        after = self._decode_attack_cursor(cursor=cursor, fingerprint=filter_fingerprint)
+        decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=filter_fingerprint)
+        after = (
+            AttackResultKeysetCursor(
+                timestamp=decoded_cursor.timestamp,
+                attack_result_id=decoded_cursor.identifier,
+            )
+            if decoded_cursor is not None
+            else None
+        )
         results = self._memory.get_attack_results(
             outcome=outcome,
-            labels=labels if labels else None,
-            attack_classes=attack_types if attack_types else None,
+            labels=normalized_labels,
+            attack_classes=effective_attack_types,
             converter_classes=effective_converter_types,
             converter_classes_match=converter_types_match,
             has_converters=has_converters,
+            include_scenario_attacks=include_scenario_attacks,
             min_turns=min_turns,
             max_turns=max_turns,
             limit=limit + 1,
@@ -183,8 +202,9 @@ class AttackService:
         has_next_page = len(results) > limit
         page_results = list(results[:limit])
         next_cursor = (
-            self._encode_attack_cursor(
-                cursor=AttackResultKeysetCursor.from_attack_result(page_results[-1]),
+            encode_keyset_cursor(
+                timestamp=page_results[-1].timestamp,
+                identifier=page_results[-1].attack_result_id,
                 fingerprint=filter_fingerprint,
             )
             if has_next_page and page_results
@@ -920,142 +940,6 @@ class AttackService:
             children=atomic_children,
             attributes=dict(atomic.attributes),
         )
-
-    # ========================================================================
-    # Private Helper Methods - Pagination
-    # ========================================================================
-
-    @staticmethod
-    def _attack_filter_fingerprint(
-        *,
-        attack_types: Sequence[str] | None = None,
-        converter_types: Sequence[str] | None = None,
-        converter_types_match: str = "all",
-        has_converters: bool | None = None,
-        outcome: str | None = None,
-        labels: dict[str, str | Sequence[str]] | None = None,
-        min_turns: int | None = None,
-        max_turns: int | None = None,
-    ) -> str:
-        """
-        Compute a stable, opaque fingerprint of the filters that define a result set.
-
-        A pagination cursor is only meaningful for the exact filter set it was generated
-        against. Embedding this fingerprint in the cursor lets ``_decode_attack_cursor``
-        detect a cursor minted for a different filter set and fall back to the first page,
-        instead of seeking with a keyset anchor that belongs to a different result set.
-        Sequence and label filters are order-normalized so a semantically identical filter
-        set always fingerprints the same regardless of argument order.
-
-        Returns:
-            A short hex digest that is stable for a given set of filter values.
-        """
-
-        def _norm_seq(values: Sequence[str] | None) -> list[str] | None:
-            return sorted(str(v) for v in values) if values else None
-
-        def _norm_labels(
-            raw: dict[str, str | Sequence[str]] | None,
-        ) -> dict[str, str | list[str]] | None:
-            if not raw:
-                return None
-            normalized: dict[str, str | list[str]] = {}
-            for key in sorted(raw):
-                value = raw[key]
-                if isinstance(value, str):
-                    normalized[key] = value
-                    continue
-                # Drop empty sequences: get_attack_results treats an empty-sequence label as
-                # "no filter" (see effective_labels), so including it here would fingerprint
-                # a request differently from the equivalent no-op filter and spuriously reset
-                # pagination to the first page.
-                candidates = sorted(str(v) for v in value)
-                if not candidates:
-                    continue
-                normalized[key] = candidates
-            return normalized or None
-
-        payload = {
-            "attack_types": _norm_seq(attack_types),
-            "converter_types": _norm_seq(converter_types),
-            "converter_types_match": converter_types_match,
-            "has_converters": has_converters,
-            "outcome": outcome,
-            "labels": _norm_labels(labels),
-            "min_turns": min_turns,
-            "max_turns": max_turns,
-        }
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
-
-    @staticmethod
-    def _encode_attack_cursor(*, cursor: AttackResultKeysetCursor, fingerprint: str) -> str:
-        """
-        Encode a keyset anchor and its filter fingerprint into an opaque pagination cursor.
-
-        The anchor's timestamp can contain ``.``/``:``/``-`` (ISO timestamps), so the payload
-        is JSON-serialized and base64url-encoded rather than joined with a delimiter, keeping
-        the cursor an unambiguous opaque token for ``_decode_attack_cursor``.
-
-        Returns:
-            An opaque base64url cursor string encoding ``{fingerprint, timestamp,
-            attack_result_id}``.
-        """
-        payload = {
-            "f": fingerprint,
-            "t": cursor.timestamp.isoformat(),
-            "i": cursor.attack_result_id,
-        }
-        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-    @staticmethod
-    def _decode_attack_cursor(*, cursor: str | None, fingerprint: str) -> AttackResultKeysetCursor | None:
-        """
-        Decode the opaque list-attacks cursor into a keyset (seek) anchor.
-
-        The cursor encodes the previous page's last-row timestamp anchor together with a
-        fingerprint of the filter set it was generated for (see ``_attack_filter_fingerprint``).
-        A cursor is honored only when its fingerprint matches the current request's filters;
-        malformed, legacy (offset/attack-result-id/recency-string), or filter-mismatched cursors
-        fall back to the first page (``None``) so a stale cursor degrades gracefully instead of
-        raising or seeking within the wrong result set.
-
-        Returns:
-            The decoded ``AttackResultKeysetCursor``, or ``None`` to start at the first page.
-        """
-        if not cursor:
-            return None
-        try:
-            padded = cursor + "=" * (-len(cursor) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-        except (binascii.Error, ValueError, TypeError):
-            return None
-        if not isinstance(payload, dict) or payload.get("f") != fingerprint:
-            return None
-        raw_timestamp = payload.get("t")
-        attack_result_id = payload.get("i")
-        if not isinstance(raw_timestamp, str) or not isinstance(attack_result_id, str):
-            return None
-        try:
-            timestamp = datetime.fromisoformat(raw_timestamp)
-            uuid.UUID(attack_result_id)
-        except ValueError:
-            return None
-        if timestamp.tzinfo is None:
-            # Service-minted cursors always carry an aware (UTC) timestamp (AttackResult.timestamp
-            # is timezone-aware). A naive timestamp means a crafted or corrupted cursor whose anchor
-            # would bind inconsistently against the aware timestamp column, so restart at page one.
-            return None
-        # Canonicalize to UTC so the tie-break comparison matches the UTC-normalized timestamp
-        # column regardless of the offset a crafted cursor encodes (service cursors are already UTC).
-        try:
-            timestamp = timestamp.astimezone(timezone.utc)
-        except (OverflowError, OSError):
-            # A crafted cursor near datetime's min/max with a large UTC offset overflows the
-            # representable range when shifted to UTC; treat it as malformed and restart at page one.
-            return None
-        return AttackResultKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
 
     # ========================================================================
     # Private Helper Methods - Duplicate / Branch
