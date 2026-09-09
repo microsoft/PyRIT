@@ -288,16 +288,7 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
 
                 {category === 'security' && (
                   <Text className={styles.warning} data-testid="feedback-security-guidance">
-                    Security vulnerabilities must be reported privately. Do not enter
-                    vulnerability details in this form. Use the{' '}
-                    <Link
-                      href={SECURITY_POLICY_URL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      PyRIT security reporting process
-                    </Link>
-                    .
+                    Use the PyRIT security reporting process to report vulnerabilities.
                   </Text>
                 )}
 
@@ -366,7 +357,7 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
                   iconPosition="after"
                   onClick={onClose}
                 >
-                  Open private reporting process
+                  Open security reporting process
                 </Button>
               )}
               {isFeedbackCategory(category) && (

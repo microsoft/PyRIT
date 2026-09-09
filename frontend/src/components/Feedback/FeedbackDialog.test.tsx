@@ -121,16 +121,10 @@ describe("FeedbackDialog", () => {
       await pickCategory("security");
 
       expect(screen.getByTestId("feedback-security-guidance")).toHaveTextContent(
-        /must be reported privately/i,
+        "Use the PyRIT security reporting process to report vulnerabilities.",
       );
       expect(
-        screen.getByRole("link", { name: /PyRIT security reporting process/i }),
-      ).toHaveAttribute(
-        "href",
-        "https://github.com/microsoft/PyRIT/security/policy",
-      );
-      expect(
-        screen.getByRole("link", { name: /open private reporting process/i }),
+        screen.getByRole("link", { name: /open security reporting process/i }),
       ).toHaveAttribute(
         "href",
         "https://github.com/microsoft/PyRIT/security/policy",
