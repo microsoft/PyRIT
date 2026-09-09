@@ -7,12 +7,13 @@ Labels API routes.
 Provides access to unique label values for filtering in the GUI.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.memory import CentralMemory
 
 router = APIRouter(prefix="/labels", tags=["labels"])
@@ -37,6 +38,15 @@ async def get_label_options(  # pyrit-async-suffix-exempt
         "attacks",
         description="Source type to get labels from.",
     ),
+    operator: list[Annotated[str, Field(max_length=128)]] | None = Query(
+        None,
+        description="Narrow attack labels by operator.",
+    ),
+    operation: list[Annotated[str, Field(max_length=128)]] | None = Query(
+        None,
+        description="Narrow attack labels by operation.",
+    ),
+    label: list[str] | None = Query(None, description="Narrow attack labels by key:value filters."),
 ) -> LabelOptionsResponse:
     """
     Get unique label keys and values for filtering.
@@ -46,6 +56,9 @@ async def get_label_options(  # pyrit-async-suffix-exempt
 
     Args:
         source: The source type to query labels from.
+        operator: Operator values used to narrow attack rows.
+        operation: Operation values used to narrow attack rows.
+        label: Arbitrary key:value filters used to narrow attack rows.
 
     Returns:
         LabelOptionsResponse: Map of label keys to their unique values.
@@ -53,7 +66,13 @@ async def get_label_options(  # pyrit-async-suffix-exempt
     memory = CentralMemory.get_memory_instance()
 
     if source == "attacks":
-        labels = await run_in_threadpool(memory.get_unique_attack_labels)
+        label_filters = parse_label_query_params(label)
+        labels = await run_in_threadpool(
+            memory.get_unique_attack_labels,
+            operator=operator,
+            operation=operation,
+            labels=label_filters,
+        )
         attribution = await run_in_threadpool(memory.get_unique_attack_attribution)
         return LabelOptionsResponse(source=source, labels=labels, **attribution)
 

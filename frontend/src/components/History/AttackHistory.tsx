@@ -107,7 +107,11 @@ export default function AttackHistory({
     attacksApi.getConverterOptions()
       .then(resp => setConverterOptions(resp.converter_types))
       .catch(() => { /* ignore */ })
-    labelsApi.getLabels()
+    labelsApi.getLabels('attacks', {
+      operator: filters.operator.length > 0 ? filters.operator : undefined,
+      operation: filters.operation.length > 0 ? filters.operation : undefined,
+      label: filters.otherLabels.length > 0 ? filters.otherLabels : undefined,
+    })
       .then(resp => {
         const others: string[] = []
         for (const [key, values] of Object.entries(resp.labels)) {
@@ -122,7 +126,7 @@ export default function AttackHistory({
         setOtherLabelOptions(others.sort())
       })
       .catch(() => { /* ignore */ })
-  }, [])
+  }, [filters.operator, filters.operation, filters.otherLabels])
 
   // Fetch attacks whenever filters change or an event handler bumps fetchToken.
   // All setState calls live in .then/.catch/.finally so we don't trigger

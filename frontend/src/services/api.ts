@@ -369,8 +369,13 @@ export const attacksApi = {
 export const labelsApi = {
   getLabels: async (
     source: 'attacks' | 'scenarios' = 'attacks',
+    filters?: {
+      operator?: string[]
+      operation?: string[]
+      label?: string[]
+    },
   ): Promise<LabelOptionsResponse> => {
-    const response = await apiClient.get('/labels', { params: { source } })
+    const response = await apiClient.get('/labels', { params: { source, ...filters } })
     return response.data
   },
 }

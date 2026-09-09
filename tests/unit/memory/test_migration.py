@@ -2486,6 +2486,9 @@ def test_attack_attribution_migration_backfills_labels_and_indexes() -> None:
                 index["name"]: index["column_names"]
                 for index in inspect(connection).get_indexes("ScenarioResultEntries")
             }
+            prompt_columns = {
+                column["name"]: column["type"] for column in inspect(connection).get_columns("PromptMemoryEntries")
+            }
 
         assert row.operator == "alice"
         assert row.operation == "nightly"
@@ -2495,13 +2498,22 @@ def test_attack_attribution_migration_backfills_labels_and_indexes() -> None:
             "timestamp",
             "id",
         ]
-        assert attack_indexes["ix_AttackResultEntries_operator_conversation_timestamp_id"][0] == "operator"
-        assert attack_indexes["ix_AttackResultEntries_operation_conversation_timestamp_id"][0] == "operation"
+        assert attack_indexes["ix_AttackResultEntries_operator_timestamp_id"] == [
+            "operator",
+            "timestamp",
+            "id",
+        ]
+        assert attack_indexes["ix_AttackResultEntries_operation_timestamp_id"] == [
+            "operation",
+            "timestamp",
+            "id",
+        ]
         assert prompt_indexes["ix_PromptMemoryEntries_conversation_sequence_id"] == [
             "conversation_id",
             "sequence",
             "id",
         ]
+        assert prompt_columns["conversation_id"].length == 128
         assert scenario_indexes["ix_ScenarioResultEntries_scenario_name_timestamp_id"] == [
             "scenario_name",
             "timestamp",

@@ -1451,7 +1451,37 @@ class TestLabelsRoutes:
             assert data["labels"] == {"env": ["prod"], "team": ["red"]}
             assert data["operators"] == []
             assert data["operations"] == []
-            mock_memory.get_unique_attack_labels.assert_called_once()
+            mock_memory.get_unique_attack_labels.assert_called_once_with(
+                operator=None,
+                operation=None,
+                labels=None,
+            )
+
+    def test_get_labels_for_attacks_passes_narrowing_filters(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.labels.CentralMemory") as mock_memory_class:
+            mock_memory = MagicMock()
+            mock_memory.get_unique_attack_labels.return_value = {"env": ["prod"]}
+            mock_memory.get_unique_attack_attribution.return_value = {
+                "operators": ["alice", "bob"],
+                "operations": ["nightly"],
+            }
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            response = client.get(
+                "/api/labels",
+                params=[
+                    ("operator", "alice"),
+                    ("operation", "nightly"),
+                    ("label", "team:red"),
+                ],
+            )
+
+            assert response.status_code == status.HTTP_200_OK
+            mock_memory.get_unique_attack_labels.assert_called_once_with(
+                operator=["alice"],
+                operation=["nightly"],
+                labels={"team": ["red"]},
+            )
 
     def test_get_labels_empty(self, client: TestClient) -> None:
         """Test getting labels when no attack results exist."""

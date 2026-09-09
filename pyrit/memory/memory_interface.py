@@ -18,14 +18,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, func, literal, not_, or_, select
+from sqlalchemy import MetaData, and_, case, exists, func, literal, not_, or_, select
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.session import Session
-
-from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -94,6 +92,11 @@ from pyrit.models import (
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
+)
+from pyrit.models.results.attack_result import (
+    ATTRIBUTION_FIELDS,
+    normalize_attribution_values,
+    pop_legacy_attribution_labels,
 )
 
 if TYPE_CHECKING:
@@ -229,8 +232,6 @@ class _AttackResultQuery:
         "converter_classes",
         "targeted_harm_categories",
         "identifier_filters",
-        "operator",
-        "operation",
     )
 
     attack_result_ids: Sequence[str] | None = None
@@ -245,8 +246,8 @@ class _AttackResultQuery:
     has_converters: bool | None = None
     include_scenario_attacks: bool = True
     labels: Mapping[str, str | Sequence[str]] | None = None
-    operator: Sequence[str] | None = None
-    operation: Sequence[str] | None = None
+    operator: str | Sequence[str] | None = None
+    operation: str | Sequence[str] | None = None
     targeted_harm_categories: Sequence[str] | None = None
     identifier_filters: Sequence[IdentifierFilter] | None = None
     scenario_result_id: str | None = None
@@ -267,37 +268,26 @@ class _AttackResultQuery:
             if value is not None:
                 object.__setattr__(self, field_name, tuple(value))
 
-        for field_name in ("operator", "operation"):
+        for field_name in ATTRIBUTION_FIELDS:
             values = getattr(self, field_name)
-            if values is not None and any(not isinstance(value, str) for value in values):
-                raise ValueError(f"{field_name} values must be strings")
-            if values is not None and any(len(value) > AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
-                raise ValueError(
-                    f"{field_name} values must be at most {AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH} characters"
+            if values is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    normalize_attribution_values(field=field_name, raw=values, allow_multiple=True),
                 )
 
         if self.labels is not None:
-            labels = {key: value if isinstance(value, str) else tuple(value) for key, value in self.labels.items()}
-            for name in ("operator", "operation"):
-                if name not in labels:
-                    continue
-                legacy_raw = labels.pop(name)
-                legacy_values = (legacy_raw,) if isinstance(legacy_raw, str) else tuple(legacy_raw)
-                if any(not isinstance(value, str) for value in legacy_values):
-                    raise ValueError(f"labels.{name} values must be strings")
-                if any(len(value) > AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH for value in legacy_values):
-                    raise ValueError(
-                        f"labels.{name} values must be at most {AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH} characters"
-                    )
-                dedicated_values = getattr(self, name)
-                if dedicated_values is not None and set(dedicated_values) != set(legacy_values):
-                    raise ValueError(f"{name} conflicts with legacy labels.{name}")
-                print_deprecation_message(
-                    old_item=f"_AttackResultQuery.labels['{name}']",
-                    new_item=f"_AttackResultQuery.{name}",
-                    removed_in="1.4.0",
-                )
-                object.__setattr__(self, name, legacy_values)
+            remaining, resolved = pop_legacy_attribution_labels(
+                labels=self.labels,
+                dedicated={field: getattr(self, field) for field in ATTRIBUTION_FIELDS},
+                allow_multiple=True,
+                old_item="_AttackResultQuery.labels['{field}']",
+                new_item="_AttackResultQuery.{field}",
+            )
+            for field_name, values in resolved.items():
+                object.__setattr__(self, field_name, values)
+            labels = {key: value if isinstance(value, str) else tuple(value) for key, value in remaining.items()}
             object.__setattr__(self, "labels", MappingProxyType(labels) if labels else None)
 
 
@@ -3585,7 +3575,7 @@ class MemoryInterface(abc.ABC):
                 deduplication, mirroring ``min_turns``. Defaults to None.
             limit (int | None, optional): Maximum number of deduplicated attack results to
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
-                deduplication and pagination happen in the database (via ``ROW_NUMBER()``)
+                deduplication and pagination happen in the database (via a ``NOT EXISTS`` anti-join)
                 instead of loading every row into memory. Defaults to None (return all).
             after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
@@ -3601,11 +3591,6 @@ class MemoryInterface(abc.ABC):
             ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
                 ``objective_sha256`` (id-batched lookups do not support SQL pagination).
         """
-        labels, operator_values, operation_values = self._normalize_attack_attribution_filters(
-            labels=labels,
-            operator=operator,
-            operation=operation,
-        )
         query = _AttackResultQuery(
             attack_result_ids=attack_result_ids,
             conversation_id=conversation_id,
@@ -3619,8 +3604,8 @@ class MemoryInterface(abc.ABC):
             has_converters=has_converters,
             include_scenario_attacks=include_scenario_attacks,
             labels=labels,
-            operator=operator_values,
-            operation=operation_values,
+            operator=operator,
+            operation=operation,
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
@@ -3630,55 +3615,6 @@ class MemoryInterface(abc.ABC):
             after=after,
         )
         return self._query_attack_results(query=query)
-
-    @staticmethod
-    def _normalize_attack_attribution_filters(
-        *,
-        labels: Mapping[str, str | Sequence[str]] | None,
-        operator: str | Sequence[str] | None,
-        operation: str | Sequence[str] | None,
-    ) -> tuple[Mapping[str, str | Sequence[str]] | None, Sequence[str] | None, Sequence[str] | None]:
-        """
-        Normalize deprecated attribution label aliases without mutating caller input.
-
-        Returns:
-            The arbitrary labels, operator values, and operation values.
-
-        Raises:
-            ValueError: If a legacy alias conflicts with its dedicated filter.
-        """
-        operator_values = [operator] if isinstance(operator, str) else operator
-        operation_values = [operation] if isinstance(operation, str) else operation
-        for field_name, values in (("operator", operator_values), ("operation", operation_values)):
-            if values is not None and any(len(value) > AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
-                raise ValueError(
-                    f"{field_name} values must be at most {AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH} characters"
-                )
-        if not labels:
-            return labels, operator_values, operation_values
-
-        normalized_labels = dict(labels)
-        normalized_dedicated = {"operator": operator_values, "operation": operation_values}
-        for name in ("operator", "operation"):
-            if name not in normalized_labels:
-                continue
-            legacy_raw = normalized_labels.pop(name)
-            legacy_values = [legacy_raw] if isinstance(legacy_raw, str) else list(legacy_raw)
-            dedicated_values = normalized_dedicated[name]
-            if dedicated_values is not None and set(dedicated_values) != set(legacy_values):
-                raise ValueError(f"{name} conflicts with legacy labels.{name}")
-            print_deprecation_message(
-                old_item=f"get_attack_results(labels={{'{name}': ...}})",
-                new_item=f"get_attack_results({name}=...)",
-                removed_in="1.4.0",
-            )
-            normalized_dedicated[name] = legacy_values
-
-        return (
-            normalized_labels or None,
-            normalized_dedicated["operator"],
-            normalized_dedicated["operation"],
-        )
 
     def _query_attack_results(self, *, query: _AttackResultQuery) -> Sequence[AttackResult]:
         """
@@ -3940,16 +3876,28 @@ class MemoryInterface(abc.ABC):
         """
         Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
 
-        Ranks rows with ``ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY timestamp
-        DESC, id DESC)`` after applying ``conditions``, keeps only the newest row per
-        conversation (``rn == 1``) — reproducing the post-fetch Python dedup but *before*
-        pagination so page sizes stay correct — then applies the ``min_turns``/``max_turns``
-        bounds to those winners, orders by recency, seeks past the ``after`` keyset anchor,
-        and applies ``limit`` in the database. The turn bounds are applied to the winners (not
-        inside the ranking subquery) so they never resurrect an older duplicate that happens
-        to fall in range. Seeking on the recency ordering tuple (rather than a numeric offset)
-        keeps page boundaries stable when other rows are inserted or deleted between page loads
+        Keeps only the newest row per ``conversation_id`` with a correlated ``NOT EXISTS``
+        anti-join: a row survives when no other row that passes the same ``conditions``
+        shares its conversation and sorts later on ``(timestamp, id)``. This reproduces the
+        post-fetch Python dedup but *before* pagination so page sizes stay correct. The
+        ``min_turns``/``max_turns`` bounds are applied to the surviving winners (not inside
+        the anti-join) so they never resurrect an older duplicate that happens to fall in
+        range. Seeking on the recency ordering tuple (rather than a numeric offset) keeps
+        page boundaries stable when other rows are inserted or deleted between page loads
         (offset pagination instead shifts every row after the change).
+
+        The anti-join replaces a ``ROW_NUMBER() OVER (PARTITION BY conversation_id ...)``
+        window that had to rank *every* matching row on every page before a single result
+        could be returned, which made each page cost O(table). ``NOT EXISTS`` lets the
+        planner drive from the recency index, seek past the keyset anchor, probe
+        ``ix_AttackResultEntries_conversation_timestamp_id`` per candidate row, and stop
+        once ``limit`` winners are found.
+
+        ``conditions`` are re-applied inside the anti-join through a derived table rather
+        than remapped onto an alias: the converter and harm-category filters are raw
+        ``text()`` fragments that hard-code ``"AttackResultEntries"``, so alias adaption
+        would silently leave them bound to the outer row and let a newer non-matching row
+        suppress a valid winner.
 
         Args:
             conditions (list[Any]): Scalar WHERE filters applied before deduplication.
@@ -3962,22 +3910,8 @@ class MemoryInterface(abc.ABC):
         Returns:
             list[AttackResult]: The deduplicated, recency-ordered page of attack results.
         """
-        ranked = select(
-            AttackResultEntry.id.label("id"),
-            func.row_number()
-            .over(
-                partition_by=AttackResultEntry.conversation_id,
-                order_by=(AttackResultEntry.timestamp.desc(), AttackResultEntry.id.desc()),
-            )
-            .label("rn"),
-        )
-        if conditions:
-            ranked = ranked.where(and_(*conditions))
-        ranked_subquery = ranked.subquery()
-
-        winner_ids = select(ranked_subquery.c.id).where(ranked_subquery.c.rn == 1)
-
-        page_conditions: list[Any] = [AttackResultEntry.id.in_(winner_ids)]
+        page_conditions: list[Any] = list(conditions)
+        page_conditions.append(self._attack_results_not_superseded_condition(conditions=conditions))
         if min_turns is not None:
             page_conditions.append(AttackResultEntry.executed_turns >= min_turns)
         if max_turns is not None:
@@ -3992,6 +3926,48 @@ class MemoryInterface(abc.ABC):
             limit=limit,
         )
         return [entry.get_attack_result() for entry in entries]
+
+    @staticmethod
+    def _attack_results_not_superseded_condition(*, conditions: list[Any]) -> Any:
+        """
+        Build the anti-join predicate keeping only the newest matching row per conversation.
+
+        Args:
+            conditions (list[Any]): The same filters applied to the outer query, so dedup
+                picks the newest row *among matching rows*.
+
+        Returns:
+            Any: A condition that is true when no later matching row shares the conversation.
+        """
+        candidates = select(
+            AttackResultEntry.conversation_id.label("conversation_id"),
+            AttackResultEntry.timestamp.label("timestamp"),
+            AttackResultEntry.id.label("id"),
+        )
+        if conditions:
+            candidates = candidates.where(and_(*conditions))
+        # correlate(None) stops SQLAlchemy from hoisting the inner FROM onto the outer row,
+        # which would make every candidate trivially supersede itself.
+        newer = candidates.correlate(None).subquery("newer")
+
+        return not_(
+            exists(
+                select(literal(1))
+                .select_from(newer)
+                .where(
+                    and_(
+                        newer.c.conversation_id == AttackResultEntry.conversation_id,
+                        or_(
+                            newer.c.timestamp > AttackResultEntry.timestamp,
+                            and_(
+                                newer.c.timestamp == AttackResultEntry.timestamp,
+                                newer.c.id > AttackResultEntry.id,
+                            ),
+                        ),
+                    )
+                )
+            )
+        )
 
     @staticmethod
     def _filter_attack_results_by_turns(
@@ -4038,20 +4014,36 @@ class MemoryInterface(abc.ABC):
                 seen[entry.conversation_id] = entry
         return [entry.get_attack_result() for entry in seen.values()]
 
-    def get_unique_attack_labels(self) -> dict[str, list[str]]:
+    def get_unique_attack_labels(
+        self,
+        *,
+        operator: Sequence[str] | None = None,
+        operation: Sequence[str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> dict[str, list[str]]:
         """
-        Return all unique label key-value pairs across attack results.
+        Return unique arbitrary labels, optionally narrowed by indexed attribution first.
+
+        Args:
+            operator (Sequence[str] | None): Operator values used to narrow rows.
+            operation (Sequence[str] | None): Operation values used to narrow rows.
+            labels (Mapping[str, str | Sequence[str]] | None): Arbitrary label filters used
+                to narrow rows.
 
         Returns:
             dict[str, list[str]]: Mapping of label keys to sorted lists of
             unique values.
         """
         label_values: dict[str, set[str]] = {}
+        filter_query = _AttackResultQuery(operator=operator, operation=operation, labels=labels)
+        conditions = self._build_attack_result_scalar_conditions(query=filter_query)
+        conditions.extend(self._build_attack_result_label_conditions(query=filter_query))
 
         with closing(self.get_session()) as session:
-            are_rows = (
-                session.query(AttackResultEntry.labels).filter(AttackResultEntry.labels.isnot(None)).distinct().all()
-            )
+            query = session.query(AttackResultEntry.labels).filter(AttackResultEntry.labels.isnot(None))
+            if conditions:
+                query = query.filter(and_(*conditions))
+            are_rows = query.distinct().all()
 
         for (labels,) in are_rows:
             if not isinstance(labels, dict):

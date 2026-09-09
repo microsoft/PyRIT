@@ -28,6 +28,7 @@ depends_on: str | Sequence[str] | None = None
 
 _ATTRIBUTION_FIELDS = ("operator", "operation")
 _ATTRIBUTION_MAX_LENGTH = 128
+_BATCH_SIZE = 1000
 
 
 def upgrade() -> None:
@@ -44,14 +45,16 @@ def upgrade() -> None:
         ["conversation_id", "timestamp", "id"],
     )
     op.create_index(
-        "ix_AttackResultEntries_operator_conversation_timestamp_id",
+        "ix_AttackResultEntries_operator_timestamp_id",
         "AttackResultEntries",
-        ["operator", "conversation_id", "timestamp", "id"],
+        ["operator", "timestamp", "id"],
+        mssql_include=["conversation_id"],
     )
     op.create_index(
-        "ix_AttackResultEntries_operation_conversation_timestamp_id",
+        "ix_AttackResultEntries_operation_timestamp_id",
         "AttackResultEntries",
-        ["operation", "conversation_id", "timestamp", "id"],
+        ["operation", "timestamp", "id"],
+        mssql_include=["conversation_id"],
     )
 
     _drop_index_if_exists(name="idx_conversation_id", table_name="PromptMemoryEntries")
@@ -93,11 +96,11 @@ def downgrade() -> None:
     )
 
     op.drop_index(
-        "ix_AttackResultEntries_operation_conversation_timestamp_id",
+        "ix_AttackResultEntries_operation_timestamp_id",
         table_name="AttackResultEntries",
     )
     op.drop_index(
-        "ix_AttackResultEntries_operator_conversation_timestamp_id",
+        "ix_AttackResultEntries_operator_timestamp_id",
         table_name="AttackResultEntries",
     )
     op.drop_index(
@@ -146,14 +149,14 @@ def _drop_index_if_exists(*, name: str, table_name: str) -> None:
 
 def _bound_indexed_text_columns() -> None:
     """Bound existing text keys before creating indexes that SQL Server accepts."""
-    _validate_column_length(table_name="PromptMemoryEntries", column_name="conversation_id", max_length=36)
+    _validate_column_length(table_name="PromptMemoryEntries", column_name="conversation_id", max_length=128)
     _validate_column_length(table_name="ScenarioResultEntries", column_name="scenario_name", max_length=256)
     _validate_column_length(table_name="ScenarioResultEntries", column_name="scenario_run_state", max_length=32)
     with op.batch_alter_table("PromptMemoryEntries") as batch_op:
         batch_op.alter_column(
             "conversation_id",
             existing_type=sa.String(),
-            type_=sa.String(36),
+            type_=sa.String(128),
             existing_nullable=False,
         )
     with op.batch_alter_table("ScenarioResultEntries") as batch_op:
@@ -189,7 +192,7 @@ def _restore_unbounded_text_columns() -> None:
     with op.batch_alter_table("PromptMemoryEntries") as batch_op:
         batch_op.alter_column(
             "conversation_id",
-            existing_type=sa.String(36),
+            existing_type=sa.String(128),
             type_=sa.String(),
             existing_nullable=False,
         )
@@ -209,11 +212,7 @@ def _validate_column_length(*, table_name: str, column_name: str, max_length: in
     )
     oversized_value = (
         op.get_bind()
-        .execute(
-            sa.select(table.c[column_name])
-            .where(sa.func.length(table.c[column_name]) > max_length)
-            .limit(1)
-        )
+        .execute(sa.select(table.c[column_name]).where(sa.func.length(table.c[column_name]) > max_length).limit(1))
         .scalar_one_or_none()
     )
     if oversized_value is not None:
@@ -232,31 +231,51 @@ def _move_attribution_from_labels() -> None:
     """
     bind = op.get_bind()
     table = _attack_results_table(include_attribution=True)
+    statement = (
+        sa.update(table)
+        .where(table.c.id == sa.bindparam("row_id"))
+        .values(
+            labels=sa.bindparam("new_labels"),
+            operator=sa.bindparam("new_operator"),
+            operation=sa.bindparam("new_operation"),
+        )
+    )
     rows = bind.execute(sa.select(table.c.id, table.c.labels)).all()
-    for row in rows:
-        labels = row.labels
-        if not isinstance(labels, dict):
-            continue
-        remaining_labels = dict(labels)
-        values: dict[str, Any] = {}
-        for field_name in _ATTRIBUTION_FIELDS:
-            if field_name not in remaining_labels:
+    for start in range(0, len(rows), _BATCH_SIZE):
+        updates = []
+        for row in rows[start : start + _BATCH_SIZE]:
+            labels = row.labels
+            if not isinstance(labels, dict):
                 continue
-            value = remaining_labels.pop(field_name)
-            if not isinstance(value, str):
-                raise ValueError(
-                    f"AttackResultEntries row {row.id} has non-string labels.{field_name}; "
-                    "cannot migrate it to a first-class string column."
+            remaining_labels = dict(labels)
+            values: dict[str, Any] = {}
+            for field_name in _ATTRIBUTION_FIELDS:
+                if field_name not in remaining_labels:
+                    continue
+                value = remaining_labels.pop(field_name)
+                if not isinstance(value, str):
+                    raise ValueError(
+                        f"AttackResultEntries row {row.id} has non-string labels.{field_name}; "
+                        "cannot migrate it to a first-class string column."
+                    )
+                if len(value) > _ATTRIBUTION_MAX_LENGTH:
+                    raise ValueError(
+                        f"AttackResultEntries row {row.id} has labels.{field_name} longer than "
+                        f"{_ATTRIBUTION_MAX_LENGTH} characters; migration will not truncate it."
+                    )
+                values[field_name] = value
+            if values:
+                updates.append(
+                    {
+                        "row_id": row.id,
+                        "new_labels": remaining_labels,
+                        # Both columns were just added, so writing None leaves them NULL.
+                        "new_operator": values.get("operator"),
+                        "new_operation": values.get("operation"),
+                    }
                 )
-            if len(value) > _ATTRIBUTION_MAX_LENGTH:
-                raise ValueError(
-                    f"AttackResultEntries row {row.id} has labels.{field_name} longer than "
-                    f"{_ATTRIBUTION_MAX_LENGTH} characters; migration will not truncate it."
-                )
-            values[field_name] = value
-        if values:
-            values["labels"] = remaining_labels
-            bind.execute(sa.update(table).where(table.c.id == row.id).values(**values))
+        if updates:
+            bind.execute(statement, updates)
 
 
 def _restore_attribution_to_labels() -> None:
@@ -268,21 +287,26 @@ def _restore_attribution_to_labels() -> None:
     """
     bind = op.get_bind()
     table = _attack_results_table(include_attribution=True)
+    statement = sa.update(table).where(table.c.id == sa.bindparam("row_id")).values(labels=sa.bindparam("new_labels"))
     rows = bind.execute(sa.select(table.c.id, table.c.labels, table.c.operator, table.c.operation)).all()
-    for row in rows:
-        labels = dict(row.labels) if isinstance(row.labels, dict) else {}
-        changed = False
-        for field_name in _ATTRIBUTION_FIELDS:
-            value = getattr(row, field_name)
-            if value is None:
-                continue
-            existing = labels.get(field_name)
-            if existing is not None and existing != value:
-                raise ValueError(
-                    f"AttackResultEntries row {row.id} has conflicting labels.{field_name} "
-                    f"while downgrading: {existing!r} != {value!r}."
-                )
-            labels[field_name] = value
-            changed = True
-        if changed:
-            bind.execute(sa.update(table).where(table.c.id == row.id).values(labels=labels))
+    for start in range(0, len(rows), _BATCH_SIZE):
+        updates = []
+        for row in rows[start : start + _BATCH_SIZE]:
+            labels = dict(row.labels) if isinstance(row.labels, dict) else {}
+            changed = False
+            for field_name in _ATTRIBUTION_FIELDS:
+                value = getattr(row, field_name)
+                if value is None:
+                    continue
+                existing = labels.get(field_name)
+                if existing is not None and existing != value:
+                    raise ValueError(
+                        f"AttackResultEntries row {row.id} has conflicting labels.{field_name} "
+                        f"while downgrading: {existing!r} != {value!r}."
+                    )
+                labels[field_name] = value
+                changed = True
+            if changed:
+                updates.append({"row_id": row.id, "new_labels": labels})
+        if updates:
+            bind.execute(statement, updates)

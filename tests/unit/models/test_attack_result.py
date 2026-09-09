@@ -395,7 +395,10 @@ class TestAttackResultValidation:
         assert dumped["labels"] == {"team": "red"}
 
         result.labels["operator"] = "legacy-mutation"
-        assert result.model_dump(mode="json")["labels"] == {"team": "red"}
+        assert result.model_dump(mode="json")["labels"] == {
+            "team": "red",
+            "operator": "legacy-mutation",
+        }
 
 
 class TestAttackResultDuplicate:

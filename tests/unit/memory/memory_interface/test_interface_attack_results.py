@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.dialects import mssql
 from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
@@ -1281,6 +1283,42 @@ def test_get_unique_attack_labels_deduplicates_across_attacks(sqlite_instance: M
     assert result == {"env": ["prod"]}
 
 
+def test_get_unique_attack_labels_narrows_by_attribution_and_labels(sqlite_instance: MemoryInterface):
+    sqlite_instance.add_attack_results_to_memory(
+        attack_results=[
+            create_attack_result(
+                "conv_1",
+                1,
+                operator="alice",
+                operation="nightly",
+                labels={"team": "red", "env": "prod"},
+            ),
+            create_attack_result(
+                "conv_2",
+                2,
+                operator="alice",
+                operation="daytime",
+                labels={"team": "blue", "env": "test"},
+            ),
+            create_attack_result(
+                "conv_3",
+                3,
+                operator="bob",
+                operation="nightly",
+                labels={"team": "red", "env": "dev"},
+            ),
+        ]
+    )
+
+    result = sqlite_instance.get_unique_attack_labels(
+        operator=["alice"],
+        operation=["nightly"],
+        labels={"team": ["red"]},
+    )
+
+    assert result == {"env": ["prod"], "team": ["red"]}
+
+
 def test_get_attack_results_filters_dedicated_attribution_columns(sqlite_instance: MemoryInterface):
     attack_results = [
         create_attack_result("conv_1", 1, operator="alice", operation="nightly"),
@@ -1841,6 +1879,17 @@ def test_get_attack_results_pagination_returns_recency_ordered_page(sqlite_insta
 
     page2 = sqlite_instance.get_attack_results(limit=3, after=_after(page1))
     assert [r.conversation_id for r in page2] == ["conv-6", "conv-5", "conv-4"]
+
+
+def test_get_attack_results_pagination_uses_not_exists_anti_join() -> None:
+    """Pagination probes for a newer duplicate instead of ranking the full result set."""
+    condition = MemoryInterface._attack_results_not_superseded_condition(conditions=[])
+    statement = select(AttackResultEntry.id).where(condition)
+    sql = str(statement.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True})).upper()
+
+    assert "NOT (EXISTS" in sql
+    assert "ROW_NUMBER" not in sql
+    assert "PARTITION BY" not in sql
 
 
 def test_get_attack_results_pagination_disjoint_and_complete(sqlite_instance: MemoryInterface):

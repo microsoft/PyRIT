@@ -35,7 +35,6 @@ from sqlalchemy.types import Uuid
 from typing_extensions import Self
 
 import pyrit
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
@@ -73,6 +72,7 @@ from pyrit.models import (
     TargetIdentifier,
     scorable_from_dict,
 )
+from pyrit.models.results.attack_result import pop_legacy_attribution_labels
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,9 @@ class PromptMemoryEntry(Base):
     role: Mapped[Literal["system", "user", "assistant", "simulated_assistant", "tool", "developer"]] = mapped_column(
         String, nullable=False
     )
-    conversation_id = mapped_column(String(36), nullable=False)
+    # Bounded so SQL Server accepts it as an index key. 128 rather than 36 because
+    # conversation_id is a free-form caller-supplied string, not necessarily a UUID.
+    conversation_id = mapped_column(String(128), nullable=False)
     sequence = mapped_column(INTEGER, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
@@ -1577,18 +1579,18 @@ class AttackResultEntry(Base):
         # Serves the History recency ORDER BY timestamp DESC, id DESC and its keyset seek.
         Index("ix_AttackResultEntries_timestamp_id", "timestamp", "id"),
         Index(
-            "ix_AttackResultEntries_operator_conversation_timestamp_id",
+            "ix_AttackResultEntries_operator_timestamp_id",
             "operator",
-            "conversation_id",
             "timestamp",
             "id",
+            mssql_include=["conversation_id"],
         ),
         Index(
-            "ix_AttackResultEntries_operation_conversation_timestamp_id",
+            "ix_AttackResultEntries_operation_timestamp_id",
             "operation",
-            "conversation_id",
             "timestamp",
             "id",
+            mssql_include=["conversation_id"],
         ),
         # Serves scenario progress deltas scoped by parent and ordered oldest-first.
         Index(
@@ -1701,29 +1703,16 @@ class AttackResultEntry(Base):
         self.outcome = entry.outcome.value
         self.outcome_reason = entry.outcome_reason
         self.attack_metadata = self.filter_json_serializable_metadata(entry.metadata)
-        labels = dict(entry.labels or {})
-        attribution = {"operator": entry.operator, "operation": entry.operation}
-        for field_name in ("operator", "operation"):
-            if field_name not in labels:
-                continue
-            legacy_value = labels.pop(field_name)
-            dedicated_value = attribution[field_name]
-            if not isinstance(legacy_value, str):
-                raise ValueError(f"labels.{field_name} must be a string")
-            if dedicated_value is not None and dedicated_value != legacy_value:
-                raise ValueError(f"{field_name} conflicts with legacy labels.{field_name}")
-            print_deprecation_message(
-                old_item=f"AttackResult.labels['{field_name}']",
-                new_item=f"AttackResult.{field_name}",
-                removed_in="1.4.0",
-            )
-            attribution[field_name] = legacy_value
-        for field_name, value in attribution.items():
-            if value is not None and len(value) > AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH:
-                raise ValueError(f"{field_name} must be at most {AttackResult.ATTRIBUTION_VALUE_MAX_LENGTH} characters")
-        self.operator = attribution["operator"]
-        self.operation = attribution["operation"]
-        self.labels = labels
+        remaining_labels, resolved = pop_legacy_attribution_labels(
+            labels=entry.labels or {},
+            dedicated={"operator": entry.operator, "operation": entry.operation},
+            allow_multiple=False,
+            old_item="AttackResult.labels['{field}']",
+            new_item="AttackResult.{field}",
+        )
+        self.operator = resolved["operator"][0] if resolved["operator"] else None
+        self.operation = resolved["operation"][0] if resolved["operation"] else None
+        self.labels = remaining_labels
         self.targeted_harm_categories = entry.targeted_harm_categories or None
 
         # Persist conversation references by type

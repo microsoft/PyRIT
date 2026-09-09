@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field, computed_field, field_serializer, model_v
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     AttackResult,
     ChatMessageRole,
@@ -26,6 +25,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
 )
+from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, pop_legacy_attribution_labels
 
 
 class TargetInfo(BaseModel):
@@ -381,23 +381,16 @@ class _AttackAttributionInput(BaseModel):
         if not isinstance(data, dict) or not isinstance(data.get("labels"), dict):
             return data
         normalized = dict(data)
-        labels = dict(normalized["labels"])
-        for field_name in ("operator", "operation"):
-            if field_name not in labels:
-                continue
-            legacy_value = labels.pop(field_name)
-            if not isinstance(legacy_value, str):
-                raise ValueError(f"labels.{field_name} must be a string")
-            dedicated_value = normalized.get(field_name)
-            if dedicated_value is not None and dedicated_value != legacy_value:
-                raise ValueError(f"{field_name} conflicts with legacy labels.{field_name}")
-            print_deprecation_message(
-                old_item=f"labels.{field_name}",
-                new_item=field_name,
-                removed_in="1.4.0",
-            )
-            normalized[field_name] = legacy_value
-        normalized["labels"] = labels
+        remaining, resolved = pop_legacy_attribution_labels(
+            labels=normalized["labels"],
+            dedicated={field: normalized.get(field) for field in ATTRIBUTION_FIELDS},
+            allow_multiple=False,
+            old_item="labels.{field}",
+            new_item="{field}",
+        )
+        for field, values in resolved.items():
+            normalized[field] = values[0] if values else None
+        normalized["labels"] = remaining
         return normalized
 
 

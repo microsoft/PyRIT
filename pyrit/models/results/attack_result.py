@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, ClassVar, TypeVar
@@ -19,6 +20,96 @@ from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 
 AttackResultT = TypeVar("AttackResultT", bound="AttackResult")
+
+ATTRIBUTION_FIELDS: tuple[str, str] = ("operator", "operation")
+ATTRIBUTION_VALUE_MAX_LENGTH: int = 128
+
+
+def normalize_attribution_values(*, field: str, raw: Any, allow_multiple: bool) -> tuple[str, ...]:
+    """
+    Validate one attribution value, or a sequence of them, as bounded strings.
+
+    Args:
+        field (str): Name used in error messages.
+        raw (Any): A single value or a sequence of values.
+        allow_multiple (bool): Whether a sequence of values is valid.
+
+    Returns:
+        tuple[str, ...]: The validated values.
+
+    Raises:
+        ValueError: If a value is not a string or exceeds the maximum length.
+    """
+    if isinstance(raw, str):
+        values: tuple[Any, ...] = (raw,)
+    elif allow_multiple and isinstance(raw, Sequence):
+        values = tuple(raw)
+    else:
+        expected = "a string or a sequence of strings" if allow_multiple else "a string"
+        raise ValueError(f"{field} must be {expected}")
+    if any(not isinstance(value, str) for value in values):
+        expected = "strings" if allow_multiple else "a string"
+        raise ValueError(f"{field} must contain {expected}")
+    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
+        raise ValueError(f"{field} must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
+    return values
+
+
+def pop_legacy_attribution_labels(
+    *,
+    labels: Mapping[str, Any],
+    dedicated: Mapping[str, Any],
+    allow_multiple: bool,
+    old_item: str,
+    new_item: str,
+) -> tuple[dict[str, Any], dict[str, tuple[str, ...] | None]]:
+    """
+    Move legacy ``operator``/``operation`` label aliases onto their dedicated values.
+
+    ``operator`` and ``operation`` used to live in the free-form ``labels`` mapping. They are
+    now indexed columns, so every entry point accepts the old spelling for one more release
+    and funnels it here. Both ``old_item`` and ``new_item`` are format strings taking a
+    ``field`` placeholder, so each caller reports the deprecation in its own vocabulary.
+
+    Args:
+        labels (Mapping[str, Any]): Labels that may still carry the legacy aliases.
+        dedicated (Mapping[str, Any]): Current dedicated values, keyed by field name.
+        allow_multiple (bool): Whether each attribution field can contain multiple values.
+        old_item (str): Deprecation message template for the old spelling.
+        new_item (str): Deprecation message template for the replacement.
+
+    Returns:
+        tuple[dict[str, Any], dict[str, tuple[str, ...] | None]]: The labels with the aliases
+        removed, and the resolved values per attribution field.
+
+    Raises:
+        ValueError: If an alias is invalid or disagrees with its dedicated value.
+    """
+    remaining = dict(labels)
+    resolved: dict[str, tuple[str, ...] | None] = {}
+    for field in ATTRIBUTION_FIELDS:
+        current = dedicated.get(field)
+        values = (
+            None
+            if current is None
+            else normalize_attribution_values(field=field, raw=current, allow_multiple=allow_multiple)
+        )
+        if field in remaining:
+            legacy_values = normalize_attribution_values(
+                field=f"labels.{field}",
+                raw=remaining.pop(field),
+                allow_multiple=allow_multiple,
+            )
+            if values is not None and set(values) != set(legacy_values):
+                raise ValueError(f"{field} conflicts with legacy labels.{field}: {values!r} != {legacy_values!r}")
+            print_deprecation_message(
+                old_item=old_item.format(field=field),
+                new_item=new_item.format(field=field),
+                removed_in="1.4.0",
+            )
+            values = legacy_values
+        resolved[field] = values
+    return remaining, resolved
 
 
 class AttackOutcome(str, Enum):
@@ -45,8 +136,7 @@ class AttackOutcome(str, Enum):
 class AttackResult(StrategyResult):
     """Base class for all attack results."""
 
-    ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = 128
-    _LEGACY_ATTRIBUTION_FIELDS: ClassVar[tuple[str, str]] = ("operator", "operation")
+    ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = ATTRIBUTION_VALUE_MAX_LENGTH
 
     # Identity
     # Unique identifier of the conversation that produced this result
@@ -136,47 +226,21 @@ class AttackResult(StrategyResult):
         Raises:
             ValueError: If an alias is not a string or conflicts with a dedicated field.
         """
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or not isinstance(data.get("labels"), dict):
             return data
 
         normalized = dict(data)
-        labels_value = normalized.get("labels")
-        if labels_value is None:
-            return normalized
-        if not isinstance(labels_value, dict):
-            return normalized
-
-        labels = dict(labels_value)
-        for field_name in cls._LEGACY_ATTRIBUTION_FIELDS:
-            if field_name not in labels:
-                continue
-            legacy_value = labels.pop(field_name)
-            if not isinstance(legacy_value, str):
-                raise ValueError(f"labels.{field_name} must be a string")
-            dedicated_value = normalized.get(field_name)
-            if dedicated_value is not None and dedicated_value != legacy_value:
-                raise ValueError(
-                    f"{field_name} conflicts with legacy labels.{field_name}: {dedicated_value!r} != {legacy_value!r}"
-                )
-            print_deprecation_message(
-                old_item=f"AttackResult.labels['{field_name}']",
-                new_item=f"AttackResult.{field_name}",
-                removed_in="1.4.0",
-            )
-            normalized[field_name] = legacy_value
-
-        normalized["labels"] = labels
+        remaining, resolved = pop_legacy_attribution_labels(
+            labels=normalized["labels"],
+            dedicated={field: normalized.get(field) for field in ATTRIBUTION_FIELDS},
+            allow_multiple=False,
+            old_item="AttackResult.labels['{field}']",
+            new_item="AttackResult.{field}",
+        )
+        for field, values in resolved.items():
+            normalized[field] = values[0] if values else None
+        normalized["labels"] = remaining
         return normalized
-
-    @field_serializer("labels")
-    def _serialize_arbitrary_labels(self, labels: dict[str, str]) -> dict[str, str]:
-        """
-        Serialize only arbitrary labels, even if the mutable mapping was modified later.
-
-        Returns:
-            The labels without attribution aliases.
-        """
-        return {key: value for key, value in labels.items() if key not in self._LEGACY_ATTRIBUTION_FIELDS}
 
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """
