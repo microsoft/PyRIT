@@ -9,5 +9,8 @@ recursive-include pyrit *.jpg
 recursive-include pyrit *.wav
 recursive-include pyrit *.mp4
 recursive-include pyrit *.md
+include THIRD_PARTY_NOTICES.txt
+recursive-include LICENSES *.txt
+recursive-include third_party *.json
 include pyrit/executor/promptgen/gcg/src/Dockerfile
 recursive-include pyrit/backend/frontend *

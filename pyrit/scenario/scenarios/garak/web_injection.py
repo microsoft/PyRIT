@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
 from __future__ import annotations
 

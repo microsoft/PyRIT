@@ -17,6 +17,7 @@ steps:
     inputs:
       outputfile: $(System.DefaultWorkingDirectory)/obj/NOTICE
       outputformat: text
+      additionaldata: $(System.DefaultWorkingDirectory)/THIRD_PARTY_NOTICES.txt
 
   - publish: $(System.DefaultWorkingDirectory)/obj/NOTICE
     artifact: NOTICE
