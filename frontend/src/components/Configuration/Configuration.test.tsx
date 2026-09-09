@@ -26,10 +26,15 @@ jest.mock('@/services/api', () => ({
 const mockedConfigurationApi = jest.mocked(configurationApi)
 const mockedInitializersApi = jest.mocked(initializersApi)
 
+// Fluent UI dialogs can render slowly in JSDOM under full test load.
+jest.setTimeout(60_000)
+
 function renderPage(): void {
   render(
     <FluentProvider theme={webLightTheme}>
-      <Configuration />
+      <main>
+        <Configuration />
+      </main>
     </FluentProvider>,
   )
 }
@@ -84,6 +89,7 @@ describe('Configuration', () => {
   it('should load and display configuration content', async () => {
     renderPage()
 
+    expect(screen.getAllByRole('main')).toHaveLength(1)
     expect(screen.getByRole('heading', { level: 1, name: 'Configuration' })).toBeInTheDocument()
     expect(await screen.findByLabelText('Configuration YAML')).toHaveValue('operator: alice\n')
     expect(screen.getByRole('navigation', { name: 'Configuration files' })).toBeInTheDocument()
@@ -204,8 +210,17 @@ describe('Configuration', () => {
       { selector: 'label' },
     )).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Add initializer' }))
-    const dialog = screen.getByRole('dialog', { name: 'Add custom initializer' })
-    await user.type(within(dialog).getByRole('textbox', { name: /Initializer name/ }), 'new_custom')
+    const dialog = await screen.findByRole(
+      'dialog',
+      { name: 'Add custom initializer' },
+      { timeout: 15_000 },
+    )
+    const nameInput = await within(dialog).findByRole(
+      'textbox',
+      { name: /Initializer name/ },
+      { timeout: 15_000 },
+    )
+    await user.type(nameInput, 'new_custom')
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Python source' }), {
       target: { value: 'class NewCustom: pass' },
     })

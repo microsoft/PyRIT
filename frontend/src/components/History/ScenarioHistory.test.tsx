@@ -60,7 +60,9 @@ const defaultProps = {
 function renderHistory(props = defaultProps) {
   return render(
     <FluentProvider theme={webLightTheme}>
-      <ScenarioHistory {...props} />
+      <main>
+        <ScenarioHistory {...props} />
+      </main>
     </FluentProvider>,
   )
 }
@@ -88,6 +90,7 @@ describe('ScenarioHistory', () => {
     renderHistory({ ...defaultProps, onOpenRun })
 
     const row = await screen.findByTestId('scenario-history-row-run-1')
+    expect(screen.getAllByRole('main')).toHaveLength(1)
     expect(screen.getByText('foundry.red_team')).toBeInTheDocument()
     expect(screen.getByText('RedTeamScenario · v3')).toBeInTheDocument()
     expect(screen.getByText('gpt-4o')).toBeInTheDocument()
