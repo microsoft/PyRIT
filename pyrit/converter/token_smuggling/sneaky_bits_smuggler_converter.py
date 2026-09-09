@@ -38,12 +38,14 @@ class SneakyBitsSmugglerConverter(SmugglerConverter):
             one_char (str | None): Character to represent binary 1 in ``sneaky_bits`` mode (default: U+2064).
 
         Raises:
-            ValueError: If the action is unsupported, marker values are not single characters, or markers are equal.
+            ValueError: If the action is unsupported or markers are not distinct, single-character strings.
         """
         super().__init__(action=action)
         self.zero_char = zero_char if zero_char is not None else "\u2062"  # Invisible Times
         self.one_char = one_char if one_char is not None else "\u2064"  # Invisible Plus
 
+        if not isinstance(self.zero_char, str) or not isinstance(self.one_char, str):
+            raise ValueError("zero_char and one_char must be strings")
         if len(self.zero_char) != 1 or len(self.one_char) != 1:
             raise ValueError("zero_char and one_char must each be exactly one character")
         if self.zero_char == self.one_char:
