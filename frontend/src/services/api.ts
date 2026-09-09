@@ -375,7 +375,12 @@ export const labelsApi = {
       label?: string[]
     },
   ): Promise<LabelOptionsResponse> => {
-    const response = await apiClient.get('/labels', { params: { source, ...filters } })
+    const response = await apiClient.get('/labels', {
+      params: { source, ...filters },
+      paramsSerializer: {
+        indexes: null, // serialize arrays as ?key=val1&key=val2
+      },
+    })
     return response.data
   },
 }

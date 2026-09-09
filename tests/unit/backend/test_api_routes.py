@@ -1482,6 +1482,7 @@ class TestLabelsRoutes:
                 operation=["nightly"],
                 labels={"team": ["red"]},
             )
+            mock_memory.get_unique_attack_attribution.assert_not_called()
 
     def test_get_labels_empty(self, client: TestClient) -> None:
         """Test getting labels when no attack results exist."""

@@ -48,6 +48,17 @@ function buildListParams(filters: HistoryFilters, pageCursor: string | undefined
   return params
 }
 
+function buildOtherLabelOptions(labels: Record<string, string[]>): string[] {
+  const options: string[] = []
+  for (const [key, values] of Object.entries(labels)) {
+    if (key === 'operator' || key === 'operation') continue
+    for (const value of values) {
+      options.push(`${key}:${value}`)
+    }
+  }
+  return options.sort()
+}
+
 export default function AttackHistory({
   onOpenAttack,
   filters,
@@ -66,7 +77,11 @@ export default function AttackHistory({
   const [converterOptions, setConverterOptions] = useState<string[]>([])
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
   const [operationOptions, setOperationOptions] = useState<string[]>([])
-  const [otherLabelOptions, setOtherLabelOptions] = useState<string[]>([])
+  const [allOtherLabelOptions, setAllOtherLabelOptions] = useState<string[]>([])
+  const [narrowedOtherLabelOptions, setNarrowedOtherLabelOptions] = useState<{
+    filterKey: string
+    options: string[]
+  } | null>(null)
 
   // Pagination
   const [cursor, setCursor] = useState<string | undefined>(undefined)
@@ -84,6 +99,18 @@ export default function AttackHistory({
     filters.otherLabels,
   ])
   const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
+  const labelOptionFilterKey = JSON.stringify([
+    filters.operator,
+    filters.operation,
+    filters.otherLabels,
+  ])
+  const hasLabelOptionFilters = filters.operator.length > 0
+    || filters.operation.length > 0
+    || filters.otherLabels.length > 0
+  const otherLabelOptions = hasLabelOptionFilters
+    && narrowedOtherLabelOptions?.filterKey === labelOptionFilterKey
+    ? narrowedOtherLabelOptions.options
+    : allOtherLabelOptions
 
   // Bumped from event handlers (Refresh button, pagination) to re-trigger the
   // fetch effect without calling setState synchronously inside it.
@@ -99,7 +126,7 @@ export default function AttackHistory({
     setFetchToken(prev => ({ cursor: pageCursor, filterKey, nonce: prev.nonce + 1 }))
   }, [filterKey])
 
-  // Load filter options on mount
+  // Attack and converter options do not depend on the active history filters.
   useEffect(() => {
     attacksApi.getAttackOptions()
       .then(resp => setAttackTypeOptions(resp.attack_types))
@@ -107,26 +134,43 @@ export default function AttackHistory({
     attacksApi.getConverterOptions()
       .then(resp => setConverterOptions(resp.converter_types))
       .catch(() => { /* ignore */ })
+    labelsApi.getLabels()
+      .then(resp => {
+        // TODO(PyRIT 1.4): Remove the labels.* fallbacks with legacy attribution aliases.
+        setOperatorOptions([...(resp.operators ?? resp.labels.operator ?? [])].sort())
+        setOperationOptions([...(resp.operations ?? resp.labels.operation ?? [])].sort())
+        setAllOtherLabelOptions(buildOtherLabelOptions(resp.labels))
+      })
+      .catch(() => { /* ignore */ })
+  }, [])
+
+  // Arbitrary label options are narrowed by the active indexed attribution filters.
+  useEffect(() => {
+    if (!hasLabelOptionFilters) return
+    let cancelled = false
     labelsApi.getLabels('attacks', {
       operator: filters.operator.length > 0 ? filters.operator : undefined,
       operation: filters.operation.length > 0 ? filters.operation : undefined,
       label: filters.otherLabels.length > 0 ? filters.otherLabels : undefined,
     })
       .then(resp => {
-        const others: string[] = []
-        for (const [key, values] of Object.entries(resp.labels)) {
-          if (key !== 'source') {
-            for (const val of values) {
-              others.push(`${key}:${val}`)
-            }
-          }
-        }
-        setOperatorOptions([...(resp.operators ?? resp.labels.operator ?? [])].sort())
-        setOperationOptions([...(resp.operations ?? resp.labels.operation ?? [])].sort())
-        setOtherLabelOptions(others.sort())
+        if (cancelled) return
+        setNarrowedOtherLabelOptions({
+          filterKey: labelOptionFilterKey,
+          options: buildOtherLabelOptions(resp.labels),
+        })
       })
       .catch(() => { /* ignore */ })
-  }, [filters.operator, filters.operation, filters.otherLabels])
+    return () => {
+      cancelled = true
+    }
+  }, [
+    filters.operator,
+    filters.operation,
+    filters.otherLabels,
+    hasLabelOptionFilters,
+    labelOptionFilterKey,
+  ])
 
   // Fetch attacks whenever filters change or an event handler bumps fetchToken.
   // All setState calls live in .then/.catch/.finally so we don't trigger

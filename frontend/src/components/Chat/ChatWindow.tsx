@@ -80,19 +80,6 @@ function matchesNarrowScreen(): boolean {
     && window.matchMedia(NARROW_SCREEN_QUERY).matches
 }
 
-function attackAttributionFromLabels(labels?: Record<string, string>): Pick<
-  CreateAttackRequest,
-  'operator' | 'operation' | 'labels'
-> {
-  if (!labels) return {}
-  const { operator, operation, ...arbitraryLabels } = labels
-  const attribution: Pick<CreateAttackRequest, 'operator' | 'operation' | 'labels'> = {}
-  if (operator) attribution.operator = operator
-  if (operation) attribution.operation = operation
-  if (Object.keys(arbitraryLabels).length > 0) attribution.labels = arbitraryLabels
-  return attribution
-}
-
 interface ChatWindowProps {
   onNewAttack: () => void
   activeTarget: TargetInstance | null
@@ -444,7 +431,9 @@ export default function ChatWindow({
       if (!currentAttackResultId) {
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
-          ...attackAttributionFromLabels(labels),
+          // TODO(PyRIT 1.4): Pass only dedicated attribution after legacy label aliases are removed.
+          // The create-attack API normalizes these aliases through _AttackAttributionInput.
+          labels,
           system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
         }
         const createResponse = await attacksApi.createAttack(createRequest)
@@ -671,7 +660,7 @@ export default function ChatWindow({
     try {
       const createResponse = await attacksApi.createAttack({
         target_registry_name: activeTarget.target_registry_name,
-        ...attackAttributionFromLabels(labels),
+        labels,
         source_conversation_id: activeConversationId,
         cutoff_index: messageIndex,
       })
@@ -722,7 +711,7 @@ export default function ChatWindow({
       // Let the backend clone the conversation with new labels
       const createResponse = await attacksApi.createAttack({
         target_registry_name: activeTarget.target_registry_name,
-        ...attackAttributionFromLabels(labels),
+        labels,
         source_conversation_id: activeConversationId,
         cutoff_index: lastIndex,
       })

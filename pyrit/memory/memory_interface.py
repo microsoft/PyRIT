@@ -25,6 +25,8 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
 from sqlalchemy.orm.session import Session
 
+from pyrit.common.deprecation import print_deprecation_message
+
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
@@ -93,11 +95,7 @@ from pyrit.models import (
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
-from pyrit.models.results.attack_result import (
-    ATTRIBUTION_FIELDS,
-    normalize_attribution_values,
-    pop_legacy_attribution_labels,
-)
+from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, ATTRIBUTION_VALUE_MAX_LENGTH
 
 if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
@@ -107,6 +105,24 @@ logger = logging.getLogger(__name__)
 
 Model = TypeVar("Model")
 IdentifierModel = TypeVar("IdentifierModel", bound=ComponentIdentifier)
+
+
+def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[str]) -> tuple[str, ...]:
+    """
+    Validate and snapshot one dedicated attribution filter.
+
+    Returns:
+        tuple[str, ...]: The validated immutable filter values.
+
+    Raises:
+        ValueError: If any value is not a string or exceeds the column limit.
+    """
+    values = (raw,) if isinstance(raw, str) else tuple(raw)
+    if any(not isinstance(value, str) for value in values):
+        raise ValueError(f"{field} values must be strings")
+    if any(len(value) > ATTRIBUTION_VALUE_MAX_LENGTH for value in values):
+        raise ValueError(f"{field} values must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
+    return values
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -260,6 +276,8 @@ class _AttackResultQuery:
         """
         Snapshot mutable inputs and normalize legacy attribution aliases.
 
+        TODO(PyRIT 1.4): Remove attribution handling in ``labels``.
+
         Raises:
             ValueError: If attribution aliases conflict or exceed their maximum length.
         """
@@ -274,20 +292,27 @@ class _AttackResultQuery:
                 object.__setattr__(
                     self,
                     field_name,
-                    normalize_attribution_values(field=field_name, raw=values, allow_multiple=True),
+                    _normalize_attribution_filter_values(field=field_name, raw=values),
                 )
 
         if self.labels is not None:
-            remaining, resolved = pop_legacy_attribution_labels(
-                labels=self.labels,
-                dedicated={field: getattr(self, field) for field in ATTRIBUTION_FIELDS},
-                allow_multiple=True,
-                old_item="_AttackResultQuery.labels['{field}']",
-                new_item="_AttackResultQuery.{field}",
-            )
-            for field_name, values in resolved.items():
-                object.__setattr__(self, field_name, values)
-            labels = {key: value if isinstance(value, str) else tuple(value) for key, value in remaining.items()}
+            labels = {key: value if isinstance(value, str) else tuple(value) for key, value in self.labels.items()}
+            for field_name in ATTRIBUTION_FIELDS:
+                if field_name not in labels:
+                    continue
+                legacy_values = _normalize_attribution_filter_values(
+                    field=f"labels.{field_name}",
+                    raw=labels.pop(field_name),
+                )
+                dedicated_values = getattr(self, field_name)
+                if dedicated_values is not None and set(dedicated_values) != set(legacy_values):
+                    raise ValueError(f"{field_name} conflicts with legacy labels.{field_name}")
+                print_deprecation_message(
+                    old_item=f"_AttackResultQuery.labels['{field_name}']",
+                    new_item=f"_AttackResultQuery.{field_name}",
+                    removed_in="1.4.0",
+                )
+                object.__setattr__(self, field_name, legacy_values)
             object.__setattr__(self, "labels", MappingProxyType(labels) if labels else None)
 
 

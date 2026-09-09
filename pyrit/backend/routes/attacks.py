@@ -110,6 +110,7 @@ async def list_attacks(  # pyrit-async-suffix-exempt
     """
     service = get_attack_service()
     labels = parse_label_query_params(label) or {}
+    # TODO(PyRIT 1.4): Remove legacy attribution aliases from label query parameters.
     legacy_operator = labels.pop("operator", None)
     legacy_operation = labels.pop("operation", None)
     if legacy_operator is not None:

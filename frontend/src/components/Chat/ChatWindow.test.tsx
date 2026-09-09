@@ -705,8 +705,7 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith({
         target_registry_name: "openai_chat_1",
-        operator: 'testuser',
-        operation: 'test_op',
+        labels: { operator: 'testuser', operation: 'test_op' },
         system_prompt: undefined,
       });
       expect(onConversationCreated).toHaveBeenCalledWith("ar-conv-1", "conv-1");

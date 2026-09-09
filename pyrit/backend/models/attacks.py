@@ -25,7 +25,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
 )
-from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, pop_legacy_attribution_labels
+from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
 
 class TargetInfo(BaseModel):
@@ -372,6 +372,8 @@ class _AttackAttributionInput(BaseModel):
         """
         Normalize deprecated label aliases without mutating the caller's dictionaries.
 
+        TODO(PyRIT 1.4): Remove this validator with legacy attribution label aliases.
+
         Returns:
             The normalized model input.
 
@@ -381,16 +383,14 @@ class _AttackAttributionInput(BaseModel):
         if not isinstance(data, dict) or not isinstance(data.get("labels"), dict):
             return data
         normalized = dict(data)
-        remaining, resolved = pop_legacy_attribution_labels(
+        remaining, operator, operation = normalize_legacy_attack_attribution(
             labels=normalized["labels"],
-            dedicated={field: normalized.get(field) for field in ATTRIBUTION_FIELDS},
-            allow_multiple=False,
-            old_item="labels.{field}",
-            new_item="{field}",
+            operator=normalized.get("operator"),
+            operation=normalized.get("operation"),
         )
-        for field, values in resolved.items():
-            normalized[field] = values[0] if values else None
         normalized["labels"] = remaining
+        normalized["operator"] = operator
+        normalized["operation"] = operation
         return normalized
 
 

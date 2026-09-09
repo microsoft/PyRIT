@@ -219,6 +219,7 @@ export default function LabelsBar({ labels, onLabelsChange }: LabelsBarProps) {
       // so keep anything already collected rather than replacing outright.
       .then(resp => setExistingLabels(prev => ({
         ...resp.labels,
+        // TODO(PyRIT 1.4): Remove the labels.* fallbacks with legacy attribution aliases.
         operator: [...new Set([...(resp.operators ?? resp.labels.operator ?? []), ...(prev.operator || [])])],
         operation: [...new Set([...(resp.operations ?? resp.labels.operation ?? []), ...(prev.operation || [])])],
       })))

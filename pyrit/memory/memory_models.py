@@ -72,7 +72,7 @@ from pyrit.models import (
     TargetIdentifier,
     scorable_from_dict,
 )
-from pyrit.models.results.attack_result import pop_legacy_attribution_labels
+from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
 logger = logging.getLogger(__name__)
 
@@ -1703,15 +1703,13 @@ class AttackResultEntry(Base):
         self.outcome = entry.outcome.value
         self.outcome_reason = entry.outcome_reason
         self.attack_metadata = self.filter_json_serializable_metadata(entry.metadata)
-        remaining_labels, resolved = pop_legacy_attribution_labels(
+        remaining_labels, operator, operation = normalize_legacy_attack_attribution(
             labels=entry.labels or {},
-            dedicated={"operator": entry.operator, "operation": entry.operation},
-            allow_multiple=False,
-            old_item="AttackResult.labels['{field}']",
-            new_item="AttackResult.{field}",
+            operator=entry.operator,
+            operation=entry.operation,
         )
-        self.operator = resolved["operator"][0] if resolved["operator"] else None
-        self.operation = resolved["operation"][0] if resolved["operation"] else None
+        self.operator = operator
+        self.operation = operation
         self.labels = remaining_labels
         self.targeted_harm_categories = entry.targeted_harm_categories or None
 

@@ -73,7 +73,11 @@ async def get_label_options(  # pyrit-async-suffix-exempt
             operation=operation,
             labels=label_filters,
         )
-        attribution = await run_in_threadpool(memory.get_unique_attack_attribution)
+        attribution = (
+            {}
+            if operator or operation or label_filters
+            else await run_in_threadpool(memory.get_unique_attack_attribution)
+        )
         return LabelOptionsResponse(source=source, labels=labels, **attribution)
 
     labels = await run_in_threadpool(memory.get_unique_scenario_labels)
