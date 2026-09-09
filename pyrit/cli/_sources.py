@@ -105,6 +105,11 @@ class RestApiConversationSource:
         """
         Return the objective scores captured for the given piece ids.
 
+        ``get_messages_async`` must be called first because the REST messages
+        response supplies and populates the score cache used by this method.
+        This is safe in the CLI flow because it fetches the messages before
+        passing those same messages and this source to the conversation printer.
+
         Args:
             prompt_ids (list[str]): The message-piece ids to fetch scores for.
 
@@ -126,10 +131,11 @@ class RestApiConversationSource:
             MessagePiece: The hydrated piece.
         """
         data = _only_known(MessagePiece, piece_json)
+        # Defensive defaults before validation
         if not data.get("role"):
             data["role"] = message_role or "user"
         if not data.get("original_value"):
-            data["original_value"] = piece_json.get("converted_value") or piece_json.get("original_value") or ""
+            data["original_value"] = piece_json.get("converted_value") or ""
         return MessagePiece.model_validate(data)
 
     def _select_objective_score(self, *, piece_json: dict[str, Any]) -> Score | None:
