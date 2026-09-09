@@ -15,7 +15,7 @@ Targets can be:
 import asyncio
 import logging
 from functools import lru_cache
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
@@ -125,6 +125,28 @@ class TargetService:
         """
         return self._registry.instances.get(target_registry_name)
 
+    @staticmethod
+    def _get_catalog_auth_modes(auth_modes: tuple[str, ...]) -> list[Literal["api_key", "identity"]]:
+        """
+        Validate and narrow registry authentication modes for the catalog response.
+
+        Args:
+            auth_modes (tuple[str, ...]): Authentication modes declared by a target class.
+
+        Returns:
+            list[Literal["api_key", "identity"]]: Validated catalog authentication modes.
+
+        Raises:
+            ValueError: If a target class declares an unsupported authentication mode.
+        """
+        catalog_auth_modes: list[Literal["api_key", "identity"]] = []
+        for auth_mode in auth_modes:
+            if auth_mode == "api_key" or auth_mode == "identity":
+                catalog_auth_modes.append(auth_mode)
+                continue
+            raise ValueError(f"Unsupported target authentication mode: {auth_mode!r}")
+        return catalog_auth_modes
+
     async def list_target_catalog_async(self) -> TargetCatalogResponse:
         """
         List all available target types from the target class registry.
@@ -143,7 +165,7 @@ class TargetService:
             TargetCatalogEntry(
                 target_type=metadata.class_name,
                 parameters=[p for p in metadata.parameters if p.is_string_coercible],
-                supported_auth_modes=cast("list[Literal['api_key', 'identity']]", list(metadata.supported_auth_modes)),
+                supported_auth_modes=self._get_catalog_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items

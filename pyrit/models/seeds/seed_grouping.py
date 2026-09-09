@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
+from pyrit.models.seeds.seed_objective import SeedObjective
+from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models.seeds.seed_simulated_conversation import SeedSimulatedConversation
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,8 +57,10 @@ def group_seeds_into_attack_groups(seeds: Sequence[Seed]) -> list[AttackSeedGrou
         ValueError: If any resulting group does not satisfy ``AttackSeedGroup``'s
             invariants (e.g. it has no objective or more than one).
     """
-    grouped_seeds: dict[uuid.UUID, list[Seed]] = defaultdict(list)
+    grouped_seeds: dict[uuid.UUID, list[SeedUnion]] = defaultdict(list)
     for seed in seeds:
+        if not isinstance(seed, (SeedPrompt, SeedObjective, SeedSimulatedConversation)):
+            raise ValueError(f"Unsupported seed type: {type(seed).__name__}")
         group_id = seed.prompt_group_id if seed.prompt_group_id is not None else uuid.uuid4()
         grouped_seeds[group_id].append(seed)
 
@@ -63,6 +68,6 @@ def group_seeds_into_attack_groups(seeds: Sequence[Seed]) -> list[AttackSeedGrou
     for group_seeds in grouped_seeds.values():
         if len(group_seeds) > 1:
             group_seeds.sort(key=lambda s: getattr(s, "sequence", None) or 0)
-        attack_groups.append(AttackSeedGroup(seeds=cast("list[SeedUnion]", group_seeds)))
+        attack_groups.append(AttackSeedGroup(seeds=group_seeds))
 
     return attack_groups
