@@ -5,7 +5,7 @@
 Add first-class attack attribution fields and history query indexes.
 
 Revision ID: a4c6e8f0b2d1
-Revises: 8d1e3f5a7b9c
+Revises: 1b3d5f7a9c2e
 Create Date: 2026-09-04 18:48:00.000000
 """
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "a4c6e8f0b2d1"
-down_revision: str | Sequence[str] | None = "8d1e3f5a7b9c"
+down_revision: str | Sequence[str] | None = "1b3d5f7a9c2e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

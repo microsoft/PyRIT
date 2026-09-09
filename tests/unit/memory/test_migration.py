@@ -2443,7 +2443,7 @@ def test_attack_recency_downgrade_restores_updated_at_and_drops_indexes():
 
 
 _ATTACK_ATTRIBUTION_REV = "a4c6e8f0b2d1"
-_ATTACK_ATTRIBUTION_PREV_REV = "8d1e3f5a7b9c"
+_ATTACK_ATTRIBUTION_PREV_REV = "1b3d5f7a9c2e"
 
 
 def _seed_attack_result_with_labels(connection, *, attack_id: str, labels: dict[str, object]) -> None:
