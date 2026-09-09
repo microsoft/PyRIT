@@ -13,7 +13,7 @@ import weakref
 from collections.abc import Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 from urllib.parse import urlparse
@@ -705,6 +705,14 @@ class MemoryInterface(abc.ABC):
             SQLAlchemyError: If the message pieces or converter identifiers cannot be persisted.
         """
         entries = [PromptMemoryEntry(entry=piece) for piece in message_pieces]
+        # Sequence orders messages, so timestamp preserves the input order of pieces within one message.
+        latest_timestamp_by_message: dict[tuple[str, int], datetime] = {}
+        for entry in entries:
+            message_key = (entry.conversation_id, entry.sequence)
+            latest_timestamp = latest_timestamp_by_message.get(message_key)
+            if latest_timestamp is not None and entry.timestamp <= latest_timestamp:
+                entry.timestamp = latest_timestamp + timedelta(microseconds=1)
+            latest_timestamp_by_message[message_key] = entry.timestamp
         with closing(self.get_session()) as session:
             try:
                 for piece, entry in zip(message_pieces, entries, strict=True):

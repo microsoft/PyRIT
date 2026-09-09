@@ -108,7 +108,6 @@ async def list_attacks(  # pyrit-async-suffix-exempt
     Returns:
         AttackListResponse: Paginated list of attack summaries.
     """
-    service = get_attack_service()
     labels = parse_label_query_params(label) or {}
     # TODO(PyRIT 1.4): Remove legacy attribution aliases from label query parameters.
     legacy_operator = labels.pop("operator", None)
@@ -138,6 +137,7 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         converter_types = [c for c in converter_types if c]
     if attack_types is not None:
         attack_types = [a for a in attack_types if a]
+    service = get_attack_service()
     return await service.list_attacks_async(
         attack_types=attack_types,
         converter_types=converter_types,
