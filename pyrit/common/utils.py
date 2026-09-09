@@ -193,14 +193,21 @@ def get_kwarg_param(
 
     value = kwargs.pop(param_name)
 
-    if not value:
+    if value is None:
         if not required:
             return default_value
         raise ValueError(f"Parameter '{param_name}' must be provided and non-empty")
 
+    # Type checked before emptiness so a falsy value of the wrong type still raises
+    # TypeError rather than silently falling back to the default.
     if not isinstance(value, expected_type):
         raise TypeError(
             f"Parameter '{param_name}' must be of type {expected_type.__name__}, got {type(value).__name__}"
         )
+
+    if not value:
+        if not required:
+            return default_value
+        raise ValueError(f"Parameter '{param_name}' must be provided and non-empty")
 
     return value

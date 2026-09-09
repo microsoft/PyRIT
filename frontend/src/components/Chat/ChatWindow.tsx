@@ -772,7 +772,7 @@ export default function ChatWindow({
           <div className={styles.breadcrumbBar}>
             <Breadcrumb aria-label="Attack provenance" size="small">
               <BreadcrumbItem>
-                <Text size={200}>Scenario History</Text>
+                <Text size={200}>Scanner History</Text>
               </BreadcrumbItem>
               <BreadcrumbDivider />
               <BreadcrumbItem>

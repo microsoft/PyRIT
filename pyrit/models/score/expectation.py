@@ -33,8 +33,9 @@ class ScoringExpectation(BaseModel):
 
     ``conditions`` carry the criteria: typed objects routed by type to the scorers that
     match them. Attacks forward them without inspecting them, and a scorer matches at
-    most one of them. ``SerializeAsAny`` keeps each condition serialized as its own
-    subtype, so subclass fields survive a round trip.
+    most one of them. Their tuple order is part of the persisted expectation and its
+    fingerprint. ``SerializeAsAny`` keeps each condition serialized as its own subtype,
+    so subclass fields survive a round trip.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -155,8 +156,8 @@ def scoring_expectation_fingerprint(exp: ScoringExpectation) -> str:
     Return a stable content fingerprint of an expectation.
 
     The fingerprint is the lowercase SHA-256 hex of the canonical JSON serialization
-    (sorted keys, compact separators), so two expectations with the same objective and
-    conditions hash identically regardless of construction order.
+    (sorted keys, compact separators). JSON object key order does not affect the digest,
+    but condition tuple order is preserved and remains significant.
 
     Args:
         exp (ScoringExpectation): The expectation to fingerprint.

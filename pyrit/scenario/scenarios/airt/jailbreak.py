@@ -200,6 +200,21 @@ class Jailbreak(Scenario):
             ),
         ]
 
+    def set_params_from_args(self, *, args: dict[str, Any]) -> None:
+        """
+        Resolve run parameters and reject non-positive repeat counts.
+
+        Args:
+            args (dict[str, Any]): Raw scenario run parameters.
+
+        Raises:
+            ValueError: If ``num_jailbreak_attempts`` is less than one.
+        """
+        super().set_params_from_args(args=args)
+        num_attempts = self.params["num_jailbreak_attempts"]
+        if num_attempts < 1:
+            raise ValueError("num_jailbreak_attempts must be at least 1")
+
     @apply_defaults
     def __init__(
         self,
@@ -322,7 +337,7 @@ class Jailbreak(Scenario):
         template_count = len(self.params.get("jailbreak_names") or []) or (
             self.params.get("num_jailbreaks") or _DEFAULT_NUM_JAILBREAKS
         )
-        attempt_count = self.params.get("num_jailbreak_attempts") or 1
+        attempt_count = self.params["num_jailbreak_attempts"]
         technique_names = {technique.value for technique in self._scenario_techniques}
         converter_count = len(technique_names - {_JAILBREAK_SYSTEM_PROMPT})
         system_delivery_selected = _JAILBREAK_SYSTEM_PROMPT in technique_names
@@ -450,7 +465,7 @@ class Jailbreak(Scenario):
             )
 
         self._resolved_jailbreaks = self._resolve_templates()
-        num_attempts = self.params.get("num_jailbreak_attempts", 1)
+        num_attempts = self.params["num_jailbreak_attempts"]
 
         technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())
 

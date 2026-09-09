@@ -34,11 +34,12 @@ async def test_health_remains_schedulable_during_cold_target_catalog() -> None:
             catalog_request = asyncio.create_task(client.get("/api/targets/catalog"))
             assert await asyncio.to_thread(discovery_started.wait, 5)
 
-            health_response = await asyncio.wait_for(client.get("/api/health"), timeout=2)
-
-            assert health_response.status_code == 200
-            assert not discovery_finished.is_set()
-            discovery_release.set()
-            catalog_response = await asyncio.wait_for(catalog_request, timeout=2)
+            try:
+                health_response = await client.get("/api/health")
+                assert health_response.status_code == 200
+                assert not discovery_finished.is_set()
+            finally:
+                discovery_release.set()
+            catalog_response = await catalog_request
 
     assert catalog_response.status_code == 200

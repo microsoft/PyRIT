@@ -11,7 +11,7 @@ for. On upgrade the legacy objective is folded into an objective-only expectatio
 downgrade only the objective survives and typed conditions are dropped.
 
 Revision ID: 1b3d5f7a9c2e
-Revises: 0f2e4d6c8b1a
+Revises: 8d1e3f5a7b9c
 Create Date: 2026-09-03 10:00:00.000000
 """
 
@@ -26,7 +26,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "1b3d5f7a9c2e"
-down_revision: str | None = "0f2e4d6c8b1a"
+down_revision: str | None = "8d1e3f5a7b9c"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -2528,7 +2528,7 @@ def test_migrations_do_not_use_unbounded_string_primary_keys() -> None:
 # scored_expectation migration (1b3d5f7a9c2e)
 # --------------------------------------------------------------------------- #
 _SCORED_EXPECTATION_REV = "1b3d5f7a9c2e"
-_SCORED_EXPECTATION_PREV_REV = "0f2e4d6c8b1a"
+_SCORED_EXPECTATION_PREV_REV = "8d1e3f5a7b9c"
 
 
 def _seed_pre_scored_expectation_score(connection, *, score_id, objective):

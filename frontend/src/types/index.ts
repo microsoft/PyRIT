@@ -640,7 +640,7 @@ export interface AttackRetrySummary {
   retries: RetryEvent[]
 }
 
-export type ScenarioRunState = 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+export type ScenarioRunState = 'CREATED' | 'QUEUED' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
 
 export interface ScenarioRunSummary {
   scenario_result_id: string
@@ -661,6 +661,53 @@ export interface ScenarioRunSummary {
   total_retries: number
   labels: Record<string, string>
   completed_at?: string | null
+  pyrit_version?: string | null
+  target?: ScenarioTargetSummary | null
+  datasets_used?: string[]
+  scenario_parameters?: Record<string, unknown>
+  planned_total_available?: boolean
+  successful_attacks?: number
+  error_attacks?: number
+  attack_details_available?: boolean
+}
+
+export interface ScenarioTargetSummary {
+  target_type: string
+  endpoint?: string | null
+  model_name?: string | null
+  identifier_hash?: string | null
+}
+
+export interface ScenarioRunListItem {
+  scenario_result_id: string
+  scenario_name: string
+  scenario_registry_name?: string | null
+  scenario_version: number
+  status: ScenarioRunState
+  created_at: string
+  updated_at: string
+  error?: string | null
+  error_type?: string | null
+  techniques_used: string[]
+  total_attacks: number | null
+  completed_attacks: number
+  objective_achieved_rate: number
+  total_retries: number
+  labels: Record<string, string>
+  completed_at?: string | null
+  pyrit_version?: string | null
+  target?: ScenarioTargetSummary | null
+  datasets_used: string[]
+  scenario_parameters: Record<string, unknown>
+  planned_total_available: boolean
+  successful_attacks: number
+  error_attacks: number
+  attack_details_available: boolean
+}
+
+export interface ScenarioRunListResponse {
+  items: ScenarioRunListItem[]
+  pagination: PaginationInfo
 }
 
 /** Compact persisted run header returned by the progress endpoint. */
@@ -672,6 +719,12 @@ export interface ScenarioProgressHeader {
   status: ScenarioRunState
   created_at: string
   completed_at?: string | null
+  pyrit_version?: string | null
+  target?: ScenarioTargetSummary | null
+  techniques_used?: string[]
+  datasets_used?: string[]
+  scenario_parameters?: Record<string, unknown>
+  labels?: Record<string, string>
 }
 
 /** One persisted attack attempt in ascending progress order. */
