@@ -212,6 +212,20 @@ def test_parse_reply_requires_next_message_even_without_required_list():
         _parse_adversarial_reply('{"surprise": "x"}', schema=OTHER_SCHEMA)
 
 
+@pytest.mark.parametrize("next_message", ["", " \t\n"], ids=["empty", "whitespace"])
+def test_parse_reply_rejects_blank_next_message(next_message: str) -> None:
+    response = json.dumps(
+        {
+            "next_message": next_message,
+            "rationale": "r",
+            "last_response_summary": "s",
+        }
+    )
+
+    with pytest.raises(InvalidJsonException, match="must contain non-whitespace text"):
+        _parse_adversarial_reply(response, schema=SCHEMA)
+
+
 def test_parse_reply_coerces_non_string_next_message():
     # A non-enforcing target can emit a JSON number for next_message; the attack loop needs a
     # str, so the value is coerced rather than rejected (matches crescendo's own str() handling).
@@ -635,6 +649,26 @@ class TestGetNextMessageAsync:
         normalizer = _normalizer(None)
         normalizer.send_prompt_async.side_effect = [
             Message.from_prompt(prompt="totally not json", role="assistant"),
+            Message.from_prompt(prompt=VALID_JSON, role="assistant"),
+        ]
+        manager = _manager(
+            adversarial_system_prompt=_system_prompt(schema=SCHEMA),
+            prompt_normalizer=normalizer,
+        )
+
+        turn = await manager.get_next_message_async(turn_index=1, last_response=_response_message())
+
+        assert turn.reply is not None
+        assert turn.reply.next_message == "hello target"
+        assert normalizer.send_prompt_async.call_count == 2
+
+    async def test_blank_next_message_retries_then_succeeds(self) -> None:
+        normalizer = _normalizer(None)
+        normalizer.send_prompt_async.side_effect = [
+            Message.from_prompt(
+                prompt='{"next_message": "", "rationale": "r", "last_response_summary": "s"}',
+                role="assistant",
+            ),
             Message.from_prompt(prompt=VALID_JSON, role="assistant"),
         ]
         manager = _manager(

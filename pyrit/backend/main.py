@@ -22,7 +22,7 @@ from starlette.types import Scope
 import pyrit
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
-from pyrit.backend.models.initializers import BaselineInitializerSetting
+from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.routes import (
     attacks,
     auth,
@@ -39,7 +39,6 @@ from pyrit.backend.routes import (
 )
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
-from pyrit.backend.services.initializer_service import get_initializer_service
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
@@ -83,16 +82,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await asyncio.to_thread(initializer_registry.register_stored_initializers)
     await config.initialize_pyrit_async(raise_on_initializer_error=False)
 
-    # Persisted additional initializers run after the .pyrit_conf baseline, in stored order.
-    app.state.baseline_initializers = [
-        BaselineInitializerSetting(
+    app.state.configured_initializers = [
+        ConfiguredInitializerSetting(
             initializer_name=initializer.name,
             parameters=initializer.args,
             order_index=order_index,
         )
         for order_index, initializer in enumerate(config.initializer_configs)
     ]
-    await get_initializer_service().run_additional_initializers_async()
 
     # Expose config values to route handlers via app.state
     default_labels: dict[str, str] = {}

@@ -49,9 +49,14 @@ class FloatScaleScorer(Scorer):
         Returns:
             HarmScorerMetrics: The metrics for this scorer, or None if not found or not configured.
         """
+        from pyrit.common.path import SCORER_EVALS_PATH
         from pyrit.score.scorer_evaluation.scorer_metrics_io import find_harm_metrics_by_eval_hash
 
-        if self.evaluation_file_mapping is None or self.evaluation_file_mapping.harm_category is None:
+        if self.evaluation_file_mapping is None:
+            return None
+
+        result_file = SCORER_EVALS_PATH / self.evaluation_file_mapping.result_file
+        if not result_file.exists():
             return None
 
         eval_hash = self.get_identifier().eval_hash
@@ -60,7 +65,7 @@ class FloatScaleScorer(Scorer):
 
         return find_harm_metrics_by_eval_hash(
             eval_hash=eval_hash,
-            harm_category=self.evaluation_file_mapping.harm_category,
+            file_path=result_file,
         )
 
 
@@ -72,17 +77,13 @@ class MessageFloatScaleScorer(FloatScaleScorer, MessageScorer):
     to which a response exhibits certain characteristics. Each piece in a request response
     is scored independently, returning one score per piece.
 
-    **Default error / blocked behavior**
+    **Default unreadable / blocked behavior**
 
-    When no supported pieces remain after validator filtering (e.g. the response is
-    blocked, has another error type, or no piece matches the scorer's supported data
-    types), the base ``score_async`` invokes ``_build_fallback_score`` and returns a
-    single ``Score`` with value ``0.0``. The rationale distinguishes blocked / error /
-    filtered cases. This mirrors ``MessageTrueFalseScorer``'s ``False`` default so that
-    downstream consumers (attack strategies, threshold wrappers) get a consistent,
-    "attack did not succeed" value without each call site needing special-cased error
-    handling. Subclasses that need different semantics (e.g. a refusal-style
-    "blocked = True") should override ``_score_piece_async`` or ``_build_fallback_score``.
+    The return type is ``list[Score]``. Unsupported evidence returns ``[]``. An unreadable
+    transport or protocol response for supported evidence returns a list containing an
+    undetermined score. A fully blocked response returns a list containing a completed ``0.0``
+    score. Subclasses can override ``_build_fallback_score`` when they need different domain
+    semantics.
     """
 
     def __init__(
@@ -109,14 +110,15 @@ class MessageFloatScaleScorer(FloatScaleScorer, MessageScorer):
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
-        Build a single-element list containing a neutral ``0.0`` score when no pieces could be scored.
+        Build the default result for a blocked, unreadable, or non-applicable response.
 
         Args:
             message (Message): The message whose first piece tells why nothing was scored.
             objective (str | None): The objective associated with this scoring call.
 
         Returns:
-            list[Score]: A single-element list containing a ``0.0`` ``float_scale`` score,
-                or an undetermined score when the response failed with an error.
+            list[Score]: ``[]`` for non-applicable evidence; a list containing a completed
+                ``0.0`` score for a fully blocked response; or a list containing an
+                undetermined score for another response error.
         """
         return self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="0.0")

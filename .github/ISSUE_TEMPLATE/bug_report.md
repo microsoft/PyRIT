@@ -47,6 +47,7 @@ Please provide the following information:
 - version of Python packages: please run the following snippet and paste the output:
   ```python
   import pyrit
+
   pyrit.show_versions()
   ```
 -->

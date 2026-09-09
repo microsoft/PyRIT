@@ -71,6 +71,9 @@ _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
         language_name="Ruby", dataset_name="garak_rubygems_packages", ecosystem=PackageEcosystem.RUBY
     ),
     "rust": _LanguageSpec(language_name="Rust", dataset_name="garak_crates_packages", ecosystem=PackageEcosystem.RUST),
+    "dart": _LanguageSpec(language_name="Dart", dataset_name="garak_dart_packages", ecosystem=PackageEcosystem.DART),
+    "perl": _LanguageSpec(language_name="Perl", dataset_name="garak_perl_packages", ecosystem=PackageEcosystem.PERL),
+    "raku": _LanguageSpec(language_name="Raku", dataset_name="garak_raku_packages", ecosystem=PackageEcosystem.RAKU),
 }
 
 
@@ -106,6 +109,9 @@ class PackageHallucinationTechnique(ScenarioTechnique):
     JavaScript = ("javascript", set())
     Ruby = ("ruby", set())
     Rust = ("rust", {"default"})
+    Dart = ("dart", set())
+    Perl = ("perl", set())
+    Raku = ("raku", set())
 
     @classmethod
     def get_aggregate_tags(cls) -> set[str]:
@@ -135,7 +141,7 @@ class PackageHallucination(Scenario):
     Reference: [@derczynski2024garak]
     """
 
-    VERSION: int = 2
+    VERSION: int = 3
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden

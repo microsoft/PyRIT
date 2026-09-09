@@ -84,14 +84,21 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
     """
 
     _tags: set[str]
+    _description: str | None
 
-    def __new__(cls, value: str, tags: set[str] | None = None) -> ScenarioTechnique:
+    def __new__(
+        cls,
+        value: str,
+        tags: set[str] | None = None,
+        description: str | None = None,
+    ) -> ScenarioTechnique:
         """
         Create a new ScenarioTechnique with value and tags.
 
         Args:
             value: The technique value/name.
             tags: Optional set of tags for categorization.
+            description: Optional human-readable technique summary.
 
         Returns:
             ScenarioTechnique: The new enum member.
@@ -99,6 +106,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         obj = object.__new__(cls)
         obj._value_ = value
         obj._tags = tags or set()
+        obj._description = description
         return obj
 
     @property
@@ -113,6 +121,11 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
             set[str]: The tags (e.g., {"easy", "converter", "encoding"}).
         """
         return self._tags
+
+    @property
+    def description(self) -> str | None:
+        """The human-readable technique summary."""
+        return self._description
 
     @classmethod
     def default(cls: type[T]) -> T:

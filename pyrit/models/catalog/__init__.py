@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         ScenarioRunSizeEstimate,
         ScenarioRunSizeEstimateRequest,
         ScenarioRunSummary,
+        ScenarioTechniqueSummary,
     )
     from pyrit.models.catalog.target import TargetInstance
 
@@ -48,6 +49,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunSizeEstimate": "pyrit.models.catalog.scenario",
     "ScenarioRunSizeEstimateRequest": "pyrit.models.catalog.scenario",
     "ScenarioRunSummary": "pyrit.models.catalog.scenario",
+    "ScenarioTechniqueSummary": "pyrit.models.catalog.scenario",
     "TargetInstance": "pyrit.models.catalog.target",
 }
 

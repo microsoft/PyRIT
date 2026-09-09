@@ -16,7 +16,13 @@ if TYPE_CHECKING:
     from pyrit.memory.azure_sql_memory import AzureSQLMemory
     from pyrit.memory.central_memory import CentralMemory
     from pyrit.memory.memory_embedding import MemoryEmbedding
-    from pyrit.memory.memory_interface import AttackResultKeysetCursor, MemoryInterface
+    from pyrit.memory.memory_interface import (
+        AttackResultKeysetCursor,
+        MemoryInterface,
+        ScenarioHistoryAggregate,
+        ScenarioHistoryKeysetCursor,
+        ScenarioHistoryRunRecord,
+    )
     from pyrit.memory.memory_models import AttackResultEntry, EmbeddingDataEntry, PromptMemoryEntry, SeedEntry
     from pyrit.memory.sqlite_memory import SQLiteMemory
     from pyrit.memory.storage import (
@@ -55,6 +61,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ImagePathDataTypeSerializer": "pyrit.memory.storage",
     "MemoryInterface": "pyrit.memory.memory_interface",
     "MemoryEmbedding": "pyrit.memory.memory_embedding",
+    "ScenarioHistoryKeysetCursor": "pyrit.memory.memory_interface",
+    "ScenarioHistoryRunRecord": "pyrit.memory.memory_interface",
+    "ScenarioHistoryAggregate": "pyrit.memory.memory_interface",
     "PromptMemoryEntry": "pyrit.memory.memory_models",
     "SeedEntry": "pyrit.memory.memory_models",
     "set_message_piece_sha256_async": "pyrit.memory.storage",

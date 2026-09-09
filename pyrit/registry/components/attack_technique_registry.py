@@ -296,21 +296,21 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         if default_member_names:
             all_aggregate_tag_names.add("default")
 
-        members: dict[str, tuple[str, set[str]]] = {}
+        members: dict[str, tuple[str, set[str], str | None]] = {}
 
         # Aggregate members first (ALL is always present)
-        members["ALL"] = ("all", {"all"})
+        members["ALL"] = ("all", {"all"}, None)
         if default_member_names:
-            members["DEFAULT"] = ("default", {"default"})
+            members["DEFAULT"] = ("default", {"default"}, None)
         for agg_name in sorted(auto_aggregate_tags):
-            members[agg_name.upper()] = (agg_name, {agg_name})
+            members[agg_name.upper()] = (agg_name, {agg_name}, None)
 
         # Technique members from the pool — tag DEFAULT members so the aggregate expands.
         for factory in pool:
             factory_tags = set(factory.technique_tags)
             if factory.name in default_member_names:
                 factory_tags = factory_tags | {"default"}
-            members[factory.name] = (factory.name, factory_tags)
+            members[factory.name] = (factory.name, factory_tags, factory.description)
 
         # Build the enum class dynamically
         technique_cls = ScenarioTechnique(class_name, members)

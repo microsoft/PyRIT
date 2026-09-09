@@ -14,7 +14,7 @@ import {
   SettingsRegular,
   HistoryRegular,
   PersonFeedbackRegular,
-  WrenchRegular,
+  ScriptRegular,
   WeatherMoonRegular,
   WeatherSunnyRegular,
   TargetRegular,
@@ -23,7 +23,13 @@ import { useTheme } from '../../hooks/useTheme'
 import type { ThemeMode } from '../../hooks/useTheme'
 import { useNavigationStyles } from './Navigation.styles'
 
-export type ViewName = 'home' | 'chat' | 'history' | 'targets' | 'initializers' | 'configuration'
+export type ViewName =
+  | 'home'
+  | 'chat'
+  | 'history'
+  | 'targets'
+  | 'configuration'
+  | 'scenarios'
 
 interface NavigationProps {
   currentView: ViewName
@@ -94,10 +100,21 @@ export default function Navigation({
           data-active={currentView === 'history'}
           appearance="subtle"
           icon={<HistoryRegular />}
-          title="Attack History"
-          aria-label="Attack History"
+          title="History"
+          aria-label="History"
           aria-current={currentView === 'history' ? 'page' : undefined}
           onClick={() => onNavigate('history')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'scenarios'}
+          appearance="subtle"
+          icon={<ScriptRegular />}
+          title="Scanner"
+          aria-label="Scanner"
+          aria-current={currentView === 'scenarios' ? 'page' : undefined}
+          onClick={() => onNavigate('scenarios')}
         />
 
         <Button
@@ -109,17 +126,6 @@ export default function Navigation({
           aria-label="Targets"
           aria-current={currentView === 'targets' ? 'page' : undefined}
           onClick={() => onNavigate('targets')}
-        />
-
-        <Button
-          className={styles.navButton}
-          data-active={currentView === 'initializers'}
-          appearance="subtle"
-          icon={<WrenchRegular />}
-          title="Initializers"
-          aria-label="Initializers"
-          aria-current={currentView === 'initializers' ? 'page' : undefined}
-          onClick={() => onNavigate('initializers')}
         />
 
         {canManageConfiguration && (

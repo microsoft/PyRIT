@@ -76,6 +76,7 @@ def _prompt_sending_factory() -> AttackTechniqueFactory:
     return AttackTechniqueFactory(
         name=_PROMPT_SENDING,
         attack_class=PromptSendingAttack,
+        description="Renders each jailbreak template around the objective and sends it as the user message.",
         technique_tags=["single_turn"],
     )
 
@@ -97,6 +98,10 @@ def _jailbreak_system_prompt_factory() -> AttackTechniqueFactory:
     return AttackTechniqueFactory(
         name=_JAILBREAK_SYSTEM_PROMPT,
         attack_class=PromptSendingAttack,
+        description=(
+            "Uses the jailbreak template as the system prompt and sends the objective as the user message. "
+            "This technique requires editable history and system-prompt support."
+        ),
         technique_tags=["single_turn"],
     )
 
@@ -194,6 +199,21 @@ class Jailbreak(Scenario):
                 default=None,
             ),
         ]
+
+    def set_params_from_args(self, *, args: dict[str, Any]) -> None:
+        """
+        Resolve run parameters and reject non-positive repeat counts.
+
+        Args:
+            args (dict[str, Any]): Raw scenario run parameters.
+
+        Raises:
+            ValueError: If ``num_jailbreak_attempts`` is less than one.
+        """
+        super().set_params_from_args(args=args)
+        num_attempts = self.params["num_jailbreak_attempts"]
+        if num_attempts < 1:
+            raise ValueError("num_jailbreak_attempts must be at least 1")
 
     @apply_defaults
     def __init__(
@@ -317,7 +337,7 @@ class Jailbreak(Scenario):
         template_count = len(self.params.get("jailbreak_names") or []) or (
             self.params.get("num_jailbreaks") or _DEFAULT_NUM_JAILBREAKS
         )
-        attempt_count = self.params.get("num_jailbreak_attempts") or 1
+        attempt_count = self.params["num_jailbreak_attempts"]
         technique_names = {technique.value for technique in self._scenario_techniques}
         converter_count = len(technique_names - {_JAILBREAK_SYSTEM_PROMPT})
         system_delivery_selected = _JAILBREAK_SYSTEM_PROMPT in technique_names
@@ -368,6 +388,9 @@ class Jailbreak(Scenario):
             component.count for component in components if component.label != "Native system-prompt jailbreak delivery"
         )
         planned_count = sum(component.count for component in components)
+        minimum_planned_count = (
+            planned_count if system_delivery_selected and converter_count == 0 else target_agnostic_count
+        )
         baseline_explanation = (
             f" Baseline adds one unit per selected seed group ({seed_group_count} units)."
             if self._include_baseline
@@ -383,8 +406,12 @@ class Jailbreak(Scenario):
         )
         if estimated_attack_count is None:
             capability_note = (
-                f" {target_agnostic_count} total planned units for target-agnostic delivery; "
-                f"{planned_count} when native system-prompt delivery is supported."
+                " The selected technique requires native system-prompt delivery; incompatible targets cannot run it."
+                if converter_count == 0
+                else (
+                    f" {target_agnostic_count} total planned units for target-agnostic delivery; "
+                    f"{planned_count} when native system-prompt delivery is supported."
+                )
             )
         elif system_delivery_selected and system_delivery_supported is True:
             capability_note = " The selected target supports the native system-prompt component."
@@ -392,10 +419,21 @@ class Jailbreak(Scenario):
             capability_note = " The selected target does not support native system-prompt delivery, so it is omitted."
         else:
             capability_note = ""
+        jailbreak_names = self.params.get("jailbreak_names") or []
+        effective_parameters: dict[str, int | list[str]] = {
+            "num_jailbreak_attempts": attempt_count,
+        }
+        if jailbreak_names:
+            effective_parameters["jailbreak_names"] = list(jailbreak_names)
+        else:
+            effective_parameters["num_jailbreaks"] = template_count
         return ScenarioRunSizeEstimate(
             estimated_attack_count=estimated_attack_count,
+            minimum_attack_count=minimum_planned_count if estimated_attack_count is None else None,
+            maximum_attack_count=planned_count if estimated_attack_count is None else None,
             components=components,
             datasets=datasets,
+            effective_parameters=effective_parameters,
             note=f"{formula}{baseline_explanation}{capability_note}",
         )
 
@@ -427,7 +465,7 @@ class Jailbreak(Scenario):
             )
 
         self._resolved_jailbreaks = self._resolve_templates()
-        num_attempts = self.params.get("num_jailbreak_attempts", 1)
+        num_attempts = self.params["num_jailbreak_attempts"]
 
         technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())
 

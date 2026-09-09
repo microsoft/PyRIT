@@ -654,9 +654,7 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=attack._auxiliary_scorers,
                 objective_scorer=mock_true_false_scorer,
-                role_filter="assistant",
                 objective="Test objective",
-                skip_on_error_result=True,
             )
 
     async def test_evaluate_response_without_objective_scorer_returns_none(self, mock_target, sample_response):
@@ -676,9 +674,7 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=attack._auxiliary_scorers,
                 objective_scorer=None,
-                role_filter="assistant",
                 objective="Test objective",
-                skip_on_error_result=True,
             )
 
     async def test_evaluate_response_with_auxiliary_scorers(
@@ -718,9 +714,7 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=[auxiliary_scorer],
                 objective_scorer=mock_true_false_scorer,
-                role_filter="assistant",
                 objective="Test objective",
-                skip_on_error_result=True,
             )
 
 

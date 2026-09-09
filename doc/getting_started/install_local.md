@@ -32,6 +32,7 @@ Notebooks and your PyRIT installation must be on the same version. This pip inst
    Or in Python:
    ```python
    import pyrit
+
    print(pyrit.__version__)
    ```
 

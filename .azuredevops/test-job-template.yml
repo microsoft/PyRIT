@@ -130,6 +130,52 @@ jobs:
           make ${{ parameters.makeTarget }}
         fi
   - bash: |
+      set -uo pipefail
+      artifact_dir="$(Build.ArtifactStagingDirectory)/backend-logs"
+      mkdir -p "$artifact_dir"
+
+      # ServerLauncher writes the backend log to tempfile.gettempdir(), which honours
+      # TMPDIR/TEMP/TMP before falling back to /tmp, so check the agent temp directory too.
+      log_found=false
+      for candidate in "${TMPDIR:-}" "${TEMP:-}" "${TMP:-}" "${AGENT_TEMPDIRECTORY:-}" /tmp; do
+        [ -n "$candidate" ] || continue
+        if [ -f "$candidate/pyrit_backend.log" ]; then
+          log_found=true
+          # Only claim success, and only ask for a publish, if the copy actually landed;
+          # publishing an empty directory would report a log that isn't there. Report the
+          # size too, because a zero byte log is a real outcome and an empty artifact
+          # otherwise looks like this step failed.
+          if cp_error=$(cp "$candidate/pyrit_backend.log" "$artifact_dir/pyrit_backend.log" 2>&1); then
+            log_bytes=$(wc -c <"$artifact_dir/pyrit_backend.log")
+            echo "Collected backend log from $candidate ($log_bytes bytes)"
+            echo "##vso[task.setvariable variable=backendLogFound]true"
+          else
+            echo "##vso[task.logissue type=warning]Found pyrit_backend.log in $candidate but failed to copy it: $cp_error"
+          fi
+          break
+        fi
+      done
+
+      # Distinguish the two outcomes: a job that never launches a backend is expected to have
+      # no log, whereas a log that was found but could not be collected is a real problem.
+      if [ "${log_found:-false}" = false ]; then
+        echo "No pyrit_backend.log found; this job did not launch a backend."
+      fi
+    displayName: "Collect pyrit_backend log"
+    name: collect_backend_log
+    condition: always()
+  - task: PublishPipelineArtifact@1
+    displayName: "Publish pyrit_backend log"
+    condition: and(always(), eq(variables['backendLogFound'], 'true'))
+    # Publishing a diagnostic log must never change the outcome of the test job.
+    continueOnError: true
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)/backend-logs
+      # BuildId stays the same when a failed job is retried, and pipeline artifacts cannot be
+      # overwritten, so JobAttempt is needed to keep each attempt's artifact name unique.
+      artifactName: backend-logs-${{ parameters.jobName }}-$(Build.BuildId)-attempt-$(System.JobAttempt)
+      publishLocation: pipeline
+  - bash: |
       rm -f ~/.pyrit/.env ~/.pyrit/.env.local
     name: clean_up_env_files
     condition: always()

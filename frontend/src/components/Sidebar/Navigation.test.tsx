@@ -3,7 +3,7 @@
  * Licensed under the MIT license.
  */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, useTheme } from "../../hooks/useTheme";
 import Navigation from "./Navigation";
@@ -112,11 +112,73 @@ describe("Navigation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the attack history button", () => {
+  it("renders the history button", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
     expect(
-      screen.getByRole("button", { name: "Attack History" })
+      screen.getByRole("button", { name: "History" })
     ).toBeInTheDocument();
+  });
+
+  it("renders the Scanner button", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+    expect(
+      screen.getByRole("button", { name: "Scanner" })
+    ).toBeInTheDocument();
+  });
+
+  it("renders the final primary navigation order", () => {
+    renderWithProvider(<Navigation {...defaultProps} />);
+    const navigation = screen.getByRole("navigation", { name: "Primary" });
+    const labels = within(navigation)
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"));
+
+    expect(labels).toEqual([
+      "Home",
+      "Chat",
+      "History",
+      "Scanner",
+      "Targets",
+      "Configuration",
+    ]);
+  });
+
+  it("marks History current and navigates to its tabbed view", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation
+        {...defaultProps}
+        currentView="history"
+        onNavigate={onNavigate}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "History" });
+    expect(button).toHaveAttribute("aria-current", "page");
+    await user.click(button);
+    expect(onNavigate).toHaveBeenCalledWith("history");
+  });
+
+  it("calls onNavigate with 'scenarios' when the scenarios button is clicked", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} onNavigate={onNavigate} />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Scanner" }));
+    expect(onNavigate).toHaveBeenCalledWith("scenarios");
+  });
+
+  it("marks the scenarios button current when it is the active view", () => {
+    renderWithProvider(
+      <Navigation {...defaultProps} currentView="scenarios" />
+    );
+    expect(screen.getByRole("button", { name: "Scanner" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
   });
 
   it("renders one feedback button and forwards clicks to onOpenFeedback", async () => {
@@ -147,7 +209,7 @@ describe("Navigation", () => {
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    await user.click(screen.getByRole("button", { name: "Attack History" }));
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(onNavigate).toHaveBeenCalledWith("history");
   });
 

@@ -16,6 +16,7 @@ import { ArrowSyncRegular, SaveRegular } from '@fluentui/react-icons'
 import { configurationApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import EditorWorkspace from '@/components/EditorWorkspace'
+import Initializers from '@/components/Initializers/Initializers'
 
 import { useConfigurationStyles } from './Configuration.styles'
 import CustomInitializerFiles from './CustomInitializerFiles'
@@ -27,7 +28,7 @@ interface StatusMessage {
   text: string
 }
 
-type ConfigurationTab = 'configuration' | 'environment' | 'custom-initializers'
+type ConfigurationTab = 'configuration' | 'environment' | 'initializers' | 'custom-initializers'
 
 export default function Configuration() {
   const styles = useConfigurationStyles()
@@ -102,6 +103,7 @@ export default function Configuration() {
     if (
       data.value === 'configuration'
       || data.value === 'environment'
+      || data.value === 'initializers'
       || data.value === 'custom-initializers'
     ) {
       setSelectedTab(data.value)
@@ -109,7 +111,7 @@ export default function Configuration() {
   }
 
   return (
-    <main className={styles.root}>
+    <div className={styles.root}>
       <div className={styles.header}>
         <Text as="h1" size={600} weight="semibold">Configuration</Text>
       </div>
@@ -117,6 +119,7 @@ export default function Configuration() {
       <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
         <Tab value="configuration">PyRIT Configuration</Tab>
         <Tab value="environment">Environment &amp; Secrets</Tab>
+        <Tab value="initializers">Initializers</Tab>
         <Tab value="custom-initializers">Custom Initializers</Tab>
       </TabList>
 
@@ -128,6 +131,8 @@ export default function Configuration() {
 
       {selectedTab === 'custom-initializers' ? (
         <CustomInitializerFiles />
+      ) : selectedTab === 'initializers' ? (
+        <Initializers />
       ) : selectedTab === 'environment' ? (
         <EnvironmentFiles />
       ) : loading ? (
@@ -177,6 +182,6 @@ export default function Configuration() {
           </Field>
         </EditorWorkspace>
       )}
-    </main>
+    </div>
   )
 }
