@@ -23,7 +23,7 @@ export default function HistoryPage({ selectedTab, onTabChange, children }: Hist
   }
 
   return (
-    <main className={styles.root}>
+    <div className={styles.root}>
       <header className={styles.header}>
         <Text as="h1" size={600} weight="semibold">History</Text>
         <TabList selectedValue={selectedTab} onTabSelect={handleTabSelect}>
@@ -32,6 +32,6 @@ export default function HistoryPage({ selectedTab, onTabChange, children }: Hist
         </TabList>
       </header>
       <div className={styles.content}>{children}</div>
-    </main>
+    </div>
   )
 }

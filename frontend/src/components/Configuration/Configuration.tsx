@@ -111,7 +111,7 @@ export default function Configuration() {
   }
 
   return (
-    <main className={styles.root}>
+    <div className={styles.root}>
       <div className={styles.header}>
         <Text as="h1" size={600} weight="semibold">Configuration</Text>
       </div>
@@ -182,6 +182,6 @@ export default function Configuration() {
           </Field>
         </EditorWorkspace>
       )}
-    </main>
+    </div>
   )
 }

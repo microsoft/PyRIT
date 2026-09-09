@@ -29,7 +29,9 @@ const mockedInitializersApi = jest.mocked(initializersApi)
 function renderPage(): void {
   render(
     <FluentProvider theme={webLightTheme}>
-      <Configuration />
+      <main>
+        <Configuration />
+      </main>
     </FluentProvider>,
   )
 }
@@ -84,6 +86,7 @@ describe('Configuration', () => {
   it('should load and display configuration content', async () => {
     renderPage()
 
+    expect(screen.getAllByRole('main')).toHaveLength(1)
     expect(screen.getByRole('heading', { level: 1, name: 'Configuration' })).toBeInTheDocument()
     expect(await screen.findByLabelText('Configuration YAML')).toHaveValue('operator: alice\n')
     expect(screen.getByRole('navigation', { name: 'Configuration files' })).toBeInTheDocument()
