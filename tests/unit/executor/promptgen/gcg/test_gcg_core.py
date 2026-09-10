@@ -364,7 +364,7 @@ _EXTRA_CONFIG = {
 }
 
 
-def _tiny_model(model_type: str):
+def _tiny_model(model_type: str) -> Any:
     """Build a small randomly initialized model of the given architecture."""
     transformers = pytest.importorskip("transformers", reason="transformers not installed")
     config = transformers.AutoConfig.for_model(model_type, **_TINY_CONFIG, **_EXTRA_CONFIG.get(model_type, {}))
