@@ -5,7 +5,7 @@
 Tests for scenario run API routes.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,8 +45,8 @@ def _mock_run_response(
         scenario_result_id=run_id,
         scenario_name=scenario_name,
         status=run_status,
-        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        updated_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2025, 1, 1, tzinfo=UTC),
         error=None,
     )
 
@@ -238,7 +238,7 @@ class TestGetScenarioRunResultsRoute:
             outcome=AttackOutcome.SUCCESS,
             executed_turns=1,
             execution_time_ms=100,
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         )
         scenario_result = make_scenario_result(
             scenario_name="foundry.red_team_agent",

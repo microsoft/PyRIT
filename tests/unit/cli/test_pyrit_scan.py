@@ -7,6 +7,7 @@ Unit tests for the pyrit_scan CLI module (thin REST client).
 
 import logging
 from argparse import Namespace
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -205,7 +206,7 @@ class TestExtractScenarioArgs:
 
 def _make_scenario_result():
     """Build a minimal but valid ``ScenarioResult`` for the run-results happy path."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from pyrit.models import (
         AttackOutcome,
@@ -220,7 +221,7 @@ def _make_scenario_result():
         outcome=AttackOutcome.SUCCESS,
         executed_turns=1,
         execution_time_ms=10,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
     )
     return make_scenario_result(
         scenario_name="test_scenario",
@@ -236,7 +237,7 @@ def _make_scenario_result():
 
 def _mock_api_client():
     """Create a mock PyRITApiClient with default response behaviors (typed wire-data)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from pyrit.models import ScenarioRunState, TargetCapabilities
     from pyrit.models.catalog import (
@@ -245,7 +246,7 @@ def _mock_api_client():
         TargetInstance,
     )
 
-    now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2025, 1, 1, tzinfo=UTC)
 
     client = AsyncMock()
     client.health_check_async.return_value = True
@@ -482,12 +483,12 @@ class TestMain:
     @patch("pyrit.cli.api_client.PyRITApiClient")
     def test_main_failed_scenario(self, mock_client_class, mock_probe):
         """Test main when scenario run fails."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import ScenarioRunSummary
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         mock_client = _mock_api_client()
         mock_client.get_scenario_run_async.return_value = ScenarioRunSummary(
             scenario_result_id="test-id",
@@ -1128,7 +1129,7 @@ class TestScenarioParamFlow:
 
     @staticmethod
     def _build_mock_client(supported_params=None, status="COMPLETED"):
-        from datetime import datetime, timezone
+        from datetime import datetime
         from unittest.mock import AsyncMock
 
         from pyrit.models import ScenarioRunState
@@ -1137,7 +1138,7 @@ class TestScenarioParamFlow:
             ScenarioRunSummary,
         )
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         typed_params: list[Parameter] = []
         for p in supported_params or []:
             if isinstance(p, Parameter):
@@ -1294,13 +1295,13 @@ class TestPollStreamsRetryWarnings:
     """The poll loop should stream retry warnings as attack results land."""
 
     async def test_poll_prints_retry_warnings_once(self, capsys):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
         from pyrit.models.retry_event import RetryEvent
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         retry = RetryEvent(
             attempt_number=3,
             exception_type="RateLimitError",

@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlparse
@@ -96,7 +96,7 @@ async def _get_sas_for_container_async(*, container_url: str) -> str:
     container_name = parsed.path.strip("/")
     storage_account_name = parsed.netloc.split(".")[0]
 
-    start_time = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
+    start_time = datetime.now(tz=UTC) - timedelta(minutes=5)
     expiry_time = start_time + timedelta(hours=1)
 
     credential = DefaultAzureCredential()
@@ -245,7 +245,7 @@ def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
     elif ar.timestamp is not None:
         created_at = ar.timestamp
     else:
-        created_at = datetime.now(timezone.utc)
+        created_at = datetime.now(UTC)
     updated_at = ar.timestamp if ar.timestamp is not None else created_at
     return created_at, updated_at
 

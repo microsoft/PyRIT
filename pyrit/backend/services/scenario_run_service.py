@@ -182,7 +182,7 @@ class ScenarioRunService:
         active = self._active_tasks.get(scenario_result_id)
         if active is not None and active.task is not None and not active.task.done():
             active.task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+            with contextlib.suppress(asyncio.CancelledError, TimeoutError):
                 await asyncio.wait_for(active.task, timeout=5.0)
 
         # Persist cancelled state to DB

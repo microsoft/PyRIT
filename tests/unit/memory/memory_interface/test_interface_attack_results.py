@@ -4,7 +4,7 @@
 
 import uuid
 from dataclasses import FrozenInstanceError
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -48,7 +48,7 @@ def create_attack_result(
     )
 
 
-_BASE_TS = datetime(2024, 6, 1, tzinfo=timezone.utc)
+_BASE_TS = datetime(2024, 6, 1, tzinfo=UTC)
 
 
 def _make_attack_result(

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -42,7 +42,7 @@ def test_score_metadata_none_coerced_to_empty_dict():
 
 
 def test_aware_timestamp_is_preserved():
-    aware = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    aware = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
     score = _make_score(timestamp=aware)
     assert score.timestamp == aware
 
@@ -144,7 +144,7 @@ def test_model_dump_contains_expected_keys():
         id=str(uuid.uuid4()),
         score_category=["Category1"],
         score_metadata={"key": "value"},
-        timestamp=datetime.now(tz=timezone.utc),
+        timestamp=datetime.now(tz=UTC),
         objective="Task1",
     )
     result = score.model_dump(mode="json")
@@ -180,7 +180,7 @@ def test_model_validate_roundtrip():
             params={"system_prompt": "Rate the response"},
         ),
         message_piece_id=str(uuid.uuid4()),
-        timestamp=datetime.now(tz=timezone.utc),
+        timestamp=datetime.now(tz=UTC),
         objective="Generate a violent response",
     )
     roundtripped = Score.model_validate(original.model_dump(mode="json"))

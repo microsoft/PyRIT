@@ -8,7 +8,7 @@ All interactions in the UI are modeled as "attacks" - including manual conversat
 This is the attack-centric API design where every user interaction targets a model.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, computed_field, field_serializer
@@ -184,7 +184,7 @@ class MessageView(Message):
     @property
     def created_at(self) -> datetime:
         """The timestamp of the first piece."""
-        return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(timezone.utc)
+        return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(UTC)
 
 
 class AttackSummary(AttackResult):
@@ -204,12 +204,8 @@ class AttackSummary(AttackResult):
     # Mapper-populated presentation fields (need external stats / metadata).
     message_count: int = Field(default=0, description="Total number of messages in the attack")
     last_message_preview: str | None = Field(default=None, description="Preview of the last message")
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc), description="Attack creation timestamp"
-    )
-    updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp"
-    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Attack creation timestamp")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Last update timestamp")
 
     @field_serializer("related_conversations")
     def _serialize_related_conversations(

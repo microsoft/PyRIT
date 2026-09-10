@@ -6,6 +6,7 @@ Unit tests for the pyrit_shell CLI module (thin REST client).
 """
 
 import asyncio
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -483,12 +484,12 @@ class TestDoRun:
     @staticmethod
     def _run_payload(status="COMPLETED"):
         """Build a typed ScenarioRunSummary for use as a mock return value."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from pyrit.models import ScenarioRunState
         from pyrit.models.catalog import ScenarioRunSummary
 
-        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        now = datetime(2025, 1, 1, tzinfo=UTC)
         return ScenarioRunSummary(
             scenario_result_id="rid-1",
             scenario_name="foo",

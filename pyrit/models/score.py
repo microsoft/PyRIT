@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
@@ -74,7 +74,7 @@ class Score(BaseModel):
     message_piece_id: uuid.UUID | str
 
     # Timestamp of when the score was created
-    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # The task based on which the text is scored (the original attacker model's objective).
     objective: str | None = None
@@ -207,6 +207,6 @@ class UnvalidatedScore:
             score_metadata=self.score_metadata,
             scorer_class_identifier=self.scorer_class_identifier,
             message_piece_id=self.message_piece_id,
-            timestamp=self.timestamp if self.timestamp else datetime.now(tz=timezone.utc),
+            timestamp=self.timestamp if self.timestamp else datetime.now(tz=UTC),
             objective=self.objective,
         )

@@ -9,7 +9,7 @@ All public ``print_*`` functions accept typed ``pyrit.models`` objects
 ``ScenarioRunSummary``, ``ScenarioResult``).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -82,7 +82,7 @@ def _make_target(**overrides) -> TargetInstance:
 
 
 def _make_run(**overrides) -> ScenarioRunSummary:
-    now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2025, 1, 1, tzinfo=UTC)
     defaults = {
         "scenario_result_id": "abc-123",
         "scenario_name": "test_sc",
@@ -644,7 +644,7 @@ async def test_print_scenario_result_async_accepts_real_scenario_result():
         outcome=AttackOutcome.SUCCESS,
         executed_turns=2,
         execution_time_ms=150,
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
     )
     scenario_result = make_scenario_result(
         scenario_name="test.scenario",
@@ -685,7 +685,7 @@ def test_print_scenario_runs_list_populated(capsys):
             scenario_result_id="abcdefgh1234",
             total_attacks=4,
             objective_achieved_rate=75,
-            created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
         ),
         _make_run(
             status=ScenarioRunState.IN_PROGRESS,
@@ -693,7 +693,7 @@ def test_print_scenario_runs_list_populated(capsys):
             scenario_result_id="ijklmnop5678",
             total_attacks=0,
             objective_achieved_rate=0,
-            created_at=datetime(2024, 2, 2, tzinfo=timezone.utc),
+            created_at=datetime(2024, 2, 2, tzinfo=UTC),
         ),
     ]
     _output.print_scenario_runs_list(runs=runs)

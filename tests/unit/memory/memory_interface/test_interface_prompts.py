@@ -4,7 +4,7 @@
 
 import uuid
 from collections.abc import MutableSequence, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -1012,12 +1012,12 @@ def test_get_message_pieces_sent_after(sqlite_instance: MemoryInterface):
         ),
     ]
 
-    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
-    entries[1].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
+    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=UTC)
+    entries[1].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=UTC)
 
     sqlite_instance._insert_entries(entries=entries)
 
-    retrieved_entries = sqlite_instance.get_message_pieces(sent_after=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    retrieved_entries = sqlite_instance.get_message_pieces(sent_after=datetime(2024, 1, 1, tzinfo=UTC))
 
     assert len(retrieved_entries) == 1
     assert "Hello 3" in retrieved_entries[0].original_value
@@ -1048,12 +1048,12 @@ def test_get_message_pieces_sent_before(sqlite_instance: MemoryInterface):
         ),
     ]
 
-    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
-    entries[1].timestamp = datetime(2021, 12, 25, 15, 30, 0, tzinfo=timezone.utc)
+    entries[0].timestamp = datetime(2022, 12, 25, 15, 30, 0, tzinfo=UTC)
+    entries[1].timestamp = datetime(2021, 12, 25, 15, 30, 0, tzinfo=UTC)
 
     sqlite_instance._insert_entries(entries=entries)
 
-    retrieved_entries = sqlite_instance.get_message_pieces(sent_before=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    retrieved_entries = sqlite_instance.get_message_pieces(sent_before=datetime(2024, 1, 1, tzinfo=UTC))
 
     assert len(retrieved_entries) == 2
     assert_original_value_in_list("Hello 1", retrieved_entries)

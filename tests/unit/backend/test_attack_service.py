@@ -10,7 +10,7 @@ The attack service uses PyRIT memory with AttackResult as the source of truth.
 import base64
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -76,7 +76,7 @@ def make_attack_result(
     updated_at: datetime | None = None,
 ) -> AttackResult:
     """Create a mock AttackResult for testing."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     created = created_at or now
     updated = updated_at or now
 
@@ -213,7 +213,7 @@ def make_mock_piece(
     piece.converted_value_data_type = "text"
     piece.original_value_data_type = "text"
     piece.response_error = "none"
-    piece.timestamp = timestamp or datetime.now(timezone.utc)
+    piece.timestamp = timestamp or datetime.now(UTC)
     # MessagePiece no longer carries scores — they are fetched from memory.
     # Pin original_prompt_id so the mapper's score-lookup key is deterministic.
     piece.original_prompt_id = None
@@ -1046,7 +1046,7 @@ class TestUpdateAttack:
 
     async def test_update_attack_bumps_timestamp(self, attack_service, mock_memory) -> None:
         """Test that update_attack bumps the timestamp recency column and does not write metadata."""
-        old_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        old_time = datetime(2024, 1, 1, tzinfo=UTC)
         ar = make_attack_result(conversation_id="test-id", updated_at=old_time)
         mock_memory.get_attack_results.return_value = [ar]
         mock_memory.get_conversation_messages.return_value = []
@@ -1499,8 +1499,8 @@ class TestPagination:
         offset_cursor = base64.urlsafe_b64encode(json.dumps(offset_payload).encode("utf-8")).decode("ascii").rstrip("=")
         offset_decoded = decode(offset_cursor)
         assert offset_decoded is not None
-        assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=timezone.utc)
-        assert offset_decoded.timestamp.tzinfo == timezone.utc
+        assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=UTC)
+        assert offset_decoded.timestamp.tzinfo == UTC
 
         # A crafted cursor whose extreme UTC offset would push the timestamp past datetime's
         # representable range when normalized to UTC decodes to None instead of raising.
@@ -2031,8 +2031,8 @@ class TestGetConversations:
 
         mock_memory.get_attack_results.return_value = [ar]
 
-        t1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
-        t2 = datetime(2026, 1, 1, 9, 30, 0, tzinfo=timezone.utc)  # earlier than t1
+        t1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+        t2 = datetime(2026, 1, 1, 9, 30, 0, tzinfo=UTC)  # earlier than t1
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t1),
@@ -2221,7 +2221,7 @@ class TestAddMessageTargetConversation:
             target_conversation_id="branch-1",
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_summary = AttackSummary(
             attack_result_id="ar-attack-1",
             conversation_id="attack-1",
@@ -2364,8 +2364,8 @@ class TestConversationSorting:
         }
         mock_memory.get_attack_results.return_value = [ar]
 
-        t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
-        t_late = datetime(2026, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
+        t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
+        t_late = datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC)
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t_late),
@@ -2392,7 +2392,7 @@ class TestConversationSorting:
         }
         mock_memory.get_attack_results.return_value = [ar]
 
-        t = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
 
         mock_memory.get_conversation_stats.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t),
@@ -2514,8 +2514,8 @@ class TestAttackServiceAdditionalCoverage:
                         objective="test objective",
                         message_count=0,
                         labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
                     )
                 ),
             ),
@@ -2592,8 +2592,8 @@ class TestAttackServiceAdditionalCoverage:
                         objective="test objective",
                         message_count=0,
                         labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
                     )
                 ),
             ),
@@ -2672,8 +2672,8 @@ class TestAttackServiceAdditionalCoverage:
                         objective="test objective",
                         message_count=0,
                         labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
                     )
                 ),
             ),
@@ -2733,8 +2733,8 @@ class TestAttackServiceAdditionalCoverage:
                         objective="test objective",
                         message_count=0,
                         labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
                     )
                 ),
             ),

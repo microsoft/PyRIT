@@ -5,7 +5,7 @@
 Tests for ScenarioRunService.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -97,8 +97,8 @@ def _make_db_scenario_result(
     sr.get_techniques_used.return_value = []
     sr.attack_results = attack_results or {}
     sr.number_tries = 1
-    sr.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    sr.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc)
+    sr.creation_time = datetime(2025, 1, 1, tzinfo=UTC)
+    sr.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
     sr.labels = {}
     sr.objective_achieved_rate.return_value = 0
     sr.get_display_groups.return_value = {}
@@ -714,8 +714,8 @@ class TestScenarioRunServiceExecution:
         mock_scenario_result.get_techniques_used.return_value = ["base64"]
         mock_scenario_result.attack_results = {"attack1": []}
         mock_scenario_result.number_tries = 1
-        mock_scenario_result.creation_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        mock_scenario_result.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc)
+        mock_scenario_result.creation_time = datetime(2025, 1, 1, tzinfo=UTC)
+        mock_scenario_result.completion_time = datetime(2025, 1, 1, 0, 5, tzinfo=UTC)
 
         mock_instance.run_async = AsyncMock(return_value=mock_scenario_result)
 

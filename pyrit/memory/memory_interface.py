@@ -10,7 +10,7 @@ import weakref
 from collections.abc import Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, TypeVar
 
@@ -2428,7 +2428,7 @@ class MemoryInterface(abc.ABC):
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
         entries: MutableSequence[SeedEntry] = []
-        current_time = datetime.now(tz=timezone.utc)
+        current_time = datetime.now(tz=UTC)
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
 
@@ -2527,7 +2527,7 @@ class MemoryInterface(abc.ABC):
                 "seeds tagged for another dataset."
             )
 
-        current_time = datetime.now(tz=timezone.utc)
+        current_time = datetime.now(tz=UTC)
         entries: list[SeedEntry] = []
         for prompt in seeds:
             await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
@@ -3588,7 +3588,7 @@ class MemoryInterface(abc.ABC):
                 )
                 continue
 
-            sort_key = row.timestamp or datetime.min.replace(tzinfo=timezone.utc)
+            sort_key = row.timestamp or datetime.min.replace(tzinfo=UTC)
             grouped[scenario_id].setdefault(name, []).append((sort_key, row.get_attack_result()))
 
         return {

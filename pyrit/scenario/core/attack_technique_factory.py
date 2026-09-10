@@ -709,14 +709,14 @@ class AttackTechniqueFactory(Identifiable):
         Returns:
             The inner type X, or None if the annotation cannot be unwrapped to a single type.
         """
-        # Handle Python 3.10+ union syntax (types.UnionType): X | None
+        # Handle typing.Union and Optional annotations.
         origin = typing.get_origin(annotation)
         if origin is Union or (hasattr(annotation, "__args__") and origin is None and hasattr(annotation, "__or__")):
             args = typing.get_args(annotation)
             non_none = [a for a in args if a is not type(None)]
             return non_none[0] if len(non_none) == 1 else None
 
-        # types.UnionType from PEP 604 at runtime (3.10+)
+        # Handle PEP 604 unions (X | None).
         if hasattr(annotation, "__args__") and type(annotation).__name__ == "UnionType":
             args = annotation.__args__
             non_none = [a for a in args if a is not type(None)]
