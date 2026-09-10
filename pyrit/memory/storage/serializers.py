@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed import Seed
 
 # Define allowed categories for validation
-AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries"]
+AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries", "scorable-content-entries"]
 
 
 def _write_wav_sync(

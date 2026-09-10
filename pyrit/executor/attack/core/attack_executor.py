@@ -176,6 +176,7 @@ class AttackExecutor:
         field_overrides: Sequence[dict[str, Any]] | None = None,
         return_partial_on_failure: bool = False,
         attribution: AttackResultAttribution | None = None,
+        attributions: Sequence[AttackResultAttribution] | None = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -205,6 +206,8 @@ class AttackExecutor:
                 When ``None`` (default), no attribution is applied. The same
                 attribution is shared across all tasks; per-task identity is
                 reconstructed from the row's own ``objective_sha256``.
+            attributions: Optional per-seed-group attribution. Must match
+                ``seed_groups`` and cannot be combined with ``attribution``.
             **broadcast_fields: Fields applied to all seed groups (e.g., memory_labels).
                 Per-seed-group field_overrides take precedence.
 
@@ -212,7 +215,8 @@ class AttackExecutor:
             AttackExecutorResult with completed results and any incomplete objectives.
 
         Raises:
-            ValueError: If seed_groups is empty or field_overrides length doesn't match.
+            ValueError: If seed groups are empty, override/attribution lengths do not
+                match, or shared and per-task attribution are both provided.
             BaseException: If return_partial_on_failure=False and any objective fails.
         """
         if not seed_groups:
@@ -222,6 +226,19 @@ class AttackExecutor:
             raise ValueError(
                 f"field_overrides length ({len(field_overrides)}) must match seed_groups length ({len(seed_groups)})"
             )
+        if attributions is not None and len(attributions) != len(seed_groups):
+            raise ValueError(
+                f"attributions length ({len(attributions)}) must match seed_groups length ({len(seed_groups)})"
+            )
+        if attribution is not None and attributions is not None:
+            raise ValueError("Provide attribution or attributions, not both")
+        effective_attributions = (
+            list(attributions)
+            if attributions is not None
+            else [attribution] * len(seed_groups)
+            if attribution is not None
+            else None
+        )
 
         params_type = attack.params_type
 
@@ -263,11 +280,16 @@ class AttackExecutor:
         if build_failures and not return_partial_on_failure:
             raise build_failures[0][2]
 
+        successful_attributions = (
+            [effective_attributions[index] for index in successful_input_indices]
+            if effective_attributions is not None
+            else None
+        )
         execution_result = await self._execute_with_params_list_async(
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
-            attribution=attribution,
+            attributions=successful_attributions,
             input_indices=successful_input_indices,
         )
         return self._merge_parameter_build_failures(
@@ -341,7 +363,7 @@ class AttackExecutor:
             attack=attack,
             params_list=params_list,
             return_partial_on_failure=return_partial_on_failure,
-            attribution=attribution,
+            attributions=[attribution] * len(params_list) if attribution is not None else None,
         )
 
     async def _execute_with_params_list_async(
@@ -350,7 +372,7 @@ class AttackExecutor:
         attack: AttackStrategy[AttackStrategyContextT, AttackStrategyResultT],
         params_list: Sequence[AttackParameters],
         return_partial_on_failure: bool = False,
-        attribution: AttackResultAttribution | None = None,
+        attributions: Sequence[AttackResultAttribution] | None = None,
         input_indices: Sequence[int] | None = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -363,22 +385,28 @@ class AttackExecutor:
             attack: The attack strategy to execute.
             params_list: List of AttackParameters, one per execution.
             return_partial_on_failure: If True, returns partial results on failure.
-            attribution: Optional ``AttackResultAttribution`` stamped onto every
-                per-task ``AttackContext`` so the persistence path can record
-                orchestrator linkage.
+            attributions: Optional per-task attribution matching ``params_list``.
             input_indices: Original input positions for ``params_list``. Defaults
                 to sequential positions when parameters were constructed directly.
 
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
+
+        Raises:
+            ValueError: If per-task attribution or input-index lengths do not match.
         """
         semaphore = self._get_semaphore()
+        if attributions is not None and len(attributions) != len(params_list):
+            raise ValueError(
+                f"attributions length ({len(attributions)}) must match params_list length ({len(params_list)})"
+            )
 
         async def run_one_async(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:
                 context = attack._context_type(params=params)
-                if attribution is not None:
-                    context._attribution = attribution
+                task_attribution = attributions[index] if attributions is not None else None
+                if task_attribution is not None:
+                    context._attribution = task_attribution
                 return await attack.execute_with_context_async(context=context)
 
         tasks = [run_one_async(i, p) for i, p in enumerate(params_list)]

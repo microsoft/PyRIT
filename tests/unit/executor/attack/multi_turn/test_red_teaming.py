@@ -21,6 +21,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import DEFAULT_ADVERSARIAL_FIRST_MESSAGE
+from pyrit.executor.attack.core.attack_strategy import _ObjectiveTargetConversationLifecycle
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import (
@@ -38,7 +39,7 @@ from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.score import MessageScorer, TrueFalseScorer
 from tests.unit.mocks import MockPromptTarget
 
 
@@ -997,10 +998,16 @@ class TestObjectiveTargetSending:
         )
         basic_context.executed_turns = 1
 
-        await attack._send_prompt_to_objective_target_async(
-            context=basic_context,
-            message=Message.from_prompt(prompt="Second request", role="user"),
-        )
+        async with _ObjectiveTargetConversationLifecycle(
+            objective_target=objective_target,
+            logger=attack._logger,
+        ) as lifecycle:
+            basic_context._objective_target_conversation_lifecycle = lifecycle
+            await attack._send_prompt_to_objective_target_async(
+                context=basic_context,
+                message=Message.from_prompt(prompt="Second request", role="user"),
+            )
+            basic_context._objective_target_conversation_lifecycle = None
 
         assert basic_context.session.conversation_id == old_conversation_id
         assert objective_target.prompt_sent == ["custom formatted request"]
@@ -1587,7 +1594,7 @@ class TestRedTeamingConversationTracking:
         with (
             patch.object(attack._conversation_manager, "initialize_context_async") as mock_update,
             patch.object(attack._prompt_normalizer, "send_prompt_async", new_callable=AsyncMock) as mock_send,
-            patch.object(Scorer, "score_response_async", new_callable=AsyncMock) as mock_score,
+            patch.object(MessageScorer, "score_response_async", new_callable=AsyncMock) as mock_score,
             patch.object(attack, "_generate_next_prompt_async", new_callable=AsyncMock) as mock_generate,
         ):
             mock_update.return_value = ConversationState(turn_count=0, last_assistant_message_scores=[])

@@ -1072,7 +1072,7 @@ class MultiPromptAttack:
                 verbose=verbose,
             )
             state.runtime = time.time() - start
-            keep_control = True if not anneal else acceptance_probability(prev_loss, loss, i + anneal_from)
+            keep_control = True if not anneal else acceptance_probability(state.loss, loss, i + anneal_from)
             if keep_control:
                 self.control_str = control
                 state.control = control
@@ -1082,7 +1082,6 @@ class MultiPromptAttack:
             # annealing rejects it, so ``state.loss`` always describes the
             # suffix in ``state.control``.
             state.candidate_loss = loss
-            prev_loss = loss
             if loss < state.best_loss:
                 state.best_loss = loss
                 state.best_control = control

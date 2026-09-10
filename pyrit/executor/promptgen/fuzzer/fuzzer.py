@@ -29,9 +29,12 @@ from pyrit.models import (
     ComponentIdentifier,
     Identifiable,
     Message,
+    MessageScorable,
     Score,
+    ScoringExpectation,
     SeedGroup,
     SeedPrompt,
+    UndeterminedScoreError,
 )
 from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
 from pyrit.score import FloatScaleThresholdScorer, Scorer, SelfAskScaleScorer
@@ -467,9 +470,11 @@ class FuzzerResultPrinter:
                 scores = self._memory.get_prompt_scores(prompt_ids=[str(message.id)])
                 if scores:
                     score = scores[0]
-                    self._print_colored(
-                        f"{self._indent * 3} Score: {score.get_value()} | {score.score_rationale}", Fore.CYAN
-                    )
+                    try:
+                        score_value = str(score.get_value())
+                    except UndeterminedScoreError:
+                        score_value = "undetermined"
+                    self._print_colored(f"{self._indent * 3} Score: {score_value} | {score.score_rationale}", Fore.CYAN)
                 print()
 
     def _print_footer(self) -> None:
@@ -1046,8 +1051,9 @@ class FuzzerGenerator(
         response_pieces = [response.message_pieces[0] for response in responses]
 
         # Score with objective scorer
-        return await self._scorer.score_prompts_batch_async(
-            messages=[piece.to_message() for piece in response_pieces], objectives=tasks
+        return await self._scorer.score_batch_async(
+            scorables=[MessageScorable.from_message(piece.to_message()) for piece in response_pieces],
+            expectations=[ScoringExpectation(objective=task) for task in tasks],
         )
 
     def _process_scoring_results(
@@ -1106,7 +1112,10 @@ class FuzzerGenerator(
         Returns:
             True if this is a successful jailbreak.
         """
-        score_value = score.get_value()
+        try:
+            score_value = score.get_value()
+        except UndeterminedScoreError:
+            return False
         # For true_false scores (like from FloatScaleThresholdScorer), check for boolean True
         if score.score_type == "true_false":
             return score_value is True

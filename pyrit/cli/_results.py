@@ -24,7 +24,7 @@ from pyrit.cli._cli_args import ScenarioResultView
 
 if TYPE_CHECKING:
     from pyrit.cli.api_client import PyRITApiClient
-    from pyrit.models import AttackResult, ScenarioResult
+    from pyrit.models import AttackResult, ScenarioResult, Score
 
 #: Default cap on how many attacks the expensive views (``conversations`` /
 #: ``full``) render when the user gives neither ``--attack-result-ids`` nor
@@ -169,6 +169,22 @@ def apply_view_limit_policy(
     return limit
 
 
+def _row_score_value(*, score: Score | None) -> str | None:
+    """
+    Render a score for the attacks table.
+
+    Args:
+        score (Score | None): The attack's last score, if it had one.
+
+    Returns:
+        str | None: The score value, its status when undetermined, or None.
+    """
+    if score is None:
+        return None
+    # An undetermined score has no value, so name its status instead.
+    return score.score_value if score.score_value is not None else score.status.value
+
+
 def build_attacks_table_payload(
     *,
     result: ScenarioResult,
@@ -206,7 +222,7 @@ def build_attacks_table_payload(
             objective=attack_result.objective,
             outcome=attack_result.outcome.value,
             executed_turns=attack_result.executed_turns,
-            score_value=(str(attack_result.last_score.score_value) if attack_result.last_score is not None else None),
+            score_value=_row_score_value(score=attack_result.last_score),
         )
         for atomic_attack_name, attack_result in selected
     ]
@@ -416,6 +432,8 @@ def _to_transcript_score(*, score: dict[str, Any]) -> TranscriptScore:
         TranscriptScore: The scorer name, value, and rationale.
     """
     value = score.get("score_value")
+    if value is None:
+        value = score.get("status")
     return TranscriptScore(
         scorer=score.get("scorer_type") or None,
         value=str(value) if value is not None else None,

@@ -4,7 +4,7 @@
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Score
+from pyrit.models import ComponentIdentifier, Score, ScoreStatus
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScoreAggregator,
     FloatScaleScorerAllCategories,
@@ -18,19 +18,41 @@ _TEST_SCORER_ID = ComponentIdentifier(
 )
 
 
-def _mk_score(val: float, *, category: list[str] | None = None, prr_id: str = "1", rationale: str = "") -> Score:
+def _mk_score(
+    val: float | None,
+    *,
+    category: list[str] | None = None,
+    metadata: dict[str, str | int | float] | None = None,
+    prr_id: str = "1",
+    rationale: str = "",
+) -> Score:
     """Helper to create a float scale score."""
     return Score(
-        score_value=str(val),
+        score_value=str(val) if val is not None else None,
+        status=ScoreStatus.UNDETERMINED if val is None else ScoreStatus.COMPLETE,
         score_value_description=f"Score of {val}",
         score_type="float_scale",
         score_category=category,
         score_rationale=rationale,
-        score_metadata=None,
+        score_metadata=metadata,
         message_piece_id=prr_id,
         scorer_class_identifier=_TEST_SCORER_ID,
         objective=None,
     )
+
+
+def test_float_scale_aggregator_accepts_a_generator():
+    scores = (_mk_score(value, category=["test"]) for value in (0.3, 0.7))
+    results = FloatScaleScoreAggregator.MAX(scores)
+    assert len(results) == 1
+    assert results[0].value == 0.7
+
+
+def test_float_scale_by_category_aggregator_accepts_a_generator():
+    scores = (_mk_score(value, category=["test"]) for value in (0.3, 0.7))
+    results = FloatScaleScorerByCategory.MAX(scores)
+    assert len(results) == 1
+    assert results[0].value == 0.7
 
 
 # Tests for FloatScaleScoreAggregator (simple aggregation)
@@ -108,6 +130,35 @@ def test_float_scale_aggregator_mixed_empty_and_valid():
     assert results[0].category == ["Violence"]
 
 
+@pytest.mark.parametrize(
+    "aggregator",
+    [FloatScaleScoreAggregator.MAX, FloatScaleScorerAllCategories.MAX],
+)
+def test_undetermined_aggregate_preserves_categories_and_metadata(aggregator):
+    scores = [
+        _mk_score(
+            0.5,
+            category=["Hate"],
+            metadata={"shared": "same", "complete_only": 1},
+        ),
+        _mk_score(
+            None,
+            category=["Violence"],
+            metadata={"shared": "same", "undetermined_only": 2},
+        ),
+    ]
+
+    result = aggregator(scores)[0]
+
+    assert result.value is None
+    assert result.category == ["Hate", "Violence"]
+    assert result.metadata == {
+        "shared": "same",
+        "complete_only": 1,
+        "undetermined_only": 2,
+    }
+
+
 # Tests for FloatScaleScorerByCategory (category-aware aggregation)
 def test_by_category_groups_correctly():
     """Test that scores are grouped by category and aggregated separately."""
@@ -162,6 +213,50 @@ def test_by_category_min():
 
     assert hate_result.value == 0.3
     assert violence_result.value == 0.2
+
+
+def test_by_category_extrema_resolve_conflicting_metadata_from_selected_score() -> None:
+    scores = [
+        _mk_score(0.3, category=["Hate"], metadata={"severity": 2, "low_only": 1}),
+        _mk_score(0.7, category=["Hate"], metadata={"severity": 5, "high_only": 1}),
+    ]
+
+    max_result = FloatScaleScorerByCategory.MAX(scores)[0]
+    min_result = FloatScaleScorerByCategory.MIN(scores)[0]
+
+    assert max_result.value == 0.7
+    assert max_result.metadata == {"severity": 5, "low_only": 1, "high_only": 1}
+    assert min_result.value == 0.3
+    assert min_result.metadata == {"severity": 2, "low_only": 1, "high_only": 1}
+
+
+def test_by_category_max_keeps_categories_and_metadata_separate() -> None:
+    scores = [
+        _mk_score(0.3, category=["Hate"], metadata={"severity": 2}),
+        _mk_score(0.7, category=["Hate"], metadata={"severity": 5}),
+        _mk_score(0.8, category=["Violence"], metadata={"severity": 6}),
+        _mk_score(0.4, category=["Violence"], metadata={"severity": 3}),
+    ]
+
+    results = FloatScaleScorerByCategory.MAX(scores)
+
+    assert [(result.category, result.value, result.metadata) for result in results] == [
+        (["Hate"], 0.7, {"severity": 5}),
+        (["Violence"], 0.8, {"severity": 6}),
+    ]
+
+
+def test_by_category_max_uses_first_winner_metadata_for_ties() -> None:
+    scores = [
+        _mk_score(0.7, category=["Hate"], metadata={"source": "first"}),
+        _mk_score(0.7, category=["Hate"], metadata={"source": "second"}),
+        _mk_score(0.3, category=["Hate"], metadata={"source": "lower"}),
+    ]
+
+    result = FloatScaleScorerByCategory.MAX(scores)[0]
+
+    assert result.value == 0.7
+    assert result.metadata == {"source": "first"}
 
 
 def test_by_category_empty_strings_treated_as_uncategorized():
@@ -232,6 +327,22 @@ def test_by_category_description_includes_category_name():
 
     assert len(results) == 1
     assert "Hate" in results[0].description
+
+
+def test_by_category_undetermined_aggregate_preserves_group_context():
+    scores = [
+        _mk_score(0.5, category=["Hate"], metadata={"shared": "same"}),
+        _mk_score(None, category=["Hate"], metadata={"undetermined": 1}),
+        _mk_score(0.7, category=["Violence"], metadata={"complete": 1}),
+    ]
+
+    results = FloatScaleScorerByCategory.MAX(scores)
+
+    hate_result = next(result for result in results if result.category == ["Hate"])
+    violence_result = next(result for result in results if result.category == ["Violence"])
+    assert hate_result.value is None
+    assert hate_result.metadata == {"shared": "same", "undetermined": 1}
+    assert violence_result.value == 0.7
 
 
 # Tests for FloatScaleScorerAllCategories (combine all categories)

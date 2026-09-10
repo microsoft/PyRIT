@@ -86,6 +86,7 @@ Once JupyterLab is open:
 
 ```python
 import pyrit
+
 print(pyrit.__version__)
 ```
 
@@ -188,6 +189,7 @@ To use NVIDIA GPUs with PyRIT:
 
    ```python
    import torch
+
    print(f"CUDA available: {torch.cuda.is_available()}")
    print(f"GPU count: {torch.cuda.device_count()}")
    ```

@@ -39,7 +39,6 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
 )
 from pyrit.backend.routes import version as version_routes
-from pyrit.backend.routes.labels import get_label_options
 from pyrit.models import ConverterIdentifier, MessagePiece, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 
@@ -114,6 +113,7 @@ class TestAttackRoutes:
                 converter_types=None,
                 converter_types_match="all",
                 has_converters=None,
+                include_scenario_attacks=True,
                 outcome="success",
                 labels=None,
                 min_turns=None,
@@ -178,6 +178,23 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             call_kwargs = mock_service.list_attacks_async.call_args.kwargs
             assert call_kwargs["has_converters"] is False
+
+    def test_list_attacks_excludes_scenario_attacks_when_requested(self, client: TestClient) -> None:
+        """?include_scenario_attacks=false is parsed and forwarded."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/api/attacks", params={"include_scenario_attacks": "false"})
+
+            assert response.status_code == status.HTTP_200_OK
+            assert mock_service.list_attacks_async.call_args.kwargs["include_scenario_attacks"] is False
 
     def test_create_attack_success(self, client: TestClient) -> None:
         """Test successful attack creation."""
@@ -316,12 +333,89 @@ class TestAttackRoutes:
 
             response = client.post(
                 "/api/attacks/attack-1/messages",
-                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "attack-1"},
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    "request_converter_configurations": [
+                        {
+                            "converter_ids": ["request-1", "request-2"],
+                            "indexes_to_apply": [0],
+                            "prompt_data_types_to_apply": ["text"],
+                        }
+                    ],
+                    "response_converter_configurations": [
+                        {
+                            "converter_ids": ["response-1"],
+                            "prompt_data_types_to_apply": ["text"],
+                        }
+                    ],
+                },
             )
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert len(data["messages"]["messages"]) == 2
+            request = mock_service.add_message_async.await_args.kwargs["request"]
+            assert request.request_converter_configurations[0].converter_ids == [
+                "request-1",
+                "request-2",
+            ]
+            assert request.request_converter_configurations[0].indexes_to_apply == [0]
+            assert request.request_converter_configurations[0].prompt_data_types_to_apply == ["text"]
+            assert request.response_converter_configurations[0].converter_ids == ["response-1"]
+
+    @pytest.mark.parametrize(
+        "converter_fields",
+        [
+            {
+                "converter_ids": ["legacy-converter"],
+                "request_converter_configurations": [{"converter_ids": ["request-converter"]}],
+            },
+            {"request_converter_configurations": []},
+            {"request_converter_configurations": [{"converter_ids": []}]},
+            {"response_converter_configurations": []},
+            {"request_converter_configurations": [{"converter_ids": ["request-converter"], "indexes_to_apply": []}]},
+            {"request_converter_configurations": [{"converter_ids": ["request-converter"], "indexes_to_apply": [-1]}]},
+            {"request_converter_configurations": [{"converter_ids": ["request-converter"], "indexes_to_apply": [1]}]},
+            {
+                "request_converter_configurations": [
+                    {"converter_ids": ["request-converter"], "prompt_data_types_to_apply": []}
+                ]
+            },
+        ],
+    )
+    def test_add_message_rejects_invalid_converter_configurations(
+        self, client: TestClient, converter_fields: dict[str, object]
+    ) -> None:
+        """Test invalid structured converter configurations."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    **converter_fields,
+                },
+            )
+
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            mock_get_service.return_value.add_message_async.assert_not_called()
+
+    def test_add_message_rejects_converter_configuration_when_send_is_false(self, client: TestClient) -> None:
+        """Test that converter configurations cannot be supplied without sending."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={
+                    "pieces": [{"original_value": "Hello"}],
+                    "target_conversation_id": "attack-1",
+                    "send": False,
+                    "converter_ids": ["legacy-converter"],
+                },
+            )
+
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            mock_get_service.return_value.add_message_async.assert_not_called()
 
     def test_update_attack_not_found(self, client: TestClient) -> None:
         """Test updating a non-existent attack returns 404."""
@@ -356,6 +450,20 @@ class TestAttackRoutes:
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.add_message_async = AsyncMock(side_effect=ValueError("Target object for 'target-1' not found"))
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/attacks/attack-1/messages",
+                json={"pieces": [{"original_value": "Hello"}], "target_conversation_id": "attack-1"},
+            )
+
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_add_message_converter_not_found(self, client: TestClient) -> None:
+        """Test adding a message with an unknown converter returns 404."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.add_message_async = AsyncMock(side_effect=ValueError("Converter instance 'missing' not found"))
             mock_get_service.return_value = mock_service
 
             response = client.post(
@@ -1338,13 +1446,21 @@ class TestLabelsRoutes:
             assert set(data["labels"]["operator"]) == {"alice", "bob"}
             assert set(data["labels"]["operation"]) == {"hunt", "scan"}
 
-    async def test_get_label_options_unsupported_source_returns_empty_labels(self) -> None:
-        """Test that get_label_options returns empty labels for unsupported source types."""
-        with patch("pyrit.backend.routes.labels.CentralMemory"):
-            # Call the function directly with a non-"attacks" source to cover the else branch.
-            # The Literal["attacks"] type hint prevents this via the API, but the function
-            # handles it gracefully.
-            result = await get_label_options(source="other")  # type: ignore[arg-type]
+    async def test_get_label_options_rejects_unsupported_source(self, client: TestClient) -> None:
+        """Test that unsupported label source types are rejected."""
+        response = client.get("/api/labels?source=other")
 
-        assert result.source == "other"
-        assert result.labels == {}
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    async def test_get_scenario_label_options(self, client: TestClient) -> None:
+        """Test that scenario labels use the scenario memory source."""
+        with patch("pyrit.backend.routes.labels.CentralMemory") as mock_central_memory:
+            mock_memory = MagicMock()
+            mock_memory.get_unique_scenario_labels.return_value = {"operator": ["alice"]}
+            mock_central_memory.get_memory_instance.return_value = mock_memory
+
+            response = client.get("/api/labels?source=scenarios")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"source": "scenarios", "labels": {"operator": ["alice"]}}
+        mock_memory.get_unique_scenario_labels.assert_called_once_with()

@@ -233,6 +233,10 @@ class TestGetTargetObject:
 class TestListTargetCatalog:
     """Tests for TargetService.list_target_catalog_async method."""
 
+    def test_catalog_rejects_unsupported_auth_mode(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported target authentication mode: 'oauth'"):
+            TargetService._get_catalog_auth_modes(("oauth",))
+
     async def test_catalog_returns_known_target_types(self) -> None:
         """The catalog exposes constructible target classes from the registry."""
         service = TargetService()

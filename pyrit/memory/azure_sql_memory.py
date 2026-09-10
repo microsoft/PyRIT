@@ -3,12 +3,24 @@
 
 import logging
 import struct
-from collections.abc import Sequence
+import uuid
+from collections.abc import Mapping, Sequence
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from sqlalchemy import and_, create_engine, event, exists, text
+from sqlalchemy import (
+    Integer,
+    Unicode,
+    and_,
+    bindparam,
+    create_engine,
+    event,
+    exists,
+    func,
+    literal_column,
+    text,
+)
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
@@ -21,7 +33,9 @@ from pyrit.common.singleton import Singleton
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
+    CustomUUID,
     PromptMemoryEntry,
+    ScenarioResultEntry,
 )
 from pyrit.memory.storage import AzureBlobStorageIO
 from pyrit.models import ConversationStats
@@ -594,7 +608,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
         return result
 
-    def _get_scenario_result_label_condition(self, *, labels: dict[str, str]) -> Any:
+    def _get_scenario_result_label_condition(self, *, labels: Mapping[str, str | Sequence[str]]) -> Any:
         """
         Get the SQL Azure implementation for filtering ScenarioResults by labels.
 
@@ -608,12 +622,192 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         # Return combined conditions for all labels
         conditions = []
-        for key, value in labels.items():
-            condition = text(f"ISJSON(labels) = 1 AND JSON_VALUE(labels, '$.{key}') = :{key}").bindparams(
-                **{key: str(value)}
-            )
-            conditions.append(condition)
+        for key_index, (key, raw_value) in enumerate(labels.items()):
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            placeholders = []
+            path_param = f"scenario_label_path_{key_index}"
+            bindparams: dict[str, str] = {path_param: f'$."{key}"'}
+            for index, value in enumerate(values):
+                param = f"scenario_label_value_{key_index}_{index}"
+                placeholders.append(f":{param}")
+                bindparams[param] = str(value)
+            if placeholders:
+                conditions.append(
+                    text(
+                        f"ISJSON(labels) = 1 AND JSON_VALUE(labels, :{path_param}) IN ({', '.join(placeholders)})"
+                    ).bindparams(**bindparams)
+                )
         return and_(*conditions)
+
+    def _get_scenario_registry_name_condition(self, *, scenario_names: Sequence[str]) -> Any:
+        """
+        Match requested scenario registry names inside the persisted run plan.
+
+        Returns:
+            Any: SQL Server JSON condition for the requested names.
+        """
+        placeholders = []
+        bindparams: dict[str, str] = {}
+        for index, value in enumerate(scenario_names):
+            param = f"scenario_registry_name_{index}"
+            placeholders.append(f":{param}")
+            bindparams[param] = value
+        return text(
+            "ISJSON(scenario_metadata) = 1 AND "
+            "JSON_VALUE(scenario_metadata, '$.run_plan.scenario_registry_name') "
+            f"IN ({', '.join(placeholders)})"
+        ).bindparams(**bindparams)
+
+    def _get_scenario_history_plan_expressions(self) -> tuple[Any, Any, Any]:
+        """Return compact SQL Server run-plan fields without objective-bearing seed groups."""
+        return (
+            func.json_value(
+                ScenarioResultEntry.scenario_metadata,
+                "$.run_plan.scenario_registry_name",
+            ),
+            func.json_query(
+                ScenarioResultEntry.scenario_metadata,
+                "$.run_plan.atomic_groups",
+            ),
+            func.isnull(
+                literal_column(
+                    """
+                    (
+                        SELECT
+                            JSON_VALUE(
+                                CASE
+                                    WHEN ISJSON([history_seed].[value]) = 1 THEN [history_seed].[value]
+                                    ELSE N'{}'
+                                END,
+                                '$.id'
+                            ) AS [id],
+                            JSON_VALUE(
+                                CASE
+                                    WHEN ISJSON([history_seed].[value]) = 1 THEN [history_seed].[value]
+                                    ELSE N'{}'
+                                END,
+                                '$.objective_sha256'
+                            ) AS [objective_sha256]
+                        FROM OPENJSON(
+                            COALESCE(
+                                JSON_QUERY(
+                                    [ScenarioResultEntries].[scenario_metadata],
+                                    '$.run_plan.seed_groups'
+                                ),
+                                N'[]'
+                            )
+                        ) AS [history_seed]
+                        FOR JSON PATH, INCLUDE_NULL_VALUES
+                    )
+                    """
+                ),
+                literal_column("'[]'"),
+            ),
+        )
+
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+        """Return SQL Server JSON expressions for persisted scenario attempt attribution."""
+        atomic_name = func.coalesce(
+            func.json_value(AttackResultEntry.attribution_data, '$."parent_collection"'),
+            "",
+        )
+        technique_hash = func.coalesce(
+            func.json_value(AttackResultEntry.attribution_data, '$."parent_eval_hash"'),
+            "",
+        )
+        seed_group_id = func.coalesce(
+            func.json_value(AttackResultEntry.attribution_data, '$."seed_group_id"'),
+            AttackResultEntry.objective_sha256,
+            "",
+        )
+        return atomic_name, technique_hash, seed_group_id
+
+    def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
+        """Return SQL Server run-plan expansions for planned units and planned seed groups."""
+        scenario_ids = bindparam(
+            "history_plan_scenario_ids",
+            value=list(scenario_result_ids),
+            expanding=True,
+            type_=CustomUUID(),
+        )
+        planned_units = (
+            text(
+                """
+                SELECT
+                    [plan_scenario].[id] AS [scenario_result_id],
+                    CAST([plan_group].[key] AS INT) AS [group_ordinal],
+                    JSON_VALUE([plan_group_json].[value], '$.id') AS [atomic_group_id],
+                    JSON_VALUE([plan_group_json].[value], '$.atomic_attack_name') AS [atomic_attack_name],
+                    JSON_VALUE([plan_group_json].[value], '$.technique_eval_hash') AS [technique_eval_hash],
+                    [plan_group_seed].[value] AS [seed_group_id]
+                FROM [ScenarioResultEntries] AS [plan_scenario]
+                CROSS APPLY OPENJSON(
+                    COALESCE(
+                        JSON_QUERY(
+                            [plan_scenario].[scenario_metadata],
+                            '$.run_plan.atomic_groups'
+                        ),
+                        N'[]'
+                    )
+                ) AS [plan_group]
+                CROSS APPLY (
+                    SELECT CASE
+                        WHEN ISJSON([plan_group].[value]) = 1 THEN [plan_group].[value]
+                        ELSE N'{}'
+                    END AS [value]
+                ) AS [plan_group_json]
+                CROSS APPLY OPENJSON([plan_group_json].[value], '$.seed_group_ids') AS [plan_group_seed]
+                WHERE ISJSON([plan_scenario].[scenario_metadata]) = 1
+                    AND [plan_scenario].[id] IN :history_plan_scenario_ids
+                """
+            )
+            .bindparams(scenario_ids)
+            .columns(
+                scenario_result_id=CustomUUID(),
+                group_ordinal=Integer(),
+                atomic_group_id=Unicode(),
+                atomic_attack_name=Unicode(),
+                technique_eval_hash=Unicode(),
+                seed_group_id=Unicode(),
+            )
+            .subquery("plan_units")
+        )
+        plan_seeds = (
+            text(
+                """
+                SELECT
+                    [plan_scenario].[id] AS [scenario_result_id],
+                    JSON_VALUE([plan_seed_json].[value], '$.id') AS [seed_group_id],
+                    JSON_VALUE([plan_seed_json].[value], '$.objective_sha256') AS [objective_sha256]
+                FROM [ScenarioResultEntries] AS [plan_scenario]
+                CROSS APPLY OPENJSON(
+                    COALESCE(
+                        JSON_QUERY(
+                            [plan_scenario].[scenario_metadata],
+                            '$.run_plan.seed_groups'
+                        ),
+                        N'[]'
+                    )
+                ) AS [plan_seed]
+                CROSS APPLY (
+                    SELECT CASE
+                        WHEN ISJSON([plan_seed].[value]) = 1 THEN [plan_seed].[value]
+                        ELSE N'{}'
+                    END AS [value]
+                ) AS [plan_seed_json]
+                WHERE ISJSON([plan_scenario].[scenario_metadata]) = 1
+                    AND [plan_scenario].[id] IN :history_plan_scenario_ids
+                """
+            )
+            .bindparams(scenario_ids)
+            .columns(
+                scenario_result_id=CustomUUID(),
+                seed_group_id=Unicode(),
+                objective_sha256=Unicode(),
+            )
+            .subquery("plan_seeds")
+        )
+        return planned_units, plan_seeds
 
     def get_session(self) -> Session:
         """

@@ -191,7 +191,7 @@ export default function Home({
                 appearance="primary"
                 icon={<ArrowRightRegular />}
                 iconPosition="after"
-                onClick={() => onNavigate('config')}
+                onClick={() => onNavigate('targets')}
                 data-testid="home-configure-target-btn"
               >
                 {activeTarget ? 'Manage targets' : 'Configure a target'}

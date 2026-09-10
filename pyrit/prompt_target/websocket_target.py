@@ -11,6 +11,7 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 from websockets.protocol import State
 
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
@@ -182,31 +183,43 @@ class WebsocketTarget(PromptTarget):
                 f"Timed out waiting for a WebSocket response after {self._response_timeout_seconds} seconds."
             ) from None
 
-    async def cleanup_conversation_async(self, conversation_id: str) -> None:
+    async def reset_conversation_async(self, *, conversation_id: str) -> None:
         """
         Close and remove one conversation connection.
 
+        Called from attack lifecycle cleanup once a conversation is finished. An
+        unknown conversation id is a no-op, so this is safe to call more than once.
+
         Args:
             conversation_id (str): PyRIT conversation ID.
-
-        Raises:
-            asyncio.CancelledError: If cleanup is cancelled after the connection has finished closing.
         """
         conversation_lock = self._conversation_locks.setdefault(conversation_id, asyncio.Lock())
         async with conversation_lock:
             websocket = self._existing_conversation.pop(conversation_id, None)
             if websocket is None:
                 return
-            close_future = asyncio.ensure_future(websocket.close())
             try:
-                await asyncio.shield(close_future)
-            except asyncio.CancelledError as cancellation_error:
-                try:
-                    await close_future
-                except BaseException as close_error:
-                    raise cancellation_error from close_error
-                raise
+                await websocket.close()
+            except Exception as error:  # noqa: BLE001 - cleanup must not replace the attack outcome
+                logger.warning("Error closing WebSocket conversation %s: %s", conversation_id, error)
+                return
             logger.info("Disconnected WebSocket conversation: %s", conversation_id)
+
+    async def cleanup_conversation_async(self, conversation_id: str) -> None:
+        """
+        Close and remove one conversation connection.
+
+        Deprecated. Use ``reset_conversation_async`` instead.
+
+        Args:
+            conversation_id (str): PyRIT conversation ID.
+        """
+        print_deprecation_message(
+            old_item="WebsocketTarget.cleanup_conversation_async",
+            new_item="WebsocketTarget.reset_conversation_async",
+            removed_in="1.3.0",
+        )
+        await self.reset_conversation_async(conversation_id=conversation_id)
 
     async def cleanup_target_async(self) -> None:
         """

@@ -1,16 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
 import re
 
 from pyrit.analytics.text_matching import ApproximateTextMatching
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 
-class SystemPromptExtractionScorer(FloatScaleScorer):
+class SystemPromptExtractionScorer(MessageFloatScaleScorer):
     """
     Deterministic scorer that measures how much of a target's system prompt leaked into a response.
 

@@ -1119,7 +1119,7 @@ class TestAtomicAttackAttributionStamping:
         self, mock_attack, sample_seed_groups, sample_attack_results
     ):
         """Outside a Scenario, ``_scenario_result_id`` is None and the
-        executor must receive ``attribution=None``."""
+        executor must receive ``attributions=None``."""
         atomic = AtomicAttack(
             attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
@@ -1131,13 +1131,13 @@ class TestAtomicAttackAttributionStamping:
             mock_exec.return_value = wrap_results(sample_attack_results)
             await atomic.run_async()
 
-        assert mock_exec.call_args.kwargs["attribution"] is None
+        assert mock_exec.call_args.kwargs["attributions"] is None
 
     async def test_attribution_built_when_scenario_result_id_set(
         self, mock_attack, sample_seed_groups, sample_attack_results
     ):
         """When the Scenario stamps ``_scenario_result_id`` onto the atomic
-        attack, ``run_async`` must build and pass a single attribution object."""
+        attack, ``run_async`` must build and pass per-seed-group attribution."""
         from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         atomic = AtomicAttack(
@@ -1151,10 +1151,14 @@ class TestAtomicAttackAttributionStamping:
             mock_exec.return_value = wrap_results(sample_attack_results)
             await atomic.run_async()
 
-        attribution = mock_exec.call_args.kwargs["attribution"]
-        assert isinstance(attribution, AttackResultAttribution)
-        assert attribution.parent_id == "00000000-0000-0000-0000-000000000abc"
-        assert attribution.parent_collection == "MyAtomicAttack"
+        attributions = mock_exec.call_args.kwargs["attributions"]
+        assert len(attributions) == len(sample_seed_groups)
+        assert all(isinstance(attribution, AttackResultAttribution) for attribution in attributions)
+        assert all(attribution.parent_id == "00000000-0000-0000-0000-000000000abc" for attribution in attributions)
+        assert all(attribution.parent_collection == "MyAtomicAttack" for attribution in attributions)
+        assert [attribution.seed_group_id for attribution in attributions] == [
+            seed_group.logical_id for seed_group in sample_seed_groups
+        ]
 
     async def test_attribution_includes_technique_eval_hash(
         self, mock_attack, sample_seed_groups, sample_attack_results
@@ -1173,9 +1177,9 @@ class TestAtomicAttackAttributionStamping:
             mock_exec.return_value = wrap_results(sample_attack_results)
             await atomic.run_async()
 
-        attribution = mock_exec.call_args.kwargs["attribution"]
-        assert attribution.parent_eval_hash is not None
-        assert attribution.parent_eval_hash == atomic.technique_eval_hash
+        attributions = mock_exec.call_args.kwargs["attributions"]
+        assert all(attribution.parent_eval_hash is not None for attribution in attributions)
+        assert all(attribution.parent_eval_hash == atomic.technique_eval_hash for attribution in attributions)
 
 
 @pytest.mark.usefixtures("patch_central_database")
