@@ -1,8 +1,6 @@
 name: naive_crescendo
 description: |
   A strategy that gradually builds up to a sensitive topic. This is a naive implementation of https://crescendo-the-multiturn-jailbreak.github.io/.
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 source: AI Red Team
