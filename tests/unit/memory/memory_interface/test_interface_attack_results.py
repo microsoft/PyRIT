@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
@@ -24,6 +25,7 @@ from pyrit.models import (
     IdentifierFilter,
     IdentifierType,
     MessagePiece,
+    ScenarioRunState,
     Score,
 )
 
@@ -146,6 +148,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
             converter_classes=["Converter"],
             converter_classes_match="any",
             has_converters=True,
+            include_scenario_attacks=False,
             labels={"operator": ["alice"]},
             targeted_harm_categories=["violence"],
             identifier_filters=[identifier_filter],
@@ -168,6 +171,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
     assert query.converter_classes == ("Converter",)
     assert query.converter_classes_match == "any"
     assert query.has_converters is True
+    assert query.include_scenario_attacks is False
     assert query.labels == {"operator": ("alice",)}
     assert query.targeted_harm_categories == ("violence",)
     assert query.identifier_filters == (identifier_filter,)
@@ -1625,6 +1629,31 @@ def test_get_attack_results_has_converters_false_combined_with_attack_classes(sq
 
     results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"], has_converters=False)
     assert {r.conversation_id for r in results} == {"conv_2"}
+
+
+def test_get_attack_results_can_exclude_scenario_attacks(sqlite_instance: MemoryInterface) -> None:
+    """Manual-only queries exclude attacks carrying scenario attribution."""
+    scenario = make_scenario_result(
+        id=uuid.uuid4(),
+        scenario_name="Scenario",
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        labels={},
+        metadata={},
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+    )
+    manual_attack = create_attack_result("manual", 1)
+    scenario_attack = create_attack_result("scenario", 2)
+    scenario_attack.attribution_parent_id = str(scenario.id)
+    scenario_attack.attribution_data = {"parent_collection": "attack"}
+    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario])
+    sqlite_instance.add_attack_results_to_memory(attack_results=[manual_attack, scenario_attack])
+
+    all_results = sqlite_instance.get_attack_results(include_scenario_attacks=True)
+    manual_results = sqlite_instance.get_attack_results(include_scenario_attacks=False)
+
+    assert {result.conversation_id for result in all_results} == {"manual", "scenario"}
+    assert [result.conversation_id for result in manual_results] == ["manual"]
 
 
 # ============================================================================

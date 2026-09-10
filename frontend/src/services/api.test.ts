@@ -742,6 +742,32 @@ describe("api service", () => {
       expect(result.status).toBe("IN_PROGRESS");
     });
 
+    it("lists scenario history with repeated array query parameters", async () => {
+      const mockResponse = {
+        data: { items: [], pagination: { limit: 10, has_more: false } },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await scenariosApi.listRuns({
+        limit: 10,
+        cursor: "history-cursor",
+        scenario_names: ["first.scenario", "second.scenario"],
+        run_statuses: ["IN_PROGRESS", "FAILED"],
+        label: ["operator:alice", "operator:bob", "team:safety"],
+      });
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs", {
+        params: {
+          limit: 10,
+          cursor: "history-cursor",
+          scenario_names: ["first.scenario", "second.scenario"],
+          run_statuses: ["IN_PROGRESS", "FAILED"],
+          label: ["operator:alice", "operator:bob", "team:safety"],
+        },
+        paramsSerializer: { indexes: null },
+      });
+    });
+
     it("gets scenario run progress with since/limit query params", async () => {
       const mockResponse = {
         data: {
@@ -759,11 +785,37 @@ describe("api service", () => {
       };
       (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
 
-      await scenariosApi.getRunProgress("sr-1", { since: "cursor-1", limit: 50 });
+      const controller = new AbortController();
+      await scenariosApi.getRunProgress(
+        "sr-1",
+        { since: "cursor-1", limit: 50 },
+        controller.signal,
+      );
 
       expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr-1/progress", {
         params: { since: "cursor-1", limit: 50 },
+        signal: controller.signal,
       });
+    });
+
+    it("cancels a scenario run by id", async () => {
+      const mockResponse = {
+        data: {
+          scenario_result_id: "sr-1",
+          status: "CANCELLED",
+        },
+      };
+      const controller = new AbortController();
+      (apiClient.post as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      const result = await scenariosApi.cancelRun("sr/1", controller.signal);
+
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/scenarios/runs/sr%2F1/cancel",
+        undefined,
+        { signal: controller.signal },
+      );
+      expect(result.status).toBe("CANCELLED");
     });
   });
 });

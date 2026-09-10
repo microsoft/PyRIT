@@ -300,7 +300,7 @@ def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition
     ``schema`` is None (no declared schema), only the ``next_message`` invariant is enforced. Markdown
     code fences are stripped and keys are normalized from camelCase to snake_case before validation, so
     a backend that drifts to ``nextMessage`` still parses without burning a retry. ``next_message`` is
-    the one field the attack loop consumes and is always required; ``rationale`` /
+    the one field the attack loop consumes and must contain non-whitespace text; ``rationale`` /
     ``last_response_summary`` carry the attacker's own reasoning.
 
     Args:
@@ -313,7 +313,7 @@ def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition
 
     Raises:
         InvalidJsonException: If the reply is not valid JSON, does not decode to an object, is
-            missing a required key, carries a key the schema forbids, or omits ``next_message``.
+            missing a required key, carries a key the schema forbids, or has no usable ``next_message``.
     """
     cleaned = remove_markdown_json(response_text)
     try:
@@ -345,8 +345,14 @@ def _parse_adversarial_reply(response_text: str, *, schema: JsonSchemaDefinition
             message=f"Response is missing the '{_NEXT_MESSAGE_KEY}' field the attack loop sends: {cleaned}"
         )
 
+    next_message = str(normalized[_NEXT_MESSAGE_KEY])
+    if not next_message.strip():
+        raise InvalidJsonException(
+            message=f"Response field '{_NEXT_MESSAGE_KEY}' must contain non-whitespace text: {cleaned}"
+        )
+
     return AdversarialReply(
-        next_message=str(normalized[_NEXT_MESSAGE_KEY]),
+        next_message=next_message,
         rationale=normalized.get("rationale"),
         last_response_summary=normalized.get("last_response_summary"),
         raw=response_text,

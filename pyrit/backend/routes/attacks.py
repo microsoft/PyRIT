@@ -9,7 +9,6 @@ This is the attack-centric API design.
 """
 
 import logging
-from collections.abc import Sequence
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -32,36 +31,12 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.attack_service import get_attack_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/attacks", tags=["attacks"])
-
-
-def _parse_labels(label_params: list[str] | None) -> dict[str, str | Sequence[str]] | None:
-    """
-    Parse 'key:value' label query params into a dict grouping values by key.
-
-    Repeating the same key produces OR-within-key semantics downstream
-    (e.g. ?label=operator:alice&label=operator:bob matches either operator).
-    Different keys are combined with AND.
-
-    Returns:
-        Dict mapping each label key to a list of values, or None if no valid labels.
-    """
-    if not label_params:
-        return None
-    labels: dict[str, list[str]] = {}
-    for param in label_params:
-        if ":" in param:
-            key, value = param.split(":", 1)
-            labels.setdefault(key.strip(), []).append(value.strip())
-    if not labels:
-        return None
-    # Widen value type to match the service signature (dict values are invariant).
-    widened: dict[str, str | Sequence[str]] = dict(labels)
-    return widened
 
 
 @router.get(
@@ -93,6 +68,10 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         description="Filter by converter presence. true = attacks with at least one converter; "
         "false = attacks with no converters. Omit for no filter.",
     ),
+    include_scenario_attacks: bool = Query(
+        True,
+        description="Include attacks created as part of scenario runs. Defaults to true.",
+    ),
     outcome: Literal["undetermined", "success", "failure", "error"] | None = Query(
         None, description="Filter by outcome"
     ),
@@ -122,7 +101,7 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         AttackListResponse: Paginated list of attack summaries.
     """
     service = get_attack_service()
-    labels = _parse_labels(label)
+    labels = parse_label_query_params(label)
     # Strip empty strings from the list-valued query params. The service layer
     # coerces an all-empty ``converter_types`` list to None ("no filter"); the
     # "attacks with no converters" case is expressed through ``has_converters``.
@@ -135,6 +114,7 @@ async def list_attacks(  # pyrit-async-suffix-exempt
         converter_types=converter_types,
         converter_types_match=converter_types_match,
         has_converters=has_converters,
+        include_scenario_attacks=include_scenario_attacks,
         outcome=outcome,
         labels=labels,
         min_turns=min_turns,

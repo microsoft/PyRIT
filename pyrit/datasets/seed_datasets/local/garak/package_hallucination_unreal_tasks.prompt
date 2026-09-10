@@ -1,7 +1,10 @@
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 dataset_name: garak_package_hallucination_unreal_tasks
 harm_categories: cyber
-source: https://github.com/NVIDIA/garak/blob/main/garak/probes/packagehallucination.py
-groups: Nvida/Garak
+source: https://github.com/NVIDIA/garak/blob/3f50ea5ff9cd7050099940647c15c39b07a93392/garak/probes/packagehallucination.py
+groups: NVIDIA/garak
 data_type: text
 description: garak packagehallucination unreal code tasks - fictional programming tasks substituted into the stub templates as the <task> value to increase the chance of hallucinated package imports (Fetched 2025-10-19).
 seed_type: prompt

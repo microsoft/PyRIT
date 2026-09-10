@@ -31,7 +31,12 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
-from pyrit.memory import AttackResultKeysetCursor
+from pyrit.backend.services.pagination import (
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+    fingerprint_filters,
+    normalize_label_filters,
+)
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -235,10 +240,39 @@ def _cursor_for(result: AttackResult, *, fingerprint: str | None = None) -> str:
     Mirrors what ``list_attacks_async`` mints internally, so tests can feed a cursor back
     in without depending on the fingerprint's exact value.
     """
-    effective_fingerprint = fingerprint if fingerprint is not None else AttackService._attack_filter_fingerprint()
-    return AttackService._encode_attack_cursor(
-        cursor=AttackResultKeysetCursor.from_attack_result(result),
+    effective_fingerprint = fingerprint if fingerprint is not None else _attack_filter_fingerprint()
+    return encode_keyset_cursor(
+        timestamp=result.timestamp,
+        identifier=result.attack_result_id,
         fingerprint=effective_fingerprint,
+    )
+
+
+def _attack_filter_fingerprint(
+    *,
+    attack_types: list[str] | None = None,
+    converter_types: list[str] | None = None,
+    converter_types_match: str = "all",
+    has_converters: bool | None = None,
+    include_scenario_attacks: bool = True,
+    outcome: str | None = None,
+    labels: dict[str, str | list[str]] | None = None,
+    min_turns: int | None = None,
+    max_turns: int | None = None,
+) -> str:
+    """Build the fingerprint used by ``AttackService.list_attacks_async``."""
+    return fingerprint_filters(
+        filters={
+            "attack_types": attack_types,
+            "converter_types": converter_types,
+            "converter_types_match": converter_types_match,
+            "has_converters": has_converters,
+            "include_scenario_attacks": include_scenario_attacks,
+            "outcome": outcome,
+            "labels": normalize_label_filters(labels=labels),
+            "min_turns": min_turns,
+            "max_turns": max_turns,
+        }
     )
 
 
@@ -433,6 +467,14 @@ class TestListAttacks:
 
         call_kwargs = mock_memory.get_attack_results.call_args[1]
         assert call_kwargs["has_converters"] is False
+
+    async def test_list_attacks_forwards_scenario_attack_filter(self, attack_service, mock_memory) -> None:
+        """The scenario-attack inclusion flag is forwarded to memory."""
+        mock_memory.get_attack_results.return_value = []
+
+        await attack_service.list_attacks_async(include_scenario_attacks=False)
+
+        assert mock_memory.get_attack_results.call_args.kwargs["include_scenario_attacks"] is False
 
     async def test_list_attacks_filters_by_converter_types_and_logic(self, attack_service, mock_memory) -> None:
         """Test that list_attacks passes converter_types to memory layer."""
@@ -1777,6 +1819,23 @@ class TestPagination:
         assert call_kwargs["limit"] == 21
         assert call_kwargs["after"] is None
 
+    async def test_list_attacks_empty_attack_types_match_no_filter_cursor(self, attack_service, mock_memory) -> None:
+        """An empty attack-type list has the same query and cursor fingerprint as no filter."""
+        backing = _paginated_backing(3)
+        mock_memory.get_attack_results.side_effect = _keyset_side_effect(backing)
+
+        first = await attack_service.list_attacks_async(limit=2)
+        assert first.pagination.next_cursor is not None
+        await attack_service.list_attacks_async(
+            attack_types=[],
+            limit=2,
+            cursor=first.pagination.next_cursor,
+        )
+
+        call_kwargs = mock_memory.get_attack_results.call_args.kwargs
+        assert call_kwargs["attack_classes"] is None
+        assert call_kwargs["after"].attack_result_id == backing[1].attack_result_id
+
     async def test_list_attacks_decodes_cursor_to_after(self, attack_service, mock_memory) -> None:
         """A cursor is decoded into the memory keyset anchor when its filter fingerprint matches."""
         mock_memory.get_attack_results.return_value = []
@@ -1798,10 +1857,10 @@ class TestPagination:
 
     def test_decode_attack_cursor_rejects_invalid_and_round_trips_valid(self) -> None:
         """Bad/legacy/mismatched/naive cursors decode to None; valid round-trips; non-UTC canonicalizes to UTC."""
-        fingerprint = AttackService._attack_filter_fingerprint()
+        fingerprint = _attack_filter_fingerprint()
 
         def decode(cursor, fp=fingerprint):
-            return AttackService._decode_attack_cursor(cursor=cursor, fingerprint=fp)
+            return decode_keyset_cursor(cursor=cursor, fingerprint=fp)
 
         assert decode(None) is None
         assert decode("") is None
@@ -1815,7 +1874,7 @@ class TestPagination:
         assert decode(valid, "0000000000000000") is None
         decoded = decode(valid)
         assert decoded is not None
-        assert decoded.attack_result_id == anchor.attack_result_id
+        assert decoded.identifier == anchor.attack_result_id
         assert decoded.timestamp == anchor.timestamp
 
         # A crafted cursor carrying a naive (tz-less) timestamp is rejected: service-minted anchors
@@ -1937,11 +1996,12 @@ class TestPagination:
 
     def test_attack_filter_fingerprint_is_order_independent_and_filter_sensitive(self) -> None:
         """The fingerprint normalizes ordering but distinguishes different filter values."""
-        fingerprint = AttackService._attack_filter_fingerprint
+        fingerprint = _attack_filter_fingerprint
         assert fingerprint(attack_types=["a", "b"]) == fingerprint(attack_types=["b", "a"])
         assert fingerprint(labels={"op": ["red", "blue"]}) == fingerprint(labels={"op": ["blue", "red"]})
         assert fingerprint() != fingerprint(outcome="success")
         assert fingerprint(outcome="success") != fingerprint(outcome="failure")
+        assert fingerprint() != fingerprint(include_scenario_attacks=False)
         assert fingerprint(min_turns=1) != fingerprint(max_turns=1)
         # An empty-sequence label is a no-op filter in get_attack_results (effective_labels),
         # so it must fingerprint identically to no label filter — otherwise a cursor minted

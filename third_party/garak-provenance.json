@@ -1,0 +1,91 @@
+{
+  "component": "NVIDIA/garak",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/NVIDIA/garak",
+  "revision": "3f50ea5ff9cd7050099940647c15c39b07a93392",
+  "license_file": "LICENSES/Apache-2.0.txt",
+  "notice_file": "THIRD_PARTY_NOTICES.txt",
+  "scope_note": "This inventory covers garak-derived material distributed by PyRIT. It does not audit licenses from garak's upstream dataset sources.",
+  "redistributed_files": [
+    {
+      "path": "pyrit/converter/ansi_escape/ansi_attack_converter.py",
+      "sources": ["garak/probes/ansiescape.py", "garak/resources/ansi.py"]
+    },
+    {
+      "path": "pyrit/converter/ask_to_decode_converter.py",
+      "sources": ["garak/probes/encoding.py"]
+    },
+    {
+      "path": "pyrit/converter/braille_converter.py",
+      "sources": ["garak/probes/encoding.py"]
+    },
+    {
+      "path": "pyrit/datasets/converters/policy_puppetry_converter.yaml",
+      "sources": ["garak/probes/doctor.py"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/access_shell_commands.prompt",
+      "sources": ["garak/data/payloads/access_shell_commands.json"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/doctor.prompt",
+      "sources": ["garak/probes/doctor.py"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/example_domains_xss.prompt",
+      "sources": ["garak/data/payloads/example_domains_xss.json"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/markdown_js.prompt",
+      "sources": ["garak/data/payloads/markdown_js.json"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/normal_instructions.prompt",
+      "sources": ["garak/data/payloads/normal_instructions.json"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/package_hallucination_real_tasks.prompt",
+      "sources": ["garak/probes/packagehallucination.py"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/package_hallucination_stubs.prompt",
+      "sources": ["garak/probes/packagehallucination.py"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/package_hallucination_unreal_tasks.prompt",
+      "sources": ["garak/probes/packagehallucination.py"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/slur_terms_en.prompt",
+      "sources": ["garak/data/payloads/slur_terms_en.json"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/system_prompt_extraction.prompt",
+      "sources": ["garak/data/sysprompt_extraction/attacks.json"]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/web_html_js.prompt",
+      "sources": ["garak/data/payloads/web_html_js.json"]
+    },
+    {
+      "path": "pyrit/scenario/scenarios/garak/audio_achilles_heel.py",
+      "sources": ["garak/probes/audio.py"]
+    },
+    {
+      "path": "pyrit/scenario/scenarios/garak/package_hallucination.py",
+      "sources": ["garak/probes/packagehallucination.py"]
+    },
+    {
+      "path": "pyrit/scenario/scenarios/garak/web_injection.py",
+      "sources": ["garak/probes/web_injection.py", "garak/data/xss"]
+    },
+    {
+      "path": "pyrit/score/float_scale/system_prompt_extraction_scorer.py",
+      "sources": ["garak/detectors/sysprompt_extraction.py"]
+    },
+    {
+      "path": "pyrit/score/true_false/regex/package_hallucination_scorer.py",
+      "sources": ["garak/detectors/packagehallucination.py"]
+    }
+  ]
+}

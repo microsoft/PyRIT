@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# Portions Copyright (c) 2023 Leon Derczynski and NVIDIA CORPORATION & AFFILIATES.
+# Garak-derived portions are licensed under Apache-2.0 and modified by Microsoft Corporation.
+# See THIRD_PARTY_NOTICES.txt for attribution and source details.
 
 """
 Package-hallucination scorer, ported from garak's ``packagehallucination`` detector.

@@ -11,6 +11,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from pyrit.memory import CentralMemory
 
@@ -29,9 +30,9 @@ class LabelOptionsResponse(BaseModel):
     response_model=LabelOptionsResponse,
 )
 async def get_label_options(  # pyrit-async-suffix-exempt
-    source: Literal["attacks"] = Query(
+    source: Literal["attacks", "scenarios"] = Query(
         "attacks",
-        description="Source type to get labels from. Currently only 'attacks' is supported.",
+        description="Source type to get labels from.",
     ),
 ) -> LabelOptionsResponse:
     """
@@ -48,6 +49,7 @@ async def get_label_options(  # pyrit-async-suffix-exempt
     """
     memory = CentralMemory.get_memory_instance()
 
-    labels = memory.get_unique_attack_labels() if source == "attacks" else {}
+    label_loader = memory.get_unique_attack_labels if source == "attacks" else memory.get_unique_scenario_labels
+    labels = await run_in_threadpool(label_loader)
 
     return LabelOptionsResponse(source=source, labels=labels)
