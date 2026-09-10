@@ -18,6 +18,7 @@ from pyrit.models import (
     SeedPrompt,
     UnvalidatedScore,
 )
+from pyrit.models.harm_category import HarmCategory
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEvalFiles
@@ -115,7 +116,7 @@ class LikertScalePaths(enum.Enum):
         LikertScaleEvalFiles(
             human_labeled_datasets_files=["harm/sexual.csv"],
             result_file="harm/sexual_metrics.jsonl",
-            harm_category="sexual",
+            harm_category=HarmCategory.SEXUAL_CONTENT.name,
         ),
     )
     VIOLENCE_SCALE = (
@@ -141,11 +142,11 @@ class LikertScalePaths(enum.Enum):
         None,
     )
     FAIRNESS_BIAS_SCALE = (
-        Path(HARM_DEFINITION_PATH, "fairness_bias.yaml").resolve(),
+        Path(HARM_DEFINITION_PATH, "representational.yaml").resolve(),
         LikertScaleEvalFiles(
-            human_labeled_datasets_files=["harm/fairness_bias.csv"],
-            result_file="harm/fairness_bias_metrics.jsonl",
-            harm_category="fairness_bias",
+            human_labeled_datasets_files=["harm/representational.csv"],
+            result_file="harm/representational_metrics.jsonl",
+            harm_category=HarmCategory.REPRESENTATIONAL.name,
         ),
     )
     HARM_SCALE = (
@@ -194,7 +195,10 @@ class LikertScalePaths(enum.Enum):
         Returns:
             LikertScale: The loaded scale.
         """
-        return LikertScale.from_yaml(self.path, evaluation_files=self.evaluation_files)
+        scale = LikertScale.from_yaml(self.path, evaluation_files=self.evaluation_files)
+        if self.evaluation_files and self.evaluation_files.harm_category:
+            return scale.model_copy(update={"category": self.evaluation_files.harm_category})
+        return scale
 
 
 class _LikertScaleResponseHandler(ResponseHandler):

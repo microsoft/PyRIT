@@ -1,0 +1,18 @@
+---------------------------------------------------------
+
+garak source portions - Apache-2.0
+https://github.com/NVIDIA/garak
+
+Portions Copyright (c) 2023 Leon Derczynski
+Portions Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+PyRIT includes source code, prompt templates, regular expressions, and payload data
+derived from garak. Microsoft Corporation modified these portions for PyRIT.
+
+The garak-derived portions are licensed under the Apache License, Version 2.0.
+A copy of the license is provided in LICENSES/Apache-2.0.txt.
+
+The provenance inventory in third_party/garak-provenance.json identifies the
+garak revision, source paths, and modified PyRIT files.
+
+---------------------------------------------------------

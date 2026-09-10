@@ -101,8 +101,8 @@ export default function Navigation({
           data-active={currentView === 'history'}
           appearance="subtle"
           icon={<HistoryRegular />}
-          title="Attack History"
-          aria-label="Attack History"
+          title="History"
+          aria-label="History"
           aria-current={currentView === 'history' ? 'page' : undefined}
           onClick={() => onNavigate('history')}
         />

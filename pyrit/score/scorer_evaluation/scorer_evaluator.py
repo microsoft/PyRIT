@@ -14,6 +14,7 @@ from scipy.stats import ttest_1samp
 
 from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.models import MessageScorable, Score, ScoringExpectation, UndeterminedScoreError
+from pyrit.models.harm_category import HarmCategory
 from pyrit.prompt_target.batch_helper import batch_task_async
 from pyrit.score.message_scorer import extract_objective_from_previous_turn
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
@@ -188,9 +189,7 @@ class ScorerEvaluator(abc.ABC):
             )
         combined_harm_definition_version = next(iter(harm_definition_versions)) if harm_definition_versions else None
 
-        # Use harm_definition from CSV headers (e.g., "fairness_bias.yaml").
-        # The CSV header is authoritative since the harm_category name may differ from
-        # the YAML filename (e.g., harm_category="bias" but file is "fairness_bias.yaml").
+        # Use the harm definition declared by the CSV instead of deriving it from the category.
         if len(harm_definitions) > 1:
             raise ValueError(
                 f"All CSVs in a harm evaluation must reference the same harm_definition, "
@@ -299,7 +298,7 @@ class ScorerEvaluator(abc.ABC):
                     return (False, None)
                 existing = find_harm_metrics_by_eval_hash(
                     eval_hash=scorer_hash,
-                    harm_category=harm_category,
+                    file_path=result_file_path,
                 )
             else:
                 existing = find_objective_metrics_by_eval_hash(
@@ -480,6 +479,29 @@ class ScorerEvaluator(abc.ABC):
         return cast("list[list[Score]]", results)
 
     @staticmethod
+    def _score_matches_harm_category(*, score: Score, harm_category: str) -> bool:
+        """Return whether a score category matches a canonical or aliased harm category."""
+        labeled_categories = set(HarmCategory.parse_many(harm_category))
+        if labeled_categories == {HarmCategory.OTHER} and harm_category.casefold() not in {
+            HarmCategory.OTHER.name.casefold(),
+            HarmCategory.OTHER.value.casefold(),
+        }:
+            labeled_categories = set()
+
+        for score_category in score.score_category or []:
+            if score_category == harm_category:
+                return True
+            score_categories = set(HarmCategory.parse_many(score_category))
+            if score_categories == {HarmCategory.OTHER} and score_category.casefold() not in {
+                HarmCategory.OTHER.name.casefold(),
+                HarmCategory.OTHER.value.casefold(),
+            }:
+                continue
+            if score_categories & labeled_categories:
+                return True
+        return False
+
+    @staticmethod
     def _select_evaluation_score(*, scores: list[Score], harm_category: str | None) -> Score | None:
         """
         Select the one score that corresponds to a labeled response.
@@ -499,7 +521,11 @@ class ScorerEvaluator(abc.ABC):
 
         if len(scores) == 1:
             categories = scores[0].score_category or []
-            if harm_category is None or not categories or harm_category in categories:
+            if (
+                harm_category is None
+                or not categories
+                or ScorerEvaluator._score_matches_harm_category(score=scores[0], harm_category=harm_category)
+            ):
                 return scores[0]
             raise ValueError(
                 f"Scorer evaluation requires a score for harm category '{harm_category}', "
@@ -507,7 +533,10 @@ class ScorerEvaluator(abc.ABC):
             )
 
         category_matches = [
-            score for score in scores if harm_category is not None and harm_category in (score.score_category or [])
+            score
+            for score in scores
+            if harm_category is not None
+            and ScorerEvaluator._score_matches_harm_category(score=score, harm_category=harm_category)
         ]
         if len(category_matches) == 1:
             return category_matches[0]
