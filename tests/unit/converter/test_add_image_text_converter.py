@@ -256,3 +256,10 @@ def test_add_image_text_converter_auto_font_size_no_bounding_box(large_sample_im
     )
     updated_image = converter._add_text_to_image("Auto-sized text on full image")
     assert updated_image is not None
+
+
+@pytest.mark.parametrize("rotation", [float("nan"), float("inf"), float("-inf")])
+def test_add_image_text_converter_rejects_non_finite_rotation(image_text_converter_sample_image, rotation):
+    """Non-finite rotation angles should fail during converter construction."""
+    with pytest.raises(ValueError, match="rotation must be finite"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, rotation=rotation)
