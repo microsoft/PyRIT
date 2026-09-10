@@ -44,19 +44,27 @@ def test_variation_selector_invalid_action():
 
 
 @pytest.mark.parametrize("base_char", ["", "ab", "😊x"])
-def test_variation_selector_invalid_base_char(base_char):
+def test_variation_selector_invalid_base_char(base_char: str) -> None:
     with pytest.raises(ValueError, match="base_char_utf8 must be exactly one character"):
         VariationSelectorSmugglerConverter(base_char_utf8=base_char)
 
 
-async def test_variation_selector_custom_base_char_roundtrip():
-    encoder = VariationSelectorSmugglerConverter(action="encode", base_char_utf8="A")
+@pytest.mark.parametrize("base_char", ["\ufe00", "\ufe0f", "\U000e0100", "\U000e01ef"])
+def test_variation_selector_rejects_selector_base_char(base_char: str) -> None:
+    with pytest.raises(ValueError, match="base_char_utf8 must not be a variation selector"):
+        VariationSelectorSmugglerConverter(base_char_utf8=base_char)
+
+
+@pytest.mark.parametrize("base_char", ["A", "\ufdff", "\ufe10", "\U000e00ff", "\U000e01f0"])
+@pytest.mark.parametrize("embed_in_base", [True, False])
+async def test_variation_selector_custom_base_char_roundtrip(base_char: str, embed_in_base: bool) -> None:
+    encoder = VariationSelectorSmugglerConverter(action="encode", base_char_utf8=base_char, embed_in_base=embed_in_base)
     encoded = await encoder.convert_async(prompt="test", input_type="text")
 
-    decoder = VariationSelectorSmugglerConverter(action="decode", base_char_utf8="A")
+    decoder = VariationSelectorSmugglerConverter(action="decode", base_char_utf8=base_char, embed_in_base=embed_in_base)
     decoded = await decoder.convert_async(prompt=encoded.output_text, input_type="text")
 
-    assert encoded.output_text.startswith("A")
+    assert encoded.output_text.startswith(base_char)
     assert decoded.output_text == "test"
 
 

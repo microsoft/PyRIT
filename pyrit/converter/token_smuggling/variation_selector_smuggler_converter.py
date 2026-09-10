@@ -47,12 +47,16 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
                                     Default is True.
 
         Raises:
-            ValueError: If an unsupported action is provided or ``base_char_utf8`` is not exactly one character.
+            ValueError: If an unsupported action is provided, or ``base_char_utf8`` is not exactly one character
+                or is a variation selector used to encode payload bytes.
         """
         super().__init__(action=action)
         base_char = base_char_utf8 if base_char_utf8 is not None else "😊"
         if len(base_char) != 1:
             raise ValueError("base_char_utf8 must be exactly one character.")
+        code_point = ord(base_char)
+        if 0xFE00 <= code_point <= 0xFE0F or 0xE0100 <= code_point <= 0xE01EF:
+            raise ValueError("base_char_utf8 must not be a variation selector.")
         self.utf8_base_char = base_char
         self.embed_in_base = embed_in_base
 
