@@ -65,7 +65,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
 
         Raises:
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
-                font_size tuple is invalid, or bounding_box coordinates are invalid.
+                font_size is invalid, or bounding_box coordinates are invalid.
         """
         if not img_to_add:
             raise ValueError("Please provide valid image path")
@@ -119,7 +119,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
             font_size (int | tuple[int, int]): Fixed size or (min, max) range.
 
         Raises:
-            ValueError: If font_size tuple is invalid.
+            ValueError: If font_size is not positive or the tuple range is invalid.
         """
         if isinstance(font_size, tuple):
             if len(font_size) != 2 or font_size[0] > font_size[1] or font_size[0] < 1:
@@ -128,6 +128,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
             self._font_size_max = font_size[1]
             self._auto_font_size = True
         else:
+            if font_size < 1:
+                raise ValueError("font_size must be greater than 0")
             self._font_size_min = font_size
             self._font_size_max = font_size
             self._auto_font_size = False

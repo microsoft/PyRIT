@@ -96,32 +96,44 @@ async def test_echo_file_not_found():
 
 def test_echo_invalid_delay_zero():
     """delay of 0 should raise ValueError."""
-    with pytest.raises(ValueError, match="delay must be greater than 0"):
+    with pytest.raises(ValueError, match="delay must be a finite number greater than 0"):
         AudioEchoConverter(delay=0, decay=0.5)
 
 
 def test_echo_invalid_delay_negative():
     """Negative delay should raise ValueError."""
-    with pytest.raises(ValueError, match="delay must be greater than 0"):
+    with pytest.raises(ValueError, match="delay must be a finite number greater than 0"):
         AudioEchoConverter(delay=-0.5, decay=0.5)
+
+
+@pytest.mark.parametrize("delay", [float("nan"), float("inf"), float("-inf")])
+def test_echo_invalid_delay_non_finite(delay: float):
+    with pytest.raises(ValueError, match="delay must be a finite number greater than 0"):
+        AudioEchoConverter(delay=delay, decay=0.5)
 
 
 def test_echo_invalid_decay_zero():
     """decay of 0 should raise ValueError."""
-    with pytest.raises(ValueError, match="decay must be between 0 and 1"):
+    with pytest.raises(ValueError, match="decay must be a finite number between 0 and 1"):
         AudioEchoConverter(delay=0.3, decay=0)
 
 
 def test_echo_invalid_decay_one():
     """decay of 1 should raise ValueError."""
-    with pytest.raises(ValueError, match="decay must be between 0 and 1"):
+    with pytest.raises(ValueError, match="decay must be a finite number between 0 and 1"):
         AudioEchoConverter(delay=0.3, decay=1.0)
 
 
 def test_echo_invalid_decay_above_one():
     """decay > 1 should raise ValueError."""
-    with pytest.raises(ValueError, match="decay must be between 0 and 1"):
+    with pytest.raises(ValueError, match="decay must be a finite number between 0 and 1"):
         AudioEchoConverter(delay=0.3, decay=1.5)
+
+
+@pytest.mark.parametrize("decay", [float("nan"), float("inf"), float("-inf")])
+def test_echo_invalid_decay_non_finite(decay: float):
+    with pytest.raises(ValueError, match="decay must be a finite number between 0 and 1"):
+        AudioEchoConverter(delay=0.3, decay=decay)
 
 
 async def test_echo_unsupported_input_type(sqlite_instance):
